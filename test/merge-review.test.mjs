@@ -14,7 +14,7 @@ import { isAncestor } from '../plugins/aidrian/lib/review/diff.mjs';
 import { recordPass, recordSignoff, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { answerOwed, markRequestsSent, recordPending, runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
 import { answerPending, emptyState, noteOutcome, readLocalState, readRecord, recordFile, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { check, checkMcp, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { check, checkMcp, CURL_REASON, mergeRepoArg, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { waitingRoute } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
 
@@ -52,6 +52,11 @@ function repo(t, config = {}) {
   };
   return { dir, git, project, transcript, views, viewer, run, answer, record, commit: git('rev-parse', 'HEAD') };
 }
+
+// The deny's last route in an attended session: the Human's own shell, with the merge to hand over (#390).
+const handOver = (pr, { head = HEAD, flags = '', strategy = ', with the team\'s merge-strategy flag,' } = {}) =>
+  'Or the Human merges in their own shell (`!` in the prompt): when the Human already gave this decision in their own words in this session, ' +
+  `do not ask it again; hand over \`gh pr merge ${pr}${flags} --match-head-commit ${head}\`${strategy} for the Human to run.`;
 
 const owe = (state, kind, at = '2026-11-03T13:50:00.000Z') => state.pending.push({ kind, head: HEAD, at, by: 'the Human' });
 const outcome = (state, status, head = HEAD, at = '2026-11-03T14:00:00.000Z') => (state.outcome = { status, head, at });
@@ -193,13 +198,14 @@ test('a review stopped at its round limit asks the Human to ship or to grant rou
     assert.equal(reason, `Blocked: this merges pull request #5 at abcdef1, and the review of head abcdef1 is \`${status}\`: stopped at its round limit, with 2 findings open, and not running. ` +
       `Only the Human decides this: ask with AskUserQuestion, the question "${question}", the options "Merge with the findings filed" and "Grant more review rounds", ` +
       'and mark neither as preferred. When the Human picks "Merge with the findings filed", file the findings the review left open as a follow-up issue, then merge. ' +
-      `When the Human picks "Grant more review rounds", do not merge. ${route} Or the Human merges in their own shell.`, status);
+      `When the Human picks "Grant more review rounds", do not merge. ${route} ${handOver(5)}`, status);
     assert.match(reason, /`aidrian pr extend 5 --human approve`/u, `${status}: both routes name the grant command`);
     assert.doesNotMatch(reason, /Wait for the review/u, status);
     assert.doesNotMatch(reason, /recommend/iu, status);
     assert.doesNotMatch(reason, /\b(?:I|you|your)\b/u, status);
     const mcp = checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: { transcript_path: r.transcript }, viewPr: r.viewer() });
-    assert.equal(mcp, reason, `${status}: the MCP tool gets the same deny`);
+    // The merge tool names its repository, so the merge to hand over names it too.
+    assert.equal(mcp, reason.replace(handOver(5), handOver(5, { flags: ' --repo acme/notes' })), `${status}: the MCP tool gets the same deny`);
   }
   assert.match(r.run('gh pr merge 5') ?? '', /its refusal names the route to one more round/u, 'round_limit: the refusal names the route');
   const reasoned = repo(t);
@@ -332,7 +338,7 @@ test('a review that runs, waits for the Human, covers another head, or is owed k
   r.record(5, (state) => outcome(state, 'running'));
   assert.equal(r.run('gh pr merge 5'), 'Blocked: this merges pull request #5 at abcdef1, and the review of head abcdef1 is `running`: run `aidrian pr review 5` until it returns `received` or `none_needed`. ' +
     'Only the Human waives this: ask with AskUserQuestion, the question "Merge pull request #5 at abcdef1 before its review is finished?", the options "Wait for the review" ' +
-    '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". Or the Human merges in their own shell.');
+    `(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ${handOver(5)}`);
   for (const [name, edit] of [
     ['a check that waits for the Human', stopped('extension_ask', { extensions: [{ ...JUDGING, status: 'asking' }] })],
     ['a capped status on another head', stopped('round_limit', { head: NEXT })],
@@ -357,7 +363,7 @@ test('gh api merges are read: a PUT or POST to pulls/<n>/merge', (t) => {
   assert.equal(r.run('gh api repos/acme/notes/pulls/5/merge'), null, 'a GET reads whether it merged');
   assert.equal(r.run('gh api -X PUT repos/other/repo/pulls/5/merge'), null, 'another repository');
   const read = (command) => readMerge(readInvocation(lexCommand(command)[0]), {});
-  assert.deepEqual(read(`gh api -X PUT repos/acme/notes/pulls/5/merge -f sha=${HEAD}`), { pr: 5, head: HEAD, target: null, repo: 'acme/notes', text: { subject: null, body: null, unreadable: false } });
+  assert.deepEqual(read(`gh api -X PUT repos/acme/notes/pulls/5/merge -f sha=${HEAD}`), { pr: 5, head: HEAD, target: null, repo: 'acme/notes', text: { subject: null, body: null, unreadable: false }, hosts: ['github.com'] });
   // The merge commit's own subject and body, for the closing-word check; a field from a file or a variable is unreadable.
   assert.deepEqual(read(`gh api -X PUT repos/acme/notes/pulls/5/merge -f commit_title='Fixes ENG-9' -f commit_message=body`).text, { subject: 'Fixes ENG-9', body: 'body', unreadable: false });
   assert.equal(read('gh api -X PUT repos/acme/notes/pulls/5/merge -F commit_message=@msg.txt').text.unreadable, true);
@@ -366,6 +372,104 @@ test('gh api merges are read: a PUT or POST to pulls/<n>/merge', (t) => {
   assert.deepEqual(read(`gh pr merge 5 -t 'Fixes ENG-9' -b 'x' --match-head-commit ${HEAD}`).text, { subject: 'Fixes ENG-9', body: 'x', unreadable: false });
   assert.equal(read(`gh pr merge 5 -F body.md --match-head-commit ${HEAD}`).text.unreadable, true);
   assert.equal(read('gh pr view 5'), null);
+});
+
+test('a curl call that names a merge URL, GraphQL, or a merge mutation is refused outright, a read included (#425)', (t) => {
+  const r = repo(t);
+  const url = 'https://api.github.com/repos/acme/notes/pulls/5/merge';
+  const escaped = '{"query":"mutation { merge\\u0050ullRequest(input: {}) { clientMutationId } }"}';
+  // No record at all: the guard reads no curl call, so each is refused whatever the record says.
+  for (const command of [
+    `curl -X PUT ${url}`,
+    `curl -sXPUT ${url}`,
+    `curl ${url}`,
+    `curl -G -d per_page=1 ${url}`,
+    `curl -X PUT "$API/repos/acme/notes/pulls/$PR/merge"`,
+    `curl -X PUT https://ghe.example.com/api/v3/repos/Acme/Notes/pulls/5/merge?x=1`,
+    `curl https://api.github.com/repos/acme/notes --next -X PUT ${url}`,
+    `curl -X PUT -H '--next' -- ${url}`,
+    'curl https://api.github.com/graphql -d \'{"query":"query { viewer { login } }"}\'',
+    'curl -X POST "$API/graphql" -d "$BODY"',
+    'curl https://ghe.example.com/api/graphql?x=1 -d @body.json',
+    `curl "$API" -d '${escaped}'`,
+    `curl "$API" -d'${escaped}'`,
+    `curl "$API" --data='${escaped}'`,
+    'curl "$API" -d \'{"query":"mutation { enqueuePullRequest(input: {}) { clientMutationId } }"}\'',
+  ]) assert.equal(r.run(command), CURL_REASON, command);
+  assert.equal(r.run('curl --url=https://api.github.com/graphql -d x'), CURL_REASON, 'a glued --url');
+  // A body file the call sends is no word the guard reads, even one that names a mutation (the hooks doc's limits).
+  writeFileSync(path.join(r.dir, 'merge.json'), escaped);
+  // Only a URL's path counts: not its host, its query, or its fragment.
+  for (const command of ['curl -X PUT https://api.github.com/repos/acme/notes/pulls/5', 'curl "$UPLOAD_URL" --data-binary "$JSON"',
+    'curl -X POST https://uploads.example.com/upload -d x', 'curl https://graphql.example.com/health', 'curl https://graphql', 'curl graphql',
+    'curl https://graphql/', "curl -X POST 'https://uploads.example.com/upload?next=/repos/acme/notes/pulls/5/merge' -d x",
+    "curl 'https://uploads.example.com/upload?return=/graphql#/graphql' -d x", 'curl --url=https://graphql/ ', 'curl --url=https://graphql',
+    "curl 'uploads.example.com?next=/repos/acme/notes/pulls/5/merge'", "curl 'uploads.example.com#/graphql'",
+    // Only a word does: a merge or GraphQL path, or a mutation, in the command itself.
+    'curl "$UPLOAD_URL" -d @merge.json', 'curl "$UPLOAD_URL" --data-raw @merge.json']) {
+    assert.equal(r.run(command), null, command);
+  }
+  assert.doesNotMatch(CURL_REASON, /\b(?:I|you|your)\b/u);
+});
+
+test('gh api reads a GraphQL call by its own query: a variable, a jq filter, or a URL field beside --input names no mutation (#425)', (t) => {
+  const r = repo(t);
+  const query = path.join(r.dir, 'merge.json');
+  writeFileSync(query, '{"query":"mutation { mergePullRequest(input: { pullRequestId: \\"PR_x\\" }) { clientMutationId } }"}');
+  const plain = path.join(r.dir, 'viewer.json');
+  writeFileSync(plain, '{"query":"query { viewer { login } }"}');
+  assert.equal(r.run("gh api graphql -f query='query($q: String!) { search(query: $q, type: ISSUE) { issueCount } }' -f q=mergePullRequest"), null);
+  assert.equal(r.run("gh api repos/acme/notes/pulls/7 --jq '.mergePullRequest'"), null);
+  assert.match(r.run("gh api graphql -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }' -f q=x") ?? '', /^Blocked: this is a GraphQL call/u);
+  // With --input the body is the last one's file, and gh sends the fields in the URL: that file decides.
+  assert.equal(r.run(`gh api graphql --input ${plain} -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }'`), null);
+  assert.match(r.run(`gh api graphql --input ${query} -f per_page=1`) ?? '', /^Blocked: this is a GraphQL call/u);
+  assert.equal(r.run(`gh api graphql --input ${query} --input ${plain}`), null);
+  assert.match(r.run(`gh api graphql --input ${plain} --input ${query}`) ?? '', /^Blocked: this is a GraphQL call/u);
+});
+
+test('a refused merge hands over the one command the Human runs, naming the team`s strategy and the merge`s repository (#390)', (t) => {
+  const r = repo(t, { github: { autoMerge: { strategy: 'squash' } } });
+  r.record(5, stopped('round_limit'));
+  const reason = r.run('gh pr merge 5') ?? '';
+  assert.ok(reason.endsWith(handOver(5, { flags: ' --squash', strategy: '' })), reason);
+  assert.doesNotMatch(reason, /\b(?:I|you|your)\b/u);
+  assert.ok((r.run('gh pr merge 5 -R acme/notes') ?? '').endsWith(handOver(5, { flags: ' --repo acme/notes --squash', strategy: '' })), 'the merge named its repository');
+  // A review still running keeps its question, and the same hand-over.
+  r.record(5, (state) => outcome(state, 'running'));
+  assert.ok((r.run('gh pr merge 5') ?? '').endsWith(handOver(5, { flags: ' --squash', strategy: '' })));
+});
+
+test('a pull request URL and an -R that disagree, or an -R the shell builds beside it, is a merge the guard cannot check', (t) => {
+  const r = repo(t);
+  for (const command of [
+    `gh pr merge https://github.com/acme/notes/pull/5 -R acme/other --match-head-commit ${HEAD}`,
+    `gh pr merge https://github.com/acme/notes/pull/5 -R ghe.example.com/acme/notes --match-head-commit ${HEAD}`,
+    `gh pr merge https://github.com/acme/notes/pull/5 -R "$R" --match-head-commit ${HEAD}`,
+  ]) assert.match(r.run(command) ?? '', /could not read which one/u, command);
+  assert.equal(r.run(`gh pr merge https://github.com/acme/notes/pull/5 -R Acme/Notes --match-head-commit ${HEAD}`), null, 'a URL and -R that agree');
+});
+
+test('a mutation name JSON spells with an escape is still a merge in a gh api query file', (t) => {
+  const r = repo(t);
+  const file = path.join(r.dir, 'escaped.json');
+  writeFileSync(file, '{"query":"mutation { merge\\u0050ullRequest(input: {}) { clientMutationId } }"}');
+  assert.match(r.run(`gh api graphql --input ${file}`) ?? '', /^Blocked: this is a GraphQL call/u);
+});
+
+test('the merge to hand over keeps the merge`s host, and writes only a repository name of GitHub`s own characters', (t) => {
+  const r = repo(t);
+  r.record(5, (state) => outcome(state, 'running'));
+  assert.ok((r.run('gh pr merge https://ghe.example.com/acme/notes/pull/5') ?? '').endsWith(handOver(5, { flags: ' --repo ghe.example.com/acme/notes' })), 'an Enterprise URL');
+  assert.ok((r.run('gh pr merge 5 -R ghe.example.com/acme/notes') ?? '').endsWith(handOver(5, { flags: ' --repo ghe.example.com/acme/notes' })), 'a host-qualified -R');
+  assert.ok((r.run('gh pr merge 5 -R github.com/acme/notes') ?? '').endsWith(handOver(5, { flags: ' --repo github.com/acme/notes' })), 'an explicit github.com stays: the Human`s shell may default to another host');
+  assert.ok((r.run('gh pr merge 5 -R acme/notes') ?? '').endsWith(handOver(5, { flags: ' --repo acme/notes' })), 'no host named, none written');
+  // A repository or host with shell syntax in it is never written into a command the Human runs.
+  assert.equal(mergeRepoArg('acme/no$(touch x)tes'), ' --repo <owner>/<name>');
+  assert.equal(mergeRepoArg("acme/no'tes"), ' --repo <owner>/<name>');
+  assert.equal(mergeRepoArg('acme/notes', ['gh;e.example.com']), ' --repo acme/notes');
+  assert.equal(mergeRepoArg('acme/notes', ['ghe.example.com', 'other.example.com']), ' --repo acme/notes', 'hosts that disagree name none');
+  assert.equal(mergeRepoArg(null), '');
 });
 
 test('the MCP merge tool is guarded too', (t) => {

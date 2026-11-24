@@ -4,6 +4,9 @@
 //   - `gh pr merge` (but `--disable-auto`, and `--help` or `-h`, which merge nothing), `--auto` included;
 //   - `gh api repos/<owner>/<name>/pulls/<n>/merge` sent as a PUT or a POST;
 //   - the MCP tool `mcp__github__merge_pull_request`, or a host connector's call that stands for it (scripts/hook-mcp-github.mjs).
+// A GraphQL call through `gh api` that may merge (MERGE_MUTATIONS) names its pull request by a node id no record is keyed
+// by, and a curl call that names a merge URL, GraphQL, or a mutation is no call the rule reads (readCurl), so inside a
+// project each is refused outright, for every session, with the `gh pr merge` to run instead.
 // Each is read wherever it runs (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a shell.
 // A shell fed text the rule cannot read as commands, such as a pipe into `bash`, is refused when that text names a merge.
 // It reads only this machine's review record (lib/review/state.mjs), scoped to the merge's repository when the call names
@@ -28,7 +31,9 @@
 // the waivers below reaches it.
 // The Human waives the record's denial with an AskUserQuestion answer, given at or after the head's outcome and every
 // entry still owed, to a question naming `#<PR>` and the head's first 7 characters, whose chosen option starts with
-// "Merge anyway". Without a transcript the host writes in that shape (Codex), the Human merges in their own shell.
+// "Merge anyway". Without a transcript the host writes in that shape (Codex), the Human merges in their own shell, and
+// every attended denial hands over that one command (handOver), so a decision the Human typed in chat is never asked
+// twice; a chat message is never taken as the answer. A session no Human attends is asked no question (unattendedCap).
 // A review stopped at its round limit (`extension_check` or `round_limit` on the merge's head, nothing owed) runs no
 // more, so its denial offers no wait: it asks to ship with what the review left open filed as an issue, or to grant
 // more rounds, neither preferred, and an answer starting "Merge with the findings filed" waives it too, there only.
@@ -54,8 +59,8 @@
 // A read that fails or would begin too late keeps the denial.
 // A session no Human attends (its unattended mark, lib/unattended-mark.mjs, read by the host's session id) may not take
 // the record's word alone, which a project run's confined session can write: a merge the checks above let through, with
-// a record or none, the Human's answer, or a waiver, must also name its number and full head, in the repository the
-// session is pinned to, and pass lib/review/merge-trust.mjs trustProblem on the forge (unattendedProblem); a pull request
+// a record or none, the Human's answer, or a waiver, must also name its number and full head, in the repository and on
+// the host the session is pinned to (every host the merge names, ghHosts), and pass lib/review/merge-trust.mjs trustProblem on the forge (unattendedProblem); a pull request
 // of a project run's issue may close or link no other issue, by its title, body, commits, and the merge's own subject and
 // body (mergeClosesProblem). Attended sessions are unchanged.
 
@@ -63,7 +68,7 @@ import { closeSync, constants, fstatSync, openSync, readFileSync, readSync } fro
 import path from 'node:path';
 
 import { loadConfig, resolveAutoMerge } from '../../config.mjs';
-import { forgeFor, isTrustedCommenter } from '../../forges/index.mjs';
+import { forgeFor, isTrustedCommenter, repoIdentity } from '../../forges/index.mjs';
 import { knownPrefix } from '../../git.mjs';
 import { stateFolders } from '../../handoff-guard.mjs';
 // A cycle (pr-auto-merge.mjs imports this file), benign while neither uses the other's exports as it loads.
@@ -118,14 +123,21 @@ export function viewPrAt(cwd, forge = null) {
 // read is null: a dynamic head or number is read through gh; a dynamic repository counts as this one.
 // `cwd` is the folder a query file a `gh api graphql` call names is read from.
 export function readMerge({ program, args, environment = [] }, env = {}, { cwd = process.cwd() } = {}) {
+  if (program === 'curl') return readCurl(args);
   if (program !== 'gh') return null;
+  const merge = readGh(args, environment, env, cwd);
+  return merge && !merge.graphql ? { ...merge, ...ghHosts(args, environment, env, commandPath(args)[0] === 'api') } : merge;
+}
+
+function readGh(args, environment, env, cwd) {
   const command = commandPath(args);
   const literal = (token) => (token && !token.dynamic ? token.text : null);
   if (command[0] === 'api') {
     const { words, flags } = readWords(args, new Set(API_VALUES));
-    // A merge mutation named anywhere in a `gh api` call is one, whatever endpoint it is sent to; and an endpoint that is
-    // GraphQL's, however spelled, or one the shell builds, meets the query rules.
-    if (args.some((token) => MUTATION_TEXT.test(token.text))) return { graphql: true, pr: null, head: null, target: null, repo: null, unreadable: false };
+    // A `query` field that names a merge mutation is one, whatever endpoint it is sent to; and an endpoint that is
+    // GraphQL's, however spelled, or one the shell builds, meets the query rules. Another field, such as a variable, or
+    // `--jq`, names no mutation GitHub runs.
+    if (queryNamesMutation(flags)) return { graphql: true, pr: null, head: null, target: null, repo: null, unreadable: false };
     if (words[1]?.dynamic || endpointOf(words[1]?.text) === 'graphql') {
       const graphql = graphqlMerge(args, flags, cwd);
       if (graphql || !words[1]?.dynamic) return graphql;
@@ -158,12 +170,111 @@ export function readMerge({ program, args, environment = [] }, env = {}, { cwd =
     head: head && SHA.test(head) ? head : null,
     target,
     repo: flagRepo ? literal(flagRepo) : urlRepo ?? invocationRepo(environment, env),
-    // A target the rule cannot read, such as `"$PR"`, is no pull request it can check.
-    unreadable: Boolean(words[2]) && target === null,
+    // A target the rule cannot read, such as `"$PR"`, is no pull request it can check; nor is a pull request URL whose
+    // repository or host an `-R` beside it contradicts, since the guard would read one and gh may merge the other.
+    unreadable: (Boolean(words[2]) && target === null) || selectorsDisagree(target, urlRepo, flagRepo),
     text: mergeText(last('-t', '--subject'), last('-b', '--body'), last('-F', '--body-file')),
     // `--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then.
     ...(flags.some((flag) => flag.name === '--auto') ? { auto: true } : {}),
   };
+}
+
+// Whether a pull request URL `target` (its repository `urlRepo`) and an `-R` value `flagRepo` beside it name different
+// repositories, or different hosts when the `-R` names one, or the `-R` is one the shell builds.
+function selectorsDisagree(target, urlRepo, flagRepo) {
+  if (!urlRepo || !flagRepo) return false;
+  if (flagRepo.dynamic) return true;
+  const host = hostNamed(flagRepo);
+  return repoName(flagRepo.text) !== urlRepo || (typeof host === 'string' && host !== hostNamed({ text: target, dynamic: false }));
+}
+
+// The value of the variable `name` for one gh invocation, after its assignments and env changes, as a word, or null
+// when it is unset or empty.
+function invocationValue(name, environment, env) {
+  let value = typeof env[name] === 'string' && env[name] !== '' ? { text: env[name], dynamic: false } : null;
+  for (const change of environment) {
+    if (change.clear) value = change.keep?.includes(name) ? value : null;
+    else if (change.name === name) value = change.value ?? null;
+  }
+  return value === null || value.text === '' ? null : value;
+}
+
+// The host a word names, lower-cased: from a URL, git's `host:path`, or gh's `HOST/OWNER/REPO`; null for a bare
+// `OWNER/REPO`, which names none; UNREAD_HOST for a word the shell builds, or one that names no host gh could reach.
+const UNREAD_HOST = Symbol('unread host');
+function hostNamed(word, { bare = false } = {}) {
+  if (!word || word.dynamic || /[$`]/u.test(word.text)) return UNREAD_HOST;
+  const text = word.text.trim();
+  if (!bare && !text.includes(':') && text.split('/').filter(Boolean).length === 2) return null;
+  const host = repoIdentity(bare ? `https://${text}/o/n` : text)?.host ?? null;
+  return host === null ? UNREAD_HOST : host.toLowerCase();
+}
+
+// The hosts one gh merge names, as { hosts } and { hostUnread: true }, each only when there is one, in gh's order:
+// `gh pr merge` reads a pull request URL, else `-R`, else GH_REPO, with GH_HOST for a bare `OWNER/REPO` or none (gh
+// then reads the checkout's remotes, the pinned one's for a session no Human attends); `gh api` reads `--hostname`,
+// else GH_HOST, else github.com, and GH_REPO too, which may fill its `{owner}/{repo}`. Every `-R` given is kept, and
+// for `gh api` every host it may use, so a merge is held to all of them; a word the shell builds is unread.
+function ghHosts(args, environment, env, api) {
+  const { words, flags } = readWords(args, new Set(api ? API_VALUES : MERGE_VALUES));
+  const repos = flags.filter((flag) => ['-R', '--repo'].includes(flag.name)).map((flag) => flag.value ?? { text: '', dynamic: true });
+  const ghRepo = invocationValue('GH_REPO', environment, env);
+  const host = invocationValue('GH_HOST', environment, env);
+  const withHost = (named) => (host && !named.some((each) => each !== null) ? [...named, hostNamed(host, { bare: true })] : named);
+  if (api) {
+    const given = flags.filter((flag) => flag.name === '--hostname');
+    const named = [ghRepo, ...repos].filter(Boolean).map((word) => hostNamed(word));
+    named.push(...given.map((flag) => hostNamed(flag.value, { bare: true })));
+    if (!given.length) named.push(host ? hostNamed(host, { bare: true }) : API_HOST);
+    return placesOf(named);
+  }
+  if (words[2] && /:\/\//u.test(words[2].text)) return placesOf([hostNamed(words[2])]);
+  const chosen = repos.length ? repos : [ghRepo].filter(Boolean);
+  return placesOf(withHost(chosen.map((word) => hostNamed(word))));
+}
+const API_HOST = 'github.com';
+
+const placesOf = (named) => {
+  const hosts = [...new Set(named.filter((each) => typeof each === 'string'))];
+  return { ...(hosts.length ? { hosts } : {}), ...(named.includes(UNREAD_HOST) ? { hostUnread: true } : {}) };
+};
+
+// A URL path that is a pull request's REST merge, or GraphQL's endpoint, a variable included.
+const CURL_MERGE = /\/repos\/.+\/pulls\/[^/]+\/merge\/?$/iu;
+const CURL_GRAPHQL = /\/graphql\/?$/iu;
+
+// A word's URL path as curl reads a URL, the value of a glued `--url=` included: no query or fragment, then no scheme
+// and host, or, with no scheme, no first segment, which curl takes as the host (a variable there included). A bare host
+// has none.
+const urlPath = (text) => {
+  const url = text.replace(/^--url=/u, '').replace(/[?#].*$/u, '');
+  if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(url)) return url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/iu, '');
+  return url.startsWith('/') ? url : url.replace(/^[^/]*/u, '');
+};
+
+// Whether one curl call may merge, as { outright: true }, or null. curl is no merge tool, and reading which of its
+// transfers writes, or which word is a body file, needs the arity of every curl option, so the rule parses none of it:
+// a word whose URL path is a REST merge's or GraphQL's, or a word that names a merge mutation (namesMutation, a JSON
+// body decoded, from its first `{` when an option is glued to it), refuses the call outright, a read included;
+// `gh pr merge`, `gh pr view`, and `gh api` do those calls, and the guard reads them. It reads no file the call sends.
+const curlNames = (text) => CURL_MERGE.test(urlPath(text)) || CURL_GRAPHQL.test(urlPath(text)) || namesMutation(text) || (text.includes('{') && namesMutation(text.slice(text.indexOf('{'))));
+const readCurl = (args) => (args.some((token) => curlNames(token.text)) ? { outright: true } : null);
+
+// Whether a `gh api` call's literal `query` field (`-f query=...`, `-F query=...`, not a file) names a merge mutation.
+// With `--input`, the body is the file's, and gh sends the fields in the URL: graphqlMerge reads that file instead.
+const queryNamesMutation = (flags) => !flags.some((flag) => flag.name === '--input') && flags.some((flag) => ['-f', '--raw-field', '-F', '--field'].includes(flag.name) && flag.value && !flag.value.dynamic &&
+  /^query=(?!@)/u.test(flag.value.text) && MUTATION_TEXT.test(flag.value.text.slice('query='.length)));
+
+// Whether a GraphQL request's text names a merge mutation: for a JSON request body, its `query` field once decoded, so
+// an escape such as `\u0050` hides none and a variable's value counts for nothing; for any other text, as written.
+function namesMutation(text) {
+  if (typeof text !== 'string') return false;
+  let body = null;
+  try {
+    body = JSON.parse(text);
+  } catch {}
+  const query = body && typeof body === 'object' && typeof body.query === 'string' ? body.query : text;
+  return MUTATION_TEXT.test(query);
 }
 
 // The merge commit's own subject and body a merge names, for the closing-word check (lib/closing-words.mjs):
@@ -216,6 +327,20 @@ export function mergeClosesProblem({ trail, merge, mark, home, pr }) {
 // The GraphQL mutations that merge a pull request, or leave its merge to GitHub: auto-merge and the merge queue.
 export const MERGE_MUTATIONS = Object.freeze(['mergePullRequest', 'enablePullRequestAutoMerge', 'enqueuePullRequest']);
 const MUTATION_TEXT = new RegExp(MERGE_MUTATIONS.join('|'), 'u');
+// What a GraphQL call that may merge is, as a deny names it; `unreadable` when its query is one the guard cannot read.
+const graphqlCall = (unreadable) => `${unreadable ? 'is a GraphQL call whose query the guard cannot read, which may' : 'is a GraphQL call that may'} merge a pull request or leave its merge to GitHub (${MERGE_MUTATIONS.join(', ')})`;
+
+// The deny for such a call in a session a Human attends: it names its pull request by a node id, which no review record
+// is keyed by, so the guard cannot check the review it owes, and refuses it outright.
+export const graphqlReason = (unreadable) =>
+  `Blocked: this ${graphqlCall(unreadable)}, by a node id the merge guard cannot match to a pull request's review record. ` +
+  'Merge with `gh pr merge <PR> --match-head-commit <sha>`, which the guard checks; a query that only reads runs as before.';
+
+// The deny for a curl call that names a merge URL, GraphQL's endpoint, or a merge mutation, in any session (readCurl).
+export const CURL_REASON = 'Blocked: this curl call names a pull request\'s merge URL, GraphQL\'s endpoint, or a merge mutation, and the merge guard reads ' +
+  'no curl call, so it cannot check the review a merge owes. Merge with `gh pr merge <PR> --match-head-commit <sha>`, and read with `gh pr view` or `gh api`, ' +
+  'which the guard reads.';
+
 // The largest query file a `gh api graphql` call may name that the rule reads.
 const QUERY_CAP = 1024 * 1024;
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
@@ -254,19 +379,20 @@ export function endpointOf(text) {
 }
 
 // A `gh api graphql` call that may merge (MERGE_MUTATIONS), as { graphql: true, pr: null, head: null, unreadable }, or
-// null when it names none. It names one when a word of it does, or the query file a field (`-F query=@file`) or
+// null when it names none. It names one when its query field does (queryNamesMutation), or the query file a field (`-F query=@file`) or
 // `--input` names does; a query the shell builds, a field value from a file it cannot read, and `--input -` may be one,
-// and count as `unreadable`. The merge guard refuses such a call to a session no Human attends; for any other session
-// it is no merge, as before.
+// and count as `unreadable`. The merge guard refuses such a call inside a project (graphqlReason), and to a session no
+// Human attends wherever it runs.
 function graphqlMerge(args, flags, cwd) {
   const found = (unreadable) => ({ graphql: true, pr: null, head: null, target: null, repo: null, unreadable });
-  if (args.some((token) => MUTATION_TEXT.test(token.text))) return found(false);
-  for (const flag of flags) {
+  // gh reads the last `--input` alone.
+  const input = flags.filter((flag) => flag.name === '--input').at(-1);
+  for (const flag of input ? [input] : flags) {
     const value = flag.value;
     if (flag.name === '--input') {
       if (!value || value.dynamic || value.text === '-') return found(true);
       const text = queryFile(value.text, cwd);
-      if (text === null || MUTATION_TEXT.test(text)) return found(text === null);
+      if (text === null || namesMutation(text)) return found(text === null);
       continue;
     }
     if (!['-f', '--raw-field', '-F', '--field'].includes(flag.name) || !value) continue;
@@ -275,7 +401,7 @@ function graphqlMerge(args, flags, cwd) {
     if (flag.name.startsWith('-F') || flag.name === '--field') {
       if (at) {
         const text = queryFile(at[1], cwd);
-        if (text === null || MUTATION_TEXT.test(text)) return found(text === null);
+        if (text === null || namesMutation(text)) return found(text === null);
       }
     }
   }
@@ -339,11 +465,22 @@ const delegateRoute = (pr, head, repoArg, mergeArg = repoArg) =>
 
 // ` --repo <owner>/<name>` for a command in a checkout whose remotes name several repositories: the merge's own when it
 // names one, else a placeholder; '' with one remote. A git read that fails reads as one remote.
-// ` --repo <owner>/<name>` for a merge command the guard suggests, when the merge named its repository: gh's default may
-// be another one even in a checkout with one remote. Only a name repoName reads is written, so no shell syntax.
-const mergeRepoArg = (repo) => {
+// ` --repo [<host>/]<owner>/<name>` for a merge command the guard suggests, when the merge named its repository: gh's
+// default may be another one even in a checkout with one remote. The host is written when the merge named exactly one
+// (`hosts`, readMerge's), github.com included, since the Human's shell may default to another. Only a name and host of GitHub's own characters are written, so no
+// shell syntax reaches a command the Human runs; any other is a placeholder.
+const SAFE_NAME = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/u;
+const SAFE_HOST = /^[a-z0-9.-]+(?::\d{1,5})?$/u;
+const safeRepo = (repo) => {
   const name = repoName(repo);
-  return name ? ` --repo ${name}` : '';
+  return name && SAFE_NAME.test(name) ? name : null;
+};
+export const mergeRepoArg = (repo, hosts = []) => {
+  if (repo === null || repo === undefined) return '';
+  const name = safeRepo(repo);
+  if (!name) return ' --repo <owner>/<name>';
+  const [host] = hosts.length === 1 && SAFE_HOST.test(hosts[0]) ? hosts : [null];
+  return ` --repo ${host ? `${host}/` : ''}${name}`;
 };
 
 const repoArgFor = (project, repo) => {
@@ -351,7 +488,7 @@ const repoArgFor = (project, repo) => {
   try {
     several = severalRemotes(project);
   } catch {}
-  return several ? ` --repo ${repoName(repo) ?? '<owner>/<name>'}` : '';
+  return several ? ` --repo ${safeRepo(repo) ?? '<owner>/<name>'}` : '';
 };
 
 const readTranscript = (file) => {
@@ -451,7 +588,7 @@ function delegated({ state, pr, head, capped, named, session, answers = [], coun
 // `waiverForge` is the test seam for the unattended waiver's reads (lib/review/waiver.mjs guardWaiver, budgetedForge's
 // `make`); null builds forgeFor's only when the waiver is asked. `startedAt` is when the hook's process started, shared by
 // every merge of one command; `now` the clock. `session` is the merging session's id from the hook, or null.
-export function judgeMerge({ project, pr = null, head = null, target = null, repo = null, unreadable = false, viewPr, answers = [], how = MERGE_HOW, waiverForge = null, startedAt = null, now = Date.now, memo = {}, session = null }) {
+export function judgeMerge({ project, pr = null, head = null, target = null, repo = null, hosts = [], unreadable = false, viewPr, answers = [], how = MERGE_HOW, waiverForge = null, startedAt = null, now = Date.now, memo = {}, session = null, unattended = false }) {
   startedAt ??= now();
   // Only a merge that names its head can take a recorded verdict: otherwise gh merges whatever head the branch has then.
   const named = head !== null;
@@ -512,18 +649,23 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   }
   const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
   if (mergeApproved(answers, { pr, head, since, capped })) return null;
-  const delegation = delegated({ state, pr, head, capped, named, session, answers, count, repoArg: capped ? mergeRepoArg(repo) : '' });
+  const delegation = delegated({ state, pr, head, capped, named, session, answers, count, repoArg: capped ? mergeRepoArg(repo, hosts) : '' });
   if (delegation.allow) return null;
   // A judge's recorded verdict, under both switches, for the round cap on this head only (waiverKind).
   const waiver = guardWaiver({ project, state, pr, head, named, repo, view, forge: waiverForge, startedAt, now, memo });
   const question = `Merge pull request #${pr} at ${sha7} before its review is finished?`;
   // The remotes are read only for the delegation route, which only a capped review whose open findings are all low names.
   const repoArg = delegation.delegable ? repoArgFor(project, repo) : '';
-  const ask = capped
-    ? cappedAsk({ pr, count, last: state.extensions?.at(-1) ?? null, head, delegable: delegation.delegable, repoArg, mergeArg: mergeRepoArg(repo) })
-    : `Only the Human waives this: ask with AskUserQuestion, the question "${question}", the options "Wait for the review" ` +
+  const last = state.extensions?.at(-1) ?? null;
+  let ask;
+  if (unattended) ask = capped ? unattendedCap({ pr, last, local: project.paths.local }) : UNATTENDED_WAIT;
+  else if (capped) ask = cappedAsk({ pr, count, last, head, delegable: delegation.delegable, repoArg, mergeArg: mergeRepoArg(repo, hosts) });
+  else {
+    ask = `Only the Human waives this: ask with AskUserQuestion, the question "${question}", the options "Wait for the review" ` +
       '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ';
-  const blocked = (note, route) => `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}${note}. ${ask}Or the Human merges in their own shell.${route}`;
+  }
+  const shell = unattended ? 'Or the Human merges in their own shell.' : handOver(project, pr, head, mergeRepoArg(repo, hosts));
+  const blocked = (note, route) => `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}${note}. ${ask}${shell}${route}`;
   if (waiver.allow) {
     // A project run's waived merge is taken from its budget only after every other check of the merge passed (takeWaived).
     if (waiver.take) {
@@ -535,6 +677,33 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
     return null;
   }
   return blocked(waiver.note, `${waiver.route}${delegation.route}`);
+}
+
+// The deny's ask in a session no Human attends, where no question has anyone to answer it: at a review stopped at its
+// round limit, the waiting check's own route, then the stop, unless a judge's verdict stands under the unattended waiver,
+// whose switches it names (`local`, the main checkout's local file); at any other denial, the review to finish.
+const unattendedCap = ({ pr, last, local }) => {
+  const route = last?.status === 'judging'
+    ? ` The check at round ${last.round} waits for its judge: run again the review command that reached the cap, with the options it ran with, run the \`dispatch\` it prints as its read-only agent, and record its word with the \`record\` command of that dispatch, \`aidrian pr extend ${pr} --verdict ...\`.`
+    : '';
+  return `No Human attends this session to answer, so do not ask with AskUserQuestion.${route} ` +
+    'While the review stays stopped and no judge\'s verdict stands for this head, do not merge: file what the review left open as a follow-up issue, ' +
+    'report the pull request as stopped at its round limit with that issue, and stop. A verdict stands only under the unattended waiver: ' +
+    `github.unattendedWaiver.allow true on the default and base branches, and github.unattendedWaiver "on" in ${local} (docs/config.md, Unattended waiver). `;
+};
+const UNATTENDED_WAIT = 'No Human attends this session to waive this, so do not ask with AskUserQuestion: finish the review, or report the pull request unmerged. ';
+
+// The deny's last route in a session a Human attends: the Human's own shell, with the one merge command to hand over when
+// the Human already gave the decision in their own words, so the Human never answers it twice. It names the merge's
+// repository when the merge did, and the working copy's `github.autoMerge.strategy` when it sets one.
+function handOver(project, pr, head, repoArg) {
+  let strategy = null;
+  try {
+    strategy = loadConfig(project).config.github.autoMerge.strategy ?? null;
+  } catch {}
+  const flag = typeof strategy === 'string' && /^[a-z]+$/u.test(strategy) ? ` --${strategy}` : '';
+  return 'Or the Human merges in their own shell (`!` in the prompt): when the Human already gave this decision in their own words in this session, ' +
+    `do not ask it again; hand over \`gh pr merge ${pr}${repoArg}${flag} --match-head-commit ${head}\`${flag ? '' : ', with the team\'s merge-strategy flag,'} for the Human to run.`;
 }
 
 // The session the hook payload names, or null.
@@ -622,7 +791,7 @@ export function unattendedProblem({ project, home = project, merge, mark, forge 
   const deny = (why) => `Blocked: no Human attends this session, and this merges ${pr === null ? 'a pull request' : `pull request #${pr}`}, but ${why}. ` +
     'A merge no Human asks for rests on the forge as well as this machine\'s review record: the team\'s auto-merge policy, the review bot\'s verdict on exactly the head, ' +
     'and the Human\'s sign-off, from the sign-off store, of every flow that asks for one (docs/review.md, Merge trust). Or the Human merges in their own shell.';
-  if (merge.graphql) return deny(`it ${merge.unreadable ? 'is a GraphQL call whose query the guard cannot read, which may' : 'is a GraphQL call that may'} merge it or leave its merge to GitHub (${MERGE_MUTATIONS.join(', ')}): merge with \`gh pr merge <PR> --match-head-commit <the 40-character head>\``);
+  if (merge.graphql) return deny(`it ${graphqlCall(merge.unreadable)}: merge with \`gh pr merge <PR> --match-head-commit <the 40-character head>\``);
   if (merge.auto) return deny('`--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then: merge with `gh pr merge <PR> --match-head-commit <the 40-character head>` once every check passed');
   if (pr === null || typeof head !== 'string' || !FULL_SHA.test(head)) {
     return deny('it does not name both its number and its full head commit, so the guard cannot confirm what gh merges: merge with `gh pr merge <PR> --match-head-commit <the 40-character head>`');
@@ -635,6 +804,9 @@ export function unattendedProblem({ project, home = project, merge, mark, forge 
   } catch {}
   if (!pinned) return deny('the repository it merges in cannot be told: no project run of its mark pinned one, and the main checkout\'s origin names none');
   const repo = `${pinned.owner}/${pinned.name}`;
+  if (merge.hostUnread) return deny('it names its repository or its host in a word the shell builds, which the guard cannot read: name both as written, or none');
+  const elsewhere = (merge.hosts ?? []).find((host) => host !== String(pinned.host).toLowerCase());
+  if (elsewhere) return deny(`it names the host ${elsewhere}, and this session works in ${repo} on ${pinned.host}`);
   if (merge.repo !== null && merge.repo !== undefined && repoName(merge.repo) !== repo.toLowerCase()) return deny(`it names ${merge.repo}, and this session works in ${repo}`);
   const deadline = startedAt + WAIVER_DEADLINE_MS;
   const reads = budgetedForge(forge ?? ((options) => forgeFor(project.root, options)), deadline, now);
@@ -700,7 +872,8 @@ function checkCommand(command, { cwd, env, input, viewPr, waiverForge, startedAt
     if (mark && !places) return NO_PROJECT;
     const project = places?.project ?? found;
     if (!project) continue;
-    if (merge.graphql && !mark) continue;
+    if (merge.outright) return CURL_REASON;
+    if (merge.graphql && !mark) return graphqlReason(merge.unreadable);
     if (mark && (merge.graphql || merge.auto)) return unattendedProblem({ project, home: places.home, merge, mark, startedAt, now });
     // A session of a project run is held to the run's budget of waived merges (waiver.mjs budgetProblem).
     if (mark) Object.assign(memo, { run: runOf(mark), home: places.home });
@@ -709,7 +882,7 @@ function checkCommand(command, { cwd, env, input, viewPr, waiverForge, startedAt
     if (planted) return unattendedProblem({ project, home: places.home, merge, mark, startedAt, now, planted });
     answers ??= transcriptAnswers(readTranscript(input?.transcript_path));
     memo.take = null;
-    const reason = judgeMerge({ project, ...merge, viewPr, answers, waiverForge, startedAt, now, memo, session: sessionOf(input) });
+    const reason = judgeMerge({ project, ...merge, viewPr, answers, waiverForge, startedAt, now, memo, session: sessionOf(input), unattended: Boolean(mark) });
     if (reason) return reason;
     const trust = mark ? unattendedProblem({ project, home: places.home, merge, mark, forge: trustForge, startedAt, now, memo }) : null;
     if (trust) return trust;
@@ -744,7 +917,7 @@ function checkTool(toolInput, { cwd, input, viewPr, waiverForge, startedAt, now,
   const memo = mark ? { run: runOf(mark), home: places.home } : {};
   const planted = mark ? recordProblem(project, pr, { pastDeadline: () => now() >= startedAt + WAIVER_DEADLINE_MS }) : null;
   if (planted) return unattendedProblem({ project, home: places.home, merge: { pr, head, repo }, mark, startedAt, now, planted });
-  const reason = judgeMerge({ project, pr, head, repo, viewPr, answers: transcriptAnswers(readTranscript(input?.transcript_path)), how, waiverForge, startedAt, now, memo, session: sessionOf(input) });
+  const reason = judgeMerge({ project, pr, head, repo, viewPr, answers: transcriptAnswers(readTranscript(input?.transcript_path)), how, waiverForge, startedAt, now, memo, session: sessionOf(input), unattended: Boolean(mark) });
   if (reason) return reason;
   const trust = mark ? unattendedProblem({ project, home: places.home, merge: { pr, head, repo, text }, mark, forge: trustForge, startedAt, now, memo }) : null;
   return trust ?? takeWaived(memo);

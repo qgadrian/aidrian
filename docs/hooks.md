@@ -599,6 +599,24 @@ was never sent. The rule, `plugins/aidrian/lib/rules/github/merge-review.mjs`, r
 to `repos/<owner>/<name>/pulls/<n>/merge`, the MCP tool `mcp__github__merge_pull_request`, on Claude Code
 [a GitHub MCP server a plugin installs](providers/claude-code.md#a-github-mcp-server-from-a-plugin), and on Codex
 [the GitHub connector's merge tools](providers/codex.md#github-through-the-app-connector). It is on in every project.
+A `gh pr merge` whose pull request URL and `-R` name different repositories or hosts, or whose `-R` beside such a URL
+is one the shell builds, is refused as a merge it cannot read.
+
+Two kinds of call are refused outright inside a project, for every session, with a denial that says to merge with
+`gh pr merge <PR> --match-head-commit <sha>`, which the guard checks:
+
+- A `gh api` GraphQL call that may merge: one whose `query` field names `mergePullRequest`,
+  `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or one to GraphQL whose query names one, from
+  a file it names, or whose query the shell builds or reads from stdin. It names its pull request by a node id no
+  review record is keyed by, so the guard cannot check the review it owes. Only the query counts: a JSON body's `query`
+  field is read decoded, so an escape such as `\u0050` hides none, and a variable or a `--jq` filter naming a mutation
+  counts for nothing. With `--input`, `gh api` sends the last one's file as the body and its fields in the URL, so that
+  file alone decides. A GraphQL query that only reads runs as before.
+- Any `curl` call with a word whose URL path is a pull request's REST merge (`/repos/<owner>/<name>/pulls/<n>/merge`)
+  or GraphQL's endpoint (`/graphql`), never its host, query, or fragment, a glued `--url=` included, or with a word that
+  names a merge mutation, as written or in a JSON body decoded, a read included. The guard parses no curl call: which of
+  its transfers writes, and which word is a file it sends, depend on the arity of every curl option, so it reads none,
+  and reads no file the call sends; the denial also says to read with `gh pr view` or `gh api`, which it does read.
 
 Before it reads the record, a merge of this repository, one that names none or one of this checkout's remotes, holds the
 working copy to [the base branch's config](review.md#the-record) from local git alone. A merge naming its number compares
@@ -652,6 +670,13 @@ The Human waives it. The reason prints a question naming `#<PR>` and the head's 
 the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts
 with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
+Every denial in a session a Human attends ends with that route and the one command for it, `gh pr merge <PR> --match-head-commit <sha>`
+with the merge's `--repo` when it named one, its host included when it named exactly one, and the working copy's
+`github.autoMerge.strategy` flag when it sets one; a repository name or host with any character GitHub does not use in
+one is written as `<owner>/<name>`, so no shell syntax reaches the command:
+when the Human already gave the decision in their own words, such as "merge it" typed in chat, the session does not
+ask it again, and hands that command over for the Human to run with `!` in the prompt. The guard never takes a chat
+message as the answer: the transcript is a file in the session's own account, and a typed decision has no head to bind to.
 
 At the round cap, with nothing owed and the head's outcome `extension_check` or `round_limit`, the review is stopped
 and not running, so the reason offers no wait. It says the review is stopped at its round limit and not running, and
@@ -666,6 +691,14 @@ review rounds" merges nothing, and the reason names the route to one more round:
 at the cap waits for its judge or the Human, else `aidrian pr extend <PR> --human approve`, whose refusal names the
 route when no extension waits for the Human ([Extra rounds](review.md#extra-rounds)). `extension_ask` keeps the first
 question: the step waits for the Human's answer to the extra-round question there.
+
+In a session no Human attends, a question has no one to answer it, so no denial asks one. At the round cap the denial
+says not to ask, names the judge's route while the check at the cap waits for its judge, and otherwise says that while
+the review stays stopped and no judge's verdict stands for the head, the session does not merge: it files what the
+review left open as a follow-up issue, reports the pull request stopped at its round limit with that issue, and stops.
+It names the two switches a verdict needs, `github.unattendedWaiver.allow` on the default and base branches and
+`github.unattendedWaiver` in the local file ([Unattended waiver](config.md#unattended-waiver)). Any other denial says to
+finish the review or report the pull request unmerged.
 
 When every open finding of the head is low, the reason also names a third route, for an answer in the Human's own words
 that the session decides, such as "whatever you recommend": the session files what the review left open as an open
@@ -748,8 +781,8 @@ alone: a confined session can write the review records. The guard holds it to th
 start folder, else its main checkout, wherever its call runs, so a git folder of its own makes no hole; a mark that
 names no project the guard can read refuses, and so does a main checkout that does not resolve to a project, whatever
 the start folder; the start folder gives only the project's folder in the repository and its record folders. A project
-run's driver is held the same way, from its driver mark. Its `gh pr merge --auto`, and any `gh api` call naming
-`mergePullRequest`, `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or a GraphQL call
+run's driver is held the same way, from its driver mark. Its `gh pr merge --auto`, and any `gh api` call whose `query`
+field names `mergePullRequest`, `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or a GraphQL call
 (`graphql`, `/graphql`, `graphql/`, `graphql?x=1`, or an absolute URL whose path is GraphQL's, or an endpoint the
 shell builds) whose query is in a file it names or the shell builds, and fed text naming one, are refused: each leaves
 the merge to GitHub. Before any record is parsed, its pull request's record files are checked: more than 8, more than
@@ -758,7 +791,11 @@ the merge to GitHub. Before any record is parsed, its pull request's record file
 session makes that the checks above let through, with a record or none, the Human's answer, or a waiver, must also:
 name its number and its full 40-character head (`--match-head-commit`, `sha=`, the merge tool's `sha`, or the GitHub MCP
 server's `expectedHeadSha`, which its merge passes to GitHub), in the repository the session is pinned to, its project
-run's, read from the run's ledger, else the main checkout's origin (a merge naming another repository is refused); read
+run's, read from the run's ledger, else the main checkout's origin (a merge naming another repository is refused), and on
+its host: the host the merge names, read as gh reads it, must be the pinned host, and a repository or host the shell
+builds refuses. `gh pr merge` reads a pull request URL, else `-R HOST/OWNER/NAME` or a URL, else `GH_REPO`, with
+`GH_HOST` for a bare `OWNER/NAME` or none; `gh api` reads `--hostname`, else `GH_HOST`, else `github.com`, and
+`GH_REPO`'s host too, since it may fill `{owner}/{repo}`; read
 its record files bounded, each parsed once a call; and pass on the forge, in one GraphQL
 read on the waiver's clock below, `aidrian pr auto-merge`'s policy and [merge trust](review.md#merge-trust). The policy:
 `github.autoMerge.allow` on both branches, the main checkout's own switch on, the default branch's required checks named,
@@ -785,6 +822,10 @@ for proof, protect the branch with a required review from a second account. [Lim
 Limits:
 
 - A record written on another machine is not read here.
+- A `curl` call is read only by the words of its command: one whose URL path is neither a merge's nor GraphQL's as
+  written, a URL the shell builds whole included, and that sends a merge mutation from a file (`@file`, `-T`) or a body
+  the shell builds, and curl options from a config file (`-K`, `.curlrc`), are not read: the guard reads no file curl
+  sends, like the other commands the shell lexer does not see through, such as `xargs`.
 - Two sessions writing the same record at once can lose an update; the last write wins.
 - Two concurrent review steps on one pull request share one open mark: the first to finish clears the other's.
 - In a fork checkout with gh offline, `aidrian pr request`, `attest`, and `signoff` fall back to origin, and a merge

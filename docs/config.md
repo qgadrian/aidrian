@@ -555,6 +555,11 @@ lock or a read refuses is not merged.
 - A head the review bot has not passed.
 - Any other cause of the cap, or a sign-off the Human owes on the head.
 
+With either switch off, or a cap the waiver does not cover, a session no Human attends is not asked to put a question
+to anyone: the merge guard's denial says the session does not merge, files what the review left open as a follow-up
+issue, reports the pull request stopped at its round limit, and stops, and it names both switches
+([Merge guard](hooks.md#merge-guard)). The Human merges it later, or turns the waiver on for the next run.
+
 ### Example
 
 1. The review of pull request #151 stops at the cap on head `abc1234` with `extension_check`, and its `waiver` says `"may": true`.

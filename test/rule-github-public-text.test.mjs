@@ -521,7 +521,9 @@ test('with a pipe for the private file and a slow pattern, the last rule still r
   // Processor time, not wall time: the slow pattern's searches are cut at the public-text budget, so the hook's own work
   // stays inside the host's 5 s however slowly a loaded machine runs it; a 5 s wall bound here is what failed under load
   // (#419). The read this test makes blocking, the private file as a pipe with no writer, never ends, so a hook that
-  // waited on it ends in the 15 s kill, which the status above fails. Git's reads stop at their own limits, tested apart.
+  // waited on it ends in the 15 s kill, which the status above fails; banned-terms.mjs opens it without blocking. The
+  // Bash hook's stalled git and gh refuse inside 5 s on the real clock in git.test.mjs and ready-hold.test.mjs; the
+  // public-text rule's own git reads under a stalled git are #673.
   assert.ok(hook.cpuMs !== null && hook.cpuMs < 5000, `took ${hook.cpuMs} ms of processor time`);
 });
 

@@ -14,6 +14,8 @@ import { githubCall, HOSTS, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/in
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
+import { hookCall } from './hook-call.mjs';
+
 const ROOT = path.resolve(import.meta.dirname, '..');
 const RECORDED = JSON.parse(readFileSync(path.join(ROOT, 'test/fixtures/hosts/codex/github.json'), 'utf8'));
 const MATCHER = JSON.parse(readFileSync(path.join(ROOT, 'plugins/aidrian/hooks/hooks.json'), 'utf8')).hooks.PreToolUse
@@ -47,6 +49,13 @@ const hook = (dir, call, change = {}, env = {}) => spawnSync(process.execPath, [
   env: { ...process.env, ...RECORDED.env, AIDRIAN_TELEMETRY: '0', ...env },
 });
 
+// The same hook in the test's own process (test/hook-call.mjs), as the newer cases call it.
+const SCRIPT = path.join(ROOT, 'plugins/aidrian/scripts/hook-mcp-github.mjs');
+const hookIn = (dir, call, change = {}, env = {}) => hookCall(SCRIPT, {
+  input: JSON.stringify({ ...RECORDED.pre, cwd: dir, tool_name: call.tool_name, tool_input: { ...call.tool_input, ...change } }),
+  env: { ...process.env, ...RECORDED.env, AIDRIAN_TELEMETRY: '0', ...env },
+});
+
 test('the payloads say they are not live', () => {
   assert.equal(RECORDED.live, false);
   assert.match(RECORDED.provenance, /^NOT LIVE/u);
@@ -65,11 +74,11 @@ test('the merge guard holds a merge through the connector, on its own fields', (
 
 // A Codex started from an OpenCode shell inherits OPENCODE=1 and OPENCODE_SESSION_ID: its hook is still Codex's, so the
 // connector's name is still mapped and the merge still judged (lib/hosts/index.mjs detectHost).
-test('the merge guard holds a merge through the connector under an inherited OpenCode environment', (t) => {
+test('the merge guard holds a merge through the connector under an inherited OpenCode environment', async (t) => {
   const dir = repo(t);
   owed(dir);
-  const plain = hook(dir, RECORDED.merge);
-  const inherited = hook(dir, RECORDED.merge, {}, { OPENCODE: '1', OPENCODE_SESSION_ID: 'ses_df7be4557ffeQDs22tHr3NYxUx' });
+  const plain = await hookIn(dir, RECORDED.merge);
+  const inherited = await hookIn(dir, RECORDED.merge, {}, { OPENCODE: '1', OPENCODE_SESSION_ID: 'ses_df7be4557ffeQDs22tHr3NYxUx' });
   assert.equal(inherited.status, 2, inherited.stderr);
   assert.match(inherited.stderr, /pull request #5 at abcdef1/u);
   assert.deepEqual([inherited.status, inherited.stderr], [plain.status, plain.stderr]);
@@ -77,13 +86,13 @@ test('the merge guard holds a merge through the connector under an inherited Ope
 
 // The same merge with Codex's turn_id gone and no Codex variable left, only OpenCode's: no adapter claims the payload,
 // so the unknown host maps the connector's name through every adapter, and the merge is still judged.
-test('the merge guard holds a connector merge that lost its turn_id, under OpenCode variables alone', (t) => {
+test('the merge guard holds a connector merge that lost its turn_id, under OpenCode variables alone', async (t) => {
   const dir = repo(t);
   owed(dir);
   const { turn_id: _turn, ...unmarked } = RECORDED.pre;
-  const ran = spawnSync(process.execPath, [path.join(ROOT, 'plugins/aidrian/scripts/hook-mcp-github.mjs')], {
+  // With no Codex variable either: RECORDED.env is left out of this environment.
+  const ran = await hookCall(SCRIPT, {
     input: JSON.stringify({ ...unmarked, cwd: dir, tool_name: RECORDED.merge.tool_name, tool_input: RECORDED.merge.tool_input }),
-    encoding: 'utf8',
     env: { ...process.env, AIDRIAN_TELEMETRY: '0', OPENCODE: '1', OPENCODE_SESSION_ID: 'ses_df7be4557ffeQDs22tHr3NYxUx' },
   });
   assert.equal(ran.status, 2, ran.stderr);

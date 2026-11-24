@@ -54,10 +54,11 @@ function fixture(t, { tags = null } = {}) {
   // The places under `told`, the config the guard reads them with, which `withTrees` gives another worktrees folder.
   const placesWith = (told = config) => unattendedPlaces({ cwd: start, mark, project, config: told, env, home, temp: [temp], session: SESSION });
   const withTrees = (trees) => ({ ...config, git: { ...config.git, worktrees: { ...config.git.worktrees, dir: trees } } });
-  const ask = (input, hookEnv = env, told = config) => unattendedWriteDenial({ session_id: SESSION, cwd: start, ...input }, config, {
+  // `found`, places read once for asks that change nothing they read, which saves the git calls of each read.
+  const ask = (input, hookEnv = env, told = config, found = null) => unattendedWriteDenial({ session_id: SESSION, cwd: start, ...input }, config, {
     mark,
     env: hookEnv,
-    places: () => placesWith(told),
+    places: () => found ?? placesWith(told),
   });
   const store = () => openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
   return { root, dir, state, home, start, env, git, made, ask, store, placesWith, withTrees };
@@ -100,16 +101,17 @@ test('a made worktree keeps the configured worktrees folder\'s root host files r
   const fx = fixture(t);
   const made = fx.made('feat/slice');
   const trees = path.join(made, 'trees');
-  const inside = fx.withTrees(path.relative(fx.dir, trees));
+  const inside = fx.placesWith(fx.withTrees(path.relative(fx.dir, trees)));
   for (const file of ['opencode.json', '.mcp.json', '.opencode/plugins/x.js']) {
-    assert.match(fx.ask(write(path.join(trees, file)), fx.env, inside)?.reason ?? '', /a host file a later session/u, file);
+    assert.match(fx.ask(write(path.join(trees, file)), fx.env, undefined, inside)?.reason ?? '', /a host file a later session/u, file);
   }
-  assert.equal(fx.ask(write(path.join(trees, 'notes.md')), fx.env, inside), null, 'another file there');
+  assert.equal(fx.ask(write(path.join(trees, 'notes.md')), fx.env, undefined, inside), null, 'another file there');
   // The default folder, `.worktrees` of the main checkout, holds the made worktree: it adds no entry, as one outside
   // every checkout adds none, and a file of that name inside the made worktree passes as before.
-  const paths = (told) => fx.placesWith(told).refused.map((entry) => entry.path);
-  assert.deepEqual(paths(), paths(fx.withTrees('../elsewhere-trees')));
-  assert.equal(fx.ask(write(path.join(trees, 'opencode.json'))), null, 'under the default folder');
+  const plain = fx.placesWith();
+  const paths = (found) => found.refused.map((entry) => entry.path);
+  assert.deepEqual(paths(plain), paths(fx.placesWith(fx.withTrees('../elsewhere-trees'))));
+  assert.equal(fx.ask(write(path.join(trees, 'opencode.json')), fx.env, undefined, plain), null, 'under the default folder');
 });
 
 test('a worktree another session made, or plain `git worktree add` made, stays outside, and so does one made with no session', (t) => {

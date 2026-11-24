@@ -7,6 +7,7 @@ import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
 import { attachLine, findLine, findSessions, nameMatcher, sessionEnded, sessionFinished, startBackground, startFolder, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { subagentEffort } from './claude-code-agents.mjs';
 import { configDir } from './claude-code-config.mjs';
 import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
@@ -198,6 +199,9 @@ export default {
   sessionId: (env) => env.CLAUDE_CODE_SESSION_ID || null,
   agentName,
   effort,
+  // The effort a subagent runs at, from its SubagentStart payload and its definition (claude-code-agents.mjs), or null:
+  // a hint for its commit trailers, never what the commit check reads.
+  subagentEffort: ({ input, root }) => subagentEffort({ input, root, efforts: MODEL_CHOICES.effort }),
   runEnv: (env) => (env.CLAUDE_CODE_REMOTE === 'true' ? 'cloud' : null),
   // `aidrian:<agent>` for this plugin's agents, and `<plugin>:<agent>` for another's.
   pluginAgentPrefix: 'aidrian:',

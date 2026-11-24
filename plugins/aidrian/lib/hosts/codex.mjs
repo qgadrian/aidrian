@@ -277,6 +277,8 @@ export default {
   sessionId: (env) => env.CODEX_THREAD_ID || null,
   agentName: () => null,
   effort: () => null,
+  // No payload or definition this adapter reads tells a subagent's effort.
+  subagentEffort: () => null,
   runEnv: () => null,
   // Codex installs this plugin's agents as roles named `aidrian-<agent>`.
   pluginAgentPrefix: 'aidrian-',

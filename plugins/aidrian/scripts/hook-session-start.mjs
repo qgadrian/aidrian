@@ -1,7 +1,8 @@
 // SessionStart and SubagentStart hook: one line that tells the agent which knowledge docs to read now and how to find
 // the rest, one line with the names to call the human and the AI, one voice line (push back with a reason; ask the human
 // plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
-// ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), and, for
+// ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), for a
+// subagent while config.json `attribution.commit` lists effort, the `Agent-Effort:` trailer its commits carry (effortLine), and, for
 // the main session only, a format line for chat replies, a handoff line while config.json `session.handoff.mode` is
 // "auto" (handoffLine), at most one `Handoff terminal:` line while this machine runs the background handoff route
 // (lib/shell-init.mjs terminalLine): first, when a shell startup file holds a block of the shell function that lets the
@@ -87,7 +88,8 @@ export async function handle(input) {
   const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}${tokenLine ? `\n${tokenLine}` : ''}`;
 
   if (subagent) {
-    print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
+    const effort = effortLine(input, project, config);
+    print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: effort ? `${lines}\n${effort}` : lines } }));
   } else {
     await mainSessionOutput(input, project, { lines, config, buckets });
   }
@@ -186,6 +188,16 @@ function auditLine(project, config) {
   } catch {
     return '';
   }
+}
+
+// A subagent, while config.json `attribution.commit` asks for its effort: the `Agent-Effort:` trailer its commits carry,
+// from the effort its host says it starts at (the adapter's subagentEffort), or no line when the host says none. A hint
+// only, so the first commit passes: the attribution rule reads the effort from the subagent's own transcript at commit
+// time (lib/attribution.mjs currentAuthor), stays the authority, and names the real value when a dispatch changed it.
+function effortLine(input, project, config) {
+  if (!config.attribution.commit.includes('effort')) return null;
+  const effort = detectHost({ input }).subagentEffort({ input, root: project.root });
+  return effort ? `Attribution: this agent's commits carry the trailer \`Agent-Effort: ${effort}\`, the effort it starts at; the commit check reads the effort it runs at and names it when they differ.` : null;
 }
 
 // Every session and subagent: disagree out loud instead of going along, ask questions the human can answer without the

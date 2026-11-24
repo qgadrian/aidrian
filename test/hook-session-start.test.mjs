@@ -8,6 +8,7 @@ import test from 'node:test';
 
 import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { GIT_TIMEOUT_MS } from '../plugins/aidrian/lib/git.mjs';
+import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { hookCall } from './hook-call.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -149,6 +150,47 @@ test('the main session hears when its host reaches a known tracker server the ke
   write({ enabled: true, provider: 'linear', workspace: { expect: workspace.expect }, team: { key: 'NOTES' } });
   assert.doesNotMatch((await hook({ input, CLAUDECODE: '1' })).stdout, /Tracker guard:/u, 'the short key covers them all');
   assert.doesNotMatch((await hook({ input })).stdout, /Tracker guard:/u);
+});
+
+// The line a subagent hears of the effort its commits name, while attribution.commit lists effort.
+const EFFORT = (effort) => `Attribution: this agent's commits carry the trailer \`Agent-Effort: ${effort}\`, the effort it starts at; the commit check reads the effort it runs at and names it when they differ.`;
+// A project whose commits carry `fields`, with the custom agents `agents`, each a file name to its text.
+function attributedProject(t, fields, agents = {}) {
+  const project = mkdtempSync(path.join(tmpdir(), 'aidrian-start-effort-'));
+  t.after(() => rmSync(project, { recursive: true, force: true }));
+  mkdirSync(path.join(project, '.aidrian/knowledge'), { recursive: true });
+  mkdirSync(path.join(project, '.claude/agents'), { recursive: true });
+  writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ version: 1, attribution: { commit: fields } }));
+  for (const [file, text] of Object.entries(agents)) writeFileSync(path.join(project, '.claude/agents', file), text);
+  return project;
+}
+const effortLineOf = async (project, given, more = {}) => {
+  const { stdout } = await hook({ args: ['--subagent'], input: JSON.stringify({ cwd: project, hook_event_name: 'SubagentStart', agent_id: 'a1', ...given }), CLAUDECODE: '1', ...more });
+  return JSON.parse(stdout).hookSpecificOutput.additionalContext.split('\n').filter((line) => line.startsWith('Attribution:'));
+};
+
+test('a subagent hears the Agent-Effort trailer its definition sets, the host\'s own level first, and none when nothing says it', async (t) => {
+  const agents = {
+    'review.md': '---\nname: reviewer\ndescription: Reviews.\neffort: medium\n---\nReview.\n',
+    'plain.md': '---\nname: plain-helper\ndescription: Helps.\n---\nHelp.\n',
+  };
+  const project = attributedProject(t, ['agent', 'effort'], agents);
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }), [EFFORT('medium')], 'the project agent the host names by its frontmatter name');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer', effort: { level: 'xhigh' } }), [EFFORT('xhigh')], 'the level the payload carries wins');
+  const own = /^effort: (\w+)$/mu.exec(readFileSync(path.join(PLUGIN_DIR, 'agents/harness-mechanic.md'), 'utf8'))[1];
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'aidrian:harness-mechanic' }), [EFFORT(own)], 'this plugin\'s generated agent');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'plain-helper' }), [], 'a definition with no effort');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'Explore' }), [], 'a built-in agent no file defines');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'other-plugin:reviewer' }), [], 'another plugin\'s agent');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer', effort: { level: 'turbo' } }), [EFFORT('medium')], 'a level the host does not name is no level');
+});
+
+test('a subagent hears no Agent-Effort line while attribution leaves effort out, or on Codex, whose adapter knows none', async (t) => {
+  const agents = { 'review.md': '---\nname: reviewer\neffort: medium\n---\n' };
+  assert.deepEqual(await effortLineOf(attributedProject(t, ['agent', 'model'], agents), { agent_type: 'reviewer' }), [], 'effort not listed');
+  assert.deepEqual(await effortLineOf(attributedProject(t, [], agents), { agent_type: 'reviewer' }), [], 'attribution off');
+  assert.deepEqual(await effortLineOf(attributedProject(t, ['effort'], agents), { agent_type: 'reviewer', effort: { level: 'high' } }, { CLAUDECODE: undefined }), [], 'Codex');
+  assert.equal(codex.subagentEffort({ input: { agent_type: 'reviewer', effort: { level: 'high' } }, root: '/' }), null);
 });
 
 test('a host no adapter claims is called the AI, neither Claude nor Codex', async () => {

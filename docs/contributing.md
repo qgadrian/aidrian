@@ -69,7 +69,8 @@ A clone set up with the earlier relative `.githooks` reruns `make hooks`. Agents
 - a generated agent is stale, or edited by hand;
 - `plugins/aidrian/opencode/routes.generated.json`, the hooks the OpenCode bridge runs, is missing, stale, or edited by hand,
   or `hooks/hooks.json` holds a hook it cannot run: one other than `node "$CLAUDE_PLUGIN_ROOT/scripts/<name>.mjs"`
-  followed by `--flag` arguments, or one with no positive `timeout`, or a matcher the bridge would read otherwise than
+  followed by `--flag` arguments, one with no positive `timeout`, one with a field besides `type`, `command`, and `timeout`
+  or in a group with one besides `matcher` and `hooks`, such as `if` or `async`, or a matcher the bridge would read otherwise than
   Claude Code: none on a tool event, where `"*"` means every tool, or one with a comma or whitespace, where `|` separates names;
 - the example's project folder, or this repository's own, is invalid;
 - a test fails;

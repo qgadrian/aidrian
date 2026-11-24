@@ -341,6 +341,11 @@ export function renderRoutes(hooksFile = HOOKS_FILE) {
     if (!Array.isArray(groups)) throw new Error(`${where}: ${event} must be a list of hook groups`);
     return groups.flatMap((group) => {
       if (!isPlainObject(group) || !Array.isArray(group.hooks)) throw new Error(`${where}: ${event}: a group needs a "hooks" list`);
+      const extra = Object.keys(group).find((field) => !GROUP_FIELDS.has(field));
+      if (extra !== undefined) {
+        const commands = group.hooks.map((hook) => JSON.stringify(hook?.command)).join(', ');
+        throw new Error(`${where}: ${event} group of ${commands}: field ${JSON.stringify(extra)} is one the OpenCode bridge cannot honour`);
+      }
       if (TOOL_EVENTS.has(event) && (group.matcher === undefined || group.matcher === null)) {
         throw new Error(`${where}: ${event}: a group with no matcher runs on every tool on Claude Code and on none on OpenCode; say "*" to mean every tool`);
       }
@@ -356,10 +361,17 @@ export function renderRoutes(hooksFile = HOOKS_FILE) {
   return `${JSON.stringify(routes, null, 2)}\n`;
 }
 
+// The fields a route carries. Any other, such as a handler's `if`, `async`, or `statusMessage`, changes when or how the
+// host runs the hook, and a route that dropped it would run the hook where the host does not.
+const GROUP_FIELDS = new Set(['matcher', 'hooks']);
+const HANDLER_FIELDS = new Set(['type', 'command', 'timeout']);
+
 function routeCommand(where, event, hook) {
   const command = hook?.command;
   const refuse = (why) => new Error(`${where}: ${event} hook ${JSON.stringify(command)}: ${why}`);
   if (hook?.type !== 'command') throw refuse(`type must be "command", not ${JSON.stringify(hook?.type)}`);
+  const extra = Object.keys(hook).find((field) => !HANDLER_FIELDS.has(field));
+  if (extra !== undefined) throw refuse(`field ${JSON.stringify(extra)} is one the OpenCode bridge cannot honour`);
   const match = typeof command === 'string' ? HOOK_COMMAND.exec(command) : null;
   if (!match) throw refuse('the OpenCode bridge runs only node "$CLAUDE_PLUGIN_ROOT/scripts/<name>.mjs", then --flag arguments');
   // Rounded to whole milliseconds: a timer takes those, up to 2**31 - 1, and past that Node fires it at once.

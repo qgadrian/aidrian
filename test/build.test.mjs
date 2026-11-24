@@ -392,6 +392,18 @@ test('anchoring a hooks.json tool matcher never changes which tool its route run
   }
 });
 
+test('a handler or group field the bridge cannot honour fails the route build, naming the field, its event, and command', (t) => {
+  for (const extra of [{ if: 'Bash(git *)' }, { async: true }, { statusMessage: 'Checking' }]) {
+    const [field] = Object.keys(extra);
+    const file = scratchHooks(t, { PostToolUse: [{ matcher: 'Bash', hooks: [{ ...hook(NODE('hook-x')), ...extra }] }] });
+    const named = `PostToolUse hook ${JSON.stringify(NODE('hook-x'))}: field "${field}" is one the OpenCode bridge cannot honour`;
+    assert.throws(() => renderRoutes(file), (error) => error.message.endsWith(named), field);
+  }
+  const group = scratchHooks(t, { Stop: [{ hooks: [hook(NODE('hook-stop'))], description: 'stop' }] });
+  const named = `Stop group of ${JSON.stringify(NODE('hook-stop'))}: field "description" is one the OpenCode bridge cannot honour`;
+  assert.throws(() => renderRoutes(group), (error) => error.message.endsWith(named));
+});
+
 test('a hooks.json command the bridge cannot run without a shell fails the route build, naming its event and command', (t) => {
   const refused = [
     ['bash -c "node x.mjs"', /runs only node/],

@@ -1111,7 +1111,9 @@ or a finding comes back at a spot already fixed.
 Whether the rest is worth its cost is a `scope` decision.
 Its options: fix the open findings within the round cap, record them as accepted residuals, or split the pull request.
 The session runs `aidrian decisions resolve --domain backlog --class backlog-rank --reversible no,no,no,no` ([Decisions](config.md#decisions)).
-Under `decide`, it fixes within the round cap and lists the decision in its report; the `decision_made` row `resolve` logs is the record.
+Its class is `backlog-rank`, since the question is which findings get fixed now and which become residuals or follow-ups.
+Under `decide`, it fixes within the round cap and lists the decision in its report and the pull request body.
+It writes no rule, so it takes no marker: those lines and the `decision_made` row `resolve` logs are the record.
 Under `ask`, the Human answers, and an unattended run parks it with class `scope`, whatever `unattended` says.
 The stop changes neither the cap nor the rules below: an extra round over a red flag always needs the Human.
 

@@ -1476,7 +1476,7 @@ test('a subagent, and a session the background route started, may not write in t
   }
 });
 
-test('a placeholder path is prose only while no state folder holds an angle bracket: a state.dir with one keeps it guarded', async (t) => {
+test('a placeholder path is prose only when it starts with the placeholder: a state.dir with brackets in its path stays guarded', async (t) => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-bracketed-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bracketed = path.join(root, '<team>', 'state');
@@ -1486,6 +1486,10 @@ test('a placeholder path is prose only while no state folder holds an angle brac
   const refused = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
   assert.equal(refused.status, 2, refused.stderr);
   assert.match(refused.stderr, /the session folders/u);
+  // The same project's plan prose, a path that starts with its placeholder, still passes.
+  const prose = "python3 - <<'EOF'\nopen('plan.md','w').write('''rows land in `<state>/sessions/<session id>/prs.jsonl`''')\nEOF";
+  const passed = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command: prose }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
+  assert.equal(passed.status, 0, passed.stderr);
 });
 
 // A session folder of `session` under the state folder of the project at `dir`, as the hooks make it.

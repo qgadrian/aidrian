@@ -1547,9 +1547,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   a string spells it, or a session file but `usage.json` by its name alone, read as a path part, whatever quote stands
   around it, so `cd "$X" && echo {} >> prs.jsonl` is refused; the word `sessions` alone never counts, so a project's
   own folder of that name stays writable, and nor does `usage.json` alone, a name other tools use.
-  A path with a placeholder part in angle brackets, such as `<state>/sessions/<session id>/prs.jsonl` in the text of a
-  plan that interpreter code writes, never counts: no session or state folder holds `<` or `>` in its name. One with a
-  `..` part still counts, and a session file's name outside such a path counts as before.
+  A path that starts with a placeholder part in angle brackets, such as `<state>/sessions/<session id>/prs.jsonl` in
+  the text of a plan that interpreter code writes, never counts: it is relative to a folder named for the placeholder.
+  One that starts anywhere else, such as an absolute path through a folder whose real name has brackets, or that has a
+  `..` part, still counts, and a session file's name outside such a path counts as before.
   The hooks and the `aidrian` commands write there through their own code, which no guard reads, so the
   [ledger](#session-ledger) still records a subagent's push. An attended main session is not held. The guard shares
   the store guard's reach check (`reachesStateFolder` in `lib/handoff-guard.mjs`) and its limits, and runs where it

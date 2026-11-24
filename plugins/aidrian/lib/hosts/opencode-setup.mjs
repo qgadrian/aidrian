@@ -4,8 +4,8 @@
 // set up (lib/tracker-check.mjs). OpenCode 2.4.0 reads its global config from OPENCODE_CONFIG_DIR, else from opencode
 // under the user's config folder, the file OPENCODE_CONFIG names, and opencode.json or opencode.jsonc, in a folder and
 // in its .opencode folder, in the folder a session starts in and every folder above it up to `/` (the embedded source of
-// its binary, ConfigDiscovery.discover). The probe reads the project's root and the folders above it up to and including
-// the home folder, or up to `/` when the root is not under home, at most ANCESTORS_MAX of them. A
+// its binary, ConfigDiscovery.discover). The probe reads the project's root and every folder above it up to `/`, the
+// folders above the home folder too, at most ANCESTORS_MAX of them. A
 // plugin is an entry of the `plugins` list, a string or `{ package, options }` (opencode.ai/docs/plugins); `plugin`, the
 // key's singular form, is read too, since a name read where it does not count only adds a warning.
 
@@ -119,15 +119,12 @@ function globalFolder(env) {
   return path.join(absolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(homeOf(env), '.config'), 'opencode');
 }
 
-// `root` and each folder above it, up to and including `home` when `root` lies under it, else up to `/`.
-function ancestors(root, home) {
-  const top = path.resolve(home);
-  const under = path.relative(top, root);
-  const stop = under === '' || (!under.startsWith('..') && !path.isAbsolute(under)) ? top : path.parse(root).root;
+// `root` and each folder above it, up to `/`, at most ANCESTORS_MAX of them.
+function ancestors(root) {
   const folders = [];
   for (let folder = path.resolve(root); folders.length < ANCESTORS_MAX; folder = path.dirname(folder)) {
     folders.push(folder);
-    if (folder === stop || path.dirname(folder) === folder) break;
+    if (path.dirname(folder) === folder) break;
   }
   return folders;
 }
@@ -137,7 +134,7 @@ function ancestors(root, home) {
 export function setUp({ env = process.env, root } = {}) {
   try {
     const vars = env ?? {};
-    const folders = absolute(root) ? ancestors(root, homeOf(vars)).flatMap((folder) => [folder, path.join(folder, '.opencode')]) : [];
+    const folders = absolute(root) ? ancestors(root).flatMap((folder) => [folder, path.join(folder, '.opencode')]) : [];
     const files = [
       ...(absolute(vars.OPENCODE_CONFIG) ? [vars.OPENCODE_CONFIG] : []),
       ...[globalFolder(vars), ...folders].flatMap((folder) => NAMES.map((name) => path.join(folder, name))),

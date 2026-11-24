@@ -111,9 +111,9 @@ OpenCode's probe (`lib/hosts/opencode-setup.mjs`) reads `OPENCODE_CONFIG`, `OPEN
 and `HOME` alone, and answers true when one of its config files lists this plugin: the package `aidrian`, or a Git
 specifier or path ending in `plugins/aidrian`. Those files are its global config, in `OPENCODE_CONFIG_DIR` or else in
 `opencode` under `XDG_CONFIG_HOME` or `~/.config`; the file `OPENCODE_CONFIG` names by an absolute path; and
-`opencode.json` and `opencode.jsonc`, in each folder and its `.opencode` folder, from the project's root up to and
-including the home folder, or up to `/` when the root is not under home, at most 64 folders, as OpenCode reads every
-folder above a session's start folder ([OpenCode](opencode.md#limits)).
+`opencode.json` and `opencode.jsonc`, in each folder and its `.opencode` folder, from the project's root up to `/`,
+the folders above the home folder too, at most 64 folders, as OpenCode reads every folder above a session's start
+folder ([OpenCode](opencode.md#limits)).
 A file it cannot read or parse, one that is no regular file, and one over 1 MiB count as no setup.
 
 The standard the shared code reads is what `hooks.json` matches: `Bash`, `Agent`, the events as Claude Code names them, and `mcp__<server>__<tool>`.

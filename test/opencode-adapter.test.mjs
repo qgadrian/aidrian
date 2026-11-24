@@ -300,7 +300,7 @@ test('the global folder is OPENCODE_CONFIG_DIR, else opencode under XDG_CONFIG_H
   assert.equal(setUp({ env: { HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_CONFIG_DIR: path.join(root, 'none') } }), false, 'OPENCODE_CONFIG_DIR wins');
 });
 
-test('it reads each folder above the project root up to and including home, or up to the top when the root is not under home', (t) => {
+test('it reads each folder above the project root up to the top, the folders above home too, as OpenCode does', (t) => {
   const { root } = places(t);
   const home = path.join(root, 'home');
   const project = path.join(home, 'code', 'team', 'app');
@@ -313,10 +313,20 @@ test('it reads each folder above the project root up to and including home, or u
     assert.equal(setUp({ env, root: project }), true, file);
     rmSync(file);
   }
+  for (const file of [path.join(root, 'opencode.json'), path.join(root, '.opencode', 'opencode.jsonc')]) {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, named);
+    assert.equal(setUp({ env, root: project }), true, `a folder above home, for a project under it: ${file}`);
+    assert.equal(setUp({ env, root: home }), true, `a folder above home, for home itself as the root: ${file}`);
+    assert.equal(setUp({ env: { ...env, HOME: path.join(root, 'elsewhere') }, root: project }), true, `a root not under home: ${file}`);
+    rmSync(file);
+  }
+  assert.equal(setUp({ env, root: project }), false, 'no config on the way up');
+  // At most 64 folders, the root among them; a folder that is not there reads as no config.
   writeFileSync(path.join(root, 'opencode.json'), named);
-  assert.equal(setUp({ env, root: project }), false, 'a folder above home is not read for a project under it');
-  assert.equal(setUp({ env: { ...env, HOME: path.join(root, 'elsewhere') }, root: project }), true, 'a root not under home is read up to the top');
-  assert.equal(setUp({ env: { ...env, HOME: home }, root: home }), false, 'home itself as the root reads no folder above it');
+  const deep = (depth) => path.join(root, ...Array.from({ length: depth }, () => 'd'));
+  assert.equal(setUp({ env, root: deep(63) }), true, 'the 64th folder up');
+  assert.equal(setUp({ env, root: deep(64) }), false, 'the 65th folder up');
 });
 
 test('it reads the config file OPENCODE_CONFIG names, by an absolute path only', (t) => {

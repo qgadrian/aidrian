@@ -18,6 +18,7 @@ import { fenceFor, recordedTexts, TEXT_CAPS } from './project-issue-text.mjs';
 import { forgetDecision, recordDecision } from './project-decision-store.mjs';
 import { attendedProblem, ISSUE_KEY, runPlace } from './project-run.mjs';
 import { projectId } from './project.mjs';
+import { storeRoot } from './review/signoff-store.mjs';
 import { droveRun } from './run-driver.mjs';
 
 // The file each attempt's session reads a recorded decision from, in its attempt folder, beside issue.md.
@@ -143,7 +144,9 @@ export function decisionCommand({ project, config, key, heading, record = false,
   if ((record || forget) && droveRun(session, { env, ...(home ? { home } : {}) })) {
     return refuse('this session drove a project run, which may run on with no Human, so it records and forgets no decision; run this from another session the Human attends');
   }
-  if (forget) return forgotten(project, key, env);
+  // The run's state folder as runPlace placed it gives the store root, where a start reads it (storeRoot).
+  const root = storeRoot(place.state, Boolean(config.state.dir));
+  if (forget) return forgotten(project, key, env, root);
   const text = recordedTexts(session, [key], { env, ...(home ? { home } : {}) })[key];
   if (!text) return refuse(`this session recorded no tracker read of ${key}; read it with the tracker's own issue read, then run this again`);
   const checked = pinnable(text.description, title, text.descriptionCut === true);
@@ -157,10 +160,10 @@ export function decisionCommand({ project, config, key, heading, record = false,
     `${fence}text`, section, fence,
     'Write the section so it stands alone: it names the question and the chosen path in full, since a reference to text outside it, such as an option\'s number, settles nothing.',
   ];
-  if (!record) return { exitCode: 0, out: [...shown, `sha256 ${sha256}; record it with \`aidrian project decision ${key} --heading ${shellQuoted(title)} --record\``], err: [] };
+  if (!record) return { exitCode: 0, out: [...shown, `sha256 ${sha256}; record it with \`aidrian project decision ${key} --heading=${shellQuoted(title)} --record\``], err: [] };
   let written;
   try {
-    written = recordDecision({ projectKey: projectId(project), key, heading: title, sha256, env });
+    written = recordDecision({ projectKey: projectId(project), key, heading: title, sha256, env, root });
   } catch (error) {
     return refuse(`the recorded-decision store cannot be written: ${String(error?.message ?? error).split('\n')[0]}`);
   }
@@ -168,13 +171,14 @@ export function decisionCommand({ project, config, key, heading, record = false,
 }
 
 // `text` as one POSIX shell word: single-quoted, each `'` closed, escaped, and opened again, so no `$`, backtick, or
-// other character of it is ever expanded where the printed command is pasted.
+// other character of it is ever expanded where the printed command is pasted. The printed command attaches it to its
+// option, `--heading=<word>`, so a heading that starts with `-` is never read as an option of its own.
 export const shellQuoted = (text) => `'${String(text).replaceAll('\'', '\'\\\'\'')}'`;
 
-// `--forget` of issue `key`: the answer of forgetDecision.
-function forgotten(project, key, env) {
+// `--forget` of issue `key` in the store under `root`: the answer of forgetDecision.
+function forgotten(project, key, env, root) {
   try {
-    const { file, removed } = forgetDecision({ projectKey: projectId(project), key, env });
+    const { file, removed } = forgetDecision({ projectKey: projectId(project), key, env, root });
     return { exitCode: 0, out: [removed ? `recorded-decision: ${key} forgotten, ${file} removed` : `recorded-decision: ${key} has no recorded decision on this machine`], err: [] };
   } catch (error) {
     return { exitCode: 1, out: [], err: [`aidrian project decision: the recorded-decision store cannot be written: ${String(error?.message ?? error).split('\n')[0]}`] };

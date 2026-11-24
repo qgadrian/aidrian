@@ -214,14 +214,14 @@ test('a recorded decision in the store stands only while the team switch is on, 
 
 test('a recorded-decision store an issue session could have planted is void, and the sandbox and hooks deny a confined session its folder', (t) => {
   const fx = decidedFixture(t);
-  const file = path.join(decisionStoreFolder(fx.env), projectId(fx.project), 'ENG-1.json');
+  const file = path.join(decisionStoreFolder(fx.env, fx.state), projectId(fx.project), 'ENG-1.json');
   chmodSync(file, 0o666);
   const start = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(start.exitCode, 0, start.err.join('\n'));
   assert.match(start.out.at(-1), /^note recorded-decision: ENG-1 void: .*ENG-1\.json may be written another way than by the store$/u);
   assert.equal(existsSync(decisionFile(fx)), false);
   const settings = JSON.parse(fx.claude.starts()[0].args[8]);
-  const store = realpathSync(decisionStoreFolder(fx.env));
+  const store = realpathSync(decisionStoreFolder(fx.env, fx.state));
   assert.ok(settings.sandbox.filesystem.denyWrite.includes(store), 'the sandbox denies its writes');
   assert.ok(settings.permissions.deny.includes(`Edit(/${store}/**)`), 'and the file tools\' edits');
   assert.ok(guardedFolders({ main: fx.dir, state: fx.state, env: fx.env, home: fx.home }).includes(store), 'no host access check lets a session write it');
@@ -786,7 +786,7 @@ test('a later attempt loads the branch\'s own host files only when the bot passe
   const head = pushFiles(fx, work(fx), { '.aidrian/knowledge/docs.json': '{"dir":"docs","docs":{}}\n' });
   reopen(fx, 1, 12);
   fx.forge.trails[12] = trailOf(head);
-  recordHumanSignoff({ repo: 'acme/widgets', pr: 12, flow: 'harness-config', head, by: 'Adrian', env: fx.env });
+  recordHumanSignoff({ repo: 'acme/widgets', pr: 12, flow: 'harness-config', head, by: 'Adrian', env: fx.env, root: fx.state });
   const second = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(second.exitCode, 0, second.err.join('\n'));
   const clone = work(fx, 'ENG-1', 2);
@@ -822,7 +822,7 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   const parent = 'b'.repeat(40);
   const repository = { host: 'github.com', owner: 'acme', name: 'widgets' };
   const ask = (trail, { pr = 12, includeGuardedPaths = false, changed = ['.aidrian/knowledge/docs.json'], reviewer = BOT, policyFiles = [] } = {}) => reviewedProblem({
-    project: fx.project, repository, facade: { reviewTrail: () => trail }, policy: { reviewer, includeGuardedPaths }, policyFiles, main: 'main', branch: 'feat/eng-1-export', pr, head, changed, env: fx.env,
+    project: fx.project, repository, facade: { reviewTrail: () => trail }, policy: { reviewer, includeGuardedPaths }, policyFiles, main: 'main', branch: 'feat/eng-1-export', pr, head, changed, env: fx.env, root: fx.state,
   });
   const unsigned = /flow harness-config needs the Human's sign-off on head aaaaaaa/u;
   assert.match(ask(trailOf(head)), unsigned, 'the bot alone is not enough');
@@ -840,9 +840,9 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   assert.match(ask(trailOf(head), { includeGuardedPaths: true, changed: ['harness/config.json'], policyFiles: ['.aidrian.json', 'harness/config.json'] }), unsigned, 'a config the pointer file relocates is a policy file');
   assert.equal(ask(trailOf(head), { includeGuardedPaths: true, changed: ['harness/config.json'] }), null, 'one the policy was not read from is not');
   // The Human's sign-off on exactly the head, read from the sign-off store.
-  recordHumanSignoff({ repo: 'acme/widgets', pr: 12, flow: 'harness-config', head: parent, by: 'Adrian', env: fx.env });
+  recordHumanSignoff({ repo: 'acme/widgets', pr: 12, flow: 'harness-config', head: parent, by: 'Adrian', env: fx.env, root: fx.state });
   assert.match(ask(trailOf(head), { changed: ['.aidrian/config.json'] }), unsigned, 'a sign-off on another head');
-  recordHumanSignoff({ repo: 'acme/widgets', pr: 12, flow: 'harness-config', head, by: 'Adrian', env: fx.env });
+  recordHumanSignoff({ repo: 'acme/widgets', pr: 12, flow: 'harness-config', head, by: 'Adrian', env: fx.env, root: fx.state });
   assert.equal(ask(trailOf(head), { changed: ['.aidrian/config.json'] }), null);
 });
 

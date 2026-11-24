@@ -11,11 +11,12 @@ import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
 import { pathsProblem, reviewProblem, runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { markOnce } from '../plugins/aidrian/lib/closing-words.mjs';
 import { configFromText, loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { classify, evaluateRules } from '../plugins/aidrian/lib/review/plan.mjs';
 import { emptyState, noteOutcome, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { recordHumanSignoff, signoffFolder } from '../plugins/aidrian/lib/review/merge-trust.mjs';
+import { storeRoot } from '../plugins/aidrian/lib/review/signoff-store.mjs';
 
 const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
 const OLD = '1234567890abcdef1234567890abcdef12345678';
@@ -1642,8 +1643,9 @@ test('a waived round cap never lets auto-merge skip the Human\'s sign-off of a f
   // Reported as merge trust reports an owed sign-off, so a run parks it as a decision for the Human.
   assert.deepEqual([attended.code, attended.result.reason, attended.result.trust], [1, 'trust', 'signoff']);
   assert.match(attended.result.why, /flow payments needs the Human's sign-off on head abcdef1/u);
-  // The Human signs it off on that head, in the store only a session they attend writes.
-  recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'payments', head: HEAD, by: 'Adrian' });
+  // The Human signs it off on that head, in the store only a session they attend writes: the fixture's config.json
+  // places its state folder, so the store is that folder's (storeRoot).
+  recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'payments', head: HEAD, by: 'Adrian', root: storeRoot(stateDir(r.project), true) });
   const signed = waived(t, r);
   assert.deepEqual([signed.code, signed.result.waived], [0, true]);
   // A deleted flow test in the cause needs the same, and the cause refuses it whatever the store holds.

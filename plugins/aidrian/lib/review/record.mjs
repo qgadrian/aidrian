@@ -8,6 +8,7 @@ import { withGitFacts, withoutGitFacts } from '../git.mjs';
 import { notedPlan, parseFindings, recordFindings } from './findings.mjs';
 import { parseVerdicts } from './flows.mjs';
 import { closingRange, readReading } from './dispatch.mjs';
+import { projectStoreRoot } from '../store-root.mjs';
 import { recordHumanSignoff } from './signoff-store.mjs';
 import { gitPaths } from './publish.mjs';
 import * as quota from './quota.mjs';
@@ -113,7 +114,10 @@ export function recordSignoff(project, { pr, repo, flow, head, storeHead = null,
   if (full === null) throw new Error(`the sign-off store takes the full head commit the sign-off is for, not ${head}`);
   state.signoffs[flow] = { head, by, at: new Date().toISOString() };
   if (!dryRun) {
-    recordHumanSignoff({ repo, pr, flow, head: full, by });
+    // Where every reader on the way to a merge finds it, the project's store root (store-root.mjs).
+    const placed = projectStoreRoot(project);
+    if (placed.problem) throw new Error(`the sign-off store cannot be placed: ${placed.problem}`);
+    recordHumanSignoff({ repo, pr, flow, head: full, by, root: placed.root });
     writeLocalState(project, state, { repo });
   }
   return state.signoffs[flow];

@@ -1506,10 +1506,14 @@ for both: the waiver's read serves merge trust.
    too. On a real pull request the whole check takes about 1 to 1.5 seconds; a read that runs out of the guard's 4
    seconds refuses, and says one more try is safe.
 2. **The Human's sign-offs, from the sign-off store.** `aidrian pr signoff <PR> --flow <id>` also writes the sign-off to
-   `$XDG_STATE_HOME/aidrian/signoffs/<owner>/<name>/<PR>.json`, first: a store it cannot write keeps the record unwritten
+   `<store root>/signoffs/<owner>/<name>/<PR>.json`, first: a store it cannot write keeps the record unwritten
    too. It keeps the head the Human typed, resolved to its full commit in their checkout, a prefix two commits share
-   refused; `--last` keeps the forge's current head. The store is the user's alone (each folder 0700, the file 0600, read
-   without following a link). Only a main session the Human attends writes it: the agent gate hook refuses a subagent, a
+   refused; `--last` keeps the forge's current head. The store root is the state root, `$XDG_STATE_HOME/aidrian`, or,
+   when the base branch's `state.dir` places the state folder, that folder: the writer and every reader on the way to a
+   merge take it from the base branch's config, which the forge gives a merge, never a working copy's alone, and a
+   project run's start from the state folder that holds its ledger. The store is the user's alone (each folder 0700,
+   the file 0600, read without following a link), checked from the real path of the folder above the store root.
+   Only a main session the Human attends writes it: the agent gate hook refuses a subagent, a
    session no Human attends, and a project run's driver a write there, the review-signoff rule refuses them the command
    ([hooks.md](hooks.md#bash-rules)), a confined Claude Code session's sandbox denies it to commands and file tools, and
    the project start gate refuses a Codex writable root, `/tmp`, or `$TMPDIR` that reaches it. During a run, a sign-off

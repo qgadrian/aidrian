@@ -75,7 +75,7 @@ import { pinnedRepository, readRun } from '../../project-run.mjs';
 import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.mjs';
 import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
 import { delegationFor, lowOnly } from '../../review/delegation.mjs';
-import { readHumanSignoffs, sameBot, trustProblem } from '../../review/merge-trust.mjs';
+import { sameBot, trustProblem } from '../../review/merge-trust.mjs';
 import { CAPPED, emptyState, FINISHED, openCount, owed, owedElsewhere, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { budgetedForge, guardWaiver, READ_TIMEOUT_MS, runOf, trailKey, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
@@ -85,6 +85,7 @@ import { readUnattendedMark } from '../../unattended-mark.mjs';
 import { transcriptAnswers, waitingRoute } from '../review-extend.mjs';
 import { severalRemotes } from '../review-signoff.mjs';
 import { commandPath, fillRepo, invocationRepo, readWords } from './review-request.mjs';
+import { storeSignoffs } from '../../store-root.mjs';
 
 // How long the head lookup may take, inside the hook's 5 s, as pr-body's open pull request lookup.
 const VIEW_TIMEOUT_MS = 3000;
@@ -653,7 +654,7 @@ export function unattendedProblem({ project, home = project, merge, mark, forge 
     const problem = policyProblem({ trail, head, policies, base, prefix, docs, home })
       ?? trustProblem({
         trail, head, reviewer: policies.policy.github.reviewer, files: Array.isArray(trail?.files) ? trail.files : [], complete: trail?.filesComplete === true,
-        configs: [policies.policy, policies.basePolicy], prefix, policyFiles: policies.policyFiles, state: scoped(recordFor(project, pr, repo), project, repo), signoffs: readHumanSignoffs({ repo, pr }),
+        configs: [policies.policy, policies.basePolicy], prefix, policyFiles: policies.policyFiles, state: scoped(recordFor(project, pr, repo), project, repo), signoffs: storeSignoffs(project, { repo, pr, trusted: policies.policy }),
       })
       ?? mergeClosesProblem({ trail, merge, mark, home, pr: { repo, host: pinned.host } });
     return problem ? deny(problem) : null;

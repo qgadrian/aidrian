@@ -2322,12 +2322,16 @@ any `<!--`, any `<details` in any case, or a `+++` line: `+++` after optional sp
 The run keeps a description's first 20,000 characters, and a description cut off there voids every grant on the issue,
 wherever the section sits: keep a pinned issue's description under the cap.
 
-The store is `<state root>/recorded-decisions/<project key>/<ISSUE>.json`, `{ heading, sha256, by: "human", at }`, where
-the state root is `$XDG_STATE_HOME/aidrian` or `~/.local/state/aidrian` and the project key names the project's state
-folder under `projects/`.
+The store is `<store root>/recorded-decisions/<project key>/<ISSUE>.json`, `{ heading, sha256, by: "human", at }`, where
+the project key names the project's state folder under `projects/`.
+The store root is the state root, `$XDG_STATE_HOME/aidrian` or `~/.local/state/aidrian`, or, when `state.dir` places the
+state folder, that folder itself: the [sign-off store](review.md#merge-trust) lies under the same root.
+A start, `init --check`, and `--record` take it from the state folder the run resolved, the one that holds its ledger,
+never from the environment read again, so a variable a command sets cannot move the store away from the run.
 It is kept apart from the state folder's `decisions/`, the decision-review records.
-Each folder is the user's alone, mode 0700, each file 0600, written whole and moved into place, as the
-[sign-off store](review.md#merge-trust)'s; a file or folder another user could write, or a link, voids the grant.
+Each folder is the user's alone, mode 0700, each file 0600, written whole and moved into place, as the sign-off store's.
+They are checked from the real path of the folder above the store root down: a link from the store root on, a folder
+another user owns or may write, or such a file voids the grant, and no write makes a folder before those pass.
 The [agent gates](hooks.md#agent-gates) refuse a write there by a subagent, a session no Human attends, or a run's
 driver, and a confined session's sandbox denies the folder.
 
@@ -2335,7 +2339,9 @@ driver, and a confined session's sandbox denies the folder.
 tracker read of the issue, the bytes `init` keeps, and writes nothing.
 With `--record` it then writes the store's entry and prints where; `aidrian project decision ISSUE --forget` removes it.
 Either replaces or removes an entry whose content is malformed, once its place, owner, type, and links pass, and makes
-no folder before the ones already there pass; the printed `--record` command quotes the heading as one shell word.
+no folder before the ones already there pass.
+The printed `--record` command attaches the heading as one single-quoted shell word, `--heading='<heading>'`, so a
+heading that starts with `-` stays the option's value and nothing in it expands.
 It runs only from an attended main session that never drove a project run, in every form.
 It exits 1 when the session recorded no read of the issue, the description was cut off or holds hidden markup, no
 single section has that heading, or the store cannot be written.

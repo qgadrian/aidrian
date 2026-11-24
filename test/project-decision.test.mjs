@@ -14,6 +14,7 @@ import test from 'node:test';
 
 import { decisionCommand, recordedDecision, sectionOf, shellQuoted } from '../plugins/aidrian/lib/project-decision.mjs';
 import { decisionChecks } from '../plugins/aidrian/lib/project-preflight.mjs';
+import { lexCommand } from '../plugins/aidrian/lib/shell-lex.mjs';
 import { recordHumanSignoff, signoffFolder } from '../plugins/aidrian/lib/review/signoff-store.mjs';
 import { decisionStoreFolder, forgetDecision, readRecordedDecision, recordDecision } from '../plugins/aidrian/lib/project-decision-store.mjs';
 import { projectId } from '../plugins/aidrian/lib/project.mjs';
@@ -76,7 +77,7 @@ test('a description its cap cut off keeps that mark, and voids every grant on it
   assert.equal(sectionOf(kept, 'Decision'), '## Decision\nChosen: CSV.', 'a heading ends the section well before the cut');
   assert.deepEqual(pinned(kept, 'Decision', { cut: true }), CUT);
   assert.equal(pinned(kept).section, '## Decision\nChosen: CSV.', 'the same text uncut stands');
-  const refused = fx.cmd(['decision', 'ENG-1', '--heading', 'Decision']);
+  const refused = decisionCommand({ project: fx.project, config: fx.config, key: 'ENG-1', heading: 'Decision', env: fx.env, home: fx.home });
   assert.equal(refused.exitCode, 1);
   assert.match(refused.err[0], /the kept description was cut off at its 20,000-character cap; keep a pinned issue's description under 20000 characters/u);
 });
@@ -88,12 +89,14 @@ function withRead(t, description = DECIDED.description, session = DRIVER, more =
   return fx;
 }
 
+// The fixture's project key, asked of git once (projectId reads origin and the prefix each time).
+const keyOf = (fx) => (fx.projectKey ??= projectId(fx.project));
 // Records ENG-1's `entry` in the fixture's recorded-decision store, as `--record` writes it.
-const recordIn = (fx, entry, key = 'ENG-1') => recordDecision({ projectKey: projectId(fx.project), key, heading: entry.heading, sha256: entry.sha256, env: fx.env });
-const storeFile = (fx, key = 'ENG-1') => path.join(decisionStoreFolder(fx.env), projectId(fx.project), `${key}.json`);
+const recordIn = (fx, entry, key = 'ENG-1') => recordDecision({ projectKey: keyOf(fx), key, heading: entry.heading, sha256: entry.sha256, env: fx.env, root: fx.state });
+const storeFile = (fx, key = 'ENG-1') => path.join(decisionStoreFolder(fx.env, fx.state), keyOf(fx), `${key}.json`);
 
 // A heading whose words a shell would expand if the printed command did not quote them.
-const SHELLY = "Pick $(id) `uname` $HOME it's";
+const SHELLY = "- Pick $(id) `uname` $HOME it's";
 
 test('project decision prints, --record writes, --forget removes, and a malformed entry is replaced or removed, all from one recorded read', (t) => {
   // One fixture and as few commands as the cases need: each `aidrian project decision` reads the base branch's config
@@ -101,33 +104,38 @@ test('project decision prints, --record writes, --forget removes, and a malforme
   const fx = withRead(t, `${DECIDED.description}\n\n## ${SHELLY}\n\nChosen: CSV.\n`);
   const entry = decidedEntry();
   const file = storeFile(fx);
-  const read = () => readRecordedDecision({ projectKey: projectId(fx.project), key: 'ENG-1', env: fx.env });
+  const read = () => readRecordedDecision({ projectKey: keyOf(fx), key: 'ENG-1', env: fx.env, root: fx.state });
 
-  // Without --record: the section as hashed, then its sha256 and the command that records it, the heading one POSIX
-  // shell word, single-quoted, so `$(...)`, a backtick, and `$VAR` never expand; nothing written.
-  const shelly = fx.cmd(['decision', 'ENG-1', '--heading', SHELLY]);
-  assert.equal(shelly.exitCode, 0, shelly.err.join('\n'));
+  // Without --record: the section as hashed, then its sha256 and the command that records it. The heading, which starts
+  // with a dash, goes in attached; the printed one is attached too, and one POSIX shell word, single-quoted, so
+  // `$(...)`, a backtick, and `$VAR` never expand; nothing is written.
+  const preview = fx.cmd(['decision', 'ENG-1', `--heading=${SHELLY}`]);
+  assert.equal(preview.exitCode, 0, preview.err.join('\n'));
   const section = `## ${SHELLY}\n\nChosen: CSV.`;
-  assert.deepEqual(shelly.out.slice(0, 3), ['~~~~text', section, '~~~~'], 'the section first, fenced as hashed');
-  assert.match(shelly.out.at(-2), /^Write the section so it stands alone: it names the question and the chosen path in full/u);
-  assert.equal(shellQuoted(SHELLY), "'Pick $(id) `uname` $HOME it'\\''s'");
-  assert.equal(shelly.out.at(-1), `sha256 ${createHash('sha256').update(section).digest('hex')}; record it with \`aidrian project decision ENG-1 --heading 'Pick $(id) \`uname\` $HOME it'\\''s' --record\``);
-  assert.equal(existsSync(decisionStoreFolder(fx.env)), false, 'nothing written');
+  const sha256 = createHash('sha256').update(section).digest('hex');
+  assert.deepEqual(preview.out.slice(0, 3), ['~~~~text', section, '~~~~'], 'the section first, fenced as hashed');
+  assert.match(preview.out.at(-2), /^Write the section so it stands alone: it names the question and the chosen path in full/u);
+  assert.equal(shellQuoted(SHELLY), "'- Pick $(id) `uname` $HOME it'\\''s'");
+  const line = preview.out.at(-1);
+  assert.equal(line, `sha256 ${sha256}; record it with \`aidrian project decision ENG-1 --heading='- Pick $(id) \`uname\` $HOME it'\\''s' --record\``);
+  assert.equal(existsSync(decisionStoreFolder(fx.env, fx.state)), false, 'nothing written');
 
-  // --record: an owner-only entry under owner-only folders, from the same read, which stands against it.
-  const recorded = fx.cmd(['decision', 'ENG-1', '--heading', 'Export format', '--record']);
+  // The printed command, read back into the words a shell hands over (the plugin's own lexer: no shell runs), records
+  // it: an owner-only entry under owner-only folders, from the same read.
+  const words = lexCommand(line.slice(line.indexOf('`') + 1, line.lastIndexOf('`')))[0].map((word) => word.text);
+  assert.deepEqual(words.slice(0, 4), ['aidrian', 'project', 'decision', 'ENG-1']);
+  const recorded = fx.cmd(words.slice(2));
   assert.equal(recorded.exitCode, 0, recorded.err.join('\n'));
-  assert.equal(recorded.out.at(-1), `recorded-decision: ENG-1 recorded in ${file}, sha256 ${entry.sha256}`);
+  assert.equal(recorded.out.at(-1), `recorded-decision: ENG-1 recorded in ${file}, sha256 ${sha256}`);
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(statSync(path.dirname(file)).mode & 0o777, 0o700);
   const stored = read().entry;
-  assert.deepEqual({ ...stored, at: typeof stored.at }, { heading: 'Export format', sha256: entry.sha256, by: 'human', at: 'string' });
-  assert.deepEqual(recordedDecision(stored, DECIDED.description), { section: sectionOf(DECIDED.description, 'Export format'), sha256: entry.sha256 });
+  assert.deepEqual({ ...stored, at: typeof stored.at }, { heading: SHELLY, sha256, by: 'human', at: 'string' });
 
   // --forget removes it; the store says when there is none. Arguments that conflict are refused before any read.
   assert.deepEqual(fx.cmd(['decision', 'ENG-1', '--forget']).out, [`recorded-decision: ENG-1 forgotten, ${file} removed`]);
   assert.equal(existsSync(file), false);
-  assert.deepEqual(forgetDecision({ projectKey: projectId(fx.project), key: 'ENG-1', env: fx.env }), { file, removed: false });
+  assert.deepEqual(forgetDecision({ projectKey: keyOf(fx), key: 'ENG-1', env: fx.env, root: fx.state }), { file, removed: false });
   const direct = (more) => decisionCommand({ project: fx.project, config: fx.config, key: 'ENG-1', env: fx.env, ...more }).err[0];
   assert.match(direct({ heading: 'Export format', record: true, forget: true }), /--record and --forget each act alone/u);
   assert.match(direct({ heading: 'Export format', forget: true }), /--forget takes no --heading/u);
@@ -136,7 +144,7 @@ test('project decision prints, --record writes, --forget removes, and a malforme
   // A malformed entry whose place, owner, type, and links pass: a start reads no grant, --record replaces it whole, and
   // --forget removes one of another shape; a file another user could write still refuses both.
   // The command records and forgets through these two, so they are called as it calls them.
-  const store = { projectKey: projectId(fx.project), key: 'ENG-1', env: fx.env };
+  const store = { projectKey: keyOf(fx), key: 'ENG-1', env: fx.env, root: fx.state };
   writeFileSync(file, '{ not json', { mode: 0o600 });
   assert.match(read().problem, /cannot be read as a recorded-decision store file/u, 'a start reads it as no grant');
   recordDecision({ ...store, heading: 'Export format', sha256: entry.sha256 });
@@ -155,7 +163,7 @@ test('project decision prints, --record writes, --forget removes, and a malforme
     keys.push(given.key);
     return { entry: null };
   };
-  const ask = (policy, base = {}) => decisionChecks({ policy, base, mayStart: new Set(['ENG-1', 'ENG-4']), texts: {}, project: fx.project, env: fx.env, read: spy });
+  const ask = (policy, base = {}) => decisionChecks({ policy, base, mayStart: new Set(['ENG-1', 'ENG-4']), texts: {}, project: fx.project, env: fx.env, root: fx.state, read: spy });
   ask({ recordedDecisions: false });
   ask({ problem: 'the forge did not answer' }, { config: { projectRun: { recordedDecisions: false } } });
   ask({ problem: 'the forge did not answer' });
@@ -179,35 +187,51 @@ test('a store folder that is a link gets nothing made in its target, in the reco
   assert.deepEqual(readdirSync(target), [], 'no folder was made where the links point');
 });
 
+test('a state root that is a link gets nothing made in its target, and both stores refuse the write', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-store-root-link-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const env = { XDG_STATE_HOME: path.join(root, 'state') };
+  const target = path.join(root, 'elsewhere');
+  mkdirSync(target, { mode: 0o700 });
+  mkdirSync(env.XDG_STATE_HOME, { mode: 0o700 });
+  symlinkSync(target, path.join(env.XDG_STATE_HOME, 'aidrian'));
+  assert.throws(() => recordDecision({ projectKey: 'proj', key: 'ENG-1', heading: 'Export format', sha256: 'a'.repeat(64), env }), /the recorded-decision store cannot be trusted: .*aidrian is not a plain folder/u);
+  assert.throws(() => recordHumanSignoff({ repo: 'acme/widgets', pr: 7, flow: 'payments', head: 'a'.repeat(40), by: 'the Human', env }), /the sign-off store cannot be trusted: .*aidrian is not a plain folder/u);
+  assert.deepEqual(readdirSync(target), [], 'no folder was made where the link points');
+  assert.match(readRecordedDecision({ projectKey: 'proj', key: 'ENG-1', env }).problem, /cannot be trusted: .*aidrian is not a plain folder/u, 'a read refuses it too');
+});
+
 test('project decision refuses with no recorded read, no single section, hidden markup, a session no Human attends, one that drove a run, and a store not the user\'s alone', (t) => {
   const fx = runFixture(t, { init: false });
+  // The command's own function, with the project read once: the CLI's wiring is covered by the record above.
+  const decide = (more, session = DRIVER) => decisionCommand({ project: fx.project, config: fx.config, key: 'ENG-1', env: fx.as(session), home: fx.home, ...more });
   const readFor = (session, description) => assert.equal(recordIssueReads(session, [{ key: 'ENG-1', text: { title: 'Export', description, criteria: '', labels: [] } }], { env: fx.env }), 1);
-  const missing = fx.cmd(['decision', 'ENG-1', '--heading', 'Export format']);
+  const missing = decide({ heading: 'Export format' });
   assert.equal(missing.exitCode, 1);
   assert.match(missing.err[0], /this session recorded no tracker read of ENG-1; read it with the tracker's own issue read/u);
   readFor(OTHER, DECIDED.description);
-  assert.equal(fx.cmd(['decision', 'ENG-1', '--heading', 'Export format']).exitCode, 1, 'another session\'s read');
+  assert.equal(decide({ heading: 'Export format' }).exitCode, 1, 'another session\'s read');
   readFor(DRIVER, `${DECIDED.description}\n<!-- and XLSX -->`);
-  assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Export format']).err[0], /the issue's description holds text the tracker's view hides \(an HTML comment, a <details> tag, or a \+\+\+ line, anywhere, fenced or not\)/u);
+  assert.match(decide({ heading: 'Export format' }).err[0], /the issue's description holds text the tracker's view hides \(an HTML comment, a <details> tag, or a \+\+\+ line, anywhere, fenced or not\)/u);
   readFor(DRIVER, DECIDED.description);
-  assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Missing']).err[0], /no section of ENG-1's description, or more than one, has the heading "Missing"/u);
+  assert.match(decide({ heading: 'Missing' }).err[0], /no section of ENG-1's description, or more than one, has the heading "Missing"/u);
   // A session no Human attends, and one that drove a run, record and forget nothing.
   const driver = STARTED[0].session;
   markUnattended(OTHER, { root: fx.dir, env: fx.env });
   markDriver(driver, { run: 'launch', root: fx.dir, state: fx.state, env: fx.env });
   // Both forms meet the same checks before either acts; the hook rule covers each form (project-start-guard.test.mjs).
-  const unattended = fx.cmd(['decision', 'ENG-1', '--heading', 'Export format', '--record'], { session: OTHER });
+  const unattended = decide({ heading: 'Export format', record: true }, OTHER);
   assert.equal(unattended.exitCode, 1);
   assert.match(unattended.err[0], /from an attended session, and the background handoff route started this session/u);
-  assert.match(fx.cmd(['decision', 'ENG-1', '--forget'], { session: driver }).err[0], /this session drove a project run, which may run on with no Human, so it records and forgets no decision/u);
-  assert.equal(existsSync(decisionStoreFolder(fx.env)), false, 'nothing written');
+  assert.match(decide({ forget: true }, driver).err[0], /this session drove a project run, which may run on with no Human, so it records and forgets no decision/u);
+  assert.equal(existsSync(decisionStoreFolder(fx.env, fx.state)), false, 'nothing written');
   // A store folder another user may write.
-  mkdirSync(path.join(decisionStoreFolder(fx.env), projectId(fx.project)), { recursive: true });
-  chmodSync(decisionStoreFolder(fx.env), 0o777);
-  assert.throws(() => recordDecision({ projectKey: projectId(fx.project), key: 'ENG-1', heading: 'Export format', sha256: decidedEntry().sha256, env: fx.env }), /the recorded-decision store cannot be trusted: .* may be written by another user/u);
+  mkdirSync(path.join(decisionStoreFolder(fx.env, fx.state), keyOf(fx)), { recursive: true });
+  chmodSync(decisionStoreFolder(fx.env, fx.state), 0o777);
+  assert.throws(() => recordDecision({ projectKey: keyOf(fx), key: 'ENG-1', heading: 'Export format', sha256: decidedEntry().sha256, env: fx.env, root: fx.state }), /the recorded-decision store cannot be trusted: .* may be written by another user/u);
 });
 
-test('init --check names each recorded decision of an issue to start: a blocker with no description, else a note', async (t) => {
+test('init --check names each recorded decision of an issue that may still start, from the run\'s store, while both reads turn the switch on', async (t) => {
   const fx = runFixture(t, { init: false, projectRun: { allow: true, unverifiedHosts: true, recordedDecisions: true } });
   for (const key of ['ENG-1', 'ENG-9']) recordIn(fx, decidedEntry(), key);
   const file = path.join(fx.dir, 'snapshot.input');
@@ -220,30 +244,36 @@ test('init --check names each recorded decision of an issue to start: a blocker 
   assert.deepEqual(check(DECIDED.description), ['note recorded-decision: ENG-1 stands: Export format'], 'an issue the plan does not start gets no line');
   assert.deepEqual(check(DECIDED.description.replace('CSV with', 'XLSX with')), ['note recorded-decision: ENG-1 void: the section\'s sha256 differs, so it changed after it was pinned']);
   assert.deepEqual(check(''), ['blocker recorded-decision: ENG-1 has a recorded decision in this machine\'s recorded-decision store and this session recorded no description of it; read it in this session with the tracker\'s own issue read']);
-});
+  // With a state.dir, the store is the state folder's: a state root a variable moves elsewhere, with a grant planted
+  // there that would read as void, is not read; and the writer, under that variable, records where the run reads.
+  const moved = { ...fx.as(DRIVER), XDG_STATE_HOME: path.join(fx.root, 'moved') };
+  recordDecision({ projectKey: keyOf(fx), key: 'ENG-1', heading: 'Export format', sha256: 'f'.repeat(64), env: moved });
+  assert.equal(recordIssueReads(DRIVER, [{ key: 'ENG-1', text: { title: 'Export', description: DECIDED.description, criteria: '', labels: [] } }], { env: moved }), 1);
+  assert.deepEqual(fx.cmd(['init', 'launch', '--file', file, '--check'], { env: moved }).out.filter((line) => line.includes('recorded-decision')), ['note recorded-decision: ENG-1 stands: Export format']);
+  assert.equal(decisionCommand({ project: fx.project, config: fx.config, key: 'ENG-1', heading: 'Export format', record: true, env: moved, home: fx.home }).exitCode, 0);
+  assert.equal(readRecordedDecision({ projectKey: keyOf(fx), key: 'ENG-1', env: fx.env, root: fx.state }).entry.sha256, decidedEntry().sha256, 'written to the state folder\'s store');
+  assert.equal(readRecordedDecision({ projectKey: keyOf(fx), key: 'ENG-1', env: moved }).entry.sha256, 'f'.repeat(64), 'never to the moved root');
 
-test('init --check reads the store only where the team switch is on on the local ref and the forge alike', (t) => {
-  const check = (forgeConfig) => {
-    const fx = withRead(t, DECIDED.description, DRIVER, { projectRun: { allow: true, unverifiedHosts: true, recordedDecisions: true }, forgeConfig });
-    recordIn(fx, decidedEntry());
-    const file = path.join(fx.dir, 'snapshot.input');
-    writeFileSync(file, JSON.stringify({ issues: ISSUES }));
-    return fx.cmd(['init', 'launch', '--file', file, '--check']);
+  // The forge's copy of the default branch decides too: without the switch there, nothing is read; refusing runs, the
+  // switch on the local ref with an entry stored is a blocker. One fixture, its forge's answer swapped.
+  const answer = fx.forge.contents;
+  const forge = (config) => {
+    fx.forge.contents = (repo, name, ref, options) => (name === '.aidrian/config.json' ? { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(config)).toString('base64') } : answer(repo, name, ref, options));
   };
-  const forgeless = check({ version: 1, projectRun: { allow: true, unverifiedHosts: true } });
+  forge({ version: 1, projectRun: { allow: true, unverifiedHosts: true } });
+  const forgeless = fx.cmd(['init', 'launch', '--file', file, '--check']);
   assert.ok(!forgeless.out.some((line) => line.includes('recorded-decision')), `only the local ref turns it on: ${forgeless.out.join('\n')}`);
-  const refused = check({ version: 1, projectRun: { allow: false } });
+  forge({ version: 1, projectRun: { allow: false } });
+  const refused = fx.cmd(['init', 'launch', '--file', file, '--check']);
   assert.equal(refused.exitCode, 1);
   assert.match(refused.out.find((line) => line.includes('recorded-decision')), /^blocker recorded-decision: the team's policy cannot be read \(the default branch main on the forge does not set projectRun\.allow to true\), so whether the decisions recorded for ENG-1 stand cannot be told; check again once it can$/u);
-});
+  fx.forge.contents = answer;
 
-test('init --check names no recorded decision of a canceled issue or one skipped below it, and keeps one that waits on a blocker', (t) => {
-  const entry = decidedEntry();
-  const fx = runFixture(t, { init: false, projectRun: { allow: true, unverifiedHosts: true, recordedDecisions: true } });
-  for (const key of ['ENG-2', 'ENG-5', 'ENG-6']) recordIn(fx, entry, key);
-  const file = path.join(fx.dir, 'snapshot.input');
-  writeFileSync(file, JSON.stringify({ issues: [...ISSUES, { key: 'ENG-5', branch: 'feat/eng-5-old', status: 'canceled' }, { key: 'ENG-6', branch: 'feat/eng-6-after', status: 'unstarted', blockedBy: ['ENG-5'] }] }));
-  const lines = fx.cmd(['init', 'launch', '--file', file, '--check']).out.filter((line) => line.includes('recorded-decision'));
-  assert.deepEqual(lines.map((line) => line.split(':')[1].trim().split(' ')[0]), ['ENG-2'], lines.join('\n'));
-  assert.match(lines[0], /^blocker recorded-decision: ENG-2 has a recorded decision/u);
+  // No line for a canceled issue or one skipped below it; one that waits on a blocker keeps its line.
+  for (const key of ['ENG-2', 'ENG-5', 'ENG-6']) recordIn(fx, decidedEntry(), key);
+  const later = path.join(fx.dir, 'later.input');
+  writeFileSync(later, JSON.stringify({ issues: [...ISSUES, { key: 'ENG-5', branch: 'feat/eng-5-old', status: 'canceled' }, { key: 'ENG-6', branch: 'feat/eng-6-after', status: 'unstarted', blockedBy: ['ENG-5'] }] }));
+  const lines = fx.cmd(['init', 'launch', '--file', later, '--check']).out.filter((line) => line.includes('recorded-decision'));
+  assert.deepEqual(lines.map((line) => line.split(':')[1].trim().split(' ')[0]), ['ENG-1', 'ENG-2'], lines.join('\n'));
+  assert.match(lines[1], /^blocker recorded-decision: ENG-2 has a recorded decision/u);
 });

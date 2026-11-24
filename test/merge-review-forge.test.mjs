@@ -12,7 +12,7 @@ import { prEnvDenial, signoffWriteDenial } from '../plugins/aidrian/lib/handoff-
 import { sandboxSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
-import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { activeRuns, appendToRun, initRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { currentDriver, driverHold, drivesRun, endedIn, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
@@ -26,6 +26,10 @@ import { check as signoffCheck, SUBAGENT_REASON, UNATTENDED_REASON } from '../pl
 import { DRIVER, ISSUES, OTHER, recordIssue, runFixture, STARTED } from './project-start-fixture.mjs';
 
 import { hookCall } from './hook-call.mjs';
+import { storeSignoffs } from '../plugins/aidrian/lib/store-root.mjs';
+import { storeRoot } from '../plugins/aidrian/lib/review/signoff-store.mjs';
+// The store root of a fixture whose config.json places its state folder (configOf's state.dir), where a merge reads it.
+const placedRoot = (r) => (r.storeRoot ??= storeRoot(stateDir(r.project), true));
 
 // An unattended merge never rests on a record a confined session can write (docs/review.md, Merge trust): the merge guard
 // and `aidrian pr auto-merge` confirm the team's policy and the review bot's verdict on the forge, and read the Human's
@@ -389,12 +393,18 @@ test('a forged sign-off in the review record, a sandbox-writable folder, does no
   // The record naming no flow at all does not lift the floor the forge's file list gives.
   r.record(forged([]));
   assert.match(merge(r, MERGE, { trail }) ?? '', /flow payments needs the Human's sign-off on head abcdef1 \(it changes a file of the flow\)/u);
-  recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'payments', head: OLD, by: 'Adrian' });
+  recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'payments', head: OLD, by: 'Adrian', root: placedRoot(r) });
   assert.match(merge(r, MERGE, { trail }) ?? '', /holds none for that head/u, 'a sign-off of another head');
-  recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'payments', head: HEAD, by: 'Adrian' });
+  recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'payments', head: HEAD, by: 'Adrian', root: placedRoot(r) });
   assert.equal(merge(r, MERGE, { trail }), null);
   assert.equal(autoMerge(t, r, { files: ['src/pay/charge.js'], trail }).code, 0);
-  rmSync(signoffFolder(), { recursive: true, force: true });
+  // The state.dir places the store, so a state root a variable moves elsewhere, with a sign-off planted there, is never
+  // read: as the merge reads it, with the default branch's config the forge gave.
+  const moved = { XDG_STATE_HOME: path.join(path.dirname(placedRoot(r)), 'moved-state') };
+  recordHumanSignoff({ repo: 'acme/notes', pr: 8, flow: 'payments', head: HEAD, by: 'planted', env: moved });
+  assert.deepEqual(storeSignoffs(r.project, { repo: 'acme/notes', pr: 8, env: moved, trusted: JSON.parse(r.text) }).flows, {}, 'the planted store is not the project\'s');
+  assert.equal(storeSignoffs(r.project, { repo: 'acme/notes', pr: 7, env: moved, trusted: JSON.parse(r.text) }).flows.payments.head, HEAD, 'the project\'s is read whatever the variable says');
+  rmSync(signoffFolder(undefined, placedRoot(r)), { recursive: true, force: true });
   assert.equal(merge(r, MERGE), null, 'a file outside the flow asks for no sign-off');
 });
 
@@ -412,9 +422,9 @@ test('`aidrian pr signoff` stores the head the Human typed, resolved in their ch
   const forge = { change: () => ({ url: 'https://github.com/acme/notes/pull/7', baseRefName: 'main' }), reviewTrail: () => { throw new Error('offline'); } };
   const sign = (head, flags = []) => runSignoff(['7', '--flow', 'payments', '--head', head, '--repo', 'acme/notes', ...flags], r.project, loadConfig(r.project).config, { forge });
   await sign(r.commit.slice(0, 7), ['--check']);
-  assert.deepEqual(readHumanSignoffs({ repo: 'acme/notes', pr: 7 }).flows, {}, '--check writes nothing');
+  assert.deepEqual(storeSignoffs(r.project, { repo: 'acme/notes', pr: 7 }).flows, {}, '--check writes nothing');
   await sign(r.commit.slice(0, 7));
-  assert.equal(readHumanSignoffs({ repo: 'acme/notes', pr: 7 }).flows.payments.head, r.commit, 'the typed head, resolved here');
+  assert.equal(storeSignoffs(r.project, { repo: 'acme/notes', pr: 7 }).flows.payments.head, r.commit, 'the typed head, resolved here');
   assert.equal(readLocalState(r.project, 7, 'acme/notes').signoffs.payments.head, r.commit.slice(0, 7), 'the record keeps what it kept');
   await assert.rejects(sign('deadbeef'), /is not one commit of this repository/u, 'a head this checkout does not have');
 });
@@ -822,9 +832,9 @@ test('an in-process sign-off is refused to a session with an unattended mark or 
   console.log = () => {};
   t.after(() => (console.log = quiet));
   await sign(marked, ['--check']);
-  assert.deepEqual(readHumanSignoffs({ repo: 'acme/notes', pr: 7 }).flows, {}, 'the dry run records nothing');
+  assert.deepEqual(storeSignoffs(r.project, { repo: 'acme/notes', pr: 7 }).flows, {}, 'the dry run records nothing');
   await sign('abcd1234-0000-4000-8000-00000000e0e2');
-  assert.equal(readHumanSignoffs({ repo: 'acme/notes', pr: 7 }).flows.payments.head, r.commit, 'a session the Human attends');
+  assert.equal(storeSignoffs(r.project, { repo: 'acme/notes', pr: 7 }).flows.payments.head, r.commit, 'a session the Human attends');
 });
 
 // The closing-word rule at merge time (lib/closing-words.mjs, merge-review.mjs mergeClosesProblem): a merge no Human asks
@@ -917,7 +927,7 @@ test('a missing sign-off is a security decision when any unsigned flow is a secu
 test('a sign-off store that cannot be read counts every flow that needs a sign-off unsigned: a security decision when any is a security one', (t) => {
   const r = repo(t, configOf({ review: { flows: { payments: PAYMENTS, 'zz-security': { ...PAYMENTS } } } }));
   r.record((state) => (state.outcome = { status: 'received', head: HEAD, at: '2026-11-18T09:00:00.000Z' }));
-  const file = signoffFile('acme/notes', 7);
+  const file = signoffFile('acme/notes', 7, { root: placedRoot(r) });
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   writeFileSync(file, '{ not json', { mode: 0o600 });
   const off = autoMerge(t, r, { files: ['src/pay/charge.js'], trail: trailOf(r.text, changing('src/pay/charge.js')) });

@@ -1140,13 +1140,15 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   Past the time budget, a driver's call that is no shell and writes no file, such as a Read, runs; its shell calls,
   `aidrian project wait` among them, are refused until the guards read them in time.
 - The same two, and a project run's driver, may not write in the
-  [sign-off store](review.md#merge-trust), `$XDG_STATE_HOME/aidrian/signoffs/` or `~/.local/state/aidrian/signoffs/`,
+  [sign-off store](review.md#merge-trust), `$XDG_STATE_HOME/aidrian/signoffs/`, `~/.local/state/aidrian/signoffs/`, or
+  the `signoffs/` of a state folder a `state.dir` places, which the runs-folder guard holds as it holds `runs/`,
   read the same way, with the part named `signoffs`: a merge no Human asks for reads the Human's flow sign-offs there,
   and only `aidrian pr signoff` in a main session the Human attends writes it. A session no Human attends may not run an
   `aidrian pr` command with a variable set or unset by the command line itself that moves the state root, such as
   `XDG_STATE_HOME` or `HOME`, or one a host names the session by or says a Human attends it with.
 - The same three may not write in the [recorded-decision store](config.md#recorded-decisions),
-  `$XDG_STATE_HOME/aidrian/recorded-decisions/` or `~/.local/state/aidrian/recorded-decisions/`, read the same way, with
+  `$XDG_STATE_HOME/aidrian/recorded-decisions/`, `~/.local/state/aidrian/recorded-decisions/`, or a placed state
+  folder's `recorded-decisions/`, read the same way, with
   the part named `recorded-decisions`: a project run's start reads the decisions the Human recorded there, and only
   `aidrian project decision --record` in a main session the Human attends writes it. A confined session's sandbox
   denies both stores' folders.

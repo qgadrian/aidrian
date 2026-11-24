@@ -52,10 +52,11 @@ import { originRepo, repoName } from '../review-gate.mjs';
 import { localRefSolo, viewSolo } from '../solo.mjs';
 import { isFindingId, noHigher, severityOf } from './findings.mjs';
 import { boundedReads, holdToBase } from './in-force.mjs';
-import { botProblem, flowsFloor, readHumanSignoffs, recordedFlows, signoffProblem, unsignedFlows } from './merge-trust.mjs';
+import { botProblem, flowsFloor, recordedFlows, signoffProblem, unsignedFlows } from './merge-trust.mjs';
 import { postContext, readReading } from './dispatch.mjs';
 import { heldWaiver } from './settled.mjs';
 import { heldMessage, mergePending, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
+import { storeSignoffs } from '../store-root.mjs';
 
 export const VERDICTS = Object.freeze(['waive', 'refuse']);
 // A judge's agent id as `--judge` takes it.
@@ -216,14 +217,14 @@ export const signoffOwed = (args) => owedSignoffs(args)?.why ?? null;
 
 // signoffOwed's answer with the flows it is for: { why, unsigned } or null, `unsigned` every flow, sorted, whose sign-off
 // is missing on `head`, every flow when the store cannot be read, and none when the record names no flows for that head.
-export function owedSignoffs({ state, head, trail, policies, prefix, repo, pr, signoffs = null }) {
+export function owedSignoffs({ state, head, trail, policies, prefix, repo, pr, signoffs = null, project = null }) {
   if (!isObject(state?.signoffable) || typeof state.signoffable.head !== 'string' || !sameCommit(state.signoffable.head, head)) {
     return { why: 'the record names no flows the Human signs off on this head, so whether a sign-off is owed cannot be told', unsigned: [] };
   }
   const floor = flowsFloor({ files: Array.isArray(trail?.files) ? trail.files : [], complete: trail?.filesComplete === true, configs: [policies.policy, policies.basePolicy], prefix, policyFiles: policies.policyFiles });
   const human = Array.isArray(state.outcome?.cap?.human) ? state.outcome.cap.human.filter((flow) => typeof flow === 'string') : [];
   const flows = new Set([...recordedFlows(state, head), ...floor.flows, ...human]);
-  const store = signoffs ?? readHumanSignoffs({ repo, pr });
+  const store = signoffs ?? storeSignoffs(project, { repo, pr, trusted: policies.policy });
   const why = signoffProblem({ flows, reasons: floor.reasons, signoffs: store, head });
   return why ? { why, unsigned: unsignedFlows({ flows, signoffs: store, head }) } : null;
 }
@@ -485,7 +486,7 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
   const cap = capProblem(state, head);
   if (cap) return cannot(cap);
   if (late()) return unread;
-  const owes = signoffOwed({ state, head, trail, policies, prefix, repo: home, pr });
+  const owes = signoffOwed({ state, head, trail, policies, prefix, repo: home, pr, project });
   if (owes) return cannot(owes);
   // A session of a project run is held to the run's budget of waived merges (`memo.run`), its ledger read through the
   // main checkout and its config (`memo.home`, merge-review.mjs check), as the guard reads the run's pinned repository.

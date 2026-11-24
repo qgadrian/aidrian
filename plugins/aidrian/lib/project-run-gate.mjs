@@ -83,7 +83,7 @@ import { custody, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart,
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { pushPreflight } from './push-preflight.mjs';
-import { signoffFolder, signoffFolders } from './review/signoff-store.mjs';
+import { signoffFolder, signoffFolders, storeRoot } from './review/signoff-store.mjs';
 import { recordsStart } from './run-driver.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
 import { markDriver, markUnattended, PENDING_AGE, readBeacon, readUnattendedMark } from './unattended-mark.mjs';
@@ -143,16 +143,22 @@ function markProblem(session, { env, home }) {
 }
 
 // The folders of the sign-off store (review/merge-trust.mjs signoffFolders) and of the recorded-decision store
-// (project-decision-store.mjs decisionStoreFolders) a confined session's sandbox denies, by their real paths: the ones
-// under this environment's state root are made first, owner-only, so a deny names a path there at launch.
-function guardedStore({ env, home }) {
-  for (const folder of [signoffFolder(env), decisionStoreFolder(env)]) {
+// (project-decision-store.mjs decisionStoreFolders) a confined session's sandbox denies, by their real paths: those under
+// the run's store root `root` (storeRoot of its state folder) are made first, owner-only, so a deny names a path there
+// at launch.
+function guardedStore({ env, home, root }) {
+  for (const folder of [signoffFolder(env, root), decisionStoreFolder(env, root)]) {
     try {
       mkdirSync(folder, { recursive: true, mode: 0o700 });
     } catch {}
   }
-  return [...signoffFolders({ env, home }), ...decisionStoreFolders({ env, home })].map((each) => resolvedPath(each) ?? path.resolve(each));
+  return [...signoffFolders({ env, home, root }), ...decisionStoreFolders({ env, home, root })].map((each) => resolvedPath(each) ?? path.resolve(each));
 }
+
+// The store root of the run whose state folder is `state` under the working config `config`, which runPlace held to the
+// base branch's (review/signoff-store.mjs storeRoot): every store read of a start goes through it, never the
+// environment read again.
+const runStoreRoot = (state, config) => storeRoot(state, Boolean(config.state.dir));
 
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
 // and through the forge at the repository init pinned, `repository`. { maxParallel, maxStarts, issueHours, solo,
@@ -479,7 +485,7 @@ function startPlace(context) {
   const policyRead = policyFilesAt(project.root, base.tip, prefix);
   if (policyRead.problem) return refuse(policyRead.problem, orphans);
   const policyFiles = policyRead.files;
-  const reviewed = (head, changed) => reviewedProblem({ project, repository: found.init.repository, facade, policy, policyFiles, main: base.main, branch, pr, head, changed, env });
+  const reviewed = (head, changed) => reviewedProblem({ project, repository: found.init.repository, facade, policy, policyFiles, main: base.main, branch, pr, head, changed, env, root: runStoreRoot(context.state, context.config) });
   // The host files and the policy files the base tip names, which no attempt loads from a branch no review passed.
   const guards = (file) => isGuarded(file) || isPolicyPath(file, policyFiles);
   const recorded = recordedHead(current, key) ?? resumed?.head ?? null;
@@ -503,7 +509,7 @@ function startPlace(context) {
 // ones the pinned base tip names, policyFilesAt). The run's own review
 // record does not count: every confined session may write it. One review trail read: a pull request the forge has no
 // record of is a reason, since the number is a session's word, and any other failure throws, the start's retry.
-export function reviewedProblem({ project, repository, facade, policy, policyFiles = [], main, branch, pr, head, changed, env }) {
+export function reviewedProblem({ project, repository, facade, policy, policyFiles = [], main, branch, pr, head, changed, env, root = null }) {
   if (!Number.isInteger(pr)) return 'no pull request of the issue is recorded';
   if (!policy.reviewer) return NO_BOT;
   const prefix = knownPrefix(project.root);
@@ -521,7 +527,7 @@ export function reviewedProblem({ project, repository, facade, policy, policyFil
   const bot = botProblem(trail, head, policy.reviewer);
   if (bot) return bot;
   if (policy.includeGuardedPaths && !changed.some((file) => isPolicyPath(file, policyFiles))) return null;
-  return signoffProblem({ flows: new Set([HARNESS_FLOW]), signoffs: readHumanSignoffs({ repo, pr, env }), head });
+  return signoffProblem({ flows: new Set([HARNESS_FLOW]), signoffs: readHumanSignoffs({ repo, pr, env, root }), head });
 }
 
 // The answer of a start whose branch the run's ledger cannot account for (prepareAttempt's `park`): the issue parked
@@ -589,7 +595,7 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // A host that would refuse the push of a session the driver `session` starts in the clone halts too (pushPreflight, in
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the host's placeholders go in (placeHolders).
-function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
+function confinedRoom({ project, config, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
   const clone = prepareAttempt({ project, state, run, key, attempt, branch, recorded, tip, reviewed, guards, env });
@@ -638,7 +644,7 @@ function confinedRoom({ project, state, run, key, branch, resumed, recorded, rev
   if (issueFile?.problem) return { problem: issueFile.problem };
   // A decision the Human recorded on the issue, which the team's policy, the one read after the pin, pins, checked
   // against that kept text.
-  const decision = decisionFor({ policy, project, env, key, text: issueFile?.text, folder: clone.folder });
+  const decision = decisionFor({ policy, project, env, root: runStoreRoot(state, config), key, text: issueFile?.text, folder: clone.folder });
   if (decision.problem) return { problem: decision.problem };
   const baseCopies = clone.overlay ? writeBaseCopies(clone.folder, clone.overlay.files) : null;
   if (baseCopies?.problem) return { problem: baseCopies.problem };
@@ -706,9 +712,9 @@ function issueFileFor(state, run, key, folder) {
 // checked against `text`, the run's kept text of the issue (project-decision.mjs recordedDecision): {} with the switch
 // off or no entry; { key, file, sha256 } when it stands, written to `<attempt>/decision.md`; { key, void } when it does
 // not, or the store cannot be trusted; or { problem }.
-function decisionFor({ policy, project, env, key, text, folder }) {
+function decisionFor({ policy, project, env, root, key, text, folder }) {
   if (policy.recordedDecisions !== true) return {};
-  const stored = readRecordedDecision({ projectKey: projectId(project), key, env });
+  const stored = readRecordedDecision({ projectKey: projectId(project), key, env, root });
   if (stored.problem) return { key, void: stored.problem };
   if (stored.entry === null) return {};
   const { entry } = stored;
@@ -798,7 +804,7 @@ function launchStart(context, place) {
           // The runs folder as the run names it, whose trust the host's record must hold for the clone to be trusted.
           runs: runsFolder(state),
           // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
-          guarded: guardedStore({ env, home }),
+          guarded: guardedStore({ env, home, root: runStoreRoot(state, context.config) }),
           mcp: policy.mcpServers, localBinding, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
         });
         // A failed proof halts the run whatever came of stopping its session (startLines).

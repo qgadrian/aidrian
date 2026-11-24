@@ -107,7 +107,7 @@ import { recordFor, scoped } from './rules/github/merge-review.mjs';
 // Whether no Human attends `session`: its unattended mark, a pending or unreadable one included, or its driver mark.
 const heldSession = (session, options = {}) => (readUnattendedMark(session, options) ?? driverHold(session, options)) !== null;
 
-export const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
+export const VIEW_FIELDS = 'number,headRefOid,baseRefName,baseRefOid,author,url,files,changedFiles,reviewDecision,latestReviews';
 const SHA = /^[0-9a-f]{40}$/iu;
 // The `github` keys `aidrian pr checks` judges by (pr-checks.mjs computeVerdict).
 const CHECK_LISTS = ['requiredChecks', 'conditionalChecks', 'ignoreCancelledChecks'];
@@ -133,7 +133,7 @@ export function parseArgs(argv) {
 // The pull request as `gh pr view` describes it: { number, head, base, author, repo, host, files, changedFiles,
 // reviewDecision, latestReviews }, or a string naming what is missing.
 export function readView(view) {
-  const { number, headRefOid: head, baseRefName: base, url, files, changedFiles, reviewDecision, latestReviews } = view ?? {};
+  const { number, headRefOid: head, baseRefName: base, baseRefOid, url, files, changedFiles, reviewDecision, latestReviews } = view ?? {};
   const author = view?.author?.login;
   const host = hostOf(url);
   const repo = typeof url === 'string' ? repoName(url) : null;
@@ -144,7 +144,9 @@ export function readView(view) {
   if (!Array.isArray(files) || files.some((file) => typeof file?.path !== 'string') || !Number.isInteger(changedFiles) || typeof reviewDecision !== 'string' || !Array.isArray(latestReviews)) {
     return 'gh returned no file list, changed-file count, review decision, or latest reviews for the pull request';
   }
-  return { number, head, base, author, repo, host, files: files.map(({ path, changeType }) => ({ path, changeType })), changedFiles, reviewDecision, latestReviews };
+  // The base's tip by its SHA, or null: only the policy-file lift reads it, and refuses without one (headPolicyProblem).
+  const baseOid = typeof baseRefOid === 'string' && SHA.test(baseRefOid) ? baseRefOid : null;
+  return { number, head, base, baseOid, author, repo, host, files: files.map(({ path, changeType }) => ({ path, changeType })), changedFiles, reviewDecision, latestReviews };
 }
 
 // The default branch of `repo` on GitHub, through the forge facade. Throws when gh cannot say.
@@ -341,8 +343,11 @@ export const includesPolicyFiles = (policies) => includesGuardedPaths(policies)
 // the merges after this one is the config the merge leaves, so, in this order, each failing closed:
 //   - the pull request changes no pointer file (`.aidrian.json` at the project root, in any case), which would move the
 //     config the gate reads;
-//   - its head holds the base's tip now: the forge's compare of the base branch `pr.base` with the head, through the same
-//     facade, is behind by none, so the head's config is the one the merge leaves (a read that fails refuses);
+//   - its head holds the base's tip now: the forge's compare of the base's tip by its SHA, `pr.baseOid` (the pull
+//     request's baseRefOid), with the head, through the same facade, is behind by none, so the head's config is the one
+//     the merge leaves; no SHA, or a read that fails, refuses. Two SHAs, so no branch name is spelled into the route.
+//     Accepted residual: the base can move between this compare and the merge; the branch protection setting
+//     "Require branches to be up to date before merging" closes it on the forge (docs/config.md, Auto-merge);
 //   - the head's own config, read from the forge at exactly the head commit `pr.head` as branchConfig reads a branch's,
 //     its pointer by strictConfigPathIn, so a malformed one never falls back to the default folder, sits at the path the
 //     default branch's does (`policies.configFile`), parses with no error, and keeps the default branch's
@@ -350,7 +355,7 @@ export const includesPolicyFiles = (policies) => includesGuardedPaths(policies)
 // The checks row compares only the checkout the gate runs in, which may be the unchanged base, so without this a pull
 // request could drop the checks or move the review record that judge the merge after its own. Read only while the lift
 // counts (includesPolicyFiles) and a changed file in `files` ({ path }, from the top of the repository) is a policy file
-// (isPolicyPath, with `policies.policyFiles`). `pr` is { repo, host, head, base }, and `policies` branchPolicies' answer.
+// (isPolicyPath, with `policies.policyFiles`). `pr` is { repo, host, head, base, baseOid }, and `policies` branchPolicies' answer.
 // Both the gate (gateVerdict) and the merge guard (merge-review.mjs policyProblem) ask it.
 export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
   if (!includesPolicyFiles(policies) || !files.some(({ path }) => isPolicyPath(path, policies.policyFiles))) return null;
@@ -360,7 +365,8 @@ export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
   if (moved) return `it changes ${JSON.stringify(moved.path)}, the pointer file that locates the config, which includePolicyFiles never lets a pull request change by itself`;
   const behind = (() => {
     try {
-      const compared = forge.compare(pr.repo, pr.base, pr.head, { host: pr.host });
+      if (typeof pr.baseOid !== 'string' || !SHA.test(pr.baseOid)) return null;
+      const compared = forge.compare(pr.repo, pr.baseOid, pr.head, { host: pr.host });
       return Number.isInteger(compared?.behind_by) ? compared.behind_by : null;
     } catch {
       return null;

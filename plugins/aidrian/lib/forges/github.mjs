@@ -468,6 +468,7 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
       headRefOid
       headRefName
       baseRefName
+      baseRefOid
       title
       body
       isDraft
@@ -1297,6 +1298,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
         messages: history.nodes.map((each) => ({ oid: each?.commit?.oid ?? null, message: typeof each?.commit?.message === 'string' ? each.commit.message : null })),
         messagesComplete: history.complete,
         base: typeof pr.baseRefName === 'string' ? pr.baseRefName : null,
+        // The base branch's tip as GitHub gives it, for a compare by commit (pr-auto-merge.mjs headPolicyProblem).
+        baseOid: typeof pr.baseRefOid === 'string' ? pr.baseRefOid : null,
         author: typeof pr.author?.login === 'string' ? pr.author.login : null,
         draft: pr.isDraft === true,
         reviewDecision: typeof pr.reviewDecision === 'string' ? pr.reviewDecision : '',

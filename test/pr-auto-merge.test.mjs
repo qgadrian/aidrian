@@ -52,7 +52,9 @@ function repo(t, { working = { ...TEAM, allow: true }, lists = CHECKS, local = '
 
 const finished = (state, head = HEAD, status = 'received') => (state.outcome = { status, head, at: '2026-11-03T14:00:00.000Z' });
 
-const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
+const VIEW_FIELDS = 'number,headRefOid,baseRefName,baseRefOid,author,url,files,changedFiles,reviewDecision,latestReviews';
+// The base branch's tip, as the view's baseRefOid gives it.
+const BASE_TIP = 'b'.repeat(40);
 
 // The forge facade seam, with each call kept as [method, ...arguments, host]. `files` maps `<repo>@<branch>:<path>` to a
 // file's text on GitHub; any other contents read is a 404, and a read whose ref is not `refs/heads/<branch>` is no call
@@ -94,7 +96,7 @@ function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configTex
     const value = comments[key] ?? [];
     return typeof value === 'function' ? value() : value;
   };
-  const described = { number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view };
+  const described = { number: 7, headRefOid: HEAD, baseRefName: 'main', baseRefOid: BASE_TIP, author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view };
   const present = Array.isArray(described.files) ? described.files.filter((file) => typeof file?.path === 'string' && file.changeType !== 'DELETED').map((file) => file.path) : [];
   const paged = Array.isArray(restFiles) ? restFiles.filter((entry) => typeof entry?.filename === 'string' && entry.status !== 'removed').map((entry) => entry.filename) : [];
   const folders = headTree({ ...Object.fromEntries([...present, ...paged].map((file) => [file, '100644'])), ...modes });
@@ -985,7 +987,13 @@ test('includeGuardedPaths true on the default branch and the base lets a guarded
   assert.deepEqual([behind.code, behind.out[0]], [1, 'auto-merge off for #7: head abcdef1 is behind its base feat/stack by 2 commits, so the merged config is not the one checked; merge the base first']);
   const unread = run(t, r, ['7'], { ...headed(configText(policies)), compare: () => { throw new Error('gh: Not Found (HTTP 404)'); } });
   assert.match(unread.out[0], /head abcdef1 cannot be compared with its base on the forge, so the merged config is not the one checked/u);
-  assert.ok(run(t, r, ['7'], headed(configText(policies))).calls.some((call) => call[0] === 'compare' && call[2] === 'feat/stack' && call[3] === HEAD), 'base...head');
+  assert.ok(run(t, r, ['7'], headed(configText(policies))).calls.some((call) => call[0] === 'compare' && call[2] === BASE_TIP && call[3] === HEAD), 'the base tip by its SHA...head');
+  // A base whose name a route would read otherwise, as `release#next`, is compared by its SHA alone; no SHA refuses.
+  const hashed = { files: { ...branches(policies), 'acme/notes@release#next:.aidrian/config.json': configText(policies), [`acme/notes@${HEAD}:.aidrian/config.json`]: configText(policies) }, view: { baseRefName: 'release#next', files: [{ path: '.aidrian/config.json', changeType: 'MODIFIED' }], changedFiles: 1 } };
+  const named = run(t, r, ['7'], hashed);
+  assert.equal(named.code, 0, named.out[0]);
+  assert.deepEqual(named.calls.filter((call) => call[0] === 'compare').map((call) => call.slice(2, 4)), [[BASE_TIP, HEAD]], 'never the branch name');
+  assert.match(run(t, r, ['7'], { ...hashed, view: { ...hashed.view, baseRefOid: 'release#next' } }).out[0], /head abcdef1 cannot be compared with its base on the forge/u, 'a base tip that is no SHA');
   // A pointer file the pull request changes, a config the head moves, and a malformed pointer at the head refuse.
   const pointed = run(t, r, ['7'], onStack({ ...branches(policies, policies), [`acme/notes@${HEAD}:.aidrian/config.json`]: configText(policies) }, '.aidrian/config.json', '.aidrian.json'));
   assert.match(pointed.out[0], /it changes "\.aidrian\.json", the pointer file that locates the config/u);

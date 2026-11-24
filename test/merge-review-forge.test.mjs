@@ -48,7 +48,7 @@ const card = (sha = HEAD, { unresolved = false, any = unresolved, ...extra } = {
 // The forge's review trail of #7 at HEAD, by default one the policy and the bot both pass: the gh user's own pull
 // request, its checks passed, the bot's card on the head, and both branches' config `text` from the forge.
 const trailOf = (text, over = {}) => ({
-  viewer: 'adrian', head: HEAD, base: 'main', author: 'adrian', draft: false, reviewDecision: '', latestReviews: [],
+  viewer: 'adrian', head: HEAD, base: 'main', baseOid: 'b'.repeat(40), author: 'adrian', draft: false, reviewDecision: '', latestReviews: [],
   checks: { head: HEAD, rows: [{ name: 'e2e', state: 'SUCCESS' }], complete: true },
   files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], filesTotal: 1, filesComplete: true,
   reviews: [], reviewsComplete: true, comments: [card()], commentsComplete: true,
@@ -102,7 +102,7 @@ function cliForge(config, { trail = trailOf(config), files = ['src/app.js'], hea
   const calls = [];
   const changed = files.map((each) => ({ path: each, changeType: 'MODIFIED' }));
   const forge = {
-    change: () => ({ number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: 'https://github.com/acme/notes/pull/7', files: changed, changedFiles: changed.length, reviewDecision: '', latestReviews: [] }),
+    change: () => ({ number: 7, headRefOid: HEAD, baseRefName: 'main', baseRefOid: 'b'.repeat(40), author: { login: 'adrian' }, url: 'https://github.com/acme/notes/pull/7', files: changed, changedFiles: changed.length, reviewDecision: '', latestReviews: [] }),
     repository: () => ({ default_branch: 'main' }),
     contents: (repoName, file, ref) => {
       calls.push(['contents', file]);
@@ -715,7 +715,8 @@ test('includePolicyFiles with includeGuardedPaths on both branches lets a .aidri
   assert.match(stale.result.why, /head abcdef1 is behind its base main by 1 commit, so the merged config is not the one checked; merge the base first/u);
   const calls = [];
   assert.match(merge(r, MERGE, { trail, compare: { behind_by: 1 }, calls }) ?? '', /is behind its base main by 1 commit/u, 'the guard');
-  assert.ok(calls.some((call) => call[0] === 'compare' && call[1] === 'main' && call[2] === HEAD), 'the guard compares main...head');
+  assert.ok(calls.some((call) => call[0] === 'compare' && call[1] === 'b'.repeat(40) && call[2] === HEAD), 'the guard compares the base tip by its SHA with the head');
+  assert.match(merge(r, MERGE, { trail: { ...trail, baseOid: null } }) ?? '', /cannot be compared with its base on the forge/u, 'the guard, a trail with no base tip');
   // The key alone, with includeGuardedPaths off, lifts nothing.
   const alone = JSON.stringify(configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includePolicyFiles: true } }, projectRun: { allow: true } }));
   assert.match(merge({ ...r, text: alone }, MERGE, { trail: trailOf(alone, changing(file)) }) ?? '', /which instructs AI sessions/u, 'the guard, the key alone');

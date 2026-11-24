@@ -960,6 +960,7 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
           headRefOid: sha,
           headRefName: 'feat/x',
           baseRefName: 'release',
+          baseRefOid: 'c'.repeat(40),
           title: 'feat: x',
           body: 'Fixes ENG-1',
           history: { totalCount: 101, nodes: [{ commit: { oid: sha, message: 'feat: x' } }] },
@@ -986,7 +987,7 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
   const paths = { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' };
   assert.deepEqual(forge.reviewTrail('acme/notes', 7, { paths }), {
     viewer: 'adrian', head: sha, headRef: 'feat/x', title: 'feat: x', body: 'Fixes ENG-1', messages: [{ oid: sha, message: 'feat: x' }], messagesComplete: false,
-    base: 'release', author: 'adrian', draft: false, reviewDecision: 'APPROVED',
+    base: 'release', baseOid: 'c'.repeat(40), author: 'adrian', draft: false, reviewDecision: 'APPROVED',
     latestReviews: [{ author: { login: 'lead' }, state: 'APPROVED' }],
     checks: { head: sha, rows: [{ name: 'e2e', state: 'IN_PROGRESS', run: null, workflowId: null, event: null }, { name: 'deploy', state: 'SUCCESS' }], complete: true },
     files: [{ path: 'src/a.js', changeType: 'MODIFIED' }], filesTotal: 2, filesComplete: false,

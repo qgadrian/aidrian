@@ -114,7 +114,10 @@ export function parseFindings(raw, settled = []) {
     if (!FINDING_STATES.includes(finding.state)) throw new Error(`${at}.state must be ${FINDING_STATES.join(', ')}`);
     if (finding.line !== undefined && !(Number.isInteger(finding.line) && finding.line >= 1)) throw new Error(`${at}.line must be a line number`);
     const axes = { severity: finding.severity, likelihood: finding.likelihood, affects: finding.affects, cost: finding.cost };
-    const decided = decideDisposition(Object.fromEntries(Object.entries(axes).filter(([, value]) => value !== undefined)));
+    // The written project rule the finding cites: `cites`, or the `violated_rule` a reviewer's handoff carries. It turns
+    // a drop_unless_cited into fix_now; an empty or non-string value is no citation.
+    const cites = [finding.cites, finding.violated_rule].map((value) => text(value, 300)).find(Boolean);
+    const decided = decideDisposition({ ...Object.fromEntries(Object.entries(axes).filter(([, value]) => value !== undefined)), ...(cites ? { cites } : {}) });
     if (decided.disposition === 'invalid') throw new Error(`${at}: ${decided.reason} (\`aidrian pr disposition --vocab\` lists the words)`);
     const { entry: ruled, note } = ruling({ file: text(finding.file, 300), severity: finding.severity, already_ruled: finding.already_ruled }, decided.disposition, settled);
     if (note) notes.push(`${at}.already_ruled ${note}: read as it stands`);
@@ -125,6 +128,7 @@ export function parseFindings(raw, settled = []) {
       ...(text(finding.body, 2000) ? { body: text(finding.body, 2000) } : {}),
       ...Object.fromEntries(Object.entries(axes).filter(([, value]) => typeof value === 'string')),
       ...(text(finding.evidence, 300) ? { evidence: text(finding.evidence, 300) } : {}),
+      ...(cites ? { cites } : {}),
       ...(ruled ? { already_ruled: ruled.title } : {}),
       ...(flagged(finding.security) ? { security: true } : {}),
       // The id of a priorFindings entry the reviewer reports again: recordFindings checks it, and never stores it.

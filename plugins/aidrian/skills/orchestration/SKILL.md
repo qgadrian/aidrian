@@ -84,7 +84,7 @@ requests land: the handoff file, decisions on record, pushes, logs, and landing 
 - **Security-sensitive findings**, on auth, tenant isolation, another user's data, public trust boundaries, server-side validation,
   abuse, payment or webhook trust, or privileged access: only `security-engineer` closes or excludes one. Weak evidence goes to `explorer`.
 - "Disputed" closes nothing: escalate to the Human with the owning agent and the missing evidence.
-- Run each finding through `aidrian pr disposition` with the reviewer's severity, likelihood, affects, and cost.
+- Run each finding through `aidrian pr disposition` with the reviewer's four axes and any `--cites`.
   A finding missing an axis is handled as `references/review-rules.md` says for `needs_axis`.
 - `fix_now` goes to its owner, highest likelihood × impact first.
   The owner fixes every copy of the pattern, not only the flagged line.

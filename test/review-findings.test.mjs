@@ -40,6 +40,14 @@ test('parseFindings: the disposition table decides which findings still block', 
   assert.equal(result.findings - result.fixed - result.accepted, result.open);
 });
 
+test('parseFindings: a low finding that cites a written project rule, as cites or a handoff\'s violated_rule, is fix_now and blocks', () => {
+  const low = { title: 'Error text names no next step', file: 'src/a.ts', severity: 'low', likelihood: 'contrived', affects: 'internal', state: 'accepted' };
+  const result = parseFindings(JSON.stringify([low, { ...low, cites: 'docs/rules.md#errors' }, { ...low, violated_rule: 'docs/rules.md#errors' }, { ...low, violated_rule: '' }, { ...low, violated_rule: null }]));
+  assert.deepEqual(result.list.map((each) => each.disposition), ['drop_unless_cited', 'fix_now', 'fix_now', 'drop_unless_cited', 'drop_unless_cited']);
+  assert.deepEqual(result.list.map((each) => each.cites ?? null), [null, 'docs/rules.md#errors', 'docs/rules.md#errors', null, null], 'the record keeps the citation');
+  assert.deepEqual(result.list.map(blocks), [false, true, true, false, false], 'a cited finding cannot be accepted');
+});
+
 test('parseFindings: a malformed file is refused, never read as zero findings', () => {
   assert.throws(() => parseFindings('nope'), /must be a JSON file/u);
   assert.throws(() => parseFindings('{"items":[]}'), /list of findings/u);

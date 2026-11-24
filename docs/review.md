@@ -633,7 +633,8 @@ A finding blocks the pass while it is open and not `acceptable_as_is`, or accept
 accepted (`fix_now`, or no likelihood and affects yet): one the reviewer calls accepted still blocks then. This is
 stricter than the count it replaces, which took the reviewer's word for what it accepted. The counts form,
 `--findings <n> --fixed <n>`, is still accepted, for a pass an older release dispatched, and is read as before.
-A finding may add `"security": true` for a security problem; any value but `false` counts as true
+A finding may add `"cites"`, or carry the `violated_rule` of a reviewer's handoff: the written project rule it breaks,
+which turns a `drop_unless_cited` into `fix_now` ([Small gaps](#small-gaps)). A finding may add `"security": true` for a security problem; any value but `false` counts as true
 ([Reviewers](#reviewers)). A finding that reports a `priorFindings` entry again sets `id` to that entry's id; the engine
 checks it ([Finding ids](#finding-ids)), and a mint mark in the file is never read.
 

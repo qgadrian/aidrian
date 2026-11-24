@@ -99,7 +99,8 @@ Fix every finding a review identified; never leave one silently open. Do not go 
 - Each round's findings get one fix pass. Add no hardening, check, or config that no review found.
 - When the fixes since round 1 pass half of what the pull request first added, or a finding comes back at a spot already
   fixed, stop before the next pass: whether the rest is worth its cost is a `scope` decision. Its options: fix the open
-  findings within the round cap, record them as accepted residuals, or split the pull request.
+  findings within the round cap, record the open findings whose disposition allows acceptance (not `fix_now`) as
+  accepted residuals, or split the pull request.
   Its class is `backlog-rank`: the question is which findings get fixed now and which become residuals or follow-ups.
   No option writes data, reaches outside the repository, or merges unreviewed, so run, as `knowledge/references/decisions.md` says:
 

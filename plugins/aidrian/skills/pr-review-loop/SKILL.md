@@ -97,8 +97,8 @@ Fix the root cause the comment points at, not its wording, and nothing unrelated
 
 The agent that made the fix verifies, commits, and pushes it, then returns the SHAs:
 
-- Run the checks the project's `testing` knowledge names for the touched files.
-  A behaviour change without a new or updated test is not done.
+- Run the checks your `testing` knowledge names for the touched files, and a new or updated test for each
+  behaviour change: without one it is not done.
 - One Conventional Commits commit per finding or tight group. Never bypass a hook; a failing hook is a verdict.
 - Push, then confirm with `git ls-remote --heads origin <branch>` that every SHA a reply will cite is on the remote.
 

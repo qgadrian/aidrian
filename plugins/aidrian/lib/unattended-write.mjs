@@ -877,15 +877,10 @@ function pathDenial(spelled, found, say) {
 // refused, whatever its readers make of it. Its slash-separated parts are compared whole, past empty and `.` parts, so a
 // folder whose name holds a space or a quote counts. A path that starts with `..`, or `./..`, climbs from the call's own
 // folder, which the host names as the system resolves it. An interpreter's code (`code`) has no parts to compare, since
-// a quote or other punctuation may end a path anywhere: any `/..` in it that ends there, at a slash, a quote, a space,
-// or punctuation, counts, `../../x` included, so such code names a path without `..`, or an absolute one; `a/..draft`
-// names no parent.
-const CODE_CLIMB = /\/\.\.(?=$|[/'"`\s;,)\]}])/u;
+// a quote, an escape, or other punctuation may end a path anywhere: any `/..` in it counts, `../../x` and `a/..draft`
+// included, so such code names a path without `..`, or an absolute one.
 function climbIn(text, code = false) {
-  if (code) {
-    const at = CODE_CLIMB.exec(text)?.index;
-    return at === undefined ? null : text.slice(0, at + 3);
-  }
+  if (code) return text.includes('/..') ? text.slice(0, text.indexOf('/..') + 3) : null;
   const parts = text.split('/');
   let before = null;
   for (const [i, part] of parts.entries()) {

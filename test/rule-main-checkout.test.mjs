@@ -1001,44 +1001,26 @@ test('a state folder the project keeps in the git folder still takes writes', (t
   assert.match(check(`echo x > ${repo}/.git/config`, { cwd: repo, env: ENV }) ?? '', /inside the main checkout's git folder/u);
 });
 
-// A target built from a variable: read from the line's own assignments and the hook's environment, and blocked from a
-// shell that may be in the main checkout when it still holds one (the design choice of the rule: fail closed).
+// A target built from a variable: `$HOME`, `$TMPDIR`, `$XDG_CONFIG_HOME`, and `$ZDOTDIR` are read from the hook's
+// environment, and anything else is blocked from a shell that may be in the main checkout (the rule's design choice:
+// fail closed, since whether an assignment runs, and in which shell, the text does not say).
 test('a write through a variable is judged where it leads, and blocked from the main checkout when the rule cannot read it', (t) => {
   const { repo } = fixture(t);
   const at = (command, env = ENV) => check(command, { cwd: repo, env });
-  assert.match(at('cat > "$S/x"') ?? '', /^Blocked: this command writes '\$S\/x', a path built from a variable this rule cannot read/u);
-  assert.match(at('echo x > "$DIR/src/app.js"', { DIR: repo }) ?? '', /^Blocked: this command writes 'src\/app\.js', a tracked file/u, 'from the environment');
-  assert.match(at(`S=${repo}; echo x > "$S/src/app.js"`) ?? '', /a tracked file/u, 'an assignment earlier on the line');
-  assert.match(at(`export S=${repo} && echo x > "\${S}/src/app.js"`) ?? '', /a tracked file/u);
-  assert.match(at('cd "$S" && echo x > "$S/a.txt"') ?? '', /a path built from a variable/u, 'pinned as allowed before: the variable may name the main checkout');
-  assert.match(at('for f in a b; do echo x > "$f"; done') ?? '', /a path built from a variable/u);
-  assert.match(at('t=$(mktemp); echo x > "$t"') ?? '', /a path built from a variable/u, 'a value from a substitution is not read');
-  // A resolved removal of the main checkout, and an assignment a subshell or a substitution made, which ends with it.
-  assert.match(at(`R=${repo}; rm -rf "$R"`) ?? '', /which holds the main checkout/u);
-  assert.equal(at(`S=/tmp/x; (S=${repo}); echo x > "$S/src/app.js"`), null, 'the outer S is the line\'s own');
-  assert.match(at(`S=${repo}; (S=/tmp/x); echo x > "$S/src/app.js"`) ?? '', /a tracked file/u, 'a subshell\'s assignment ends with it');
-  assert.match(at(`S=${repo}; x=$(S=/tmp/x); echo x > "$S/src/app.js"`) ?? '', /a tracked file/u, 'so does a substitution\'s');
-  // A shell the line starts sees what its invocation sets, and no earlier assignment, whose export is not followed.
-  // A shell the line starts reads no variable, whatever its invocation or an export sets: it fails closed.
-  for (const command of [`export S=/tmp/x; bash -c 'echo x > "$S/a"'`, `env -i bash -c 'echo x > "$S/a"'`, `env -u S bash -c 'echo x > "$S/a"'`, `S=/tmp/x env -i bash -c 'echo x > "$S/a"'`, `S=/tmp/x env -u S bash -c 'echo x > "$S/a"'`]) {
-    assert.match(at(command) ?? '', /a path built from a variable/u, command);
-  }
-  // A name `env -i` keeps keeps the value the invocation gave it.
-  assert.equal(at(`S=/tmp/x sudo --preserve-env=S bash -c 'echo x > "$S/a"'`), null, 'kept as given');
-  assert.match(at(`PWD=/tmp/x sudo --preserve-env=PWD bash -c 'echo x > "$PWD/src/app.js"'`) ?? '', /a path built from a variable/u, 'the shell sets PWD itself');
-  assert.match(at(`PWD=/tmp/x bash -c 'echo x > "$PWD/src/app.js"'`) ?? '', /a path built from a variable/u, 'whatever it is given');
-  assert.equal(at('PWD=/tmp/x; echo x > "$PWD/out"'), null, 'an assignment the line runs counts');
-  assert.match(at('echo x > "$PWD/src/app.js"', { PWD: '/tmp/x' }) ?? '', /a path built from a variable/u, 'never the hook\'s environment');
-  assert.match(at(`S=/tmp/x sudo -i bash -c 'echo x > "$S/a"'`) ?? '', /a path built from a variable/u, 'dropped by the reset');
-  // What its invocation sets literally is read there, from the main checkout and from a linked worktree alike.
-  assert.match(at(`S=/tmp/x; S=${repo} bash -c 'echo x > "$S/src/app.js"'`) ?? '', /a tracked file/u);
-  assert.match(at(`cd ${path.join(repo, 'wt/task')} && S=${repo} bash -c 'echo x > "$S/src/app.js"'`) ?? '', /a tracked file/u, 'a child started in a worktree');
-  // A git write's operands are read with the line's assignments too, after git's own folder change.
-  assert.match(at(`F=src/app.js; git -C ${repo} rm "$F"`) ?? '', /^Blocked/u);
-  assert.equal(at(`F=/tmp/x/a; git -C ${repo} rm "$F"`), null, 'the line\'s value, never the environment\'s');
-  // A relative resolved removal after a cd, and after a wrapper's folder change, is read where the command runs.
-  assert.match(at(`cd ${path.join(repo, 'wt/task')} && R=..; env -C ${repo}/src rm -rf "$R"`) ?? '', /which holds the main checkout/u);
-  for (const command of ['S=/tmp/x; echo x > "$S/a"', 'echo x > "$TMPDIR/a"', 'echo x > "/tmp/$name.txt"', `cd ${path.join(repo, 'wt/task')} && echo x > "$f"`]) {
+  const unread = /^Blocked: this command writes '[^']+', a path built from a variable this rule cannot read/u;
+  for (const command of [
+    'cat > "$S/x"', 'echo x > "$DIR/src/app.js"', `S=${repo}; echo x > "$S/src/app.js"`, 'S=/tmp/x; echo x > "$S/a"',
+    // Pinned as allowed before: the variable may name the main checkout.
+    'cd "$S" && echo x > "$S/a.txt"', 'for f in a b; do echo x > "$f"; done', 't=$(mktemp); echo x > "$t"',
+    `bash -c 'echo x > "$S/a"'`, 'echo x > "$PWD/src/app.js"', `R=${repo}; rm -rf "$R"`,
+  ]) assert.match(at(command, { ...ENV, DIR: repo, PWD: '/tmp/x' }) ?? '', unread, command);
+  // The hook's own variables, and a literal folder outside before the first `$`.
+  assert.match(at('echo x > "$HOME/src/app.js"', { HOME: repo }) ?? '', /a tracked file/u, 'judged where it leads');
+  assert.match(at('rm -rf "$HOME"', { HOME: repo }) ?? '', /which holds the main checkout/u, 'a resolved removal of the main checkout');
+  assert.match(at('HOME=/tmp; echo x > "$HOME/a"', { HOME: tmpdir() }) ?? '', unread, 'a variable the command sets is not read from the environment');
+  for (const command of ['echo x > "$TMPDIR/a"', 'echo x > "/tmp/$name.txt"', `cd ${path.join(repo, 'wt/task')} && echo x > "$f"`]) {
     assert.equal(at(command, { ...ENV, TMPDIR: tmpdir() }), null, command);
   }
+  // A resolved removal after a cd, and after a wrapper's folder change, is read where the command runs.
+  assert.match(at(`cd ${path.join(repo, 'wt/task')} && env -C ${repo}/src rm -rf "$HOME"`, { HOME: '..' }) ?? '', /path built from a variable|holds the main checkout/u);
 });

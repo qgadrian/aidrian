@@ -1677,7 +1677,8 @@ test('a Write or an Edit through a link and a `..` that lands outside the places
   // A path that climbs from the call's own folder, which the host names as the system resolves it, is placed as usual.
   assert.equal(ask(write('../wt/a/x.txt')), null);
   assert.equal(ask(bash('cat ../notes/a/../b > a/x.txt')), null, 'a climb in what the command reads, not writes');
-  assert.equal(ask(bash(`python3 -c "open('a/..draft', 'w')"`)), null, 'a name that starts with two dots names no parent');
+  // In an interpreter's code, where an escape may spell a slash, any `/..` counts, a name that starts with two dots too.
+  for (const code of ["open('a/..\\x2fb', 'w')", "open('a/..draft', 'w')"]) assert.match(ask(bash(`python3 -c "${code}"`))?.reason ?? '', /climbs with `\.\.`/u, code);
 });
 
 // A folder that holds a checkout of the repository git lists, wherever it lies, is refused to a removal or move: the

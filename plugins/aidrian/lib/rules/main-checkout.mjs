@@ -19,7 +19,7 @@
 
 import path from 'node:path';
 
-import { joinSpelled } from '../fs.mjs';
+import { expandKnown, joinSpelled } from '../fs.mjs';
 import { withGitFacts } from '../git.mjs';
 import { fileEditOf, isFileEditTool } from '../hosts/index.mjs';
 import { bashTargets, bashWrites } from './main-checkout/bash-writes.mjs';
@@ -41,28 +41,17 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
     ?? expansionDenial(command, cwd, env) ?? gitStateDenial(command, cwd));
 }
 
-// A variable's name in a target: `$NAME` or `${NAME}`.
-const VARIABLE = /\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/gu;
-// The variables the shell sets for itself when it starts, whatever it was given: read only from an assignment the line
-// runs.
-const SHELL_OWN = new Set(['PWD', 'OLDPWD']);
-
 // A write whose target is built from a variable, from a shell that may be in a guarded main checkout: the deny reason,
-// or null. Each `$NAME` or `${NAME}` is read from a bare assignment or `export` earlier on the line, and else from the
-// hook's environment `env`, which the session's shell starts with, so `S=/tmp/x; echo x > "$S/a"` and `"$TMPDIR/a"`
-// are judged where they lead. A target that still holds a `$` or a backtick is blocked, unless the literal path before its first `$` is an absolute
-// folder outside every guarded main checkout, as `/tmp/$x` is: it may name a tracked file there.
+// or null. Only `$HOME`, `$TMPDIR`, `$XDG_CONFIG_HOME`, and `$ZDOTDIR` are read, from the hook's environment, which the
+// session's shell starts with, unless the command sets that variable itself (fs.mjs expandKnown), so
+// `"$TMPDIR/a"` is judged where it leads. A target that still holds a `$` or a backtick, as `"$S/x"`, a loop's variable,
+// or `$(…)`, is blocked, unless the literal path before its first `$` is an absolute folder outside every guarded main
+// checkout, as `/tmp/$x` is: it may name a tracked file. A variable the line assigns is not read, since whether the
+// assignment runs, and in which shell, the command text does not say.
 function expansionDenial(command, cwd, env) {
   for (const write of bashWrites(command, cwd, { followCd: true, shells: true, expansions: true })) {
     if (!write.expansion) continue;
-    // In a shell the line starts, only what its invocation sets is read (bash-writes.mjs `ownOnly`).
-    const { set = new Map(), ownOnly = false } = write.vars ?? {};
-    const value = (name) => {
-      // An assignment the shell runs on the line counts; what it starts with, the shell's own for these, does not.
-      if (set.has(name)) return set.get(name).dynamic ? null : set.get(name).text;
-      return ownOnly || SHELL_OWN.has(name) || typeof env[name] !== 'string' ? null : env[name];
-    };
-    const text = write.text.replace(VARIABLE, (whole, braced, bare) => value(braced ?? bare) ?? whole);
+    const text = expandKnown(write.text, env, command);
     // After a directory change, the shell is where the rule's own walk says (afterChanges), a worktree's trusted `cd`
     // taken as done; none when the line starts in no guarded main checkout.
     const walk = write.cds.length ? afterChanges(write.cds) : null;
@@ -83,7 +72,7 @@ function expansionDenial(command, cwd, env) {
     const literal = text.slice(0, text.search(/[$`]/u));
     const folder = literal.endsWith(path.sep) ? literal : path.dirname(literal);
     if (path.isAbsolute(literal) && !guardedMain(existingFolder(folder))) continue;
-    return reason(`Blocked: this command writes '${write.text}', a path built from a variable this rule cannot read, while the shell may be in the main checkout (${main.roots.main}), where it may name a tracked file. Name the path literally, or set the variable earlier in the same command.`, main.project, main.config);
+    return reason(`Blocked: this command writes '${write.text}', a path built from a variable this rule cannot read, while the shell may be in the main checkout (${main.roots.main}), where it may name a tracked file. Name the path literally.`, main.project, main.config);
   }
   return null;
 }

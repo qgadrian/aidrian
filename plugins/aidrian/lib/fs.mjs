@@ -96,6 +96,18 @@ export function resolvedPath(file) {
   }
 }
 
+// The variables a guard reads in a target, from the hook's environment, which the session's shell starts with.
+const EXPANDED = Object.freeze(['HOME', 'XDG_CONFIG_HOME', 'ZDOTDIR', 'TMPDIR']);
+
+// `text` with each of EXPANDED expanded from `env`, an absolute value alone, unless the command `command` sets that
+// variable itself; a leading `~` is the home folder `env` names. The rest is kept as spelled.
+export function expandKnown(text, env, command) {
+  const sets = (name) => new RegExp(String.raw`(?<![\w$])${name}\+?=|\b(?:export|unset|declare|typeset|local|readonly|read)\b[^;&|\n]*\b${name}\b`, 'u').test(command);
+  const value = (name) => (EXPANDED.includes(name) && typeof env[name] === 'string' && path.isAbsolute(env[name]) && !sets(name) ? env[name] : null);
+  const out = text.replace(/\$\{(\w+)\}|\$(\w+)/gu, (whole, braced, bare) => value(braced ?? bare) ?? whole);
+  return /^~(?=\/|$)/u.test(out) && value('HOME') ? `${value('HOME')}${out.slice(1)}` : out;
+}
+
 // The path `text` from the folder `dir` as a command or a tool spells it, with no `..` folded away: `text` itself when it
 // is absolute. Every guard that judges it folds it as text too (path.resolve, canonical) and, where it reads links,
 // asks systemPath where the system lands.

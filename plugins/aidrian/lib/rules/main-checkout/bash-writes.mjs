@@ -35,8 +35,7 @@ const FOLDERS_LIMIT = 16;
 // target with a glob, which bashTargets drops, as { text, files: [], dirs, unsure, glob: true }, `dirs` the folders it
 // is relative to; `restores` counts git
 // checkout -- and git restore as writes; `expansions` keeps a target with a `$` or a backtick, which every other read
-// drops, as { text, files: [], dirs, unsure, expansion: true, vars }, `vars` { set, ownOnly }: the shell's assignments
-// before it, and whether it reads only those, as a shell the line starts does.
+// drops, as { text, files: [], dirs, unsure, expansion: true }.
 // Every record also has `program`, what writes it: the program's name, `>` or `>>` for a redirection, or `git <sub>`;
 // `cds`, the directory changes before it on its line, inline shells' callers included, each
 // { from, to, program, shown }: `from` the folders before the change, `to` its folder token (null for none, `-`, `+N`,
@@ -47,11 +46,6 @@ const FOLDERS_LIMIT = 16;
 // reads the command line of each `sh -c` or `bash -c`, which, like a substitution, starts where its command runs.
 export function bashWrites(command, cwd, { followCd = false, shells = false, restores = false, globs = false, expansions = false } = {}) {
   const targets = [];
-  // The assignments a target that may expand is read with, copied only for such a target when `expansions` asks.
-  const varsOf = (token, place) => {
-    if (!expansions || !token.dynamic || !/[$`]/u.test(token.text)) return null;
-    return { set: new Map(place.vars), ownOnly: place.ownOnly === true };
-  };
   const visit = (line, place, depth) => {
     // The shell's place before each subshell the line opens, which its end gives back (directory-change.mjs subshells).
     const outer = [];
@@ -61,77 +55,40 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
       checkDeadline();
       for (; closing > 0 && outer.length; closing -= 1) place = outer.pop();
       const { opens, closes } = subshells(segment);
-      for (let n = 0; n < opens; n += 1) {
-        outer.push(place);
-        place = { ...place, vars: new Map(place.vars) };
-      }
+      for (let n = 0; n < opens; n += 1) outer.push(place);
       closing = closes;
-      // A substitution and an inline shell run in shells of their own: what they assign stays there.
-      const child = () => ({ ...place, vars: new Map(place.vars) });
-      if (depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) visit(body, child(), depth + 1);
+      if (depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) visit(body, place, depth + 1);
       segment.forEach((token, i) => {
         const next = segment[i + 1];
-        if ((token.operator === '>' || token.operator === '>>') && next && !next.fdDup && !next.operator) targets.push({ token: next, place, program: token.operator, vars: varsOf(next, place) });
+        if ((token.operator === '>' || token.operator === '>>') && next && !next.fdDup && !next.operator) targets.push({ token: next, place, program: token.operator });
       });
       const invocation = readInvocation(segment);
       const { program, args, chdir } = invocation;
       // A wrapper's directory change moves the command's own paths, never the shell's redirections above.
       const own = chdir === null ? place : within(place, chdir);
-      if (WRITERS.has(program)) for (const token of written(program, args, WRITERS.get(program), invocation)) targets.push({ token, place: own, program, vars: varsOf(token, place) });
-      else if (program === 'git') targets.push(...gitWritten(segment, own, restores).map((each) => ({ ...each, vars: varsOf(each.token, place) })));
-      if (!program) for (const { name, value } of invocation.environment ?? []) place.vars.set(name, typeof value?.text === 'string' ? { text: value.text, dynamic: value.dynamic === true } : { text: '', dynamic: true });
-      if (program === 'export') {
-        for (const { text, dynamic } of args) {
-          const set = /^([A-Za-z_]\w*)=(.*)$/su.exec(text);
-          if (set) place.vars.set(set[1], { text: set[2], dynamic: dynamic === true });
-        }
-      }
+      if (WRITERS.has(program)) for (const token of written(program, args, WRITERS.get(program), invocation)) targets.push({ token, place: own, program });
+      else if (program === 'git') targets.push(...gitWritten(segment, own, restores));
       const inner = shells && depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
-      // A shell it starts gets an environment this reader does not follow (exports, the hook's own): only what its
-      // invocation sets literally is read there (`ownOnly`), an `env -i` or `env -u` leaves a name unset, and a target
-      // built from any other variable fails closed.
-      if (inner !== null) visit(inner, { ...own, vars: childVars(invocation.environment), ownOnly: true }, depth + 1);
+      if (inner !== null) visit(inner, own, depth + 1);
       const directory = directoryChange(invocation);
       if (directory) {
         const change = cdChange(directory, place.dirs);
-        place = { ...(followCd ? moved(place, change.to, true) : UNKNOWN), cds: [...place.cds, change], via: [], vars: place.vars, ownOnly: place.ownOnly };
+        place = { ...(followCd ? moved(place, change.to, true) : UNKNOWN), cds: [...place.cds, change], via: [] };
       }
     }
   };
-  // `vars`: the variables a bare assignment or `export` set in the shell, by name, each { text, dynamic } as the lexer
-  // reads its value, for `expansions`.
-  visit(command, { dirs: [cwd], unsure: false, cds: [], via: [], vars: new Map() }, 0);
+  visit(command, { dirs: [cwd], unsure: false, cds: [], via: [] }, 0);
   return targets
     .filter(({ token }) => (!token.dynamic || (globs && !/[$`]/u.test(token.text)) || (expansions && /[$`]/u.test(token.text))) && token.text !== '')
     .filter(({ token, place }) => !token.joined || token.joined.certain || intoFolder(token.joined.into, place.dirs))
-    .map(({ token, place: { dirs, unsure, cds, via }, program, vars: set }) => {
+    .map(({ token, place: { dirs, unsure, cds, via }, program }) => {
       const { dynamic } = token;
       const text = expandHome(token);
-      if (dynamic && /[$`]/u.test(text)) return { text, files: [], dirs, unsure, expansion: true, vars: set, cds, via, program };
+      if (dynamic && /[$`]/u.test(text)) return { text, files: [], dirs, unsure, expansion: true, cds, via, program };
       if (dynamic) return { text, files: [], dirs, unsure, glob: true, cds, via, program };
       if (path.isAbsolute(text)) return { text, files: [text], unsure: false, cds, via, program };
       return { text, files: dirs.map((dir) => joinSpelled(dir, text)), unsure, cds, via, program };
     });
-}
-
-// The variables a shell the line starts gets from its invocation, its `environment` changes applied in order: a literal
-// value is read; an unset, and a value that may expand, are read as unknown; and `env -i` drops every earlier one but
-// the names it keeps, which keep a value the invocation gave them, and are unknown otherwise.
-// PWD and OLDPWD are the shell's own at its start, whatever it is given (SHELL_OWN).
-const SHELL_OWN = new Set(['PWD', 'OLDPWD']);
-function childVars(environment = []) {
-  const vars = new Map();
-  const unknown = { text: '', dynamic: true };
-  for (const change of environment) {
-    if (change.clear) {
-      const kept = (change.keep ?? []).map((name) => [name, vars.get(name) ?? unknown]);
-      vars.clear();
-      for (const [name, value] of kept) vars.set(name, value);
-    } else if (typeof change.value?.text === 'string') vars.set(change.name, { text: change.value.text, dynamic: change.value.dynamic === true });
-    else vars.set(change.name, unknown);
-  }
-  for (const name of SHELL_OWN) if (vars.has(name)) vars.set(name, unknown);
-  return vars;
 }
 
 // Whether the destination token `into` of a joined name (writers.mjs joinedNames) is a folder on the disk, from the
@@ -152,7 +109,7 @@ const UNKNOWN = Object.freeze({ dirs: [], unsure: true });
 // Where a command runs after a wrapper's `env -C` or git's `-C` to the token `to`: the shell's own directory changes
 // stay, and `via` records the move after the last of them.
 function within(place, to) {
-  return { ...moved(place, to), cds: place.cds, via: [...place.via, to ?? { text: '', dynamic: true }], vars: place.vars, ownOnly: place.ownOnly };
+  return { ...moved(place, to), cds: place.cds, via: [...place.via, to ?? { text: '', dynamic: true }] };
 }
 
 // Where the shell can be after a directory change to the token `to` from `place`: { dirs, unsure }. A missing or

@@ -300,8 +300,8 @@ function decide({ found, store, session, routed, host, chainOf, env, now, run, w
   // A second run on the bytes that already started a session says so again and starts nothing.
   const earlier = route === 'background' ? readStarted(store, session, { now }) : null;
   if (earlier?.sha256 === hash) return startedLines(host, earlier);
+  const limit = routeLimit(routed, store);
   if (atChainCap(chain, routed, store)) {
-    const limit = routeLimit(routed, store);
     const named = route === 'background' ? `the base branch's session.handoff.maxChain, at most ${BACKGROUND_HOPS} on the background route,` : 'session.handoff.maxChain';
     return none(`this brief has Chain ${chain}, and ${named} allows ${limit} continuations in a row; a person resumes it, which starts the count again`);
   }

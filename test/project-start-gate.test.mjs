@@ -73,9 +73,12 @@ test('a low or medium finding in a host file is a stated residual by its id alon
   assert.ok(opened.includes(POLICY_FILES_LINE), opened);
   assert.doesNotMatch(projectPrompt(given), /includePolicyFiles/u, 'off: no line');
   assert.match(POLICY_FILES_LINE, /^The team's `github\.autoMerge\.includePolicyFiles` is on: this session may write host instruction files/u);
-  assert.match(POLICY_FILES_LINE, /never as a stated residual\. The host settings, skills, agents, commands, hooks, and MCP servers, and the forge's workflow files, stay refused/u);
+  // One rule, scoped to what this attempt may write: a base copy, a protected host file, or a workflow keeps the host-file route.
+  assert.match(POLICY_FILES_LINE, /and the other policy files, when the issue needs it, but no base copy this message lists\. One rule decides a review finding in a host file: one in a file this attempt may write is fixed as any other finding, and one in a file it may not write, a base copy this message lists, a host settings, skills, agents, commands, hooks, or MCP server file, or a forge workflow file, keeps the autopilot skill's host-file route, a stated residual or a park\.$/u);
+  const both = projectPrompt({ ...given, includePolicyFiles: true, baseCopies: '/a/base-copies.txt' });
+  assert.ok(both.includes(POLICY_FILES_LINE) && both.includes(HOST_FILE_RESIDUAL), 'base copies keep their route beside the line');
   assert.match(bullet, /^\*\*A finding in a host file\.\*\* Unless the first message says the team's `github\.autoMerge\.includePolicyFiles` is on, this session never writes a host file/u);
-  assert.match(bullet, /When the first message says `github\.autoMerge\.includePolicyFiles` is on, this session may write .* and fixes a finding in one as any other, never as a stated residual/u);
+  assert.match(bullet, /When the first message says `github\.autoMerge\.includePolicyFiles` is on, this session may write .* but no base copy the first message lists\. Then one rule decides a finding in a host file: one in a file this attempt may write is fixed as any other finding, and one in a file it may not write, a base copy, a host settings, skills, agents, commands, hooks, or MCP server file, or a workflow file, takes the residual or park route above\./u);
 });
 
 test('the driver starts the issue next lists in a fresh clone cut from the base tip, under the host sandbox, held to a floor and a tagged mark, and the ledger records it', (t) => {

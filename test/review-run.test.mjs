@@ -358,6 +358,15 @@ test('a pull request cannot weaken the review it is under: a removed flow still 
   assert.equal((await r.step({ exec: clean })).status, 'received');
 });
 
+test('a base that commits github.autoMerge.includePolicyFiles with includeGuardedPaths asks no harness-config sign-off for a config change, and the removed flow still runs', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const lifted = { autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } };
+  const r = repo(t, { baseConfig: { version: 1, github: lifted, review: { flows } }, headConfig: { version: 1, github: lifted }, change: (write) => write('src/booking/book.js', 'x\n') });
+  const first = await r.step({ exec: clean });
+  assert.deepEqual(first.plan.flows, ['booking'], 'no harness-config flow');
+  assert.deepEqual(readLocalState(r.project, 7, 'o/r').signoffable.flows, [], 'nothing for the Human to sign off');
+});
+
 test('reviewInForce: rules add up, flows and ignore lists come from the base, and every change is named', () => {
   const base = { rules: [{ depth: 'split', when: { lines: { over: 1 } } }], ignore: ['a'], nonBehaviour: [], flows: { f: { files: ['x'] } }, planCommand: 'base', reviewers: {} };
   const head = { rules: [], ignore: ['a', 'src/**'], nonBehaviour: [], flows: {}, planCommand: null, reviewers: {} };

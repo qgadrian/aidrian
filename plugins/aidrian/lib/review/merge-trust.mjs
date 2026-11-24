@@ -76,6 +76,12 @@ const runsCommand = (review) => (typeof review.planCommand === 'string' && revie
   || Object.values(isObject(review.reviewers) ? review.reviewers : {}).some((reviewer) => Array.isArray(reviewer?.command) && reviewer.command.length > 0)
   || (isObject(review.visual) && ['login', 'preview'].some((key) => typeof review.visual[key] === 'string' && review.visual[key] !== ''));
 
+// Whether every one of `configs`, as the forge holds each branch's, commits github.autoMerge.includePolicyFiles with
+// includeGuardedPaths: the team's explicit acceptance, on the default branch and the base alike, that a policy file
+// merges with no sign-off of the Human (pr-auto-merge.mjs includesPolicyFiles reads the same two keys). None lifts nothing.
+export const policyFilesLifted = (configs) => configs.length > 0
+  && configs.every((config) => config?.github?.autoMerge?.includeGuardedPaths === true && config.github.autoMerge.includePolicyFiles === true);
+
 // The flows whose Human sign-off a merge of these changed files needs, by what the forge alone gives: { flows, reasons },
 // a Set of flow ids and why each is in it. `files` are { path, changeType } from the top of the repository, `complete`
 // whether they are every changed file, `configs` the default branch's and the base's configs as the forge holds them,
@@ -87,7 +93,8 @@ const runsCommand = (review) => (typeof review.planCommand === 'string' && revie
 //   of the project's (runsCommand), its `added` patterns, or its `content` tracing may select;
 // - any flow whose `tests` match a deleted file: the review asks the Human to accept the deletion;
 // - the built-in harness-config flow when a changed file is a policy file of aidrian (POLICY_PATHS), one the configs
-//   were read from, or a doc a flow cites, or a command of the project's may name the files that decide the review;
+//   were read from, unless every config lifts that (policyFilesLifted), or a doc a flow cites, or a command of the
+//   project's may name the files that decide the review;
 // - every one of those flows when the list is not whole, or a change type hides a path (a rename).
 export function flowsFloor({ files, complete = true, configs, prefix = '', policyFiles = [] }) {
   const flows = new Set();
@@ -100,6 +107,7 @@ export function flowsFloor({ files, complete = true, configs, prefix = '', polic
   const changed = files.map((file) => ({ ...file, rel: fromRoot(file.path, prefix) }));
   const matches = (globs, rel) => rel !== null && (globs ?? []).map(pathPattern).some((pattern) => pattern.test(rel));
   const read = new Set(policyFiles.map((each) => each.toLowerCase()));
+  const lifted = policyFilesLifted(configs);
   for (const config of configs) {
     const review = config?.review ?? {};
     const commanded = runsCommand(review);
@@ -117,7 +125,7 @@ export function flowsFloor({ files, complete = true, configs, prefix = '', polic
     const cited = [...citedDocs(flowsOf).keys()];
     if (!known) add(HARNESS_FLOW, 'the forge did not give every changed file with its path');
     if (commanded) add(HARNESS_FLOW, 'a command of the project\'s review may name the files that decide the review');
-    if (changed.some((file) => POLICY_PATHS.test(file.path) || read.has(file.path.toLowerCase()))) add(HARNESS_FLOW, 'it changes the review config');
+    if (!lifted && changed.some((file) => POLICY_PATHS.test(file.path) || read.has(file.path.toLowerCase()))) add(HARNESS_FLOW, 'it changes the review config');
     if (changed.some((file) => file.rel !== null && cited.includes(file.rel))) add(HARNESS_FLOW, 'it changes a doc a flow\'s invariants cite');
   }
   return { flows, reasons };

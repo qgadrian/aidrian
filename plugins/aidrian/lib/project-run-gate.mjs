@@ -255,14 +255,15 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
 }
 
 // The line of projectPrompt for an attempt the team's github.autoMerge.includePolicyFiles reaches (teamPolicy, read at
-// the start's pin): the session may write the host instruction and policy files, and fixes a finding in one as any
-// other, in place of HOST_FILE_RESIDUAL's route. What the sandbox and the write guard refuse stays refused, as do the
-// workflow files, and an attempt on base copies keeps baseCopiesLine's rule for them. The autopilot skill's project-run
-// rules key on its first words.
+// the start's pin): the session may write the host instruction and policy files, but for a base copy baseCopiesLine
+// names. One rule decides a finding in a host file: one in a file the attempt may write is fixed as any other, and one in
+// a file it may not write, a base copy, a host file the sandbox and the write guard refuse, or a workflow file, keeps
+// HOST_FILE_RESIDUAL's route, a stated residual or a park. The autopilot skill's project-run rules key on its first words.
 export const POLICY_FILES_LINE = 'The team\'s `github.autoMerge.includePolicyFiles` is on: this session may write host instruction files, such as a `CLAUDE.md` or an `AGENTS.md`, '
-  + 'the `.aidrian/` folder, its knowledge index and `config.json` among them, and the other policy files, when the issue needs it, '
-  + 'and fixes a review finding in one as any other finding, never as a stated residual. '
-  + 'The host settings, skills, agents, commands, hooks, and MCP servers, and the forge\'s workflow files, stay refused, as the write guard says.';
+  + 'the `.aidrian/` folder, its knowledge index and `config.json` among them, and the other policy files, when the issue needs it, but no base copy this message lists. '
+  + 'One rule decides a review finding in a host file: one in a file this attempt may write is fixed as any other finding, '
+  + 'and one in a file it may not write, a base copy this message lists, a host settings, skills, agents, commands, hooks, or MCP server file, or a forge workflow file, '
+  + 'keeps the autopilot skill\'s host-file route, a stated residual or a park.';
 
 // The line of projectPrompt for an attempt whose clone holds the base branch's copies of the host files `file` names.
 const baseCopiesLine = (file) => `This branch changes host config or instruction files that no independent review has passed yet, listed as data in ${file}. `

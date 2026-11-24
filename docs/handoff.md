@@ -668,9 +668,10 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   The branch's own changes stay in its commits for the pull request's review.
   An issue's session never writes a host file, on any attempt and whatever `github.autoMerge.includeGuardedPaths` says,
   while [`github.autoMerge.includePolicyFiles`](config.md#auto-merge) is off.
-  With it on, the first message says so, and the session may write the host instruction files and the policy files and
-  fixes a finding in one as any other; the host settings, skills, agents, commands, hooks, MCP servers, and workflow files stay refused.
-  With the key off, a low or medium review finding whose fix lies in one, that the review step does not mark as a
+  With it on, the first message says so, and the session may write the host instruction files and the policy files,
+  but no base copy; the host settings, skills, agents, commands, hooks, MCP servers, and workflow files stay refused.
+  One rule decides a review finding in a host file: one in a file the attempt may write is fixed as any other finding.
+  A low or medium review finding whose fix lies in one the attempt may not write, that the review step does not mark as a
   [security finding](review.md#reviewers), and that has the engine's own [id](review.md#finding-ids), is a stated
   residual, never a decision: one item of the residual section
   `github.pullRequest.residuals` names, by default Accepted residuals, in its [format](config.md#pull-request-contract).

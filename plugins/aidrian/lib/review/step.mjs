@@ -11,6 +11,7 @@ import { packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, DEPTHS, detectFlows, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
+import { policyFilesLifted } from './merge-trust.mjs';
 import { BUILT_IN, confinedReason, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
@@ -260,7 +261,11 @@ export async function prepareStep(s) {
   const changes = scope?.changes ?? changedFiles(root, base, head);
   const changedPaths = new Set(changes.map((change) => change.file));
   const harnessChanged = [];
-  if (changed.length && changedPaths.has(project.paths.config)) harnessChanged.push(project.paths.config);
+  // A change to the review config is the Human's to sign off, unless the base branch commits
+  // github.autoMerge.includePolicyFiles with includeGuardedPaths (policyFilesLifted): the team's explicit acceptance
+  // that a session changes the policy unattended. The merge gate asks both branches on the forge again (merge-trust.mjs
+  // flowsFloor), so a base this checkout holds stale lifts nothing there.
+  if (changed.length && changedPaths.has(project.paths.config) && !policyFilesLifted([committed])) harnessChanged.push(project.paths.config);
   for (const command of [review.planCommand, baseReview?.visual?.login, baseReview?.visual?.preview]) {
     for (const file of commandFiles(root, command, baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
   }

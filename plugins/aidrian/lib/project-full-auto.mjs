@@ -15,7 +15,8 @@ export function fullAutoLines({ base, policy, projectKey, env = process.env, cou
   const config = base.config ?? {};
   const human = [
     policy.includePolicyFiles === true
-      ? 'a pull request that changes a policy file, the config.json the gate reads, the pointer file, or the local switch file, merges by itself only once the Human signed off its harness-config flow on its head with `aidrian pr signoff`, since github.autoMerge.includePolicyFiles is on'
+      ? 'a pull request that changes a policy file, the config.json the gate reads, the pointer file, or the local switch file, merges by itself with no sign-off of the Human, since github.autoMerge.includePolicyFiles is on, '
+        + 'except one that changes github.requiredChecks, conditionalChecks, ignoreCancelledChecks, or state.dir, which the gate\'s checks row keeps off with the key on or off: the Human merges that one'
       : 'a pull request that changes a policy file, the config.json the gate reads, the pointer file, or the local switch file, never merges by itself; the Human merges it',
     signoffLine(config),
     decisionLine({ policy, projectKey, env, count, safeDefaults: config.decisions?.unattended?.safeDefaults }),

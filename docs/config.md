@@ -164,7 +164,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge.deleteBranch` | `true` deletes the remote head branch with the merge. Read from the default branch. |
 | `github.autoMerge.deleteWorktree` | `true` removes the head branch's worktree after the merge, but never a session's own: [Cleanup](#cleanup-after-the-merge). Read from the default branch. |
 | `github.autoMerge.includeGuardedPaths` | `true` lets a pull request that changes a guarded path (the fixed list under `paths` in [Auto-merge](#auto-merge), and the knowledge docs the start hook loads) pass the `paths` check, but never a policy file: the files the gate reads its policy from, including a folder `.aidrian.json` names, and `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay refused. `false`, the default, keeps a guarded path off. It counts only when the repository's default branch and the pull request's base both set it, read from GitHub as `allow` is, never from the checkout. Every other check stays. Read the risk under [Auto-merge](#auto-merge) before setting it. |
-| `github.autoMerge.includePolicyFiles` | `true` lets the policy files through the `paths` check too: `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, the `.aidrian` entry itself, and the files the gate reads its policy from, including a folder `.aidrian.json` names. It also lets a [project run](#project-run)'s issue sessions write those files and the instruction files `includeGuardedPaths` covers, read when the run starts as every key of the team policy is. `false`, the default, keeps them refused. It counts only while `includeGuardedPaths` counts, and only when the repository's default branch and the pull request's base both set it, read from GitHub as `allow` is, never from the checkout, so the pull request that sets it is refused as before. Every other check stays. `aidrian check` warns while it is on. Read the risk under [Auto-merge](#auto-merge) before setting it. An older plugin rejects the key as unknown, so set [`requires.aidrian`](#plugin-version) to the release that ships it. |
+| `github.autoMerge.includePolicyFiles` | `true` lets the policy files through the `paths` check too: `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, the `.aidrian` entry itself, and the files the gate reads its policy from, including a folder `.aidrian.json` names. It also lets a [project run](#project-run)'s issue sessions write those files and the instruction files `includeGuardedPaths` covers, read when the run starts as every key of the team policy is. `false`, the default, keeps them refused. It counts only while `includeGuardedPaths` counts, and only when the repository's default branch and the pull request's base both set it, read from GitHub as `allow` is, never from the checkout, so the pull request that sets it is refused as before. With it counting, a policy file's change also needs no sign-off of the Human, even for a merge no Human attends (`trust`). Every other check stays, and the `checks` row still refuses a change to `github.requiredChecks`, `conditionalChecks`, `ignoreCancelledChecks`, or `state.dir`. `aidrian check` warns while it is on. Read the risk under [Auto-merge](#auto-merge) before setting it. An older plugin rejects the key as unknown, so set [`requires.aidrian`](#plugin-version) to the release that ships it. |
 | `github.autoMerge.unreviewedPaths` | The files a pull request whose review was `none_needed` may change and still auto-merge, as globs or `re:` entries in the syntax of the review's lists, from the project root. Each entry matches the whole path: `README.md` is the top-level file only, not `prompts/README.md`, and a `re:` entry is anchored at both ends. `[]`, the default, keeps every such pull request for the Human. It counts only when the repository's default branch and the pull request's base both list the file, read from GitHub as `allow` is, never from the checkout, so a branch cannot list its own files. A bad entry, such as a `re:` that does not compile or an empty `re:`, is a config error, and the gate refuses on it. The gate cannot know how a file is read, so list only files that no AI session reads as instructions, through an import, a link, a command, or a plugin, and that no build, docs site, or test reads as code or as an expected result. Common cases that do not qualify: Markdown a docs site parses as MDX, such as Docusaurus, or as pages with script, such as VitePress; a README whose code blocks run as doctests, such as cargo's or pytest's `--doctest-glob`; and an end-to-end test's expected files. A top-level `README.md` that nothing builds or runs is the usual case. The rest of the `review` row under [When it is on](#when-it-is-on) still applies to a listed file. An older plugin rejects the key as unknown, so set [`requires.aidrian`](#plugin-version) to the release that ships it. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
 | `review.unattendedSignoff.allow` | `true` lets a machine opt in to [unattended rulings](review.md#unattended-rulings): a judge's `aidrian pr settle` closes an unverified or disputed invariant in place of the Human. `false`, the default, keeps it off. Read from the base branch. The machine's switch is `"unattendedSignoff": "on"` in `.aidrian.local.json`; unset follows [`solo`](#solo). |
@@ -365,8 +365,15 @@ With both on, a session can edit the policy that reviews and merges its own pull
 lower its review flows, drop its visual targets, or change `requiredChecks`.
 The gate and the review read the policy of the default branch and the base as GitHub holds them, never the branch's,
 so the pull request that changes the policy is still judged under the old one, and the next pull request runs under the new one.
-A change to a policy file still selects the built-in harness-config flow, which only the Human signs off,
-so a merge no Human attends, such as a project run's, waits for `aidrian pr signoff` on its head.
+With the key counting, a change to a policy file also needs no sign-off of the Human, even for a merge no Human attends,
+such as a project run's: the review step selects no harness-config flow for a change to the config,
+and the trust check of `aidrian pr auto-merge` and the merge guard asks none for it.
+The harness-config flow still needs the Human for a doc a flow's invariants cite or a command of the review.
+The review, the review bot, the required checks, the team, and the author checks all stay.
+Only a key both branches already hold lifts the sign-off, so the pull request that turns it on is refused and needs the Human.
+A project run still cannot change `github.requiredChecks`, `conditionalChecks`, `ignoreCancelledChecks`, or `state.dir` by itself:
+the `checks` row compares the checkout's lists and state folder with the default branch's, with the key on or off,
+so a pull request that changes one waits for the Human to merge it.
 `aidrian check` warns while the key is on in the checkout's config.
 
 ### When it is on
@@ -2040,10 +2047,11 @@ file changed, or it sets `github.autoMerge.includePolicyFiles` too; otherwise it
 git leaves them out of its commits, and a push that
 changes one is refused.
 With `github.autoMerge.includePolicyFiles` on as the start reads the team policy, the session may write the host
-instruction files and the policy files, and fixes a finding in one as any other; with it off, it writes none of them,
+instruction files and the policy files, but no base copy; with it off, it writes none of them,
 whatever `github.autoMerge.includeGuardedPaths` says.
 Either way, it never writes the host settings, skills, agents, commands, hooks, or MCP servers, nor the forge's workflow files.
-With the key off, a low or medium review finding whose fix lies in a host file, no security finding, is a stated residual named by its
+One rule decides a review finding in a host file: one in a file the attempt may write is fixed as any other finding.
+A low or medium review finding whose fix lies in a host file the attempt may not write, no security finding, is a stated residual named by its
 finding id alone, in the project's [residual format](#pull-request-contract), never a decision; once it is the one stop
 left, the result is `pr_open`. A security finding, a finding with no engine id, and an item the pull request body rule
 refuses for any reason park as before ([Host files no review saw](handoff.md#a-project-run)).
@@ -2495,8 +2503,9 @@ With the switch on, `aidrian project preflight` prints a `note full-auto:` line,
 thing that still waits on a person: a policy file's pull request, the default branch's sign-off flows with
 `signoff: "human"`, a floor-class decision with no recorded answer, with the count of grants pinned on this machine,
 a halt, and a run whose driver chain ended.
-A policy file's pull request never merges by itself, or, with `github.autoMerge.includePolicyFiles` on, only once the
-Human signed off its harness-config flow on its head.
+A policy file's pull request never merges by itself, unless `github.autoMerge.includePolicyFiles` counts: then it merges
+with no sign-off of the Human, but for a change to `github.requiredChecks`, `conditionalChecks`,
+`ignoreCancelledChecks`, or `state.dir`, which the `checks` row keeps for the Human.
 One more `note human:` line names each setting that parks more than it must: `decisions.mode` or `decisions.maxMode`
 below `"decide-reversible"`, `decisions.unattended.safeDefaults` other than `"all"`, and
 `github.autoMerge.includeGuardedPaths` off.

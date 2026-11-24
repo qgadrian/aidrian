@@ -513,6 +513,12 @@ test('the floor of flows a merge needs the Human for comes from the forge`s file
   assert.deepEqual(floor(['docs/rules.md']), ['harness-config'], 'a doc an invariant cites');
   assert.deepEqual(floor(['.aidrian/config.json']), ['harness-config'], 'the review config');
   assert.deepEqual(floor(['conf/aidrian/config.json'], { policyFiles: ['.aidrian.json', 'conf/aidrian/config.json'] }), ['harness-config'], 'a config a pointer relocates');
+  // github.autoMerge.includePolicyFiles with includeGuardedPaths on every config lifts the review config's sign-off alone.
+  const lifted = { ...base, github: { autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } } };
+  assert.deepEqual(floor(['.aidrian/config.json', 'conf/aidrian/config.json'], { configs: [lifted, lifted], policyFiles: ['conf/aidrian/config.json'] }), [], 'lifted on both branches');
+  assert.deepEqual(floor(['.aidrian/config.json'], { configs: [lifted, base] }), ['harness-config'], 'on one branch only');
+  assert.deepEqual(floor(['.aidrian/config.json'], { configs: [{ ...base, github: { autoMerge: { includePolicyFiles: true } } }] }), ['harness-config'], 'without includeGuardedPaths');
+  assert.deepEqual(floor(['docs/rules.md', 'src/pay/charge.js'], { configs: [lifted] }), ['harness-config', 'payments'], 'a cited doc and a flow still ask the Human');
   assert.deepEqual(floor(['src/app.js'], { changeType: 'RENAMED' }), ['cited', 'harness-config', 'payments', 'search'], 'a rename may hide a deleted path');
   assert.deepEqual(floor(['src/app.js'], { complete: false }), ['cited', 'harness-config', 'payments', 'search'], 'a list cut short');
   const commanded = (review) => floor(['src/app.js'], { configs: [{ review: { ...base.review, ...review } }] });
@@ -673,19 +679,23 @@ test('a pull request that changes .aidrian/config.json, where projectRun widens 
   assert.equal(existsSync(signoffFolder()), false, 'nothing reached the store');
 });
 
-test('includePolicyFiles with includeGuardedPaths on both branches lets a .aidrian/config.json change pass paths, and an unattended merge still needs the harness-config sign-off', (t) => {
+test('includePolicyFiles with includeGuardedPaths on both branches lets a .aidrian/config.json change merge unattended, with no sign-off of the Human', (t) => {
   const config = configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includeGuardedPaths: true, includePolicyFiles: true } }, projectRun: { allow: true } });
   const r = repo(t, config);
   r.record(forged());
   const file = '.aidrian/config.json';
   const trail = trailOf(r.text, changing(file));
   assert.deepEqual([autoMerge(t, r, { files: [file], unattended: false, trail }).code], [0], 'attended: every check passes');
-  const unattended = autoMerge(t, r, { files: [file], trail });
-  assert.deepEqual([unattended.code, unattended.result.reason, unattended.result.trust, unattended.result.flow], [1, 'trust', 'signoff', 'harness-config'], 'past paths, the trust check stays');
-  assert.match(merge(r, MERGE, { trail }) ?? '', /flow harness-config needs the Human's sign-off on head abcdef1 \(it changes the review config\)/u, 'the guard');
-  recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'harness-config', head: HEAD, by: 'Adrian' });
-  assert.equal(autoMerge(t, r, { files: [file], trail }).code, 0, 'the Human signed off: it merges');
-  assert.equal(merge(r, MERGE, { trail }), null);
+  assert.deepEqual([autoMerge(t, r, { files: [file], trail }).code], [0], 'unattended: no sign-off is asked');
+  assert.equal(merge(r, MERGE, { trail }), null, 'the guard');
+  assert.equal(existsSync(signoffFolder()), false, 'nothing in the store');
+  // The bot stays: with no pass of the head on the forge, an unattended merge is off.
+  const unpassed = autoMerge(t, r, { files: [file], trail: trailOf(r.text, { ...changing(file), comments: [] }) });
+  assert.deepEqual([unpassed.code, unpassed.result.reason, unpassed.result.trust], [1, 'trust', 'bot']);
+  // On the base alone, the default branch without it: paths refuses, and the guard too.
+  const half = JSON.stringify(configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includeGuardedPaths: true } }, projectRun: { allow: true } }));
+  const split = trailOf(r.text, { ...changing(file), branches: { default: { name: 'main', pointer: null, config: half, knowledge: null }, base: { name: 'main', pointer: null, config: r.text } } });
+  assert.match(merge(r, MERGE, { trail: split }) ?? '', /a policy file of aidrian|a file the gate reads its policy from/u, 'the default branch does not hold it');
   // The key alone, with includeGuardedPaths off, lifts nothing.
   const alone = JSON.stringify(configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includePolicyFiles: true } }, projectRun: { allow: true } }));
   assert.match(merge({ ...r, text: alone }, MERGE, { trail: trailOf(alone, changing(file)) }) ?? '', /which instructs AI sessions/u, 'the guard, the key alone');

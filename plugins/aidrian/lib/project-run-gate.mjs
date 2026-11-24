@@ -263,10 +263,11 @@ const baseCopiesLine = (file) => `This branch changes host config or instruction
 // in the review record. It publishes nothing: a finding id (docs/review.md, Finding ids) and HOST_FILE_REASON name no
 // file, title, or reason, so no publication rule applies. The item takes the project's residual format, the section and
 // fields of github.pullRequest.residuals that the pull request body rule checks (lib/rules/github/pr-body.mjs), each
-// field filled with HOST_FILE_REASON. A security finding never takes the route.
+// field filled with HOST_FILE_REASON. A security finding, a finding with no engine id, and an item the body rule refuses
+// for any reason, such as a closed heading list or an issue key that matches the id, park instead: one fail-closed rule.
 export const HOST_FILE_REASON = 'the run may not write a host file this finding needs';
 export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, '
-  + 'is a stated residual, never a decision: one item of the residual section the project\'s pull request rules name, '
+  + 'and that has the review engine\'s own `R<round>-<n>` id, is a stated residual, never a decision: one item of the residual section the project\'s pull request rules name, '
   + 'config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon, '
   + `then \`${HOST_FILE_REASON}\`, and states each field \`github.pullRequest.residuals.fields\` lists as \`<field>: ${HOST_FILE_REASON}\`, `
   + 'never naming its file, title, or reason. '
@@ -274,7 +275,8 @@ export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies
   + `Only when such residuals are the one stop left, record the result pr_open with \`<id>: ${HOST_FILE_REASON}\` as its stop and no decisions, and run no merge: `
   + 'the Human reads the finding in the review record and merges the pull request; whenever the pull request\'s copy of the record lacks the finding\'s details, '
   + 'the Human reads them in the review record on the machine that ran the review. '
-  + 'A security finding in a host file parks as before.';
+  + 'When the pull request body rule refuses that item or its section for any reason, never work around it: the issue parks as before. '
+  + 'A security finding in a host file, and one with no such id, parks as before.';
 
 // The line of projectPrompt for an attempt on an existing branch: stop-action's catch-up, whose line names the one way
 // it merges a base its pull request conflicts with (project-stops.mjs catchUpStop), and parks one into another branch.

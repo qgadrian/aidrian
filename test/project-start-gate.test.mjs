@@ -43,8 +43,8 @@ test('the caps in code', () => {
 // A finding the session cannot fix because its fix lies in a host file goes to the Human's merge as a stated residual,
 // in the prompt of an attempt on base copies and in the skill's rules for every attempt alike, never as a decision.
 test('a low or medium finding in a host file is a stated residual by its id alone, and pr_open once it is the last stop', () => {
-  // One condition beside severity: no security mark. The line publishes nothing, so no post or head condition applies.
-  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, is a stated residual, never a decision: /u);
+  // Beside severity: no security mark, and the engine's own id. The line publishes nothing, so no post or head condition applies.
+  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, and that has the review engine's own `R<round>-<n>` id, is a stated residual, never a decision: /u);
   // The project's residual format: its section, the id as the item's lead, and every field it requires, each filled with the fixed text.
   assert.equal(HOST_FILE_REASON, 'the run may not write a host file this finding needs');
   assert.ok(HOST_FILE_RESIDUAL.includes('one item of the residual section the project\'s pull request rules name, config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon, '
@@ -53,8 +53,9 @@ test('a low or medium finding in a host file is a stated residual by its id alon
   assert.doesNotMatch(HOST_FILE_RESIDUAL, /<file>|<title>|path|post|comment|head/u, 'no file, title, or path wording, and no post condition');
   // Where the Human reads a finding the pull request's copy lacks.
   assert.ok(HOST_FILE_RESIDUAL.includes('whenever the pull request\'s copy of the record lacks the finding\'s details, the Human reads them in the review record on the machine that ran the review.'));
-  // A security finding parks, whatever else holds.
-  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file parks as before\.$/u);
+  // One fail-closed rule: whatever the body rule refuses, the issue parks, as do a security finding and one with no id.
+  assert.ok(HOST_FILE_RESIDUAL.includes('When the pull request body rule refuses that item or its section for any reason, never work around it: the issue parks as before.'));
+  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file, and one with no such id, parks as before\.$/u);
   // A mixed round: every other finding takes its own route first, and a decision it raises decides the result.
   assert.match(HOST_FILE_RESIDUAL, /Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result\. Only when such residuals are the one stop left, record the result pr_open/u);
   const given = { run: 'launch', key: 'ENG-1', attempt: 2, branch: 'feat/eng-1', clone: '/c' };

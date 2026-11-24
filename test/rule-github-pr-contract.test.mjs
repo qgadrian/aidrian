@@ -87,6 +87,9 @@ test('a host-file residual by finding id passes the residual format, with requir
   const body = shaped('Accepted residuals', []);
   assert.equal(plain.run(create(body)), null, 'the default section, with no fields required');
   assert.deepEqual(residualItems(body).map((each) => each.text), [`- R2-5: ${HOST_FILE_REASON}`]);
+  // An issue key pattern that matches the finding id refuses the item, and HOST_FILE_RESIDUAL then parks the issue.
+  const colliding = project(t, { version: 1, github: { requiredSections: ['TL;DR'], pullRequest: { issueKey: 'R\\d+-\\d+', residuals: { section: 'Accepted residuals', fields: ['risk'] } } } });
+  assert.match(colliding.run(create(shaped('Accepted residuals', ['risk']))), /is not a valid residual: it names an issue/u);
 });
 
 test('every deferral names a reason from the list, not a never-valid one, and an issue', (t) => {

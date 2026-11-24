@@ -2030,7 +2030,8 @@ file changed; otherwise its clone holds the base branch's copies, git leaves the
 changes one is refused.
 A low or medium review finding whose fix lies in a host file, no security finding, is a stated residual named by its
 finding id alone, in the project's [residual format](#pull-request-contract), never a decision; once it is the one stop
-left, the result is `pr_open`; a security finding parks as before ([Host files no review saw](handoff.md#a-project-run)).
+left, the result is `pr_open`. A security finding, a finding with no engine id, and an item the pull request body rule
+refuses for any reason park as before ([Host files no review saw](handoff.md#a-project-run)).
 Whenever the pull request's copy of the review record lacks the finding's details, the Human reads them in the review
 record on the machine that ran the review.
 The start pins the base tip, reads the team policy once with its local half at that commit, and decides everything

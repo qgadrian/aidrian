@@ -1199,16 +1199,15 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   names the file and writes to a word built from a variable or a bracket glob. A read, such as `cat`, or a plain copy
   from it, runs. Its known limits: a link already on disk under another name, and a program that deletes what it
   finds, such as `find -delete`.
-  This rule lets an interpreter's code run that names the file only in prose, as a Python docs edit or pull request
-  body does: each place it names it is in a comment (`#`, `//`, or `/* */`), or in a quoted text with the name glued on
-  both sides to Markdown's backticks, an underscore, or a bracket, such as `` `.aidrian.local.json` ``, in a text that
-  interpolates nothing and that, read as a shell command, writes no file of that name. A bare word of a text, as in
-  `'see .aidrian.local.json'`, names the file, since code can split, replace, or slice it out as the path. Any other
-  place names the file and is refused as above: `open('.aidrian.local.json', 'w')`, a variable set to the name, a path
-  that ends in it, an f-string or template that builds it, or `os.system('cp x .aidrian.local.json')`.
-  With agent gates set, the gates guard above still reads the same call as one that may change the file, and refuses it.
-  So is a path quoted inside a longer text, as a test fixture written from Python holds; write such a file with the
-  Write or Edit tool, or a shell heredoc, which the guard reads as a write to that file alone.
+  This rule lets an interpreter's code run that names the file only in its comments (`#`, `//`, or `/* */`), as a word
+  of its own or in Markdown's backticks, emphasis, or brackets, such as `# See **.aidrian.local.json**`.
+  A name anywhere else in the code, in a quoted text among them, names the file and is refused as above, however the
+  text spells it: code can derive the path from any text, as `'see .aidrian.local.json'.split()[1]` or a wrapped name
+  with its wrapper stripped does. So a docs or test file edit written from Python or Node whose new text names the file
+  is refused, and the refusal says to make it with the Edit or Write tool, which this rule judges by the file it writes,
+  or with a shell heredoc, which it reads as a write to that file alone. A read-only search, such as a `grep` of a
+  transcript for the key and the file, writes nothing and runs.
+  With agent gates set, the gates guard above still reads a comment-only call as one that may change the file, and refuses it.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's. So does

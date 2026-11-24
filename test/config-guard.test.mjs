@@ -447,30 +447,42 @@ test('a subagent may not set the auto-merge switch, with or without gates; other
   }
 });
 
-test('interpreter code that names the local file only in a comment or wrapped in a text sets no switch; one that writes it by any route is refused', (t) => {
+test('interpreter code that names the local file only in its comments sets no switch; a quoted text or any write names it, and the refusal points to Edit and Write', (t) => {
   const { dir } = project(t, { version: 1 });
   const found = findProject(dir);
-  const judge = (command) => machineSwitchWriteDenial(subagent(dir, 'Bash', { command }), found, { names: { human: 'the owner' } })?.match ?? null;
+  const denial = (tool, toolInput) => machineSwitchWriteDenial(subagent(dir, tool, toolInput), found, { names: { human: 'the owner' } });
+  const judge = (command) => denial('Bash', { command })?.match ?? null;
   const L = '.aidrian.local.json';
   const py = (code) => `python3 - <<'PY'\n${code}\nPY`;
   const js = (code) => `node - <<'JS'\n${code}\nJS`;
   for (const command of [
-    // A docs edit whose new text names the file, in Markdown's backticks, and a key, as the issue's subagent ran.
-    py(`import pathlib\np = pathlib.Path('docs/config.md')\nt = p.read_text()\nt = t.replace('x', 'Set \`github.autoMerge\` in \`${L}\` to "on".')\np.write_text(t)`),
-    py(`import pathlib\np = pathlib.Path('docs/hooks.md')\np.write_text(p.read_text() + "\\n- A subagent may not set \`github.autoMerge\` in \`${L}\`.\\n")`),
-    py(`# a note on ${L} and github.autoMerge\nopen('docs/x.md', 'a').write("""Notes on (${L}), and its keys.\n""")`),
-    // No key named: the rule that any write to the file erases a switch reads the same text.
-    py(`open('docs/x.md', 'a').write('the \`${L}\` file')`),
-    js(`// docs: ${L}\nrequire('fs').appendFileSync('docs/x.md', 'Set github.autoMerge in \`${L}\`.')`),
+    py(`# a note on ${L} and github.autoMerge\nopen('docs/x.md', 'a').write('its keys')`),
+    py(`# See **${L}**.\nopen('docs/x.md', 'a').write('github.autoMerge')`),
+    js(`// docs: \`${L}\`\nrequire('fs').appendFileSync('docs/x.md', 'github.autoMerge')`),
     // A block comment loses both its marks, so a name glued to the closing one is still a word of its own.
     js(`/* writes docs, not ${L}*/\nrequire('fs').appendFileSync('docs/x.md', 'github.autoMerge')`),
+    // A read-only search of a transcript whose pattern names the key and the file, as the issue reports.
+    `grep -n 'github.autoMerge' ~/.claude/projects/x/s.jsonl | grep ${L}`,
+    `rg -n 'github\\.autoMerge.*${L}' ~/.claude/projects/x/`,
   ]) assert.equal(judge(command), null, command);
+  // The Write and Edit tools are judged by the file they write, so a docs or test file whose text names both runs.
+  for (const [tool, toolInput] of [
+    ['Edit', { file_path: path.join(dir, 'docs/config.md'), old_string: 'x', new_string: `Set \`github.autoMerge\` in \`${L}\` to "on".` }],
+    ['Write', { file_path: path.join(dir, 'test/x.test.mjs'), content: `writeFileSync(path.join(dir, '${L}'), JSON.stringify({ github: { autoMerge: 'on' } }));\n` }],
+  ]) assert.equal(denial(tool, toolInput), null, JSON.stringify(toolInput));
+  // A docs edit written from code, as the issue's subagent ran, stays refused, and the refusal says how to make it.
+  for (const command of [
+    py(`import pathlib\np = pathlib.Path('docs/config.md')\nt = p.read_text()\nt = t.replace('x', 'Set \`github.autoMerge\` in \`${L}\` to "on".')\np.write_text(t)`),
+    py(`open('docs/x.md', 'a').write('the ${L} file')`),
+  ]) assert.match(denial('Bash', { command })?.reason ?? '', /to edit a doc or test file that mentions \.aidrian\.local\.json, use the Edit or Write tool, which the guard judges by the file it writes/u, command);
   for (const [command, match] of [
-    // A bare word of a text is one code can split, replace, or slice out as the path, with no wrapper to strip.
+    // Code can derive the path from any text: a bare word split, replaced, or sliced out, or a wrapped name stripped.
     [py(`open('see ${L} here'.split()[1], 'w').write('autoMerge')`), /sets github\.autoMerge/u],
     [py(`open('the ${L} file'.replace('the ', '').replace(' file', ''), 'w').write('autoMerge')`), /sets github\.autoMerge/u],
     [py(`p = 'x ${L}'[2:]\nopen(p, 'w').write('{}')`), /changes \.aidrian\.local\.json/u],
     [js(`const p = 'see ${L} here'.split(' ')[1]\nrequire('fs').writeFileSync(p, 'autoMerge')`), /sets github\.autoMerge/u],
+    [py(`open('see \`${L}\` here'.split('\`')[1], 'w').write('autoMerge')`), /sets github\.autoMerge/u],
+    [py(`open('(${L})'.strip('()'), 'w').write('{}')`), /changes \.aidrian\.local\.json/u],
     [py(`open('docs/x.md', 'a').write('Notes on **${L}**, and its keys.')  # autoMerge`), /sets github\.autoMerge/u],
     [py(`open('${L}', 'w').write('{"github": {"autoMerge": "on"}}')`), /sets github\.autoMerge/u],
     [py(`import json\np = '${L}'\nd = json.load(open(p))\nd['github'] = {'autoMerge': 'on'}\njson.dump(d, open(p, 'w'))`), /sets github\.autoMerge/u],

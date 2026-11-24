@@ -158,8 +158,11 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const matches = (glob) => globParts(glob.text, [], 'i').pattern.test(local);
   const globbed = () => globs.some((glob) => !glob.opaque && (erases ? matches(glob) && here(glob) : matches(glob) || linked(glob)));
   // The paths and names first: a call they settle reads no folder on disk.
-  // Code an interpreter runs that names the file only in prose, as a docs edit or a pull request body does, aims at none.
-  const aimed = targets.length > 0 || names.some((name, i) => name.toLowerCase().includes(local) && !(langs[i] && mentionsOnly(name, langs[i], local, cwd))) || globbed();
+  // Code an interpreter runs that names the file only in its comments aims at none; one that names it anywhere else, a
+  // quoted text among them, may write it, so its refusal names the tool that edits a doc mentioning the file.
+  const inCode = names.some((name, i) => langs[i] && name.toLowerCase().includes(local) && !mentionsOnly(name, langs[i], local, cwd));
+  const aimed = targets.length > 0 || inCode || names.some((name, i) => !langs[i] && name.toLowerCase().includes(local)) || globbed();
+  const edit = inCode ? `; to edit a doc or test file that mentions ${local}, use the Edit or Write tool, which the guard judges by the file it writes` : '';
   const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, seen, project.checkouts) !== null;
   if (!aimed && !reached && !(erases && !opaque && erasesOtherwise(input, project, plain, globs))) return null;
   const hit = opaque || isBash ? named[0] ?? EVERY_SWITCH : named.find((each) => changesSwitch(input, targets[0], each, local));
@@ -172,9 +175,9 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
     return { match: `may set a switch in ${local}`, reason: projectRuleReason(input, `${why}; to read the file, use Read`, human) };
   }
   if (hit === EVERY_SWITCH) {
-    return { match: `changes ${local}`, reason: projectRuleReason(input, `it writes, moves, links, or removes ${local}, or may, which holds the machine's switches, and ${only(hit.why)}; to read the file, use Read`, human) };
+    return { match: `changes ${local}`, reason: projectRuleReason(input, `it writes, moves, links, or removes ${local}, or may, which holds the machine's switches, and ${only(hit.why)}; to read the file, use Read${edit}`, human) };
   }
-  return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${only(hit.why)}`, human) };
+  return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${only(hit.why)}${edit}`, human) };
 }
 
 // `text` with its quotes, backslashes, and backticks taken out, so a word split by them, as `rm .aid""rian.local.json`
@@ -645,20 +648,14 @@ const PIECES = {
 };
 PIECES.ruby = PIECES.perl;
 
-// Whether `code`, an interpreter's code in `lang`, names the file `name` only in prose, as a docs edit or a pull request
-// body written from Python does, so it is no write to that file. Each place it names it is either in a comment, as a
-// word of its own or wrapped, or in a quoted text, wrapped: glued on both sides to a Markdown backtick, an underscore,
-// or a bracket, as `` `<name>` `` or `(<name>)`, then any punctuation. Code turns no such text into the path unless it
-// strips the wrapper on purpose; a bare word between spaces, as in `'see <name>'.split()[1]`, it may, so that names the
-// file. The text also interpolates nothing, and, read as a shell command, as `os.system` would run it, writes no file of
-// that name (bashWrites). Any other place names the file: `open('<name>', 'w')`, a path that ends in it, or a `cp` or
-// `tee` to it in a text. So does a path quoted inside a longer text, as a test fixture written from Python holds: the
-// guard cannot tell whose code that text is.
+// Whether `code`, an interpreter's code in `lang`, names the file `name` only in its comments, so it is no write to that
+// file: each place it names it is in a comment, as a word of its own or wrapped in Markdown's code, emphasis, or
+// brackets, then any punctuation, in a comment that, read as a shell command, writes no file of that name (bashWrites),
+// in case the scan took code for a comment. A quoted text never counts, however it spells the name: code can derive the
+// path from any text, as `'see <name>'.split()[1]` or a wrapped name with its wrapper stripped does.
 function mentionsOnly(code, lang, name, cwd) {
   const lower = name.toLowerCase();
-  const spelled = lower.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  const wrapped = new RegExp(String.raw`^[\x60_([]+${spelled}[\x60_)\]]+[.,;:!?]*$`, 'iu');
-  const alone = new RegExp(String.raw`^[\x60_([]*${spelled}[\x60_)\].,;:!?]*$`, 'iu');
+  const word = new RegExp(String.raw`^[\x60*_([]*${lower.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}[\x60*_)\].,;:!?]*$`, 'iu');
   const pieces = PIECES[lang];
   if (!pieces) return false;
   let at = 0;
@@ -667,12 +664,9 @@ function mentionsOnly(code, lang, name, cwd) {
     if (code.slice(at, match.index).toLowerCase().includes(lower)) return false;
     at = match.index + match[0].length;
     if (!match[0].toLowerCase().includes(lower)) continue;
-    const [whole, prefix = '', quote] = match;
-    // A line end, tab, or return escape parts words as the white space it stands for does.
-    const text = (quote ? whole.slice(prefix.length + quote.length, whole.endsWith(quote) ? -quote.length : undefined) : whole.replace(/^(?:#|\/\/|\/\*)/u, '').replace(/\*\/$/u, '')).replace(/\\[ntr]/gu, ' ');
-    const interpolates = quote && (lang === 'python' ? /f/iu.test(prefix) && text.includes('{') : quote !== "'" && /[$#]\{|[$@][\w(]/u.test(text));
-    const word = quote ? wrapped : alone;
-    if (interpolates || text.split(/\s+/u).some((each) => each.toLowerCase().includes(lower) && !word.test(each))) return false;
+    if (match[2]) return false;
+    const text = match[0].replace(/^(?:#|\/\/|\/\*)/u, '').replace(/\*\/$/u, '');
+    if (text.split(/\s+/u).some((each) => each.toLowerCase().includes(lower) && !word.test(each))) return false;
     try {
       const writes = bashWrites(text, cwd, { followCd: true, shells: true, restores: true, globs: true });
       if (writes.some((each) => [each.text, ...each.files].some((file) => path.basename(file).toLowerCase() === lower))) return false;

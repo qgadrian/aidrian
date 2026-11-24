@@ -28,22 +28,39 @@ export const RATINGS = /\b(?:blocking|blocker|critical|high|medium|low)\b/iu;
 
 // One character of an emoji, or a space between emoji: a pictograph, a skin tone, a regional indicator of a flag, a tag
 // character of a subdivision flag, a variation selector, or a joiner. A keycap, a digit, `#`, or `*` followed by U+20E3,
-// optionally after U+FE0F, is read in withoutEmoji.
+// optionally after U+FE0F, is read in emojiCuts.
 const EMOJI_PART = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u{E0020}-\u{E007F}\uFE0F\u200D ]$/u;
 const KEYCAP_BASE = /^[0-9#*]$/u;
+// A code point that continues the emoji before it: a joiner, a variation selector, a skin tone, a tag character, or a
+// keycap mark.
+const CONTINUES = /^[\p{Emoji_Modifier}\u{E0020}-\u{E007F}\uFE0F\u200D\u20E3]$/u;
+const REGIONAL = /^\p{Regional_Indicator}$/u;
+// How many of the emoji a text opens with are tried one at a time; past them only the whole run is dropped.
+const EMOJI_TRIES = 8;
 
-// `text` without the run of emoji it opens with, as in "🙋 For the Human", "🇪🇸 For Adrian", or "1️⃣ For you", read one
-// code point at a time, once: text that opens with anything else, such as "7 of 9's to-do", is returned as it is.
-function withoutEmoji(text) {
+// `text` as written, then without each complete emoji of the run it opens with, one more at a time, then without the
+// whole run, trimmed and each once: "🙋 ⭐ Adrian's to-do" gives itself, "⭐ Adrian's to-do", and "Adrian's to-do". An
+// emoji ends where no joiner, selector, skin tone, tag, or keycap mark joins the next code point to it, and a flag is its
+// pair of regional indicators. One walk over the run, code point by code point; text that opens with anything else, such
+// as "7 of 9's to-do", gives only itself.
+function emojiCuts(text) {
   const points = [...text];
+  const cuts = new Set([text.trim()]);
   let at = 0;
+  let regional = 0;
   for (;;) {
-    if (at < points.length && EMOJI_PART.test(points[at])) at += 1;
-    else if (KEYCAP_BASE.test(points[at] ?? '') && points[at + 1] === '\u20E3') at += 2;
-    else if (KEYCAP_BASE.test(points[at] ?? '') && points[at + 1] === '\uFE0F' && points[at + 2] === '\u20E3') at += 3;
+    let step = 0;
+    if (KEYCAP_BASE.test(points[at] ?? '') && points[at + 1] === '\u20E3') step = 2;
+    else if (KEYCAP_BASE.test(points[at] ?? '') && points[at + 1] === '\uFE0F' && points[at + 2] === '\u20E3') step = 3;
+    else if (at < points.length && EMOJI_PART.test(points[at])) step = 1;
     else break;
+    regional = step === 1 && REGIONAL.test(points[at]) ? regional + 1 : 0;
+    at += step;
+    const ends = points[at - 1] !== '\u200D' && !CONTINUES.test(points[at] ?? '') && regional % 2 === 0;
+    if (ends && cuts.size <= EMOJI_TRIES) cuts.add(points.slice(at).join('').trim());
   }
-  return points.slice(at).join('').trim();
+  cuts.add(points.slice(at).join('').trim());
+  return [...cuts];
 }
 
 // A heading, a bold line, or a line that ends in a colon, with its markup and that colon removed; null for any other line.
@@ -58,16 +75,17 @@ function labelOf(line) {
   return heading ? { label: text, inline: '' } : null;
 }
 
-// labelOf's result for `line` when its label is addressed to the Human (`patterns`), else null. The label is tried as
-// written, then without the emoji it opens with (withoutEmoji), as in "**🙋 For Adrian**"; then the same for the line
-// without the emoji its text opens with, past a heading's `#`s, as in "🙋 **Needs Adrian:**". A configured name that
-// opens with an emoji, such as "⭐ Adrian", so matches as written.
+// labelOf's result for `line` when its label is addressed to the Human (`patterns`), else null. The line is read as
+// written, then without each emoji its text opens with, past a heading's `#`s, as in "🙋 **Needs Adrian:**"; and each
+// label it gives the same way, as in "**🙋 For Adrian**" (emojiCuts). The first cut that matches counts, so a configured
+// name that opens with an emoji, such as "⭐ Adrian", matches as written and behind a decorative emoji alike.
 function addressedLabel(line, patterns) {
   const heading = /^#{1,6}\s+/u.exec(line)?.[0] ?? '';
-  for (const text of [line, `${heading}${withoutEmoji(line.slice(heading.length))}`]) {
-    const found = labelOf(text);
+  for (const rest of emojiCuts(line.slice(heading.length))) {
+    const found = labelOf(`${heading}${rest}`);
     if (!found) continue;
-    for (const label of [found.label, withoutEmoji(found.label)]) {
+    // A heading's label is the rest of its line, whose cuts this loop already walks.
+    for (const label of found.label === rest ? [rest] : emojiCuts(found.label)) {
       if (patterns.some((pattern) => pattern.test(label))) return { ...found, label };
     }
   }

@@ -2146,7 +2146,8 @@ do it, and how critical it is. It sends a turn back at most once ([Send-backs pe
   Human is the name from [names](config.md#names), "the Human", "the user", or "you". Text after the label's colon is an item too.
   A run of emoji a label or its line opens with, such as "🙋", a flag, or a keycap, is not part of it.
   So "### 🙋 For the Human", "**🙋 For Adrian**", and "🙋 **Needs Adrian:**" read.
-  The label is tried as written first, so a configured name such as "⭐ Adrian" matches.
+  The label is tried as written, then without one more whole emoji at a time, so a configured name such as "⭐ Adrian" matches, even behind "🙋".
+  Past the first 8 emoji, only the whole run is dropped.
   Nothing else is dropped: a quoted (`>`) line is no label, and a name that opens with a digit, such as "7 of 9", is matched whole.
 - An item is a top-level list entry with its continuation lines. The list ends at a heading, or at a paragraph after a blank line
   that is neither an entry nor indented under one.

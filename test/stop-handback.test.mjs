@@ -294,6 +294,10 @@ test('only the emoji a label opens with are dropped: a quote, a name that opens 
   const starred = "### ⭐ Adrian's to-do\n- Rotate the token.";
   assert.equal(handBackLists(starred, '⭐ Adrian|the Human')[0]?.label, "⭐ Adrian's to-do", 'a configured name that opens with an emoji, as written');
   assert.ok(handBackReason({ message: starred, human: '⭐ Adrian' }), 'and its unrated item is sent back');
+  const decorated = "### 🙋 ⭐ Adrian's to-do\n- Rotate the token.";
+  assert.equal(handBackLists(decorated, '⭐ Adrian|the Human')[0]?.label, "⭐ Adrian's to-do", 'that name behind a decorative emoji');
+  assert.ok(handBackReason({ message: decorated, human: '⭐ Adrian' }), 'and its unrated item is sent back');
+  assert.equal(handBackLists(`### ${'🙋'.repeat(8000)} For Adrian\n- x`, 'Adrian')[0]?.label, 'For Adrian', 'a long run of emoji, dropped whole');
   const stars = `${'*'.repeat(8000)} text`;
   assert.deepEqual(handBackLists(stars, 'Adrian|the Human'), [], 'a long run of markup is no label');
   assert.equal(handBackReason({ message: stars, human: HUMAN }), null);

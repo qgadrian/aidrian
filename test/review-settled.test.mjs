@@ -1470,6 +1470,9 @@ test('the auto-merge gate judges only the waivers the body still accepts: one th
   assert.ok(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: src/a.js keeps it, for a reason']), undefined) }), 'a line holding this file\'s path still lists it');
   assert.equal(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: kept, for a reason']), undefined) }), null, 'a line with no path names neither, as the review pass reads it');
   assert.ok(gate(twinRecord, { accepts: bodyAccepts(bodyWith([RESIDUAL_TEXT]), undefined) }), 'the residual\'s own text still lists it');
+  const lost = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, {}, [{ head: OLDER, findings: null }]);
+  assert.ok(gate(lost, { accepts: bodyAccepts(bodyWith(['Preserve citations: a reworded reason']), undefined) }), 'a round that kept no findings loses no hold: the waiver names its own finding');
+  assert.equal(gate(lost), null, 'and a body that dropped it still lets it go');
   let reads = 0;
   assert.equal(reviewProblem(stillOffered, HEAD, {}, { accepts: () => { reads += 1; return false; } }) !== null, true);
   assert.equal(reads, 0, 'the body is read only for a waiver the head\'s pass ended');

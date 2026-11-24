@@ -213,13 +213,16 @@ export function heldWaiver(state, { head = null, accepts = null } = {}) {
 // Whether the pull request body `body` still accepts the waiver `entry` under `section` (decisions.mjs residualItems),
 // every item read, past MAX_RESIDUALS too: an item whose text, cut as residualTexts cuts it, is the waiver's residual, or
 // one that names its finding, title and file, as the review pass reads a residual: namedBy over `raised`, the record's
-// raised findings as raisedOf gives them. A body that is no string lists nothing.
+// raised findings as raisedOf gives them, with the waiver's own finding added when the record no longer holds it, such
+// as a round that kept no findings, so a lost entry never ends a hold. A body that is no string lists nothing.
 export function bodyAccepts(body, section) {
   const items = (typeof body === 'string' ? residualItems(body, section ?? undefined) ?? [] : []).map((item) => trim(trim(item?.text).replace(LIST_ITEM, ''))).filter(Boolean);
   return (entry, raised = []) => {
     const residual = trim(entry?.residual);
-    const finding = where({ title: waiverTitle(entry), file: entry?.file });
-    return items.some((text) => (residual !== '' && text.slice(0, MAX_RESIDUAL_CHARS) === residual) || namedBy(text, raised).some((each) => where(each) === finding));
+    const own = { title: waiverTitle(entry), file: trim(entry?.file) };
+    const finding = where(own);
+    const candidates = raised.some((each) => where(each) === finding) || !own.title || !own.file ? raised : [...raised, own];
+    return items.some((text) => (residual !== '' && text.slice(0, MAX_RESIDUAL_CHARS) === residual) || namedBy(text, candidates).some((each) => where(each) === finding));
   };
 }
 

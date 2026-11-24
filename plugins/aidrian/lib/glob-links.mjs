@@ -34,6 +34,8 @@ const walks = new WeakMap();
 // name. A relative glob is spelled from each of `dirs`; one with no wildcard part has none. Each spelling is read twice
 // when the two differ: folded as text, and as spelled with its folder where the system lands (fs.mjs systemPath), where
 // a `..` after a link climbs from the link's target, its later parts as written; a guard refuses what either reaches.
+// Accepted residual: a `..` after the first wildcard part is a plain part to the link walk, which cannot tell where it
+// climbs from a link a wildcard matched; the unattended write allowlist refuses such a glob outright.
 export function globStarts({ text, dirs = [] }) {
   const spelled = path.isAbsolute(text) ? [text] : dirs.map((dir) => joinSpelled(dir, text));
   const split = (parts) => {
@@ -45,12 +47,12 @@ export function globStarts({ text, dirs = [] }) {
   };
   return spelled.flatMap((each) => {
     const folded = split(path.resolve(each).split(path.sep));
-    if (!folded) return [];
-    const starts = [{ start: folded.folder, rest: folded.rest }];
+    const starts = folded ? [{ start: folded.folder, rest: folded.rest }] : [];
     const raw = split(each.split(path.sep));
     const system = raw ? systemPath(raw.folder) : null;
     const rest = raw?.rest.filter((part) => part !== '' && part !== '.');
-    if (system && (foldCase(system) !== foldCase(canonical(folded.folder)) || rest.join(path.sep) !== folded.rest.join(path.sep))) starts.push({ start: system, rest });
+    const same = folded && foldCase(system ?? '') === foldCase(canonical(folded.folder)) && rest.join(path.sep) === folded.rest.join(path.sep);
+    if (system && !same) starts.push({ start: system, rest });
     return starts;
   });
 }

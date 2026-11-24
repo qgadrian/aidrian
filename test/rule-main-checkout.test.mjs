@@ -1023,6 +1023,9 @@ test('a write through a variable is judged where it leads, and blocked from the 
   for (const command of [`export S=/tmp/x; bash -c 'echo x > "$S/a"'`, `env -i bash -c 'echo x > "$S/a"'`, `env -u S bash -c 'echo x > "$S/a"'`, `S=/tmp/x env -i bash -c 'echo x > "$S/a"'`, `S=/tmp/x env -u S bash -c 'echo x > "$S/a"'`]) {
     assert.match(at(command) ?? '', /a path built from a variable/u, command);
   }
+  // A name `env -i` keeps keeps the value the invocation gave it.
+  assert.equal(at(`S=/tmp/x sudo --preserve-env=S bash -c 'echo x > "$S/a"'`), null, 'kept as given');
+  assert.match(at(`S=/tmp/x sudo -i bash -c 'echo x > "$S/a"'`) ?? '', /a path built from a variable/u, 'dropped by the reset');
   // What its invocation sets literally is read there, from the main checkout and from a linked worktree alike.
   assert.match(at(`S=/tmp/x; S=${repo} bash -c 'echo x > "$S/src/app.js"'`) ?? '', /a tracked file/u);
   assert.match(at(`cd ${path.join(repo, 'wt/task')} && S=${repo} bash -c 'echo x > "$S/src/app.js"'`) ?? '', /a tracked file/u, 'a child started in a worktree');

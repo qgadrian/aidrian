@@ -778,11 +778,12 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   if (!any) return null;
   const say = sayer(input, human, opaqueShellCommand(input) !== null, mark);
   // Every target text the readers keep as spelled, the file tools' and the shell's alike.
-  const spelledTargets = [...files, ...names, ...globs.map(({ text }) => text), ...modes.map(({ text }) => text),
+  const spelledTargets = [...files, ...names.filter((_, i) => code[i] !== true), ...globs.map(({ text }) => text), ...modes.map(({ text }) => text),
     ...['dynamic', 'links', 'programs', 'manifests', 'removed'].flatMap((key) => (shell?.[key] ?? []).flatMap((each) => [each.text, each.to, each.from, each.file]))].filter((each) => typeof each === 'string');
   // A target joined to the call's own folder climbs from that folder, which the host names as the system resolves it.
   const own = `${cwd.endsWith(path.sep) ? cwd.slice(0, -1) : cwd}${path.sep}`;
-  const climb = spelledTargets.map((each) => climbIn(each.startsWith(own) ? each.slice(own.length) : each)).find(Boolean);
+  const climb = spelledTargets.map((each) => climbIn(each.startsWith(own) ? each.slice(own.length) : each)).find(Boolean)
+    ?? names.filter((_, i) => code[i] === true).map((each) => climbIn(each, true)).find(Boolean);
   if (climb) return say.deny('unattended write through a climbing path', `it ${say.verb} a file and names \`${climb.slice(0, 120)}\`, a path that climbs with \`..\` from a folder it names, which a link there would lead elsewhere than the text says, and no Human attends this session; name the path without \`..\``);
   const found = places();
   if (!found) return say.unknown();
@@ -870,16 +871,23 @@ function pathDenial(spelled, found, say) {
   return null;
 }
 
-// A path in `text`, a target as a reader spells it, that climbs with `..` from a folder it names, as `a/link/../x` or
-// `$d/..`, as the text from the start to that `..`, or null: the system takes the `..` from where a link there leads,
-// and the guard's readers fold it as text, so a call that writes anything and names one is refused, whatever its readers
-// make of it. Its slash-separated parts are compared whole, a folder whose name holds a space or a quote included; in an
-// interpreter's code the same parts are read, so a word there that climbs counts too. A path that starts with `..`, or
-// `./..`, climbs from the call's own folder, which the host names as the system resolves it.
-function climbIn(text) {
+// A path in `text`, a target as a reader spells it, that climbs with `..` from a folder it names, as `a/link/../x`,
+// `a/./../x`, `a//../x`, or `$d/..`, as the text from the start to that `..`, or null: the system takes the `..` from
+// where a link there leads, and the guard's readers fold it as text, so a call that writes anything and names one is
+// refused, whatever its readers make of it. Its slash-separated parts are compared whole, past empty and `.` parts, so a
+// folder whose name holds a space or a quote counts. A path that starts with `..`, or `./..`, climbs from the call's own
+// folder, which the host names as the system resolves it. In an interpreter's code (`code`), where a quote or other
+// punctuation may end a path, any `/..` that ends a part counts after a part that is not `.` or `..`.
+const CODE_CLIMB = /[^/.\s'"`]\/+(?:\.\/+)*\.\.(?![^/'"`\s;,)\]}])/u;
+function climbIn(text, code = false) {
+  if (code) return CODE_CLIMB.exec(text)?.[0] ?? null;
   const parts = text.split('/');
-  const at = parts.findIndex((part, i) => part === '..' && i > 0 && !['', '.', '..'].includes(parts[i - 1]));
-  return at === -1 ? null : parts.slice(0, at + 1).join('/');
+  let before = null;
+  for (const [i, part] of parts.entries()) {
+    if (part === '..' && before !== null && before !== '..') return parts.slice(0, i + 1).join('/');
+    if (part !== '' && part !== '.') before = part;
+  }
+  return null;
 }
 
 // The shell's own writes (shellWrites): a target from a variable, a link, and a program's config.

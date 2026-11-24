@@ -1118,6 +1118,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   A glob counts when it may match one of the files, and so does a bracket class, such as `conf[i]g.json`, which the shell expands.
   A glob from a folder the guard knows also counts when a link already on disk, in any part it expands, leads to one of
   the files or a folder that holds it, as `printf x | tee out/alias*` does when `out/alias` links to config.json.
+  A glob's folder is read folded as text and where the system lands, so `sub/lnk/../alias*`, with `lnk` a link, is read
+  from the folder the link's target is in too. Accepted residual: a `..` after the glob's first wildcard part is a plain
+  part to the link walk, which cannot tell where it climbs from a link a wildcard matched.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
 - With or without gates, no session, attended or not, nor any subagent, may write an [override](#overrides) into a

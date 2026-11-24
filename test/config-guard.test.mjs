@@ -1724,8 +1724,10 @@ test('a subagent\'s glob whose folder climbs out of a link to a config file is r
   mkdirSync(path.join(dir, 'sub'));
   symlinkSync(path.join(dir, 'a'), path.join(dir, 'sub', 'lnk'));
   const run = (command) => inHook({ input: JSON.stringify(subagent(dir, 'Bash', { command })), cwd: dir, encoding: 'utf8' });
-  const climbed = await run('printf x | tee sub/lnk/../.aidrian/conf*');
+  // An innocently named link in the folder the system lands in, which only that folder's walk finds.
+  symlinkSync(path.join(dir, '.aidrian', 'config.json'), path.join(dir, 'notes-alias'));
+  const climbed = await run('printf x | tee sub/lnk/../notes-al*');
   assert.equal(climbed.status, 2, climbed.stderr);
   assert.match(climbed.stderr, /config\.json/u);
-  assert.equal((await run('printf x | tee sub/lnk/../notes*')).status, 0, 'a glob that reaches no guarded file');
+  assert.equal((await run('printf x | tee sub/lnk/../other*')).status, 0, 'a glob that reaches no guarded file');
 });

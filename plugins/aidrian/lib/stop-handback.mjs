@@ -193,26 +193,32 @@ function handsOver(item, pr, file) {
 
 // A question about the change at hand: one that names this pull request, this same one, or this branch.
 export const SAME_CHANGE = /\b(?:this|the same|this same)\s+(?:pull request|PR|branch)\b/iu;
-// An answer of yes the text recommends: "Recommended: yes", "Recommendation: yes", or "Yes (recommended)".
-export const RECOMMENDS_YES = /\brecommend(?:ed|s|ation)?\b\W{0,3}(?:\w+\W+){0,2}?yes\b|\byes\b[^\n]{0,15}\brecommended\b/iu;
+// An answer of yes the text recommends: "Recommended: yes", "Recommendation: yes", or "Yes (recommended)", never with a
+// `not` between, as in "Yes (not recommended)".
+export const RECOMMENDS_YES = /\brecommend(?:ed|s|ation)?\b\W{0,3}(?:(?!not\b)\w+\W+){0,2}?yes\b|\byes\b(?:(?!\bnot\b)[^\n]){0,15}\brecommended\b/iu;
 // How many lines after the question its recommendation may sit, as in a quoted "Decision needed" block.
 const RECOMMENDATION_LINES = 3;
 
 // The first question of `message` that asks to do more in the change at hand and recommends yes, cut to 80 characters,
-// or null. Its recommendation is read up to the next question, so a yes given to another question is never its own.
-// Fenced code is dropped, as handBackLists drops it.
+// or null. A question is the text from the line, sentence, or question before it up to its `?`; its recommendation is
+// read from that `?` up to the next one, within RECOMMENDATION_LINES lines, so a yes given to another question, on the
+// same line or a later one, is never its own. Fenced code is dropped, as handBackLists drops it.
 export function scopeAsk(message) {
   if (typeof message !== 'string') return null;
   const all = message.split('\n');
   const fenced = fencedIn(all);
-  const lines = all.filter((_, at) => !fenced[at]);
-  for (let at = 0; at < lines.length; at += 1) {
-    const line = lines[at];
-    if (!line.includes('?') || !SAME_CHANGE.test(line)) continue;
-    const after = lines.slice(at + 1, at + 1 + RECOMMENDATION_LINES);
-    const next = after.findIndex((later) => later.includes('?'));
-    if (!RECOMMENDS_YES.test([line, ...(next === -1 ? after : after.slice(0, next))].join('\n'))) continue;
-    const question = line.replace(/^[>\s*_#-]+/u, '').trim();
+  const text = all.filter((_, at) => !fenced[at]).join('\n');
+  for (let at = text.indexOf('?'); at !== -1; at = text.indexOf('?', at + 1)) {
+    const after = (mark) => {
+      const found = text.lastIndexOf(mark, at - 1);
+      return found === -1 ? 0 : found + mark.length;
+    };
+    const start = Math.max(after('\n'), after('?'), after('. '));
+    const question = text.slice(start, at + 1).replace(/^[>\s*_#-]+/u, '').trim();
+    if (!SAME_CHANGE.test(question)) continue;
+    const next = text.indexOf('?', at + 1);
+    const answer = text.slice(at + 1, next === -1 ? text.length : next).split('\n').slice(0, 1 + RECOMMENDATION_LINES).join('\n');
+    if (!RECOMMENDS_YES.test(answer)) continue;
     return question.length > 80 ? `${question.slice(0, 77)}...` : question;
   }
   return null;

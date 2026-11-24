@@ -1945,7 +1945,8 @@ do it, and how critical it is. It sends a turn back at most once ([Send-backs pe
 
 With no such item, the same check sends back once a question for the Human about doing more in the change at hand,
 one that names this pull request, the same one, or this branch, whose own recommendation, on its line or in the three
-lines after it up to the next question, is yes: "Recommended: yes", "Recommendation: yes", or "Yes (recommended)".
+lines after it up to the next question, on that line or a later one, is yes: "Recommended: yes", "Recommendation: yes",
+or "Yes (recommended)", never with a "not" between.
 The reason quotes the question as data. The AI once asked whether to
 add a missing check to the pull request that fixed the bug class the check guards, and the Human answered that it should
 not have to ask. A gap the work finds in its own scope is a defect to fix there, through its owner; the Human is asked

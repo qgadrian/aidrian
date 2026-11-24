@@ -94,6 +94,15 @@ test('zero config: codex-local reviews once; a finding is fix_required until a n
   assert.equal(stateFromComment(r.comments[0].body, 7).rounds.length, 2);
 });
 
+test('the local pass reads the base branch`s review bot as the author whose own comments it leaves out, not one the pull request names', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { reviewer: 'review-bot[bot]' } }, headConfig: { version: 1, github: { reviewer: 'someone' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const bots = [];
+  const exec = async (_reviewer, input) => (bots.push(input.reviewBot), clean());
+  await r.step({ exec });
+  assert.ok(bots.length > 0, 'a pass ran');
+  assert.ok(bots.every((bot) => bot === 'review-bot[bot]'), `every pass reads the base branch's bot: ${JSON.stringify(bots)}`);
+});
+
 test('a comment-, doc-, or test-only push keeps its round, and the passes it touches re-review it in delta context', async (t) => {
   for (const [what, push] of [
     ['comment', (r) => r.write('src/app.js', '// note: the app number\nexport const app = 2;\n')],

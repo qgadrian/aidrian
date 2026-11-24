@@ -231,7 +231,10 @@ export async function prepareStep(s) {
   // The post context of this step's writes (lib/review/publish.mjs): read once, when the first write needs it.
   let posting = null;
   const post = (extra = {}) => (posting ??= postContext({ forge, repo, n, project, configs: [committed, config], env, reading, ...extra }));
-  Object.assign(s, { root, cleanEnv, info, repo, repoArg, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post });
+  // The review bot whose own comments a model reviewer leaves out (reviewers.mjs botCommentsBrief): the base branch's, so a
+  // pull request cannot name another author whose comments the review then skips.
+  const reviewBot = committed.github.reviewer ?? null;
+  Object.assign(s, { root, cleanEnv, info, repo, repoArg, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post, reviewBot });
 
   // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
   // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried

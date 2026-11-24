@@ -266,6 +266,8 @@ export function passInput(s, pass, stage) {
     // `git --literal-pathspecs diff <from> <earlierBase> -- <file>`, each file name one argument quoted for the shell
     // (reviewers.mjs QUOTED_NAMES), as `-- 'name'`.
     pr: n, repo, base: merged ? merged.base : from, head, context: from === base ? 'full' : 'delta', files, flows,
+    // The base branch's review bot, whose own receipt and status card the reviewer leaves out (reviewers.mjs botCommentsBrief).
+    ...(s.reviewBot ? { reviewBot: s.reviewBot } : {}),
     ...(merged ? { baseMerged: { base: merged.base, from, earlierBase: merged.earlierBase, merges: merged.merges, rolledBack: (merged.rolledBack ?? []).filter((file) => files.includes(file)) } } : {}),
     // Only the ids listed to this pass show: the only ones a finding it returns may take.
     priorFindings: residuals ? [...contextFindings(earlier, listed), ...recordSettled(state, prior, residuals)] : earlier.map((finding) => idCopy(finding, listed)),

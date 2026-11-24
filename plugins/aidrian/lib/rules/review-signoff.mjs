@@ -10,8 +10,12 @@
 // substitution, is no dry run. An `aidrian` whose subcommand the shell builds at run time (`aidrian "$@"`) is denied
 // too, since it may be a sign-off.
 // A long-form sign-off also runs when this session's transcript holds the Human's answer to it: an AskUserQuestion whose
-// question names the pull request with the repository the command acts on (`<owner>/<name>#<PR>`), the head's first seven characters, and what is signed (`<flow>/<invariant>`,
-// `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff` for --stage), with a chosen option that starts with "Approve". The
+// question names the pull request with the repository the command acts on (`<owner>/<name>#<PR>`) and the head's first seven characters,
+// with a chosen option that starts with "Approve", where that option or the question names what is signed (`<flow>/<invariant>`,
+// `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff` for --stage). An option that names
+// such an id decides alone: "Approve ui/a" under a question naming ui/a and ui/b approves ui/a only. So the question stays
+// in plain words and the option carries the id, and the first answer runs the command: a session once asked each sign-off
+// twice, in plain words and then again with the id. The
 // host writes that answer, not the agent; a push changes the head, so it asks again. Without such a transcript the
 // command stays the Human's to run. Any word the shell builds at run time, a repeated flag, and --last get no such route: the long form does the same.
 // A subagent, and a session no Human attends, get no answer route: the sign-off also writes the sign-off store
@@ -38,7 +42,8 @@ export const SEVERAL = 'In a checkout whose remotes name more than one repositor
 
 export const REASON =
   'Blocked: `aidrian pr signoff` is the Human\'s sign-off, recorded under their name, and only the Human runs it, `--last` included. ' +
-  'Stop, and ask the Human first with AskUserQuestion, in their terms: a question that also names `<owner>/<name>#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff`, with a recommended option that starts with "Approve". ' +
+  'Stop, and ask the Human first with AskUserQuestion, once: a question in their terms that names the flow and what is signed in plain words, and also names `<owner>/<name>#<PR>` and the short head, ' +
+  'with a recommended option whose label starts with "Approve" and names the exact id, `<flow>/<invariant>`, `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff`, such as "Approve checkout/total-shown". ' +
   `${NOTIFY} ` +
   'On that answer the long-form command runs here, written out as one plain command run from the checkout of that pull request, with no shell variables, `cd`, `env -C`, or chain. ' +
   `${SEVERAL} ` +
@@ -147,11 +152,21 @@ export function signoffMiss(words, answers, target) {
   if (!onPr.length) return `no question answered names \`${named}\``;
   const onHead = onPr.filter(({ question }) => question.includes(head.slice(0, 7)));
   if (!onHead.length) return `no question naming ${named} names the head \`${head.slice(0, 7)}\``;
-  const matching = onHead.filter(({ question }) => namesToken(question));
-  if (!matching.length) return `no question naming ${named} at ${head.slice(0, 7)} names \`${tokens[0]}\`, written as one word with no space around the \`/\``;
+  // The option the Human chose decides when it names an id; else the question does.
+  const matching = onHead.filter(({ question, answer }) => (idsOf(answer).length ? idsOf(answer).some((id) => tokens.includes(id)) : namesToken(question)));
+  if (!matching.length) {
+    const other = onHead.map(({ answer }) => idsOf(answer)).find((ids) => ids.length);
+    if (other) return `the option the Human chose names \`${other.join('`, `')}\`, not \`${tokens[0]}\``;
+    return `neither a question naming ${named} at ${head.slice(0, 7)} nor the option the Human chose names \`${tokens[0]}\`, written as one word with no space around the \`/\``;
+  }
   const last = matching.at(-1).answer;
   return /^\s*approve\b/iu.test(last) ? null : `the Human picked "${last}", not the option that starts with "Approve"`;
 }
+
+// The sign-off ids an answer names, as `<flow>/<invariant>`, `<flow>/*`, or `stage:<name>/signoff`: a word with one `/`
+// that is no repository's `<owner>/<name>#<PR>`, path, or URL.
+const ID = /(?<![\w.:/-])(?:stage:)?[\w.-]+\/(?:\*|[\w-]+)(?![\w#/-])/gu;
+const idsOf = (answer) => answer.match(ID) ?? [];
 
 const TARGET_MISS = {
   remotes: 'this checkout\'s remotes name more than one repository: end the command with `--repo <owner>/<name>`, the one the question names',
@@ -168,8 +183,8 @@ const missReason = (miss) => `${REASON} This call: ${miss}.`;
 export const SUBAGENT_REASON =
   'Blocked: `aidrian pr signoff` is the Human\'s sign-off, and a subagent never records it, whatever an answer says. ' +
   'Stop and return `status: needs_input` to your dispatcher, with `next_owner: the Human`, the sign-off question in plain words that names ' +
-  '`<owner>/<name>#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*`, `<flow>/signoff`, or `stage:<name>/signoff`, ' +
-  'options whose recommended one starts with "Approve", and the long-form command the review step printed: the main session asks it and runs the command.';
+  '`<owner>/<name>#<PR>` and the short head, options whose recommended one starts with "Approve" and names `<flow>/<invariant>`, `<flow>/*`, `<flow>/signoff`, or `stage:<name>/signoff`, ' +
+  'and the long-form command the review step printed: the main session asks it once and runs the command.';
 
 export const UNATTENDED_REASON =
   'Blocked: `aidrian pr signoff` is the Human\'s sign-off, and it writes the sign-off store, which a merge no Human asks for reads as the Human\'s word, ' +

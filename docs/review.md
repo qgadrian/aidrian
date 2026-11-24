@@ -321,8 +321,12 @@ request, and an acceptance with no reason. Like every sign-off, it is an audit e
 #### Answering in the session
 
 A long-form sign-off, `--accept`, `--overrule`, or `--stage` runs from the session once the Human answered it with AskUserQuestion:
-the question names `<owner>/<name>#<PR>` of the repository the command acts on, the short head, and `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
-`stage:<name>/signoff`, and the chosen option starts with "Approve". The latest answer naming it decides, and a push asks
+the question names `<owner>/<name>#<PR>` of the repository the command acts on and the short head, the chosen option starts with "Approve",
+and the option or the question names what is signed: `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
+`stage:<name>/signoff`. So the session asks once: the question names the flow and the invariant in plain words, and the
+recommended option's label carries the exact id, such as "Approve checkout/total-shown". An option that names an id decides
+alone, so "Approve ui/wrap" under a question naming `ui/fit` and `ui/wrap` approves `ui/wrap` only, and an option naming
+another invariant approves nothing. The latest answer naming it decides, and a push asks
 again. The command is one plain `aidrian pr` call run from the pull request's checkout, with no shell variables, repeated flags, `cd`, `env -C`, or chain.
 Before it asks, a session on a host that offers a tool to send the Human a push notification sends one, so a Human away from the session, such as on a phone, sees that a decision waits.
 `--last` stays in the Human's shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).

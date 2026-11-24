@@ -1,6 +1,8 @@
 // The OpenCode bridge (plugins/aidrian/opencode/): on a fake OpenCode context and a fake spawn, what each tool event
 // sends a hook script, how the spawn is pinned, and that no failure reaches OpenCode; then, with the real spawn and this
 // Node, a completed `gh pr create` filed in the session ledger, and a call in a removed folder that leaves spawning on;
+// through the `events` seam, a blocking (execute.before) route that skips no call the call's input could make it skip,
+// with hook-bash.mjs run in this process on what the bridge sent;
 // that the routes it picks from the generated list by the leaf's standard name are the ones hooks.json fires on the
 // name the adapter reads; and that docs/providers/opencode.md and the README say what runs on OpenCode and that no
 // guard holds a session there.
@@ -17,11 +19,17 @@ import test, { after } from 'node:test';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import opencode from '../plugins/aidrian/lib/hosts/opencode.mjs';
 import { infoRead, RAW_NAMES, STANDARD_NAMES, standardToolName } from '../plugins/aidrian/lib/hosts/opencode-names.mjs';
+import { HELD_BUDGET_MS } from '../plugins/aidrian/lib/deadline.mjs';
 import { sectionLines } from '../plugins/aidrian/lib/markdown-sections.mjs';
-import { setup } from '../plugins/aidrian/opencode/bridge.mjs';
+import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { BLOCKING_KILL_MS, nodeOf, setup } from '../plugins/aidrian/opencode/bridge.mjs';
+import { folderOf, READ_MS } from '../plugins/aidrian/opencode/call.mjs';
 import { selectRoutes } from '../plugins/aidrian/opencode/route-select.mjs';
 import { EVENTS } from '../plugins/aidrian/opencode/routes.mjs';
 import server from '../plugins/aidrian/opencode/server.mjs';
+
+import { hookCall } from './hook-call.mjs';
 
 
 const REPO = path.resolve(import.meta.dirname, '..');
@@ -61,7 +69,7 @@ function fakeSpawn(behave = closes()) {
 }
 
 // A fake OpenCode context: `sessions` maps an id to what session.get gives, to an Error it throws, or to a function
-// whose result it gives on each read; `app` is 2.4.0's { name, version, channel }; `reads` lists the ids it was asked
+// whose result it gives on each read (an id it does not hold reads as a root session in SESSION_DIR); `app` is 2.4.0's { name, version, channel }; `reads` lists the ids it was asked
 // for, and `hooks` each registration by its name.
 function fakeContext({ sessions = {}, app, location = { directory: OWN_DIR }, toolHook, shellHook } = {}) {
   const hooks = {};
@@ -78,7 +86,7 @@ function fakeContext({ sessions = {}, app, location = { directory: OWN_DIR }, to
         const entry = sessions[sessionID];
         const session = typeof entry === 'function' ? await entry() : entry;
         if (session instanceof Error) throw session;
-        return session ?? { location: { directory: SESSION_DIR } };
+        return Object.hasOwn(sessions, sessionID) ? session : { location: { directory: SESSION_DIR } };
       },
     },
     hooks,
@@ -111,6 +119,16 @@ const scriptsFolder = (name, names) => {
   return dir;
 };
 const bashRoute = (script, fields = {}) => ({ event: 'PostToolUse', matcher: '^(?:Bash)$', script, args: [], timeoutMs: 5000, ...fields });
+
+// A blocking route, as a PreToolUse route on execute.before would be: EVENTS names none in this version, so the tests set
+// the bridge up with the `events` seam.
+const HOOK_BASH = path.join(PLUGIN, 'scripts/hook-bash.mjs');
+const BLOCKING = Object.freeze({ PreToolUse: 'execute.before' });
+const preRoute = (fields = {}) => ({ event: 'PreToolUse', matcher: '^(?:Bash)$', script: 'hook-bash.mjs', args: [], timeoutMs: 5000, ...fields });
+const SHA = 'abcdef1234567890abcdef1234567890abcdef12';
+const MERGE = `gh pr merge 7 --squash --match-head-commit ${SHA}`;
+// The execute.before event of a shell call: no status and no result, since the call has not run.
+const beforeEvent = (fields = {}) => ({ tool: 'shell', sessionID: 'ses_main', id: 'call_b', input: { command: MERGE }, ...fields });
 
 // The bridge set up on a fake context and spawn: `fire(event)` runs its execute.after callback.
 async function bridge({ context = fakeContext(), spawn = fakeSpawn(), env = ENV, ...seams } = {}) {
@@ -198,22 +216,25 @@ test('two matching routes start together, each under its own timeout from its sp
   ]);
 });
 
-test('the session reads end at the longest selected route`s timeout, and each script then has its own from its spawn', { timeout: 10_000 }, async (t) => {
+test('the session reads that outlast a route`s timeout still spawn it, and each script then has its own from its spawn', { timeout: 10_000 }, async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const scripts = scriptsFolder('deadline-scripts', ['hook-one.mjs', 'hook-three.mjs']);
   const routes = routesFile('deadline.json', [bashRoute('hook-one.mjs', { timeoutMs: 1000 }), bashRoute('hook-three.mjs', { timeoutMs: 3000 })]);
-  const slow = () => new Promise((resolve) => setTimeout(() => resolve({}), 2500));
+  const slow = () => new Promise((resolve) => setTimeout(() => resolve({}), 1500));
   const context = fakeContext({ sessions: { ses_slow: slow } });
   const spawn = fakeSpawn(() => {});
   const { fire } = await bridge({ context, spawn, scripts, routes });
   const running = fire(shellEvent({ sessionID: 'ses_slow' }));
   while (context.reads.length === 0) await settle();
-  t.mock.timers.tick(2500);
+  t.mock.timers.tick(1500);
   while (spawn.calls.length < 2) await settle();
   t.mock.timers.tick(999);
   await settle();
-  assert.deepEqual(spawn.calls.map((call) => call.killed), [[], []], 'reads past the shorter timeout still spawn both');
-  t.mock.timers.tick(2001);
+  assert.deepEqual(spawn.calls.map((call) => call.killed), [[], []], 'reads past the shorter timeout still spawn both, and do not count against it');
+  t.mock.timers.tick(1);
+  await settle();
+  assert.deepEqual(spawn.calls.map((call) => call.killed), [['SIGKILL'], []]);
+  t.mock.timers.tick(2000);
   await running;
   assert.deepEqual(spawn.calls.map((call) => call.killed), [['SIGKILL'], ['SIGKILL']]);
 });
@@ -227,6 +248,9 @@ test('a route list that is missing, no JSON, or no list registers no tool hook, 
     assert.deepEqual(Object.keys(context.hooks), ['create.before'], name);
     assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['skip', 'routes'], ['setup', 0]], name);
   }
+  const notices = [];
+  await setup(fakeContext(), { spawn: fakeSpawn().spawn, env: ENV, routes: cases.garbage, notices });
+  assert.deepEqual(notices, ['aidrian could not read its route list, routes.generated.json, so no aidrian hook runs in this session.']);
 });
 
 test('a generated route the bridge cannot spawn as it is, such as one whose flag is no literal --flag, is left out', async () => {
@@ -280,7 +304,8 @@ test('the spawn is pinned: one argument, cwd env stdio and no shell, env as give
   assert.equal(call.program, '/opt/node22/bin/node');
   assert.deepEqual(call.args, [HOOK]);
   assert.deepEqual(Object.keys(call.options).sort(), ['cwd', 'env', 'stdio']);
-  assert.equal(call.options.cwd, dir);
+  assert.equal(call.options.cwd, SESSION_DIR, 'spawned in the session`s folder');
+  assert.equal(sent(call).cwd, dir, 'the payload names the folder the call ran in');
   assert.equal(call.options.env, env);
   assert.deepEqual(call.options.env, given, 'no key added to the environment');
   assert.deepEqual(call.options.stdio, ['pipe', 'ignore', 'ignore']);
@@ -289,21 +314,46 @@ test('the spawn is pinned: one argument, cwd env stdio and no shell, env as give
   for (const value of [...call.args, ...Object.values(call.options.env)]) assert.ok(!value.includes('rm -rf') && !value.includes('whoami'), value);
 });
 
-test('the node program is AIDRIAN_NODE when it is an absolute path, else node', async () => {
+// A folder holding an executable `node`, and a folder holding one that is not executable.
+const nodeFolder = (name, mode = 0o755) => {
+  const dir = path.join(ROOT, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'node'), '#!/bin/sh\n');
+  chmodSync(path.join(dir, 'node'), mode);
+  return dir;
+};
+
+test('the node program is resolved at setup to an absolute file: AIDRIAN_NODE, this process`s Node, or node on an absolute PATH entry', async () => {
+  const onPath = nodeFolder('node-on-path');
+  const unrunnable = nodeFolder('node-unrunnable', 0o644);
+  const own = path.join(onPath, 'node');
+  const bun = '/opt/opencode/bin/bun';
   const cases = [
-    [{ ...ENV, AIDRIAN_NODE: '/opt/n/bin/node' }, '/opt/n/bin/node'],
-    [ENV, 'node'],
-    [{ ...ENV, AIDRIAN_NODE: 'bin/node' }, 'node'],
-    [{ ...ENV, AIDRIAN_NODE: './node' }, 'node'],
-    [{ ...ENV, AIDRIAN_NODE: '' }, 'node'],
+    [{ AIDRIAN_NODE: own, PATH: '' }, bun, own],
+    [{ PATH: '' }, process.execPath, process.execPath],
+    [{ PATH: ['relative/bin', unrunnable, onPath].join(path.delimiter) }, bun, own],
+    [{ AIDRIAN_NODE: 'bin/node', PATH: onPath }, bun, own],
+    [{ AIDRIAN_NODE: path.join(ROOT, 'no-such-node'), PATH: onPath }, bun, own],
+    [{ PATH: `relative/bin${path.delimiter}${unrunnable}` }, bun, null],
+    [{}, bun, null],
   ];
-  for (const [env, program] of cases) {
-    const spawn = fakeSpawn();
-    const context = fakeContext();
-    await setup(context, { spawn: spawn.spawn, env });
-    await context.hooks['execute.after'](shellEvent());
-    assert.equal(spawn.calls[0].program, program);
-  }
+  for (const [env, execPath, program] of cases) assert.equal(nodeOf(env, execPath), program, JSON.stringify(env));
+  const spawn = fakeSpawn();
+  const context = fakeContext();
+  await setup(context, { spawn: spawn.spawn, env: { ...ENV, AIDRIAN_NODE: own } });
+  await context.hooks['execute.after'](shellEvent());
+  assert.equal(spawn.calls[0].program, own, 'the seam left out, setup resolves it');
+});
+
+test('with no Node found, setup registers no tool hook, traces off once, and keeps one notice for the session`s context', async () => {
+  const trace = path.join(ROOT, 'trace-no-node.jsonl');
+  const notices = [];
+  const context = fakeContext();
+  await setup(context, { spawn: fakeSpawn().spawn, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace }, node: null, notices });
+  assert.deepEqual(Object.keys(context.hooks), ['create.before'], 'the PATH hook still registers');
+  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [{ step: 'off', status: 'node' }, { step: 'setup', status: 0 }]);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0], /no Node program .* so no aidrian hook runs in this session/u);
 });
 
 test('the payload holds no turn_id, and its opencode mark is an object: app.version when a string, and the info the leaf read', async () => {
@@ -323,19 +373,67 @@ test('the payload holds no turn_id, and its opencode mark is an object: app.vers
   assert.deepEqual(sent(withInfo.calls[0]).opencode, { info: infoRead({ namespace: 'x' }) }, 'only what the leaf reads of info is sent');
 });
 
-test('cwd: an absolute workdir; with none, the session`s folder, or the plugin`s own when that read fails; a relative workdir sends nothing', async () => {
+test('cwd on execute.after: the script runs in the session`s folder, and the payload names the folder the call ran in, else the call records nothing', async () => {
+  mkdirSync(path.join(SESSION_DIR, 'work'), { recursive: true });
+  mkdirSync(path.join(SESSION_DIR, 'ab:x'), { recursive: true });
+  mkdirSync(path.join(ROOT, 'home-work'), { recursive: true });
+  const trace = path.join(ROOT, 'trace-cwd.jsonl');
   const cwdOf = async (event, contextOptions = {}) => {
-    const { calls, fire } = await bridge({ context: fakeContext(contextOptions) });
+    const { calls, fire } = await bridge({ context: fakeContext(contextOptions), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
     await fire(event);
     return calls.map((call) => [call.options.cwd, sent(call).cwd]);
   };
-  assert.deepEqual(await cwdOf(shellEvent()), [[PROJECT_DIR, PROJECT_DIR]]);
+  const at = (workdir) => shellEvent({ input: { command: 'gh pr create', workdir } });
+  assert.deepEqual(await cwdOf(shellEvent()), [[SESSION_DIR, PROJECT_DIR]], 'an absolute workdir');
   assert.deepEqual(await cwdOf(shellEvent({ input: { command: 'gh pr create' } })), [[SESSION_DIR, SESSION_DIR]]);
-  assert.deepEqual(await cwdOf(shellEvent({ input: { command: 'gh pr create' } }), { sessions: { ses_root: new Error('gone') } }), [[OWN_DIR, OWN_DIR]]);
-  for (const workdir of ['work', './work', 'box:/srv/work', '']) assert.deepEqual(await cwdOf(shellEvent({ input: { command: 'gh pr create', workdir } })), [], workdir);
+  assert.deepEqual(await cwdOf(shellEvent({ input: { command: 'gh pr create' } }), { sessions: { ses_root: new Error('gone') } }), [[OWN_DIR, OWN_DIR]], 'a failed read: the plugin`s own');
+  for (const workdir of ['work', './work', 'work/', '../session-folder/work', 'ab:x/../work']) assert.deepEqual(await cwdOf(at(workdir)), [[SESSION_DIR, path.join(SESSION_DIR, 'work')]], workdir);
+  assert.deepEqual(await cwdOf(at('ab:x')), [[SESSION_DIR, path.join(SESSION_DIR, 'ab:x')]], 'a local folder named like name:part is that folder');
+  assert.deepEqual(await cwdOf(at('..')), [[SESSION_DIR, ROOT]], 'a relative workdir may climb out of the session`s folder');
+  assert.deepEqual(await cwdOf(at(`${PROJECT_DIR}/../work`)), [[SESSION_DIR, PROJECT_DIR]], 'an absolute workdir`s dot segments are normalized');
+  // ENV's HOME is ROOT.
+  assert.deepEqual(await cwdOf(at('~')), [[SESSION_DIR, ROOT]]);
+  assert.deepEqual(await cwdOf(at('~/home-work/')), [[SESSION_DIR, path.join(ROOT, 'home-work')]]);
+  assert.deepEqual(await cwdOf(at('')), [[SESSION_DIR, SESSION_DIR]], 'an empty workdir is none');
+  rmSync(trace, { force: true });
+  const skipped = ['gpu:/srv/work', 42, { dir: PROJECT_DIR }, path.join(ROOT, 'never-made'), 'never-made', '~/never-made'];
+  for (const workdir of skipped) assert.deepEqual(await cwdOf(at(workdir)), [], `${JSON.stringify(workdir)}: on another machine, of another type, or no folder`);
+  assert.deepEqual(traceLines(trace).filter((line) => line.step === 'skip').map(({ script, status }) => [script, status]), Array(skipped.length).fill(['hook-bash-post.mjs', 'cwd']));
 });
 
-test('a child session`s call carries the root as session_id and itself as agent_id; a failed read gives the calling id', async () => {
+test('cwd on execute.before: a workdir that names no folder sends the call with the session`s folder, never a skip', async () => {
+  const scripts = scriptsFolder('before-cwd-scripts', ['hook-pre.mjs']);
+  const routes = routesFile('before-cwd.json', [preRoute({ script: 'hook-pre.mjs' })]);
+  const { context, calls } = await bridge({ scripts, routes, events: BLOCKING, context: fakeContext({ sessions: { ses_main: { location: { directory: SESSION_DIR } } } }) });
+  const workdirs = ['gpu:/srv/work', 42, { dir: PROJECT_DIR }, path.join(ROOT, 'never-made'), 'never-made', '~/never-made'];
+  for (const workdir of workdirs) await context.hooks['execute.before'](beforeEvent({ input: { command: MERGE, workdir } }));
+  assert.deepEqual(calls.map((call) => [call.options.cwd, sent(call).cwd]), Array(workdirs.length).fill([SESSION_DIR, SESSION_DIR]));
+});
+
+test('folderOf resolves a workdir by path as OpenCode`s shell does, and gives null for one that is no text or names no folder', () => {
+  mkdirSync(path.join(SESSION_DIR, 'work'), { recursive: true });
+  mkdirSync(path.join(SESSION_DIR, 'ab:x'), { recursive: true });
+  mkdirSync(path.join(ROOT, 'home-work'), { recursive: true });
+  const cases = [
+    ['work', path.join(SESSION_DIR, 'work')], ['~', ROOT], ['~/home-work/', path.join(ROOT, 'home-work')], [PROJECT_DIR, PROJECT_DIR],
+    [`${PROJECT_DIR}/../work`, PROJECT_DIR], ['ab:x', path.join(SESSION_DIR, 'ab:x')], ['ab:x/../work', path.join(SESSION_DIR, 'work')],
+  ];
+  for (const [workdir, folder] of cases) assert.equal(folderOf(workdir, SESSION_DIR, ROOT), folder, workdir);
+  for (const workdir of [null, 42, ['work'], 'gpu:/srv/work', 'never-made', '~never-made']) assert.equal(folderOf(workdir, SESSION_DIR, ROOT), null, JSON.stringify(workdir));
+});
+
+test('the session`s folder is read on every call, so a session that moves is followed by the spawn and the payload alike', async () => {
+  let at = SESSION_DIR;
+  const context = fakeContext({ sessions: { ses_mover: () => ({ location: { directory: at } }) } });
+  const { calls, fire } = await bridge({ context });
+  await fire(shellEvent({ sessionID: 'ses_mover', input: { command: 'gh pr create' } }));
+  at = PROJECT_DIR;
+  await fire(shellEvent({ sessionID: 'ses_mover', input: { command: 'gh pr create' } }));
+  assert.deepEqual(calls.map((call) => [call.options.cwd, sent(call).cwd]), [[SESSION_DIR, SESSION_DIR], [PROJECT_DIR, PROJECT_DIR]]);
+  assert.deepEqual(context.reads, ['ses_mover', 'ses_mover']);
+});
+
+test('a child session`s call carries the root as session_id and itself as agent_id; a failed read sends it as a subagent`s, never the root`s', async () => {
   const sessions = { ses_grandchild: { parentID: 'ses_child' }, ses_child: { parentID: 'ses_root' }, ses_root: {} };
   const context = fakeContext({ sessions });
   const { calls, fire } = await bridge({ context });
@@ -343,14 +441,21 @@ test('a child session`s call carries the root as session_id and itself as agent_
   assert.deepEqual([sent(calls[0]).session_id, sent(calls[0]).agent_id], ['ses_root', 'ses_grandchild']);
   const reads = context.reads.length;
   await fire(shellEvent({ sessionID: 'ses_grandchild' }));
-  assert.equal(context.reads.length, reads, 'the root of a session is read once');
+  assert.deepEqual(context.reads.slice(reads), ['ses_grandchild'], 'the root is kept; only the calling session`s folder is read again');
   await fire(shellEvent({ sessionID: 'ses_root' }));
   assert.equal(Object.hasOwn(sent(calls[2]), 'agent_id'), false);
 
-  const failing = await bridge({ context: fakeContext({ sessions: { ses_sub: { parentID: 'ses_top' }, ses_top: new Error('read failed') } }) });
+  const failing = await bridge({ context: fakeContext({ sessions: { ses_sub: { parentID: 'ses_top' }, ses_top: new Error('read failed'), ses_main: new Error('read failed'), ses_null: null, ses_text: 'ses' } }) });
   await failing.fire(shellEvent({ sessionID: 'ses_sub' }));
-  assert.equal(sent(failing.calls[0]).session_id, 'ses_sub');
-  assert.equal(Object.hasOwn(sent(failing.calls[0]), 'agent_id'), false);
+  assert.deepEqual([sent(failing.calls[0]).session_id, sent(failing.calls[0]).agent_id], ['ses_top', 'ses_sub'], 'the walk stops where the read failed');
+  for (const id of ['ses_main', 'ses_null', 'ses_text']) {
+    await failing.fire(shellEvent({ sessionID: id }));
+    assert.deepEqual([sent(failing.calls.at(-1)).session_id, sent(failing.calls.at(-1)).agent_id], [id, id], `${id}: a first read that fails or gives no object sets agent_id`);
+  }
+  const before = failing.context.reads.length;
+  await failing.fire(shellEvent({ sessionID: 'ses_null' }));
+  assert.deepEqual(failing.context.reads.slice(before), ['ses_null'], 'a read that gave no object is not kept');
+  assert.equal(sent(failing.calls.at(-1)).agent_id, 'ses_null');
 });
 
 test('the root cache forgets every answer once it holds 256, so the 257th session`s call makes the first read again', async () => {
@@ -361,7 +466,7 @@ test('the root cache forgets every answer once it holds 256, so the 257th sessio
   for (let n = 0; n < 256; n += 1) await fire(shellEvent({ sessionID: `ses_kid${n}` }));
   const reads = context.reads.length;
   await fire(shellEvent({ sessionID: 'ses_kid0' }));
-  assert.equal(context.reads.length, reads, 'with 256 answers kept, the first is still known');
+  assert.deepEqual(context.reads.slice(reads), ['ses_kid0'], 'with 256 answers kept, the first`s root is still known');
   await fire(shellEvent({ sessionID: 'ses_kid256' }));
   const cleared = context.reads.length;
   await fire(shellEvent({ sessionID: 'ses_kid0' }));
@@ -379,31 +484,33 @@ test('a failed parent read is not kept: the next call of that session reads agai
   const { calls, fire } = await bridge({ context: fakeContext({ sessions: { ses_sub: parent, ses_top: {} } }) });
   await fire(shellEvent({ sessionID: 'ses_sub' }));
   await fire(shellEvent({ sessionID: 'ses_sub' }));
-  assert.deepEqual(calls.map((call) => [sent(call).session_id, sent(call).agent_id ?? null]), [['ses_sub', null], ['ses_top', 'ses_sub']]);
+  assert.deepEqual(calls.map((call) => [sent(call).session_id, sent(call).agent_id ?? null]), [['ses_sub', 'ses_sub'], ['ses_top', 'ses_sub']]);
 });
 
-test('session reads that never settle end at the route`s timeout, and the call that outlasted it sends nothing', { timeout: 10_000 }, async (t) => {
+test(`session reads that never settle end at their own ${READ_MS} ms cap, and the call is sent as a subagent's from the plugin's folder`, { timeout: 10_000 }, async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const trace = path.join(ROOT, 'trace-stalled.jsonl');
   const stalled = () => new Promise(() => {});
   const context = fakeContext({ sessions: { ses_child: stalled } });
-  const { calls, fire } = await bridge({ context, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  const spawn = fakeSpawn(() => {});
+  const { calls, fire } = await bridge({ context, spawn, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
   const event = shellEvent({ sessionID: 'ses_child', input: { command: 'gh pr create' } });
   const before = structuredClone(event.result);
-  let resolved = false;
-  const running = fire(event).then(() => { resolved = true; });
+  const running = fire(event);
   while (context.reads.length === 0) await settle();
-  t.mock.timers.tick(4999);
+  t.mock.timers.tick(READ_MS - 1);
   await settle();
-  assert.deepEqual([resolved, calls.length], [false, 0]);
+  assert.equal(calls.length, 0);
   t.mock.timers.tick(1);
+  while (calls.length === 0) await settle();
+  assert.deepEqual([sent(calls[0]).session_id, sent(calls[0]).agent_id, calls[0].options.cwd, sent(calls[0]).cwd], ['ses_child', 'ses_child', OWN_DIR, OWN_DIR], 'a late read is no skip');
+  calls[0].child.emit('close', 0, null);
   await running;
-  assert.equal(calls.length, 0, 'no script runs after the deadline');
-  assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['setup', 1], ['skip', 'timeout']]);
+  assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['setup', 1], ['run', 0]]);
   assert.deepEqual(event.result, before);
 });
 
-test('the reads have the route`s timeout, and the script its own from its spawn: reads of 3000 ms leave the child 5000 ms', { timeout: 10_000 }, async (t) => {
+test(`the reads have their own ${READ_MS} ms cap, whatever the routes' timeouts, and the script its own timeout from its spawn`, { timeout: 10_000 }, async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const slow = () => new Promise((resolve) => setTimeout(() => resolve({}), 3000));
   const context = fakeContext({ sessions: { ses_slow: slow } });
@@ -412,8 +519,9 @@ test('the reads have the route`s timeout, and the script its own from its spawn:
   let resolved = false;
   const running = fire(shellEvent({ sessionID: 'ses_slow' })).then(() => { resolved = true; });
   while (context.reads.length === 0) await settle();
-  t.mock.timers.tick(3000);
+  t.mock.timers.tick(READ_MS);
   while (spawn.calls.length === 0) await settle();
+  assert.equal(sent(spawn.calls[0]).agent_id, 'ses_slow', 'a read past the cap is a late read');
   t.mock.timers.tick(4999);
   await settle();
   assert.deepEqual([resolved, spawn.calls[0].killed], [false, []], 'not killed at 4999 ms after its spawn');
@@ -422,15 +530,17 @@ test('the reads have the route`s timeout, and the script its own from its spawn:
   assert.deepEqual(spawn.calls[0].killed, ['SIGKILL'], 'killed at 5000 ms after its spawn');
 });
 
-test('the parent walk stops at 8 reads, on a chain longer than that and on a cycle', async () => {
+test('the parent walk stops at 8 reads, on a chain longer than that and on a cycle, and sends the call as a subagent`s, not kept', async () => {
   const chain = Object.fromEntries(Array.from({ length: 20 }, (_, n) => [`ses_${n}`, { parentID: `ses_${n + 1}` }]));
   const cycle = { ses_a: { parentID: 'ses_b' }, ses_b: { parentID: 'ses_a' } };
-  for (const [sessions, start] of [[chain, 'ses_0'], [cycle, 'ses_a']]) {
+  for (const [sessions, start, root] of [[chain, 'ses_0', 'ses_8'], [cycle, 'ses_a', 'ses_a']]) {
     const context = fakeContext({ sessions });
     const { calls, fire } = await bridge({ context });
     await fire(shellEvent({ sessionID: start }));
     assert.equal(context.reads.length, 8);
-    assert.equal(calls.length, 1);
+    assert.deepEqual([sent(calls[0]).session_id, sent(calls[0]).agent_id], [root, start], start);
+    await fire(shellEvent({ sessionID: start }));
+    assert.equal(context.reads.length, 16, `${start}: a walk out of steps is not kept`);
   }
 });
 
@@ -473,43 +583,58 @@ test('the callback resolves, and leaves the result as it was, whatever the child
 });
 
 
-test('after an ENOENT in a folder that exists, no Node is read as there, and later calls spawn nothing', async () => {
-  const trace = path.join(ROOT, 'trace-off.jsonl');
-  const spawn = fakeSpawn((child) => queueMicrotask(() => child.emit('error', ENOENT())));
-  const { calls, fire } = await bridge({ spawn, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
-  await fire(shellEvent());
-  await fire(shellEvent());
-  await fire(shellEvent());
-  assert.equal(calls.length, 1);
-  const steps = traceLines(trace).map(({ step }) => step);
-  assert.deepEqual(steps.filter((step) => step === 'off'), ['off']);
-  assert.deepEqual(steps, ['setup', 'off', 'skip', 'skip']);
-});
-
-test('an ENOENT in a folder that is gone skips that call alone: the next call, in a folder that exists, spawns', async () => {
-  const trace = path.join(ROOT, 'trace-gone.jsonl');
-  const gone = path.join(ROOT, 'removed');
-  let first = true;
+test('a spawn error, an ENOENT included, ends that call alone: every later call still spawns', async () => {
+  const trace = path.join(ROOT, 'trace-enoent.jsonl');
+  let failures = 2;
   const spawn = fakeSpawn((child) => queueMicrotask(() => {
-    if (first) child.emit('error', ENOENT());
+    if (failures-- > 0) child.emit('error', ENOENT());
     else child.emit('close', 0, null);
-    first = false;
   }));
   const { calls, fire } = await bridge({ spawn, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
-  await fire(shellEvent({ input: { command: 'gh pr create', workdir: gone } }));
   await fire(shellEvent());
-  assert.equal(calls.length, 2);
-  assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['setup', 1], ['skip', 'gone'], ['run', 0]]);
+  await fire(shellEvent());
+  await fire(shellEvent());
+  assert.equal(calls.length, 3);
+  assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['setup', 1], ['run', 'ENOENT'], ['run', 'ENOENT'], ['run', 0]]);
 });
 
-test('setup resolves when one registration rejects, and still makes the other', async () => {
+test('a workdir that is gone skips a record-only call, and sends a blocking one from the session`s folder, which exists', async () => {
+  const gone = path.join(ROOT, 'removed');
+  mkdirSync(gone);
+  const after = shellEvent({ input: { command: 'gh pr create', workdir: gone } });
+  const before = beforeEvent({ input: { command: MERGE, workdir: gone } });
+  rmSync(gone, { recursive: true });
+  const trace = path.join(ROOT, 'trace-gone.jsonl');
+  const recorded = await bridge({ env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  await recorded.fire(after);
+  assert.deepEqual([recorded.calls.length, traceLines(trace).map(({ step, status }) => [step, status])], [0, [['setup', 1], ['skip', 'cwd']]]);
+  const scripts = scriptsFolder('gone-scripts', ['hook-pre.mjs']);
+  const blocking = await bridge({ scripts, routes: routesFile('gone.json', [preRoute({ script: 'hook-pre.mjs' })]), events: BLOCKING });
+  await blocking.context.hooks['execute.before'](before);
+  assert.deepEqual(blocking.calls.map((call) => [call.options.cwd, sent(call).cwd]), [[SESSION_DIR, SESSION_DIR]]);
+});
+
+test('setup resolves when one registration rejects, still makes the other, and traces and keeps a notice naming the one lost', async () => {
   const rejects = async () => { throw new Error('no hooks here'); };
+  const trace = path.join(ROOT, 'trace-unregistered.jsonl');
+  const notices = [];
   const toolFails = fakeContext({ toolHook: rejects });
-  await bridge({ context: toolFails });
+  await bridge({ context: toolFails, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace }, notices });
   assert.deepEqual(Object.keys(toolFails.hooks), ['create.before']);
+  const lostScripts = [...new Set(GENERATED.filter((route) => route.event === 'PostToolUse').map((route) => route.script))];
+  assert.ok(lostScripts.includes('hook-bash-post.mjs'));
+  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [...lostScripts.map((script) => ({ step: 'unregistered', script, status: 'execute.after' })), { step: 'setup', status: 0 }]);
+  assert.deepEqual(notices, [`OpenCode did not register aidrian's execute.after hook, so ${lostScripts.join(', ')} do not run in this session.`]);
+  const one = [];
+  await bridge({ context: fakeContext({ toolHook: rejects }), scripts: scriptsFolder('lost-scripts', ['hook-one.mjs']), routes: routesFile('lost.json', [bashRoute('hook-one.mjs'), bashRoute('hook-one.mjs', { args: ['--x'] })]), notices: one });
+  assert.deepEqual(one, ["OpenCode did not register aidrian's execute.after hook, so hook-one.mjs does not run in this session."], 'a script named once');
+  const shellTrace = path.join(ROOT, 'trace-unregistered-shell.jsonl');
+  const shellNotices = [];
   const shellFails = fakeContext({ shellHook: rejects });
-  await bridge({ context: shellFails });
+  await bridge({ context: shellFails, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: shellTrace }, notices: shellNotices });
   assert.deepEqual(Object.keys(shellFails.hooks), ['execute.after']);
+  assert.deepEqual(traceLines(shellTrace).map(({ at, ...rest }) => rest), [{ step: 'unregistered', status: 'create.before' }, { step: 'setup', status: 1 }]);
+  assert.match(shellNotices.join('\n'), /create\.before hook, so aidrian's bin folder is not put on the shell's PATH/u);
   assert.equal(await setup(null, { spawn: fakeSpawn().spawn, env: ENV }), undefined, 'not even a context');
   assert.equal(await setup(fakeContext(), null), undefined, 'no seams');
   const throwing = { get scripts() { throw new Error('no scripts here'); } };
@@ -518,10 +643,19 @@ test('setup resolves when one registration rejects, and still makes the other', 
   }
 });
 
-test('a route whose script is not a file in the scripts folder registers nothing', async () => {
+test('a route whose script is not a file in the scripts folder registers nothing, and is traced missing with a notice naming it', async () => {
   const context = fakeContext();
-  await bridge({ context, scripts: path.join(ROOT, 'no-scripts') });
+  const trace = path.join(ROOT, 'trace-missing.jsonl');
+  const notices = [];
+  await bridge({ context, scripts: path.join(ROOT, 'no-scripts'), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace }, notices });
   assert.deepEqual(Object.keys(context.hooks), ['create.before']);
+  const lost = [...new Set(GENERATED.filter((route) => route.event === 'PostToolUse').map((route) => route.script))];
+  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [...lost.map((script) => ({ step: 'unregistered', script, status: 'missing' })), { step: 'setup', status: 0 }]);
+  assert.deepEqual(notices, [`aidrian's hook scripts not on disk do not run in this session: ${lost.join(', ')}.`]);
+  const scripts = scriptsFolder('half-scripts', ['hook-here.mjs']);
+  const half = await bridge({ scripts, routes: routesFile('half.json', [bashRoute('hook-here.mjs'), bashRoute('hook-gone.mjs'), bashRoute('hook-gone.mjs', { args: ['--x'] })]), notices: [] });
+  await half.fire(shellEvent());
+  assert.deepEqual(half.calls.map((call) => path.basename(call.args[0])), ['hook-here.mjs'], 'the script on disk still runs');
 });
 
 test('create.before prepends bin once, leaves a PATH that holds it, and leaves a shell with no PATH of its own as it is', async () => {
@@ -586,13 +720,14 @@ test('the trace holds setup and each run with no command, payload, or output; un
 // Every module a file names: static and re-export `from`, bare side-effect imports, and dynamic import().
 const specifiersOf = (text) => [...text.matchAll(/^\s*(?:import|export)\b[^'"]*?\bfrom\s+['"]([^'"]+)['"]|^\s*import\s+['"]([^'"]+)['"]|\bimport\(\s*['"`]([^'"`]+)/gmu)].map((match) => match[1] ?? match[2] ?? match[3]);
 // The lib files the bridge may import, each a leaf that imports node: built-ins alone, so the bridge loads in Bun with
-// no other lib file: the name table now, and the hook-result reader once the bridge applies hook output.
-const LIB_LEAVES = ['lib/hosts/opencode-names.mjs', 'lib/hook-result.mjs'];
+// no other lib file: the name table, the hook-result reader, which the bridge does not import in this version, and
+// lib/deadline.mjs, the one source of the held guard budget a blocking route's kill time is counted from.
+const LIB_LEAVES = ['lib/hosts/opencode-names.mjs', 'lib/hook-result.mjs', 'lib/deadline.mjs'];
 
 test('the bridge files import only node: built-ins, each other, the generated routes, and the lib leaves', () => {
   const dir = path.join(PLUGIN, 'opencode');
   const files = readdirSync(dir).sort();
-  assert.deepEqual(files, ['bridge.mjs', 'route-select.mjs', 'routes.generated.json', 'routes.mjs', 'server.mjs']);
+  assert.deepEqual(files, ['bridge.mjs', 'call.mjs', 'route-select.mjs', 'routes.generated.json', 'routes.mjs', 'server.mjs']);
   const allowed = new Set([...files.map((name) => `./${name}`), ...LIB_LEAVES.map((leaf) => `../${leaf}`)]);
   for (const name of files.filter((each) => each.endsWith('.mjs'))) {
     const text = readFileSync(path.join(dir, name), 'utf8');
@@ -600,8 +735,10 @@ test('the bridge files import only node: built-ins, each other, the generated ro
     assert.doesNotMatch(text, /\brequire\(/u, name);
   }
   assert.deepEqual(specifiersOf(readFileSync(path.join(dir, 'bridge.mjs'), 'utf8')).filter((each) => !each.startsWith('node:')),
-    ['../lib/hosts/opencode-names.mjs', './route-select.mjs', './routes.mjs']);
-  assert.deepEqual(specifiersOf(readFileSync(path.join(dir, 'route-select.mjs'), 'utf8')).filter((each) => !each.startsWith('node:')), [], 'the route list half imports node: built-ins alone');
+    ['../lib/deadline.mjs', '../lib/hosts/opencode-names.mjs', './call.mjs', './route-select.mjs', './routes.mjs']);
+  for (const half of ['route-select.mjs', 'call.mjs']) {
+    assert.deepEqual(specifiersOf(readFileSync(path.join(dir, half), 'utf8')).filter((each) => !each.startsWith('node:')), [], `${half} imports node: built-ins alone`);
+  }
 });
 
 test('each lib leaf the bridge may import imports node: built-ins alone', () => {
@@ -613,10 +750,15 @@ test('each lib leaf the bridge may import imports node: built-ins alone', () => 
   assert.deepEqual(specifiersOf("import { x } from '../y.mjs';\nimport './side.mjs';\nawait import('z');"), ['../y.mjs', './side.mjs', 'z'], 'the scan sees each form');
 });
 
-test('server.mjs`s default export is { id: aidrian, setup }', () => {
+test('server.mjs`s default export is { id: aidrian, setup }, whose setup hands the bridge the context alone', async () => {
   assert.deepEqual(Object.keys(server), ['id', 'setup']);
   assert.equal(server.id, 'aidrian');
-  assert.equal(server.setup, setup);
+  const context = fakeContext();
+  const spawn = fakeSpawn();
+  const notices = [];
+  assert.equal(await server.setup(context, { spawn: spawn.spawn, node: null, routes: path.join(ROOT, 'no-routes.json'), events: BLOCKING, notices }), undefined);
+  assert.deepEqual(Object.keys(context.hooks).sort(), ['create.before', 'execute.after'], 'a second argument is no seam: the plugin`s own routes and events register');
+  assert.deepEqual(notices, []);
 });
 
 // The plugin folder is the package OpenCode installs by Git specifier: private, so no npm publish can happen, its version
@@ -897,7 +1039,7 @@ test('end to end: a removed folder skips its call, and a completed gh pr create 
   const result = { output: { output, exitCode: 0 }, content: [], metadata: { status: 'completed' } };
   await fire(shellEvent({ sessionID: 'ses_child', input: { command, workdir: gone }, result }));
   await fire(shellEvent({ sessionID: 'ses_child', input: { command, workdir: project }, result }));
-  assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['setup', 1], ['skip', 'gone'], ['run', 0]]);
+  assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['setup', 1], ['skip', 'cwd'], ['run', 0]]);
 
   const rows = ledgerFiles('ses_rootE2E').flatMap((file) => readFileSync(file, 'utf8').trim().split('\n')).map((line) => JSON.parse(line));
   assert.deepEqual(rows.map(({ at, ...row }) => row), [
@@ -914,4 +1056,160 @@ test('end to end: a removed folder skips its call, and a completed gh pr create 
   assert.equal(ran.status, 0, ran.stderr);
   const json = JSON.parse(ran.stdout);
   assert.deepEqual(json.prs.map(({ repo, number }) => `${repo}#${number}`), ['acme/widgets#12'], ran.stdout);
+});
+
+// The blocking route's tests: the bridge set up with the `events` seam, and hook-bash.mjs run in this process
+// (test/hook-call.mjs) on the payload the fake spawn was given, from the folder it was spawned in.
+
+// A project checkout with the main-checkout guard on, a tracked src/, a task worktree inside it at wt/task, and a review
+// record for pull request 7 that owes the review bot's request, so the merge guard refuses `gh pr merge 7`.
+function guardedCheckout(name) {
+  const dir = path.join(ROOT, name);
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+  mkdirSync(path.join(dir, 'src'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: `../${name}-state` }, git: { mainCheckout: { guard: true } } }));
+  writeFileSync(path.join(dir, '.gitignore'), 'wt/\n');
+  writeFileSync(path.join(dir, 'src/app.js'), 'export {};\n');
+  const git = (...args) => assert.equal(spawnSync('git', ['-C', dir, ...args], { env: HOOK_ENV }).status, 0, args.join(' '));
+  git('init', '-q', '-b', 'main');
+  git('remote', 'add', 'origin', 'git@github.com:acme/notes.git');
+  git('add', '.');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+  git('worktree', 'add', '-q', '-b', 'task', path.join(dir, 'wt/task'));
+  const state = emptyState(7, 'acme/notes');
+  state.pending.push({ kind: 'request', head: SHA, at: '2026-11-03T13:50:00.000Z', by: 'the Human' });
+  writeLocalState(projectAt(dir), state);
+  return dir;
+}
+// One checkout for the merge and the climb tests.
+const GUARDED = process.platform === 'win32' ? null : guardedCheckout('guarded-checkout');
+
+// A spawn that runs hook-bash.mjs in this process on what the bridge sent, and keeps each { status, stderr }.
+function inProcessSpawn() {
+  const results = [];
+  const spawn = fakeSpawn((child, call) => {
+    hookCall(HOOK_BASH, { input: call.stdin, cwd: call.options.cwd, env: call.options.env }).then((result) => {
+      results.push(result);
+      child.emit('close', result.status, null);
+    });
+  });
+  return { ...spawn, results };
+}
+
+async function blockingBridge({ context, trace, routes = routesFile('blocking.json', [preRoute()]) }) {
+  const spawn = inProcessSpawn();
+  await setup(context, { spawn: spawn.spawn, env: { ...HOOK_ENV, AIDRIAN_OPENCODE_TRACE: trace }, node: process.execPath, routes, events: BLOCKING });
+  return { ...spawn, fire: (event) => context.hooks['execute.before'](event) };
+}
+
+// The bridge with the blocking route on the fake spawn, which runs nothing: `fire` runs its execute.before callback.
+async function fakeBlocking(context) {
+  const made = await bridge({ context, routes: routesFile('blocking.json', [preRoute()]), events: BLOCKING });
+  return { ...made, fire: (event) => context.hooks['execute.before'](event) };
+}
+
+test('a blocking route skips no call for a reason its input controls: each is sent as the plain call is, from the session`s folder', { skip: process.platform === 'win32' }, async () => {
+  const repo = GUARDED;
+  const gone = path.join(repo, 'src', 'gone');
+  mkdirSync(gone);
+  const cases = {
+    'a relative workdir': [{ command: MERGE, workdir: 'src' }, path.join(repo, 'src')],
+    'a relative workdir that starts like another machine`s': [{ command: MERGE, workdir: 'ab:x/../src' }, path.join(repo, 'src')],
+    'a workdir on another machine': [{ command: MERGE, workdir: 'box:/srv/notes' }, repo],
+    'a workdir of another type': [{ command: MERGE, workdir: 42 }, repo],
+    'an input with fields the shell does not take': [{ command: MERGE, timeout: 'x', extra: { nested: true } }, repo],
+    'a workdir that vanished': [{ command: MERGE, workdir: gone }, repo],
+  };
+  rmSync(gone, { recursive: true });
+  const { calls, fire } = await fakeBlocking(fakeContext({ sessions: { ses_main: { location: { directory: repo } } } }));
+  await fire(beforeEvent());
+  const plain = sent(calls[0]);
+  assert.deepEqual([calls[0].options.cwd, plain.cwd, plain.hook_event_name, Object.hasOwn(plain, 'agent_id')], [repo, repo, 'PreToolUse', false]);
+  const without = ({ cwd, tool_input: input, ...rest }) => rest;
+  for (const [name, [input, cwd]] of Object.entries(cases)) {
+    await fire(beforeEvent({ input }));
+    const call = calls.at(-1);
+    assert.equal(calls.length, Object.keys(cases).indexOf(name) + 2, `${name}: sent`);
+    assert.deepEqual(without(sent(call)), without(plain), name);
+    assert.deepEqual([call.options.cwd, sent(call).cwd, sent(call).tool_input], [repo, cwd, input], name);
+  }
+  await fire(beforeEvent({ status: 'running' }));
+  assert.deepEqual(sent(calls.at(-1)), plain, 'a status of no completed call changes nothing');
+
+  // A session read that fails: the plugin's folder, and the call sent as a subagent's.
+  const failing = await fakeBlocking(fakeContext({ sessions: { ses_main: new Error('read failed') }, location: { directory: repo } }));
+  await failing.fire(beforeEvent());
+  assert.equal(failing.calls[0].options.cwd, repo);
+  assert.deepEqual(sent(failing.calls[0]), { ...plain, agent_id: 'ses_main' });
+});
+
+test('the merge guard refuses gh pr merge on what a blocking route sends, from each folder a payload names, and the trace keeps none of it', { skip: process.platform === 'win32' }, async () => {
+  const repo = GUARDED;
+  const trace = path.join(ROOT, 'trace-blocking.jsonl');
+  const context = fakeContext({ sessions: { ses_main: { location: { directory: repo } } } });
+  const { calls, results, fire } = await blockingBridge({ context, trace });
+  await fire(beforeEvent());
+  await fire(beforeEvent({ input: { command: MERGE, workdir: 'src' } }));
+  assert.deepEqual(calls.map((call) => [call.options.cwd, sent(call).cwd]), [[repo, repo], [repo, path.join(repo, 'src')]]);
+  for (const result of results) {
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /never sent/u);
+  }
+  // The trace of each refused call holds the allowed fields alone, and none of the command, the folder, or the refusal.
+  const text = readFileSync(trace, 'utf8');
+  for (const word of ['gh pr merge', 'match-head-commit', SHA.slice(0, 7), repo, 'never sent', 'ses_main', 'call_b']) assert.ok(!text.includes(word), word);
+  for (const line of traceLines(trace)) assert.deepEqual(Object.keys(line).filter((key) => !['at', 'step', 'script', 'status', 'count'].includes(key)), [], JSON.stringify(line));
+  assert.deepEqual(traceLines(trace).filter((line) => line.step === 'run').map(({ script, status }) => [script, status]), Array(2).fill(['hook-bash.mjs', 2]));
+});
+
+test('a relative workdir that climbs from a worktree into the main checkout gets a commit refused there', { skip: process.platform === 'win32' }, async () => {
+  const repo = GUARDED;
+  const worktree = path.join(repo, 'wt/task');
+  const context = fakeContext({ sessions: { ses_main: { location: { directory: worktree } } } });
+  const plain = await fakeBlocking(context);
+  await plain.fire(beforeEvent({ input: { command: 'git commit -m x', workdir: '../..' } }));
+  assert.deepEqual([plain.calls[0].options.cwd, sent(plain.calls[0]).cwd], [worktree, repo], 'a plain climb');
+  await plain.fire(beforeEvent({ input: { command: 'git commit -m x' } }));
+  assert.deepEqual([plain.calls[1].options.cwd, sent(plain.calls[1]).cwd], [worktree, worktree], 'with no workdir, the worktree');
+  const { calls, results, fire } = await blockingBridge({ context, trace: path.join(ROOT, 'trace-climb.jsonl') });
+  await fire(beforeEvent({ input: { command: 'git commit -m x', workdir: 'ab:x/../../..' } }));
+  assert.deepEqual([calls[0].options.cwd, sent(calls[0]).cwd], [worktree, repo], 'a climb that starts like another machine`s workdir');
+  assert.equal(results[0].status, 2, results[0].stderr);
+  assert.ok(results[0].stderr.includes(`in the main checkout (${repo})`), results[0].stderr);
+});
+
+test('a blocking route sends a call with no input, or a command of another type, that an execute.after route skips', async () => {
+  const scripts = scriptsFolder('blocking-shape-scripts', ['hook-pre.mjs']);
+  const routes = routesFile('blocking-shape.json', [preRoute({ script: 'hook-pre.mjs' })]);
+  const { context, calls } = await bridge({ scripts, routes, events: BLOCKING });
+  for (const input of [null, { command: ['gh', 'pr', 'merge'] }, 'gh pr merge 7']) await context.hooks['execute.before'](beforeEvent({ input }));
+  assert.deepEqual(calls.map((call) => sent(call).tool_input), [null, { command: ['gh', 'pr', 'merge'] }, 'gh pr merge 7']);
+  await context.hooks['execute.before'](beforeEvent({ sessionID: 42 }));
+  assert.equal(calls.length, 3, 'a call with no session id, which the input cannot change, is still skipped');
+});
+
+test(`a blocking route's script is killed no sooner than ${BLOCKING_KILL_MS} ms from its spawn, 1 s past the held guard budget, or its own longer timeout`, { timeout: 10_000 }, async (t) => {
+  assert.equal(BLOCKING_KILL_MS, HELD_BUDGET_MS + 1000);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const scripts = scriptsFolder('blocking-kill-scripts', ['hook-five.mjs', 'hook-ten.mjs']);
+  const routes = routesFile('blocking-kill.json', [preRoute({ script: 'hook-five.mjs', timeoutMs: 5000 }), preRoute({ script: 'hook-ten.mjs', timeoutMs: 10_000 })]);
+  // A session read that runs late: the call is sent at the read cap, as a subagent's, and each script's time starts at its spawn.
+  const slow = () => new Promise((resolve) => setTimeout(() => resolve({ location: { directory: SESSION_DIR } }), 60_000));
+  const context = fakeContext({ sessions: { ses_main: slow } });
+  const spawn = fakeSpawn(() => {});
+  await bridge({ context, spawn, scripts, routes, events: BLOCKING });
+  const running = context.hooks['execute.before'](beforeEvent());
+  while (context.reads.length === 0) await settle();
+  t.mock.timers.tick(READ_MS);
+  while (spawn.calls.length < 2) await settle();
+  assert.deepEqual(spawn.calls.map((call) => [sent(call).session_id, sent(call).agent_id]), [['ses_main', 'ses_main'], ['ses_main', 'ses_main']], 'a late read is sent with agent_id');
+  t.mock.timers.tick(BLOCKING_KILL_MS - 1);
+  await settle();
+  assert.deepEqual(spawn.calls.map((call) => call.killed), [[], []], 'not at the 5 s timeout');
+  t.mock.timers.tick(1);
+  await settle();
+  assert.deepEqual(spawn.calls.map((call) => call.killed), [['SIGKILL'], []]);
+  t.mock.timers.tick(10_000 - BLOCKING_KILL_MS);
+  await running;
+  assert.deepEqual(spawn.calls.map((call) => call.killed), [['SIGKILL'], ['SIGKILL']], 'the 10 s route at its own timeout');
 });

@@ -309,8 +309,11 @@ past the global options that take a value: `--server`, `--log-level`, `--complet
 
 Both guards read a package runner as the program it runs: `npx`, `bunx`, `npm exec`, `npm x`, `pnpm dlx`,
 `pnpm exec`, and `yarn dlx` of `@opencode/cli` or `opencode-ai` run `opencode`, and of `@anthropic-ai/claude-code`
-run `claude`, past the runner's options that take a value before or after its own word, such as npm's `-w`,
-`--workspace`, `-C`, and `--prefix`, and pnpm's `-C`, `--dir`, `-F`, and `--filter` (`lib/package-runner.mjs`).
+run `claude`. No list of the runner's options is kept: the program is the first word after the runner's own word,
+such as npm's `exec` or pnpm's `dlx`, that names a host's program or package, wherever the runner's options stand, so
+`npm --cache /d exec opencode run x` and `pnpm --dir x dlx opencode-ai run x` count (`lib/package-runner.mjs`).
+Its one false refusal, to a subagent or a session no Human attends: a runner call that names a host's program as a later argument
+of another program, such as `npx prettier claude`.
 
 **A confined clone.** On Claude Code's confined start, the clone gets empty `.opencode` and `.agents` folders, and
 `opencode.json` and `opencode.jsonc` holding `{}`, as placeholders, each file kept out of git through the git folder's

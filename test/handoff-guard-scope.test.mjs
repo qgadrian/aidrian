@@ -150,6 +150,18 @@ test('a subagent, and a session the background route started, may not start an O
   assert.match(startAsk('npx @anthropic-ai/claude-code -p x')?.reason ?? '', /starts or resumes a session of Claude Code outside the handoff gate/u);
 });
 
+test('a package runner is read as the host program it names past any of its options, and a host program named later counts too', () => {
+  for (const [command, host] of [['npm --cache /d exec claude -p hi', 'Claude Code'], ['npm exec --cache /d claude -p hi', 'Claude Code'],
+    ['npx --cache /d @anthropic-ai/claude-code -p hi', 'Claude Code'], ['pnpm --dir x dlx opencode-ai run x', 'OpenCode'], ['npm --loglevel=silent --cache /d x codex exec hi', 'Codex'],
+    // The one false reading: a host's program named as a later argument of another program.
+    ['npx prettier claude', 'Claude Code']]) {
+    const why = new RegExp(`starts or resumes a session of ${host} outside the handoff gate`, 'u');
+    assert.match(startAsk(command)?.reason ?? '', why, command);
+    assert.match(startAsk(command, { agent: null, unattended: () => true })?.reason ?? '', why, `unattended: ${command}`);
+  }
+  for (const command of ['npm --cache /d exec prettier .', 'npm --cache /d install', 'pnpm --dir x install opencode-plugin']) assert.equal(startAsk(command), null, command);
+});
+
 test('a session no Human attends may not read OpenCode\'s service password or reach its background service, by any spelling, and other ports pass', () => {
   const env = { HOME: '/home/user', XDG_STATE_HOME: '/xs', NUM: 7 };
   const ask = (command, unattended = () => true) => hostServiceDenial(bash(command, { session_id: OTHER, cwd: '/x' }), { names: { human: 'the Human' } }, { unattended, env, home: '/home/user' });

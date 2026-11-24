@@ -439,6 +439,12 @@ test('a program that writes its own config is refused to a session no Human atte
     ['pnpm --dir web dlx @opencode/cli plugin add x', /the host's own config/u],
     ['pnpm -C web exec codex login', /the host's own config/u],
     ['pnpm --filter web exec opencode plugin add x', /the host's own config/u],
+    // Past any option of the runner, one no list names too, before or after its own word, as npm's `--cache <dir>`.
+    ['npm --cache /d exec codex login', /the host's own config/u],
+    ['npm exec --cache /d claude mcp add s -- x', /the host's own config/u],
+    ['npx --cache /d @anthropic-ai/claude-code mcp add s -- x', /the host's own config/u],
+    ['pnpm --dir x dlx opencode-ai plugin add x', /the host's own config/u],
+    ['yarn --cwd x dlx codex login', /the host's own config/u],
   ];
   for (const [command, reason] of refused) assert.match(ask(bash(command))?.reason ?? '', reason, command);
   for (const command of ['git config user.name', 'git config --get user.name', 'git config -l', 'git config get user.name', `git config --file ${path.join(fx.temp, 'c')} user.name x`,

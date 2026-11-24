@@ -222,6 +222,10 @@ export function mainCheckoutPaths(hosts = HOSTS) {
 export const configCommands = (hosts = HOSTS) => hosts.map((host) => host.configCommands)
   .filter((each) => Array.isArray(each?.programs) && Array.isArray(each.subcommands));
 
+// Every host's own programs, as `claude` and `opencode`: those that start its sessions (`sessionStart`) and those whose
+// subcommands write its config (`configCommands`), which a package runner's call may name anywhere (package-runner.mjs).
+export const hostPrograms = (hosts = HOSTS) => [...new Set(hosts.flatMap((host) => [...(host.sessionStart?.programs ?? []), ...(host.configCommands?.programs ?? [])]))];
+
 // The npm packages that install a host's program, as { package: program }, from each adapter's optional `packages`: a
 // package runner's call of one runs that program (package-runner.mjs), whatever the package's last part is named.
 export const packagePrograms = (hosts = HOSTS) => Object.fromEntries(hosts.flatMap((host) => Object.entries(host.packages ?? {})));

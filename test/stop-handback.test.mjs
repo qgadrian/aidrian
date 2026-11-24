@@ -411,6 +411,9 @@ test('a question to do more in this pull request that the message recommends ans
     'Fold the sibling fix into this branch?\n- Yes (not recommended)\n- No (recommended)',
     'Fold the sibling fix into this branch?\nNot recommended: yes.',
     'Fold the sibling fix into this branch?\nYes (never recommended)',
+    // A recommendation of no that mentions a yes, and a pull request named after the question, are no such question.
+    'Add it to this PR?\nRecommendation: no. The audit status is yes.',
+    'Any updates? CI is green on this PR.\nRecommended: yes.',
   ]) assert.ok(!fires(message), message);
   // A long message of questions is read in one pass.
   const started = process.cpuUsage();

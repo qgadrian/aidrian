@@ -193,9 +193,10 @@ function handsOver(item, pr, file) {
 
 // A question about the change at hand: one that names this pull request, this same one, or this branch.
 export const SAME_CHANGE = /\b(?:this|the same|this same)\s+(?:pull request|PR|branch)\b/iu;
-// Whether one line recommends answering yes: it names a recommendation and a yes, as "Recommended: yes" or
-// "Yes (recommended)" do, and no negation, as "Yes (not recommended)" or "Never recommended: yes" hold.
-export const recommendsYes = (line) => /\brecommend/iu.test(line) && /\byes\b/iu.test(line) && !/\b(?:not|never|don['’]t)\b/iu.test(line);
+// Whether a text recommends answering yes: a recommendation and a yes next to each other, only punctuation between, as in
+// "Recommended: yes" or "Yes (recommended)", with no "not" or "never" just before it, as in "Not recommended: yes".
+const RECOMMENDS_YES = /(?<!\b(?:not|never)\s)\brecommend(?:ed|s|ation)?\b\W{0,3}yes\b|\byes\b\W{0,3}recommended\b/iu;
+export const recommendsYes = (text) => RECOMMENDS_YES.test(text);
 
 // The first question of `message` that asks to do more in the change at hand while its paragraph recommends yes, cut to
 // 80 characters, or null. A paragraph is the lines between blank lines, as a quoted "Decision needed" block is one, and
@@ -209,7 +210,8 @@ export function scopeAsk(message) {
   const paragraphs = all.filter((_, at) => !fenced[at]).join('\n').split(/\n\s*\n/u);
   for (const paragraph of paragraphs) {
     const lines = paragraph.split('\n');
-    const asked = lines.find((line) => line.includes('?') && SAME_CHANGE.test(line));
+    // A line's question is its text up to its last `?`: a sentence after it is no part of the question.
+    const asked = lines.map((line) => line.slice(0, line.lastIndexOf('?') + 1)).find((text) => SAME_CHANGE.test(text));
     if (!asked || !lines.some(recommendsYes)) continue;
     const question = asked.replace(/^[>\s*_#-]+/u, '').trim();
     return question.length > 80 ? `${question.slice(0, 77)}...` : question;

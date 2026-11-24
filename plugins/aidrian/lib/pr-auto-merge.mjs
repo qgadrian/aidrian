@@ -908,6 +908,9 @@ export function closingProblem(forge, pr, context, readTrail) {
   }
   const said = closingTextsProblem(texts, context, pr);
   if (said) return said;
+  // SHORTCUT: the text above and the closing links below come from two reads tied only by the head SHA, so a title or
+  // body edit, or a sidebar link, landing between them goes unseen here. Accepted as contrived: the merge guard judges
+  // the text and the links from one review trail at merge time (merge-review.mjs mergeClosesProblem).
   let trail;
   try {
     trail = readTrail();

@@ -414,43 +414,14 @@ export const GRANT = 'Grant more review rounds';
 // SHIP holds no character a regular expression treats as special.
 const SHIP_ANSWER = new RegExp(`^\\s*${SHIP}\\b`, 'iu');
 
-// The pull requests a text names with a repository, `<owner>/<name>#<PR>`, with no word, path, or URL before it: [{ repo, pr }].
-const REF = /(?<![\w./-])([\w.-]+\/[\w.-]+)#(\d+)(?!\d)/gu;
-const refsIn = (text) => [...text.matchAll(REF)].map((match) => ({ repo: match[1].toLowerCase(), pr: Number(match[2]) }));
-// The pull requests at a head a text names, each as one unit, `#<PR> at <sha>` or `<owner>/<name>#<PR> at <sha>`, the
-// head in 7 to 40 hex characters, as the guard's own questions write it: [{ repo, pr, sha }].
-const PAIR = /(?<![\w./-])(?:([\w.-]+\/[\w.-]+))?#(\d+) at ([0-9a-f]{7,40})(?!\w)/giu;
-const pairsIn = (text) => [...text.matchAll(PAIR)].map((match) => ({ repo: match[1]?.toLowerCase() ?? null, pr: Number(match[2]), sha: match[3].toLowerCase() }));
-
-// Whether the Human's answer `each` ({ question, answer }) is about `pr` at `head` in repository `repo` (the record's;
-// null names none). Only a pair counts, `#<PR> at <sha>` or `<owner>/<name>#<PR> at <sha>` written as one unit: the
-// chosen option's when it holds one, else the question's. Exactly one pair decides, so a question naming two pull
-// requests or heads authorises nothing unless the option names its pair. So a question in the Human's own words counts
-// when the chosen option carries the pair: a session once asked the guard's decision in its own words, and the answer
-// was ignored. Every repository the question or the option names for the pull request, as `<owner>/<name>#<PR>`, must
-// be the record's, so an option repeating a bare `#<PR>` never drops the question's other repository.
-export function answerNames(each, { pr, head, repo = null }) {
-  const answer = String(each?.answer ?? '');
-  const question = String(each?.question ?? '');
-  const own = repo ? repoName(repo) : null;
-  const pairs = pairsIn(answer).length ? pairsIn(answer) : pairsIn(question);
-  if (pairs.length !== 1 || pairs[0].pr !== Number(pr) || !String(head).toLowerCase().startsWith(pairs[0].sha)) return false;
-  return own === null || [...refsIn(question), ...refsIn(answer)].every((ref) => ref.pr !== Number(pr) || ref.repo === own);
-}
-
-// An answer that decides the guard's question, by the option it starts with: "Merge anyway" or "Wait for the review",
-// and at a review stopped at its round limit "Merge with the findings filed" or "Grant more review rounds".
-const DECIDES = new RegExp(`^\\s*(?:merge anyway|wait for the review|${SHIP}|${GRANT})\\b`, 'iu');
-
-// The Human's answer that waives the guard for `pr` at `head` (of `repo`, the record's), given at or after `since`:
-// "Merge anyway", or, at a review stopped at its round limit (`capped`), "Merge with the findings filed". The latest
-// answer about it that picks an option decides, so a later "Grant more review rounds" or "Wait for the review" withdraws
-// an earlier merge.
-export function mergeApproved(answers, { pr, head, repo = null, since = null, capped = false }) {
-  const latest = answers.filter((each) => answerNames(each, { pr, head, repo }) && DECIDES.test(each.answer ?? '') &&
-    (since === null || (each.at !== null && Date.parse(each.at) >= Date.parse(since)))).at(-1);
-  if (!latest) return false;
-  return /^\s*merge anyway\b/iu.test(latest.answer) || (capped && SHIP_ANSWER.test(latest.answer));
+// The Human's answer that waives the guard for `pr` at `head`, given at or after `since`: "Merge anyway", or, at a
+// review stopped at its round limit (`capped`), "Merge with the findings filed".
+export function mergeApproved(answers, { pr, head, since = null, capped = false }) {
+  const names = new RegExp(`#${pr}(?!\\d)`, 'u');
+  const sha7 = String(head).slice(0, 7).toLowerCase();
+  const takes = (answer) => /^\s*merge anyway\b/iu.test(answer) || (capped && SHIP_ANSWER.test(answer));
+  return answers.some((each) => names.test(each.question) && each.question.toLowerCase().includes(sha7) && takes(each.answer) &&
+    (since === null || (each.at !== null && Date.parse(each.at) >= Date.parse(since))));
 }
 
 // `, with <N> finding(s) open` for a count, or nothing without one.
@@ -464,33 +435,29 @@ const withOpen = (count) => {
 // Record text a deny quotes is clipped (review/state.mjs clip), so a long reason, such as an error's stack, keeps it short.
 const statusText = (outcome, sha7) => `the review of head ${sha7} is \`${clip(outcome.status)}\`${outcome.reason ? ` (${clip(outcome.reason)})` : ''}`;
 
-// The pull request at its head as the guard's questions name it, and answerNames reads it: `<owner>/<name>#<PR> at <sha7>`,
-// or `#<PR> at <sha7>` for a repository it does not write.
-export const pairOf = (pr, head, repo = null) => `${safeRepo(repo) ?? ''}#${pr} at ${String(head).slice(0, 7).toLowerCase()}`;
-
 // The question the guard asks at a review of `pr` stopped at its round limit on `head`, with `count` findings open (null:
 // the record has no count). The review-delegate rule reads the Human's answer to this very text, so both build it here.
-// `repo` is the record's repository, written as `<owner>/<name>#<PR>` when it is a name of GitHub's own characters.
-export function roundLimitQuestion(pr, head, count, repo = null) {
+export function roundLimitQuestion(pr, head, count) {
   // With no count, the record does not say findings are what is open: the cap is also reached on a failing check.
   let left = 'them';
   if (count === null) left = 'what it left open';
   else if (count === 1) left = 'it';
-  return `Review of pull request ${pairOf(pr, head, repo)} stopped at its round limit${withOpen(count)}. Ship, and file ${left} as an issue?`;
+  return `Review of pull request #${pr} at ${String(head).slice(0, 7).toLowerCase()} stopped at its round limit${withOpen(count)}. Ship, and file ${left} as an issue?`;
 }
 
 // The deny's tail at a review stopped at its round limit: ship with the findings filed, or grant more rounds, with
 // neither preferred. The grant's route is the waiting check's own, else `aidrian pr extend`, whose refusal names it.
-// The question may be in other words when it or the chosen option names `#<PR>` and the short head (answerNames).
 // `delegable`: every open finding of `head` is low, so the Human may also leave the decision to the session; `repoArg`
 // is ` --repo <owner>/<name>` for the delegate command in a checkout whose remotes name several repositories.
-function cappedAsk({ pr, count, last, head, repo, delegable, repoArg, mergeArg = repoArg }) {
-  const question = roundLimitQuestion(pr, head, count, repo);
+// It says to ask the question and options word for word: mergeApproved reads only an answer to a question naming `#<PR>`
+// and the short head, and a session that asked in its own words once had the Human's answer ignored (#645).
+export function cappedAsk({ pr, count, last, head, delegable, repoArg, mergeArg = repoArg }) {
+  const question = roundLimitQuestion(pr, head, count);
   const route = waitingRoute(pr, last) ??
     `Run \`aidrian pr extend ${pr} --human approve\`: it records the grant when an extension waits for the Human, and otherwise its refusal names the route to one more round.`;
   return `Only the Human decides this: ask with AskUserQuestion, the question "${question}", the options "${SHIP}" and "${GRANT}", ` +
-    `and mark neither as preferred; a question in other words counts when the chosen option, or else the question, names \`${pairOf(pr, head, repo)}\` as written, and no other pull request at a head. ` +
-    `When the Human picks "${SHIP}", file the findings the review left open as a follow-up issue, then merge. ` +
+    `and mark neither as preferred. Ask exactly this question and these options, word for word: the merge guard reads only an answer to a question ` +
+    `that names #${pr} and ${String(head).slice(0, 7).toLowerCase()}, so a question in other words is not read, and the Human is asked again. When the Human picks "${SHIP}", file the findings the review left open as a follow-up issue, then merge. ` +
     `When the Human picks "${GRANT}", do not merge. ${route} ${delegable ? delegateRoute(pr, head, repoArg, mergeArg) : ''}`;
 }
 
@@ -605,12 +572,13 @@ function heldReason({ project, pr, repo, base, deadline, now }) {
 // { allow, delegable, route }. Read only at a capped review whose open findings are all low (`delegable`), and taken only
 // for a merge that names its head (`named`), as a recorded verdict; for another, `route` says to name it. `session` is the
 // merging session's id, or null when the hook gives none: an entry another session recorded is then not taken.
-// A later "Grant more review rounds" answer of this session naming the pull request and head (answerNames) outranks the entry.
+// A later "Grant more review rounds" answer of this session to the same question (`answers`, `count`) outranks the entry.
 // `repoArg` names the repository in the merge command it suggests, as `--repo` selected it.
-function delegated({ state, pr, head, capped, named, session, answers = [], repoArg = '' }) {
+function delegated({ state, pr, head, capped, named, session, answers = [], count = null, repoArg = '' }) {
   const delegable = capped && lowOnly(state, head).ok;
   let taken = delegable ? delegationFor(state, head, { session }) : null;
-  const granted = taken && answers.some((each) => answerNames(each, { pr, head, repo: state?.repo ?? null }) && new RegExp(`^\\s*${GRANT}\\b`, 'iu').test(each.answer ?? '') &&
+  const question = roundLimitQuestion(pr, head, count);
+  const granted = taken && answers.some((each) => each.question === question && new RegExp(`^\\s*${GRANT}\\b`, 'iu').test(each.answer ?? '') &&
     each.at !== null && Date.parse(each.at) >= Date.parse(taken.at));
   if (granted) taken = null;
   let route = '';
@@ -684,18 +652,18 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
     problem += `: run \`aidrian pr review ${pr}\` until it returns \`received\` or \`none_needed\``;
   }
   const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
-  if (mergeApproved(answers, { pr, head, repo: state.repo ?? null, since, capped })) return null;
-  const delegation = delegated({ state, pr, head, capped, named, session, answers, repoArg: capped ? mergeRepoArg(repo, hosts) : '' });
+  if (mergeApproved(answers, { pr, head, since, capped })) return null;
+  const delegation = delegated({ state, pr, head, capped, named, session, answers, count, repoArg: capped ? mergeRepoArg(repo, hosts) : '' });
   if (delegation.allow) return null;
   // A judge's recorded verdict, under both switches, for the round cap on this head only (waiverKind).
   const waiver = guardWaiver({ project, state, pr, head, named, repo, view, forge: waiverForge, startedAt, now, memo });
-  const question = `Merge pull request ${pairOf(pr, head, state.repo ?? null)} before its review is finished?`;
+  const question = `Merge pull request #${pr} at ${sha7} before its review is finished?`;
   // The remotes are read only for the delegation route, which only a capped review whose open findings are all low names.
   const repoArg = delegation.delegable ? repoArgFor(project, repo) : '';
   const last = state.extensions?.at(-1) ?? null;
   let ask;
   if (unattended) ask = capped ? unattendedCap({ pr, last, local: project.paths.local }) : UNATTENDED_WAIT;
-  else if (capped) ask = cappedAsk({ pr, count, last, head, repo: state.repo ?? null, delegable: delegation.delegable, repoArg, mergeArg: mergeRepoArg(repo, hosts) });
+  else if (capped) ask = cappedAsk({ pr, count, last, head, delegable: delegation.delegable, repoArg, mergeArg: mergeRepoArg(repo, hosts) });
   else {
     ask = `Only the Human waives this: ask with AskUserQuestion, the question "${question}", the options "Wait for the review" ` +
       '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ';

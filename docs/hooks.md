@@ -681,18 +681,9 @@ for it. A merge that names no repository, or one it cannot read, reads every ent
 default may be the upstream; when this machine holds records of that number for more than one repository, it reads
 none of them in another's place and is refused, naming the `-R` to add.
 
-The Human waives it. The reason prints a question naming the pull request at its head as one unit,
-`<owner>/<name>#<PR> at <sha7>`, the review record's repository and the head's first 7 characters (`#<PR> at <sha7>`
-when that name holds a character GitHub does not use). The merge runs when the session transcript holds the Human's
-AskUserQuestion answer whose chosen option starts with "Merge anyway", given at or after the head's outcome and every
-owed review, about that pull request at that head. Only such a pair counts, `#<PR> at <sha>` or `<owner>/<name>#<PR> at <sha>`
-with 7 to 40 hex characters of the head, never a number and a commit apart: the chosen option's pair when it holds one,
-so a question in the Human's own words counts when the option is, say, "Merge anyway (<owner>/<name>#<PR> at <sha7>)";
-else the question's. Exactly one pair decides, so a question naming two authorises nothing unless the option names its
-pair. Every repository the question or the option names for the pull request, as `<owner>/<name>#<PR>`, must be the
-record's, so an option repeating a bare `#<PR>` never drops the question's other repository. The latest answer about
-the pull request and head that picks one of the guard's options decides: a later "Wait for the review" or "Grant more
-review rounds" withdraws an earlier merge answer, and a later merge answer takes it again. Without a transcript in that shape
+The Human waives it. The reason prints a question naming `#<PR>` and the head's first 7 characters; the merge runs when
+the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts
+with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
 Every denial in a session a Human attends ends with that route and the one command for it, `gh pr merge <PR> --match-head-commit <sha>`
 with the merge's `--repo` when it named one, its host included when it named exactly one, and the working copy's
@@ -704,12 +695,14 @@ message as the answer: the transcript is a file in the session's own account, an
 
 At the round cap, with nothing owed and the head's outcome `extension_check` or `round_limit`, the review is stopped
 and not running, so the reason offers no wait. It says the review is stopped at its round limit and not running, and
-asks "Review of pull request <owner>/<name>#<PR> at <sha7> stopped at its round limit, with <N> findings open. Ship, and file them as
+asks "Review of pull request #<PR> at <sha7> stopped at its round limit, with <N> findings open. Ship, and file them as
 an issue?", or with one, "..., with 1 finding open. Ship, and file it as an issue?". The count is the open findings of the
 record's last round; it is left out, and the question ends "Ship, and file what it left open as an issue?", when that
 round is not for the head, records no count, or left none.
-The options are "Merge with the findings filed" and "Grant more review rounds", with neither marked preferred. "Merge with the findings filed", or
-"Merge anyway", lets the merge run under the same conditions as the paragraph above, a question in other words included. On that answer the session files
+The options are "Merge with the findings filed" and "Grant more review rounds", with neither marked preferred. The reason
+says to ask that question and those options word for word: the guard reads only an answer to a question naming `#<PR>`
+and the short head, so a question in other words is not read, and the Human would be asked again. "Merge with the findings filed", or
+"Merge anyway", lets the merge run under the same conditions as the paragraph above. On that answer the session files
 what the review left open as a follow-up issue first, then merges; the guard does not check the issue. "Grant more
 review rounds" merges nothing, and the reason names the route to one more round: the waiting check's own while the check
 at the cap waits for its judge or the Human, else `aidrian pr extend <PR> --human approve`, whose refusal names the
@@ -751,7 +744,7 @@ its head (`--match-head-commit`, `sha=` in a `gh api` merge, or the merge tool's
 head is still low, and the entry is for that head, at or after its outcome. An entry another session recorded is passed
 over when the hook gives the merging session's id and the entry holds its own; one recorded with no session id counts
 for any. A merge that names no head is refused, and told to name it. A "Grant more review rounds" answer in the
-merging session's transcript naming the pull request and head, as above, at or after the entry, outranks it: the merge is refused, and the
+merging session's transcript to the same question, at or after the entry, outranks it: the merge is refused, and the
 reason names `aidrian pr extend <PR> --human approve`. The guard reads the entry from the record it already loaded: it
 makes no call for it; without a transcript, the entry stands. `aidrian pr auto-merge` reads no delegation.
 

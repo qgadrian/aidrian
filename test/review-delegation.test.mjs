@@ -24,7 +24,7 @@ const NEXT = '1234567890abcdef1234567890abcdef12345678';
 const URL = 'https://github.com/Acme/Notes/pull/5';
 const T0 = '2026-11-03T14:00:00.000Z';
 const LATER = '2026-11-03T14:30:00.000Z';
-const QUESTION = 'Review of pull request acme/notes#5 at abcdef1 stopped at its round limit, with 2 findings open. Ship, and file them as an issue?';
+const QUESTION = 'Review of pull request #5 at abcdef1 stopped at its round limit, with 2 findings open. Ship, and file them as an issue?';
 // The marks Claude Code 2.1.295 to 2.1.328 put on an AskUserQuestion answer the Human gave in the terminal.
 const HUMAN = { isSidechain: false, entrypoint: 'cli', permissionDecision: { decision: 'accept', source: 'user_temporary', grantScope: 'once' } };
 const OPTIONS = [{ label: 'Merge with the findings filed', description: 'd' }, { label: 'Grant more review rounds', description: 'd' }];
@@ -209,7 +209,7 @@ test('the rule lets the command run on the Human`s delegating answer to the guar
   denied(/the transcript holds no AskUserQuestion answer/u, 'no answer');
   r.answer([QUESTION, 'whatever you recommend best', '2026-11-03T13:00:00.000Z']);
   denied(/no AskUserQuestion answer came at or after the review stopped/u, 'older than the outcome');
-  const unasked = /no answer since is to the merge guard's round-limit question "Review of pull request acme\/notes#5 at abcdef1 stopped at its round limit, with 2 findings open\. Ship, and file them as an issue\?", with its two options/u;
+  const unasked = /no answer since is to the merge guard's round-limit question "Review of pull request #5 at abcdef1 stopped at its round limit, with 2 findings open\. Ship, and file them as an issue\?", with its two options/u;
   r.answer([QUESTION.replace('#5', '#55'), 'you decide']);
   denied(unasked, 'another pull request');
   r.answer([QUESTION.replace('abcdef1', '1234567'), 'you decide']);

@@ -91,7 +91,7 @@ function judge(call, project, input) {
   if (!outcome || !cappedOn(state, outcome.head)) {
     return deny(`this machine's review record of #${call.pr} holds no review stopped at its round limit, so there is no answer to record, as when another machine ran the review`);
   }
-  const question = roundLimitQuestion(call.pr, outcome.head, openCount(state, outcome.head), state.repo ?? null);
+  const question = roundLimitQuestion(call.pr, outcome.head, openCount(state, outcome.head));
   const why = delegationMiss(transcriptAnswers(readTranscript(input?.transcript_path)), { pr: call.pr, outcome, question });
   return why === null ? null : deny(why);
 }

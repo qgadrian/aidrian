@@ -1078,7 +1078,7 @@ function waitPass({ state, run, store, cap, env, home, spawn, policy, forge, now
   const lingered = settleLingering({ state, run, store, cap, env, spawn, now, wait: true });
   lines.push(...lingered.lines);
   const after = readRun(state, run);
-  if (!after.problem) sweepAttempts({ state, run, found: after, cap, env, spawn });
+  if (!after.problem) lines.push(...sweepAttempts({ state, run, found: after, cap, env, home, spawn, forge }));
   return { lines, lingering: lingered.lingering };
 }
 
@@ -1228,8 +1228,9 @@ export function recordHandoff({ project, config, run, brief, env = process.env, 
 // Records, for the driver of run `run`, the run's end at the end of its loop: an `end` row, which ends the run for
 // project-run.mjs activeRuns and releases the driver's hold (run-driver.mjs runDriver), so its session may sign off
 // again. It refuses while an issue runs, or a session runs on after its issue settled (project-linger.mjs). Only the run's current driver records it, by custody; the end of a run whose issues are parked is the driver's
-// to record too, after its report names them. A run that ended starts no issue. Returns { exitCode, out, err }.
-export function endRun({ project, config, run, env = process.env, home, now = Date.now(), spawn }) {
+// to record too, after its report names them. A run that ended starts no issue. It then sweeps the attempts' folders a
+// last time (project-start.mjs sweepAttempts), printing a line for each clone it keeps. Returns { exitCode, out, err }.
+export function endRun({ project, config, run, env = process.env, home, now = Date.now(), spawn, forge }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project end: ${why}`] });
   const { session } = sessionIdentity(env);
   const marked = typeof session === 'string' && SESSION_ID.test(session) ? markProblem(session, { env, home }) : null;
@@ -1253,7 +1254,11 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
     return { rows: [...custodyRows(held, session, now), { event: 'end', session, at: iso(now) }] };
   });
   if (written.problem) return refuse(written.problem);
-  return { exitCode: 0, out: [`end: run ${run} ended, and its driver's hold is released`], err: [] };
+  // The last sweep: every session has ended, so no forge token stays in a host file, and every clone with work the
+  // forge does not have is named.
+  const last = cap ? readRun(state, run) : { problem: 'no host' };
+  const swept = last.problem ? [] : sweepAttempts({ state, run, found: last, cap, env, home, spawn, forge: forge ?? forgeFor(project.root) });
+  return { exitCode: 0, out: [...swept, `end: run ${run} ended, and its driver's hold is released`], err: [] };
 }
 
 // Lifts the halt of run `run` (project-run.mjs haltOf) for the Human's own shell, which names no session, or an attended

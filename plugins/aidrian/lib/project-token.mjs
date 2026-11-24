@@ -178,6 +178,31 @@ export function claimedSource(folder, env) {
 // nothing secret. Null, or why it could not.
 export const writeHandoff = (folder, { handed, why = null }) => writeJson(path.join(folder, HANDOFF_FILE), handed ? { handed: true } : { handed: false, why });
 
+// Where the SessionStart hook records the host's session environment files it hands the forge token to, beside the
+// claim, outside the sandbox's grants, so the driver's sweep removes them once the session ended (lib/project-start.mjs
+// sweepAttempts): the host keeps each file after its session, token and all.
+export const TOKEN_FILES = 'token-files.json';
+// The most files one record keeps: one a SessionStart, which a resume, a clear, or a compact runs again.
+const TOKEN_FILES_CAP = 64;
+
+// Adds `file`, a session environment file of the host session `session`, to the record in the attempt's folder
+// `folder`, before the token is written there: null, or why it could not.
+export function recordTokenFile(folder, { session, file }) {
+  if (typeof session !== 'string' || typeof file !== 'string' || !path.isAbsolute(file)) return 'the host named no session environment file';
+  const read = tokenFiles(folder);
+  const files = read?.session === session ? read.files : [];
+  if (!files.includes(file)) files.push(file);
+  if (files.length > TOKEN_FILES_CAP) return 'the session has handed the token to too many files';
+  return writeJson(path.join(folder, TOKEN_FILES), { session, files });
+}
+
+// The record recordTokenFile keeps in `folder`: { session, files }, or null when there is none, or it is no record.
+export function tokenFiles(folder) {
+  const read = readSmallJson(path.join(folder, TOKEN_FILES), 64 * 1024);
+  if (!read || typeof read.session !== 'string' || !Array.isArray(read.files)) return null;
+  return { session: read.session, files: read.files.filter((each) => typeof each === 'string' && path.isAbsolute(each)) };
+}
+
 // Why the attempt in `folder` holds no forge token its session was handed, or null: only for a start that expected one,
 // whose claim is there; then a missing record, or one that says not handed, is the problem.
 export function handoffProblem(folder) {

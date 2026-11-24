@@ -12,7 +12,8 @@
 // `--body-file -` reads the heredoc fed to gh itself: the file does not exist yet when the hook runs.
 //
 // A call answers to the repository it targets. The project is the one the folder gh runs in finds (`chained` in
-// shell-lex walkCommands), and the session's only where that folder cannot be known. A call that names a repository
+// shell-lex walkCommands). Where that folder cannot be known, a call that posts text is refused with the folder-written-out
+// form (`unreadDestination`), and the session's project stands in only for one that names the session's repository. A call that names a repository
 // other than that checkout's remotes, by -R, a pull request URL, or GH_REPO, answers to no rule here
 // (`targetsAnotherRepo`): the machine cannot find that repository's config.
 //
@@ -76,6 +77,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   if (env[OVERRIDE] === '1') return null;
   for (const { call, entry, written } of bodyCalls(command, cwd)) {
     const { folder, chained, line } = entry;
+    const unread = unreadDestination(call, entry, cwd, env);
+    if (unread) return deny(unread);
     const reason = judge(call, line, { cwd: folder ?? cwd, projectFolder: chained ?? cwd, ghRepo: invocationRepo(entry.invocation.environment, env), folderKnown: folder !== null, env, written, listOpenPrs: chained === null || chained === cwd ? listOpenPrs : openPrBodies(chained), readRuns });
     if (reason) return withFolderNote(reason, entry, cwd);
   }
@@ -100,6 +103,36 @@ function withFolderNote(reason, { folder, chained }, cwd) {
   const at = reason.indexOf('\nTo override');
   return at < 0 ? `${reason}${note}` : `${reason.slice(0, at)}${note}${reason.slice(at)}`;
 }
+
+// Why the gh call `call` (readBodyCall), run as the walkCommands entry `entry` from a session whose folder `cwd` lies in
+// a project, may not post: the folder gh runs in is one this rule cannot read (`chained` null), so the rules of the
+// repository it posts to, its public text patterns, private words, pull request contract, and attribution, are not
+// known, and the session's own never stand in for them. The answer names the form that is read, the folder written out.
+// null for a call that names its repository (-R, a URL target, GH_REPO), which is judged as that name says
+// (targetsAnotherRepo), one that posts no text, a help, web, or dry run, a session in no project, and a leading `cd`
+// into the session's own project: gh then runs there or, when that `cd` fails, in the session's folder, both under the
+// same rules. The pull request body, public text, and attribution rules each refuse with it.
+export function unreadDestination(call, entry, cwd, env = process.env) {
+  if (entry.chained !== null || call.help || call.web || call.dryRun || call.deleteLast || !postsText(call)) return null;
+  const ghRepo = invocationRepo(entry.invocation.environment, env);
+  const named = targetUrl(call) ?? call.repo ?? (ghRepo ? { text: ghRepo, dynamic: false } : null);
+  if (named && !named.dynamic && repoName(named.text) !== null) return null;
+  const own = findProject(cwd);
+  if (!own) return null;
+  const there = entry.folder === null ? null : findProject(entry.folder);
+  if (there?.root === own.root) return null;
+  const word = there ? shellWord({ text: entry.folder, dynamic: false }) : '<the folder, written out>';
+  const cause = there
+    ? `the \`cd\` into ${entry.folder} is joined to gh by a \`;\` or a newline, not \`&&\` alone, so gh may post from the session's folder instead`
+    : 'gh runs in a folder this hook cannot read, such as one a variable holds, or one after a `cd` joined to gh by a `;` or a newline';
+  return `${cause}, and the rules of the repository it posts to cannot be read. Its public text patterns, private words, pull request contract, ` +
+    `and attribution go unchecked, and the rules of ${own.root}, the session's project, never stand in for them. ` +
+    `Write the folder out, as \`env -C ${word} gh …\` or \`cd ${word} && gh …\`.`;
+}
+
+// Whether the gh call `call` posts text: a create or a comment always does, through an editor or a prompt when given no
+// body; an edit, a close, a reopen, or a merge only with a body or a title.
+const postsText = (call) => ['create', 'comment'].includes(call.subcommand) || call.fill || call.body !== null || call.bodyFile !== null || call.title !== null;
 
 // Each gh call `read` matches, as { call, entry, written }, with the folder it runs in (shell-lex `walkCommands`), in
 // substitutions and inline shells too: `cd <worktree> && gh pr create --body-file b.md` reads that worktree's b.md and
@@ -158,18 +191,22 @@ export function lineWrites(top) {
     if (known && !known.dynamic) vars.set(name, known.text);
     else vars.delete(name);
   };
-  const fileOf = (each, entry) => {
+  // A word the command reads resolves in the folder it runs in, and a redirect's target in its shell's, which opens it
+  // before a wrapper such as `env -C` moves (shell-lex walkCommands `shell`).
+  const fileOf = (each, entry, folder = entry.folder) => {
     const known = token(each, entry);
-    return known && !known.dynamic && known.text && known.text !== '-' ? resolveIn(entry.folder, known.text) : null;
+    return known && !known.dynamic && known.text && known.text !== '-' ? resolveIn(folder, known.text) : null;
   };
+  const targetOf = (each, entry) => fileOf(each, entry, entry.shell === undefined ? entry.folder : entry.shell);
   const outputs = (segment) => segment.flatMap((each, i) => (each.operator && each.operator !== '<' && !segment[i + 1]?.fdDup ? [[each, segment[i + 1]]] : []));
   const overwrites = (entry, file) => {
     const body = file ? fileOf(file, entry) : null;
-    return body !== null && outputs(entry.segment).some(([, each]) => [null, body].includes(fileOf(each, entry)));
+    return body !== null && outputs(entry.segment).some(([, each]) => [null, body].includes(targetOf(each, entry)));
   };
   const note = (entry) => {
     const { segment, invocation, folder, heredocs = [] } = entry;
     const at = (each) => fileOf(each, entry);
+    const opened = (each) => targetOf(each, entry);
     const { program, args, environment = [] } = invocation;
     const set = nested(entry) ? (name) => vars.delete(name) : assign;
     if (program === '') {
@@ -192,11 +229,11 @@ export function lineWrites(top) {
     const stdoutMoved = segment.some((each, i) => each.operator === '>' && segment[i + 1]?.fdDup && [undefined, '1'].includes(each.fd));
     if (program === 'cat' && args.every((arg) => arg.text === '-') && redirects.length === 1 && redirects[0][0].operator === '>' &&
       [undefined, '1'].includes(redirects[0][0].fd) && !stdoutMoved) {
-      [target, text] = [at(redirects[0][1]), stdinBody(entry)];
+      [target, text] = [opened(redirects[0][1]), stdinBody(entry)];
     } else if (program === 'tee' && args.length === 1 && !args[0].text.startsWith('-')) {
       target = at(args[0]);
       // A redirect of its own output onto the same file races the write: what lands there is unknown.
-      text = target !== null && redirects.some(([, each]) => at(each) === target) ? null : stdinBody(entry);
+      text = target !== null && redirects.some(([, each]) => opened(each) === target) ? null : stdinBody(entry);
     } else if (program === 'cp' && !redirects.length) {
       const operands = args.filter((arg) => !/^-[fpv]+$/u.test(arg.text));
       const source = operands.length === 2 && !operands[0].text.startsWith('-') ? at(operands[0]) : null;
@@ -218,7 +255,7 @@ export function lineWrites(top) {
       }
     }
     for (const [, each] of redirects) {
-      const file = at(each);
+      const file = opened(each);
       if (file !== null) files.set(file, null);
       else unknown();
     }

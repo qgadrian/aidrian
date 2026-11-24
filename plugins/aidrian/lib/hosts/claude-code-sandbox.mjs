@@ -14,7 +14,7 @@
 // ignored. It reads no file when loaded: hooks load every adapter.
 
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, fchmodSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, unlinkSync, writeSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
@@ -281,6 +281,42 @@ export function writeEnvFile(file, vars) {
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+// The folder the host keeps the session environment files of `session` in, `<config>/session-env/<session>/`, each the
+// file one SessionStart hook's CLAUDE_ENV_FILE named, or null for an id that is no plain name.
+const sessionEnvFolder = (session, env, home) => (typeof session === 'string' && /^[\w-]{1,128}$/u.test(session)
+  ? path.join(configFolder(env, home), 'session-env', session) : null);
+
+// Removes each of `files`, the session environment files the plugin's SessionStart hook handed the forge token to for
+// the host session `session`, once that session ended (lib/project-start.mjs sweepAttempts): only a regular file of this
+// user, not a link, directly in that session's own folder of the host's session-env tree, so no other session's file,
+// and no file elsewhere, is ever removed. The host reads that file only while the session runs. The count removed.
+export function forgetEnvFiles({ files, session, env = process.env, home }) {
+  const folder = sessionEnvFolder(session, env, home);
+  if (folder === null || !Array.isArray(files)) return 0;
+  const real = (dir) => {
+    try {
+      return realpathSync(dir);
+    } catch {
+      return null;
+    }
+  };
+  const own = real(folder);
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  let removed = 0;
+  for (const file of files) {
+    if (typeof file !== 'string' || !path.isAbsolute(file) || CONTROL.test(file) || own === null || real(path.dirname(file)) !== own) continue;
+    try {
+      const stat = lstatSync(file);
+      if (!stat.isFile() || (Number.isInteger(uid) && stat.uid !== uid)) continue;
+      unlinkSync(file);
+      removed += 1;
+    } catch {
+      // Gone already, or not this user's to remove.
+    }
+  }
+  return removed;
 }
 
 // The MCP configuration the session starts with under --strict-mcp-config: only `servers`, the base branch's

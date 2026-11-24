@@ -574,7 +574,10 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   handed, so the run halts as on a failed proof. The host reads that file in its own
   process and runs its lines ahead of each Bash command (2.1.330: "Session environment loaded from CLAUDE_ENV_FILE"),
   so the sandbox hides the whole `session-env` tree and each session still gets its own variables, while no session
-  reads another's. The token reaches the sandboxed Bash commands alone, never the host's hooks or MCP servers, and no
+  reads another's. The host keeps that file after the session ends, token and all, so the hook first records its path
+  in the attempt's folder, `token-files.json`, and hands no token over when it cannot; once the host lists the session
+  as ended, the driver's `wait`, or `end`, removes each recorded file, only a regular file of the user, not a link,
+  directly in `session-env/<that session>/`, so no other session's file goes, kept attempt folder or not. The token reaches the sandboxed Bash commands alone, never the host's hooks or MCP servers, and no
   file of the run, argv, or printed line carries it.
   Variables of the shell that runs `claude --bg` never reach the session, so the driver's own `GH_TOKEN` is no channel.
   `gh auth git-credential`, the helper `gh auth setup-git` writes, answers git with `GH_TOKEN` (checked on gh 2.105.0),

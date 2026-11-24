@@ -14,7 +14,7 @@ import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } 
 import modelPrices from './claude-code-prices.mjs';
 import { continuedIn } from './claude-code-continuation.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
-import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, localBindingRisk, loopbackReach, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
+import { accessProblem, cloneProblem, confineDomains, confineReads, forgetEnvFiles, limitContinueProblem, localBindingRisk, loopbackReach, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
 import { trustProblem } from './claude-code-trust.mjs';
 import { responseObjects } from './response.mjs';
 
@@ -416,6 +416,11 @@ export default {
       // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to
       // the file the host sources before each Bash command, never the settings' `env`, which its hooks and MCP servers get.
       shellEnv: ({ env, vars }) => writeEnvFile(env.CLAUDE_ENV_FILE, vars),
+      // The file shellEnv writes for this hook, which the SessionStart hook records before it hands the forge token over,
+      // and the removal of those files once the session ended, which the driver's sweep makes (lib/project-start.mjs):
+      // the host keeps each in `session-env/<session>/` after the session ends, token and all.
+      shellEnvFile: ({ env }) => (typeof env.CLAUDE_ENV_FILE === 'string' && path.isAbsolute(env.CLAUDE_ENV_FILE) ? env.CLAUDE_ENV_FILE : null),
+      forgetShellEnv: ({ files, session, env, home }) => forgetEnvFiles({ files, session, env, home }),
       // The sandbox hides the system keyring, where the forge CLI may keep its login: the start reads the forge token
       // outside it, and the SessionStart hook hands it to the sandboxed commands through shellEnv (lib/project-token.mjs).
       forgeTokenEnv: true,

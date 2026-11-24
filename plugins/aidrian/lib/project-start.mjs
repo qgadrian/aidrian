@@ -25,19 +25,19 @@
 //     probe that a commit works in a clone made so.
 // Every git call goes through gateGit (lib/git.mjs).
 
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS, systemReal } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
 import { nestedPathspecs } from './hosts/index.mjs';
-import { claimedSource, forgeToken, gitCredentialVars, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
+import { claimedSource, forgeToken, gitCredentialVars, sessionToken, TOKEN_FILES, tokenDigest, tokenFiles, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
-import { pinnedRepository, runFolder, runsFolder } from './project-run.mjs';
+import { appendToRun, pinnedRepository, runFolder, runsFolder } from './project-run.mjs';
 import { commitFiles, commitGitlinks, isGuarded, namedFiles, overlayGuarded } from './project-trust.mjs';
 import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
 import { decisionStoreFolders } from './project-decision-store.mjs';
@@ -653,33 +653,145 @@ function linkedPart(top, relative) {
 // running one, and whose start ran nothing (`void`), or held a session `cap.ended` lists as ended. An attempt whose
 // start left it unknown waits for its orphan settling, and one whose drop holds a result no row took in yet stays. Only
 // a folder at the path attemptFolder gives is removed, and only once its stop history is archived (stop-history.mjs).
-export function sweepAttempts({ state, run, found, cap, env, spawn }) {
+// Once the session ended, the host's session environment files it handed the forge token to go first, kept folder or
+// not (forgetToken). A clone whose HEAD or issue branch holds a commit the forge does not have keeps its folder for the
+// run's life, with a `kept` row and a line saying where to recover it (unpushedHead): a run never discards work that
+// exists only there. The lines, in order.
+export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge = null }) {
+  const lines = [];
   const settled = new Set(found.rows.filter((row) => row.event === 'orphan').map((row) => `${row.key}#${row.attempt}`));
   for (const row of startRows(found).filter((each) => typeof each.drop === 'string')) {
     const folder = attemptFolder(state, run, row.key, row.attempt);
     if (path.dirname(row.drop) !== folder) continue;
     const current = found.states.get(row.key)?.state === 'running' && latestStart(found, row.key)?.attempt === row.attempt;
     if (current) continue;
+    const mine = (each) => each.key === row.key && each.attempt === row.attempt;
     // An attempt whose result was `environment` keeps its folder for the run's life: its clone may hold the only copy of
-    // work a failed push never sent, for the Human to recover.
-    const environment = found.rows.some((each) => each.event === 'result' && each.status === 'environment' && each.key === row.key && each.attempt === row.attempt);
-    if (environment) continue;
+    // work a failed push never sent, for the Human to recover. So does one a `kept` row names.
+    const stays = found.rows.some((each) => mine(each) && ((each.event === 'result' && each.status === 'environment') || each.event === 'kept'));
+    if (stays && !existsSync(path.join(folder, TOKEN_FILES))) continue;
     // A handed-over result no row took in yet keeps its folder.
-    const taken = found.rows.some((each) => ['result', 'ended'].includes(each.event) && each.key === row.key && each.attempt === row.attempt);
+    const taken = found.rows.some((each) => ['result', 'ended'].includes(each.event) && mine(each));
     if (!taken && existsSync(path.join(row.drop, DROP_FILE))) continue;
     const done = row.outcome === 'void' || settled.has(`${row.key}#${row.attempt}`)
       || (row.outcome === 'started' && safely(() => cap.ended({ id: row.id, session: row.child, env, run: spawn })) === true);
-    // The stop history goes to the run's archive first, so the caps hold across attempts; one that cannot be kept
-    // keeps the folder.
     // A folder swept already is archived already.
     if (!done || !existsSync(folder)) continue;
-    let kept;
-    try {
-      kept = archiveStops({ state, run, key: row.key, attempt: row.attempt, drop: row.drop });
-    } catch {
-      kept = 'not archived';
+    forgetToken({ cap, folder, row, env, home });
+    if (stays) continue;
+    const unpushed = unpushedHead({ folder, row, repository: found.init?.repository, forge });
+    if (unpushed?.wait) continue;
+    if (unpushed) {
+      lines.push(...keepClone({ state, run, row, folder, unpushed }));
+      continue;
     }
-    if (kept === null) safely(() => rmSync(folder, { recursive: true, force: true }));
+    // The stop history goes to the run's archive first, so the caps hold across attempts; one that cannot be kept
+    // keeps the folder.
+    let archived;
+    try {
+      archived = archiveStops({ state, run, key: row.key, attempt: row.attempt, drop: row.drop });
+    } catch {
+      archived = 'not archived';
+    }
+    if (archived === null) safely(() => rmSync(folder, { recursive: true, force: true }));
+  }
+  return lines;
+}
+
+// The `kept` row of the attempt the start row `row` made, whose clone in `folder` holds `unpushed` (unpushedHead), once,
+// under the ledger's lock: its line, or none when the row could not be written, so the next wait tries again.
+function keepClone({ state, run, row, folder, unpushed }) {
+  const mine = (each) => each.event === 'kept' && each.key === row.key && each.attempt === row.attempt;
+  const kept = appendToRun(state, run, (fresh) => (fresh.rows.some(mine) ? { rows: [] }
+    : { rows: [{ event: 'kept', key: row.key, attempt: row.attempt, head: unpushed.head, why: unpushed.why, at: new Date().toISOString() }] }));
+  return kept.problem ? [] : [`kept ${row.key} attempt ${row.attempt}: ${unpushed.why}, so its folder stays for the run's life; recover the work from ${path.join(folder, 'work')}`];
+}
+
+// Removes the host's session environment files the SessionStart hook recorded in the attempt's folder `folder` it handed
+// the forge token to (project-token.mjs recordTokenFile), through the host (`cap.forgetShellEnv`), which removes only a
+// file of that session's own, then the record. Only the session the start row `row` launched: a record that names
+// another session removes no file. The session has ended. Never throws.
+function forgetToken({ cap, folder, row, env, home }) {
+  const record = safely(() => tokenFiles(folder));
+  if (record && (typeof row.child !== 'string' || record.session === row.child)) {
+    safely(() => cap.forgetShellEnv?.({ files: record.files, session: record.session, env, home }));
+  }
+  safely(() => rmSync(path.join(folder, TOKEN_FILES), { force: true }));
+}
+
+// Whether the clone of the attempt in `folder`, which the start row `row` made, holds a commit the forge of `repository`
+// does not have, asked of `forge` (hasCommit): { head, why } when its HEAD or its issue branch does, null when the forge
+// has both or the clone has neither, and { wait } when that cannot be told now, as when the forge cannot answer. Its
+// refs are read as files (cloneHeads), never by running git in the clone, which a session had.
+export function unpushedHead({ folder, row, repository, forge }) {
+  const read = cloneHeads(path.join(folder, 'git'), row.branch);
+  if (read.problem) return { head: null, why: `its clone's refs cannot be read (${read.problem}), so whether it holds work the forge does not have cannot be told` };
+  if (!read.heads.length) return null;
+  if (!forge || typeof forge.hasCommit !== 'function' || !repository) return { wait: true };
+  for (const head of read.heads) {
+    let has;
+    try {
+      has = forge.hasCommit(`${repository.owner}/${repository.name}`, head, { host: repository.host });
+    } catch {
+      return { wait: true };
+    }
+    if (has !== true) return { head, why: `its clone holds ${head.slice(0, 12)}, a commit the forge does not have` };
+  }
+  return null;
+}
+
+const FULL_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+// A branch's ref name, as a loose ref file's path below the git folder: no part that climbs out, or that git refuses.
+const HEAD_REF = /^ref: (refs\/heads\/[^\s\0]+)$/u;
+const plainRef = (name) => typeof name === 'string' && name.startsWith('refs/heads/') && name.split('/').every((part) => part !== '' && part !== '.' && part !== '..' && !part.startsWith('.'));
+// The most a ref file may hold: a loose ref is one line, and packed-refs one per ref the clone took from the main checkout.
+const LOOSE_CAP = 4096;
+const PACKED_CAP = 32 * 1024 * 1024;
+
+// The commits of HEAD and of the branch `branch` in the git folder `gitFolder` of an attempt's clone, read as files
+// without following a link: { heads }, each a full hex id once, none for a folder with no HEAD or a branch not born yet,
+// or { problem }, for a ref the read cannot trust, which keeps the folder.
+export function cloneHeads(gitFolder, branch) {
+  const head = refFile(path.join(gitFolder, 'HEAD'), LOOSE_CAP);
+  if (head.missing) return { heads: [] };
+  if (head.problem) return { problem: `HEAD ${head.problem}` };
+  let packed = null;
+  const resolve = (name) => {
+    if (!plainRef(name)) return { problem: `${name} is not a branch's ref name` };
+    const loose = refFile(path.join(gitFolder, ...name.split('/')), LOOSE_CAP);
+    if (loose.problem) return { problem: `${name} ${loose.problem}` };
+    if (!loose.missing) return FULL_ID.test(loose.text) ? { id: loose.text } : { problem: `${name} holds no commit id` };
+    packed ??= refFile(path.join(gitFolder, 'packed-refs'), PACKED_CAP);
+    if (packed.problem) return { problem: `packed-refs ${packed.problem}` };
+    const line = packed.missing ? undefined : packed.text.split('\n').find((each) => each.endsWith(` ${name}`) && !each.startsWith('#') && !each.startsWith('^'));
+    if (line === undefined) return { id: null };
+    const id = line.slice(0, line.indexOf(' '));
+    return FULL_ID.test(id) ? { id } : { problem: `packed-refs holds no commit id for ${name}` };
+  };
+  const named = HEAD_REF.exec(head.text);
+  const found = [named ? resolve(named[1]) : FULL_ID.test(head.text) ? { id: head.text } : { problem: 'HEAD names neither a branch nor a commit' }];
+  if (typeof branch === 'string' && branch !== '') found.push(resolve(`refs/heads/${branch}`));
+  const bad = found.find((each) => each.problem);
+  if (bad) return { problem: bad.problem };
+  return { heads: [...new Set(found.map((each) => each.id).filter(Boolean))] };
+}
+
+// The trimmed text of the ref file `file`, a regular file of at most `cap` bytes read without following a link or waiting
+// on a FIFO: { text }, { missing }, or { problem }.
+function refFile(file, cap) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return { problem: 'is not a regular file' };
+    if (stat.size > cap) return { problem: 'is too large to read' };
+    const buffer = Buffer.alloc(stat.size);
+    return { text: buffer.subarray(0, readSync(fd, buffer, 0, stat.size, 0)).toString('utf8').trim() };
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return { missing: true };
+    return { problem: `cannot be read (${error.code ?? 'no code'})` };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 

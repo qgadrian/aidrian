@@ -186,7 +186,8 @@ test('a body file the same command writes first, from a heredoc or a copy, is re
     [`${write('b.md', GOOD)}${create('other.md')}`, 'gh reads another file'],
     [`${create('b.md')} && ${write('b.md', GOOD)}`, 'the write comes after gh'],
     [`cp missing.md b.md && ${create('b.md')}`, 'a copy of a file the rule cannot read'],
-    [`cd .. || true; ${write('b.md', GOOD)}${create('b.md')}`, 'a folder the rule cannot know'],
+    // A -R names where it posts, so its folder alone is unknown (unreadDestination): the checkout has no remote to tell it apart.
+    [`cd .. || true; ${write('b.md', GOOD)}${create('b.md')} -R acme/notes`, 'a folder the rule cannot know'],
     [`sed -i '' 's/^## Testing$/## Tests run/' draft.md; ${create('draft.md')}`, 'a file on disk another command edits first'],
     [`python3 fix.py draft.md && ${create('draft.md')}`, 'a script that names it'],
     [`gh pr view 3 --json body -q .body > draft.md && ${create('draft.md')}`, 'a redirect from a reader still writes'],
@@ -220,10 +221,11 @@ test('a heredoc that another input or a later command can replace is never trust
   t.after(() => rmSync(out, { recursive: true, force: true }));
   const file = path.join(out, 'b.md');
   const anywhere = project(t, { version: 1, github: { pullRequest: { sharedTempBodyFile: false } } });
-  // A real deny's shape: after a cd that is not leading, the folder is unknown, and `2>&1` must not poison the write.
-  assert.equal(anywhere(`${write(file)}cd ${out} && gh auth status 2>&1 | head -3 && git push -q 2>&1 | tail -3 && ${create(file)}`), null,
+  // A real deny's shape: after a cd that is not leading, the folder is unknown, and `2>&1` must not poison the write. A -R
+  // names where gh posts, so the unknown folder alone does not refuse it (unreadDestination).
+  assert.equal(anywhere(`${write(file)}cd ${out} && gh auth status 2>&1 | head -3 && git push -q 2>&1 | tail -3 && ${create(file)} -R acme/notes`), null,
     'a 2>&1 duplicates a descriptor and writes no file');
-  assert.match(anywhere(`${write(file)}cd ${out} && gh auth status 2> err.txt; ${create(file)}`) ?? '', /cannot read/, 'a relative redirect in an unknown folder still does');
+  assert.match(anywhere(`${write(file)}cd ${out} && gh auth status 2> err.txt; ${create(file)} -R acme/notes`) ?? '', /^Blocked: the body is one this rule cannot read/, 'a relative redirect in an unknown folder still does');
 });
 
 test('a redirection that names a descriptor is read as bash runs it, failing closed on any but stdin or stdout', (t) => {
@@ -432,4 +434,21 @@ test('a target URL names the repository before -R does', (t) => {
   const run = (command) => check(command, { cwd: dir, env: {} });
   assert.equal(run("gh pr edit https://github.com/other/repo/pull/3 -R acme/notes --body 'no sections'"), null);
   assert.match(run("gh pr edit https://github.com/acme/notes/pull/3 -R other/repo --body 'no sections'") ?? '', /^Blocked: the body has no/);
+});
+
+// bash opens a redirect in its own folder before `env -C` moves the program, which reads its body file in the new one.
+test("a redirect resolves in the shell's folder, and the body file in the folder env -C gives gh", (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  mkdirSync(path.join(dir, 'sub'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  writeFileSync(path.join(dir, 'good.md'), GOOD);
+  writeFileSync(path.join(dir, 'sub/good.md'), GOOD);
+  const run = (command) => check(command, { cwd: dir, env: {} });
+  assert.equal(run('env -C sub gh pr create -t x -F good.md > good.md'), null, 'gh reads sub/good.md, and bash empties good.md beside the session');
+  assert.match(run('env -C sub gh pr create -t x -F ../good.md > good.md') ?? '', /^Blocked: the body is one this rule cannot read/u,
+    'gh reads the very good.md bash empties first');
+  // A heredoc a wrapped cat writes lands in the shell's folder, where a later gh reads it.
+  assert.equal(run(`env -C sub cat > b.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F b.md`), null);
 });

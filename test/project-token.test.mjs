@@ -22,7 +22,7 @@ import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { confinedShellVars, confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
 import { apiStatus, receivePackStatus, tokenMayPush, TOKEN_READS, tokenReadProblems } from '../plugins/aidrian/lib/forges/github-token.mjs';
 import { confineCheck } from '../plugins/aidrian/lib/project-confine.mjs';
-import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, gitCredentialVars, handoffProblem, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
+import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, gitCredentialVars, handoffProblem, keychainToken, TOKEN_FILES, tokenFiles, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
 import { setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
 import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, FIXTURE_TOKEN, runFixture, STARTED } from './project-start-fixture.mjs';
@@ -380,6 +380,8 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   assert.equal(statSync(file).mode & 0o777, 0o600);
   const seen = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s' "$GH_TOKEN"`], { encoding: 'utf8' });
   assert.equal(seen.stdout, hookToken);
+  // The file the token went to is recorded beside the claim, for the driver to remove once the session ended.
+  assert.deepEqual(tokenFiles(path.dirname(work)), { session: STARTED[0].session, files: [file] });
   // The attempt's marker comes last, after the token and the record of its handoff, so a shell that sees the marker,
   // which the sandbox proof waits for, sees that record too.
   const lines = text(file).trim().split('\n');
@@ -396,6 +398,18 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   mkdirSync(path.dirname(envFile('again')), { recursive: true });
   assert.equal(hook(STARTED[0].session, work, envFile('again'), { [CLAIM_VAR]: claim }).status, 0);
   assert.deepEqual(JSON.parse(readFileSync(path.join(attempt, 'token-handoff.json'), 'utf8')), { handed: true });
+  assert.deepEqual(tokenFiles(attempt).files, [file, envFile('again')], 'each SessionStart\'s file');
+  // A record that cannot be written hands no token over: it would outlive the session.
+  rmSync(path.join(attempt, TOKEN_FILES));
+  mkdirSync(path.join(attempt, TOKEN_FILES));
+  const unkept = envFile('unkept');
+  mkdirSync(path.dirname(unkept), { recursive: true });
+  const refused = hook(STARTED[0].session, work, unkept, { [CLAIM_VAR]: claim });
+  assert.doesNotMatch(text(unkept), /GH_TOKEN/u);
+  assert.match(refused.stdout, /Forge token: not handed to this session: the host's session environment file could not be recorded for removal once the session ends/u);
+  assert.equal(readFileSync(path.join(attempt, 'token-handoff.json'), 'utf8').includes('"handed":false'), true, 'and records why');
+  rmSync(path.join(attempt, TOKEN_FILES), { recursive: true });
+  assert.equal(hook(STARTED[0].session, work, envFile('again'), { [CLAIM_VAR]: claim }).status, 0);
   // The same session without the claim, as one another person opened, gets no token, is told why, and leaves the
   // record of the successful handoff as it was.
   const bare = envFile('bare');

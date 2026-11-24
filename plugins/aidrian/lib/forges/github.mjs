@@ -981,6 +981,18 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const sha = rest(`repos/${repo}/branches/${encodeURIComponent(branch)}`, { host })?.commit?.sha;
       return typeof sha === 'string' && /^[0-9a-f]{40}$/u.test(sha) ? sha : null;
     },
+    // Whether `repo` holds the commit `sha`, a full hex id, on any ref or none: true, false when the forge answers that it
+    // has no such commit, or a throw when it cannot answer. Read through the git database, whose answer is the commit
+    // alone, never its diff.
+    hasCommit: (repo, sha, { host } = {}) => {
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(String(sha))) throw new Error('a commit is a full hex id');
+      try {
+        return rest(`repos/${repo}/git/commits/${sha}`, { host })?.sha === sha;
+      } catch (error) {
+        if (notFound(error) || /\(HTTP 422\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`)) return false;
+        throw error;
+      }
+    },
     // One file of `repo` at `ref`, such as `refs/heads/main`: `{ type, encoding, content }`, its content base64.
     contents: (repo, file, ref, { host } = {}) => rest(`repos/${repo}/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`, { host }),
     // One folder of a commit's tree, not recursive: `{ sha, tree: [{ path, mode, type, sha }], truncated }`, each entry's

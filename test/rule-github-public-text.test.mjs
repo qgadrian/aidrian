@@ -157,7 +157,8 @@ test('a body the rule cannot read names its own cause first', (t) => {
     ['gh issue create --title x --body-file gone.md', 'the body is one this rule cannot read: the body file `gone.md` does not exist yet'],
     ['gh pr comment 3 --body-file -', 'the body is one this rule cannot read: `--body-file -` reads standard input, and that input is not one heredoc bash passes unchanged'],
     ['gh pr comment 3 --body-file /dev/null', 'the body is one this rule cannot read: the body file `/dev/null` is a device, a pipe, or a folder, not a regular file'],
-    ['cd .. || true; gh pr comment 3 --body-file b.md', 'the body is one this rule cannot read: the body file `b.md` is a relative path, and the folder gh runs in is unknown after that directory change'],
+    // A -R names where it posts, so its folder alone is unknown (pr-body unreadDestination): the checkout has no remote to tell it apart.
+    ['cd .. || true; gh pr comment 3 -R acme/notes --body-file b.md', 'the body is one this rule cannot read: the body file `b.md` is a relative path, and the folder gh runs in is unknown after that directory change'],
     ['gh pr comment 3 --body-file b.md > b.md', 'the body is one this rule cannot read: a redirect on the gh call writes onto its own body file, which bash empties before gh reads it'],
   ]) {
     const reason = run(command) ?? '';
@@ -541,4 +542,21 @@ test('slow config patterns on an earlier call leave private words checked on a l
   const run = project(t, { version: 1, github: { requiredSections: [], publicText: { patterns: slow } } }, { [FILE]: PRIVATE_FILE });
   const command = `gh issue comment 3 --body '${SLOW_TEXT}' && gh issue comment 4 --body '${PRIVATE_TEXT}'`;
   assert.match(run(command) ?? '', /^Blocked: a private word from `\.banned-terms\.local` matched in the body/);
+});
+
+test('a post from a folder whose project cannot be read is refused, though its text holds no pattern', (t) => {
+  const run = project(t);
+  assert.equal(run('gh issue comment 3 --body fine'), null, 'its own folder: judged, and it passes');
+  for (const command of ['cd "$W" && gh issue comment 3 --body fine', `env -C "$W" gh pr comment 3 --body fine`, 'cd .. ; gh issue create --title t --body fine']) {
+    assert.match(run(command) ?? '', /^Blocked: (?:gh runs in a folder this hook cannot read|the `cd` into \S+ is joined to gh)/u, command);
+  }
+  // Nothing to post, or a person posts it from the browser.
+  assert.equal(run('cd "$W" && gh issue close 3'), null);
+  assert.equal(run('cd "$W" && gh issue create --web'), null);
+});
+
+test('a project with no pattern at all still refuses a post whose folder it cannot read', (t) => {
+  const run = project(t, { version: 1 });
+  assert.equal(run('gh issue comment 3 --body fine'), null);
+  assert.match(run('cd "$W" && gh issue comment 3 --body fine') ?? '', /^Blocked: gh runs in a folder this hook cannot read/u);
 });

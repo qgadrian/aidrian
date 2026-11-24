@@ -243,15 +243,18 @@ What each rule matches:
   a body file in a shared temp folder, and a body identical to another open pull request's.
   These rules and the attribution rule's pull request lines follow the repository the call targets.
   The project is the one found from the folder gh runs in: `env -C`, or a `cd` when every link from it to gh is `&&` in the
-  same shell (`cd /other && gh …`, `x; cd /other && gh …`). Anything else leaves the session's project: a `;`, newline, `||`,
+  same shell (`cd /other && gh …`, `x; cd /other && gh …`). Anything else leaves that folder unknown: a `;`, newline, `||`,
   pipe, `&`, `!`, or subshell boundary after the `cd`, a `cd` that may not move the shell gh runs in (after `||` or in a pipe,
-  negated, in a subshell, or under a wrapper such as `env`), and a folder the rule cannot read (`cd "$WT"`).
-  So gh on a new line after `cd /other && cat > b.md <<'EOF'` answers to the session's rules, since a failed `cd` would leave
-  it in the session's folder. To be judged by the other project, join gh on the heredoc's first line
-  (`cd /other && cat > b.md <<'EOF' && gh pr edit 1 --body-file b.md`, then the body) or use `env -C /other gh …`.
-  A deny under the session's rules where the folder gh runs in names no project, as after such a `cd` or in a folder a
-  variable holds (`env -C "$W" gh …`, whose value the rule never guesses), says whose rules they are, names the folder
-  a leading `cd` went into when it is another project's, and gives the `env -C <folder> gh …` form for another's rules.
+  negated, in a subshell, or under a wrapper such as `env`), and a folder a variable holds (`cd "$WT" &&`, `env -C "$W"`,
+  whose value the rule never guesses). From a session in a project, a call there that posts text, a body, a title, a
+  comment, or any create, is refused, by the pull request body, public text, and attribution rules alike, whatever its
+  text: the rules of the repository it posts to cannot be read, and the session's never stand in for them. The refusal
+  names the folder a leading `cd` went into, and the form that is read, `env -C <folder> gh …` or `cd <folder> && gh …`.
+  So gh on a new line after `cd /other && cat > b.md <<'EOF'` is refused, since a failed `cd` would leave it in the
+  session's folder: join gh on the heredoc's first line (`cd /other && cat > b.md <<'EOF' && gh pr edit 1 --body-file b.md`,
+  then the body) or use `env -C /other gh …`. A leading `cd` into the session's own project, a call that names its
+  repository with `-R`, a pull request URL, or `GH_REPO`, and a help, web, or dry run are not refused for the folder: a
+  `-R` that names the session's repository is judged by the session's rules, and a deny then says whose rules they are.
   Naming the repository with `-R` gets none of these rules, as the next lines say.
   A call that names a repository other than that checkout's remotes, through `-R`, a pull request URL, or `GH_REPO`,
   gets none of these rules: that repository's config cannot be found from there, so its rules go unchecked.
@@ -263,7 +266,8 @@ What each rule matches:
   a heredoc beside a `< file` or `<<< word` input, or fed to a descriptor other than 0 (`3<<EOF`); a `cat` write
   through a descriptor other than 1 (`cat 2> b.md`) or with standard output duplicated off it (`>&2`), while `2>&1`
   writes no file; a `tee` whose own output lands on its file; a body file a
-  redirect writes, gh's own output on any descriptor included (`-F b.md {fd}>b.md`); any
+  redirect writes, gh's own output on any descriptor included (`-F b.md {fd}>b.md`), a redirect's target read in the
+  shell's own folder and a body file in the one `env -C` or `git -C` gives its program, as bash opens a redirect first; any
   command between the write and gh that is not a known reader (such as `sed -i`, a script, or a program fed code on
   stdin); and a variable a nested shell or substitution assigns, or one used inside it. Such a body is one the rule
   cannot read: gh then runs as its own command after it.

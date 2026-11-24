@@ -27,7 +27,7 @@ import { runGit } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { givenRepo, repoFlag } from '../remotes.mjs';
 import { readGate, asLanded } from './waiver-stand.mjs';
-import { appendVerdict, JUDGE_ID, sameRevision, unreadRepo, VERDICT_UNREAD, verdictNext } from './waiver.mjs';
+import { appendVerdict, JUDGE_ID, sameRevision, unreadRepo, urlRef, USAGE, VERDICT_UNREAD, verdictNext } from './waiver.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { holdToBase } from './in-force.mjs';
 import { classify } from './plan.mjs';
@@ -619,6 +619,11 @@ function nextStep(entry, pr, repo, repoArg = '') {
 // `deps.forge` replaces the forge (change, conversationComments, postComment, editComment, viewer) and `deps.repo` the
 // resolved repository, in tests.
 export async function runExtend(args, project, config, deps = {}) {
+  const url = urlRef(args[0]);
+  if (url !== null && args.includes('--judge')) {
+    console.error(`aidrian pr extend: a verdict with --judge takes the pull request's number, not a URL: give ${url}, with --repo OWNER/NAME for a repository other than gh's default`);
+    return USAGE;
+  }
   const opts = parseExtend(args);
   const { forgeRepo, prRepo } = await import('../review-gate.mjs');
   const forge = deps.forge ?? forgeFor(undefined);

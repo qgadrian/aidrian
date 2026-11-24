@@ -539,6 +539,11 @@ export const verdictNext = (entry, pr, local, repo = null) => (entry.verdict ===
 // and the printed `next` use that one value, so in a fork checkout a verdict never lands on, or merges, the other
 // repository's pull request of the same number.
 export async function runWaive(args, project, config, deps = {}) {
+  const url = urlRef(args[0]);
+  if (url !== null && !args.includes('--gate')) {
+    console.error(`aidrian pr waive: a verdict takes the pull request's number, not a URL: give ${url}; the repository is the one the forge names for that number`);
+    return USAGE;
+  }
   const opts = parseWaive(args);
   if (opts.gate) return (await import('./waiver-stand.mjs')).runWaiveGate(opts, project, { config, ...(deps.forge ? { forge: deps.forge } : {}), ...(deps.gate ?? {}) });
   const machine = project.localUnattendedWaiver;
@@ -588,6 +593,12 @@ export async function runWaive(args, project, config, deps = {}) {
   console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, waiver: entry, next: verdictNext(entry, opts.pr, project.paths.local, repo), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
   return 0;
 }
+
+// A command that records a judge's verdict takes the pull request's number alone: a URL could name a repository other
+// than the one its reads resolve (forgeRepo), so it is refused as a usage error, exit USAGE. `urlRef` gives the number a
+// pull request URL names, or null for anything else.
+export const USAGE = 2;
+export const urlRef = (ref) => (typeof ref === 'string' && !/^#?\d+$/u.test(ref) ? /\/pull\/(\d+)/u.exec(ref)?.[1] ?? null : null);
 
 // The exit of a command that records a judge's verdict when the forge cannot name the pull request's repository, and
 // why: the verdict would otherwise go to origin's pull request of that number.

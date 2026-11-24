@@ -317,6 +317,29 @@ test('a verdict whose pull request the forge cannot look up exits 3 with nothing
   assert.equal(JSON.stringify(readLocalState(r.project(), 5)), before, 'nothing written');
 });
 
+test('a verdict takes the pull request number alone: a URL is a usage error, exit 2, with nothing written', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, atCheck);
+  const before = JSON.stringify(readLocalState(r.project(), 5));
+  const read = [];
+  const forge = { change: (...args) => (read.push(args), { number: 5, headRefOid: HEAD, baseRefName: 'main', url: URL }), conversationComments: () => [] };
+  const err = [];
+  t.mock.method(console, 'error', (line) => err.push(line));
+  t.mock.method(console, 'log', () => {});
+  const project = r.project();
+  const config = loadConfig(project).config;
+  try {
+    assert.equal(await runWaive([URL, '--verdict', 'refuse', '--reason', 'nits', '--judge', JUDGE.judge_id], project, config, { forge, env: {} }), 2);
+    assert.equal(await runExtend([URL, '--verdict', 'land', '--reason', 'nits', '--judge', JUDGE.judge_id], project, config, { forge, env: {} }), 2);
+  } finally {
+    t.mock.restoreAll();
+  }
+  assert.match(err[0], /^aidrian pr waive: a verdict takes the pull request's number, not a URL: give 5;/u);
+  assert.match(err[1], /^aidrian pr extend: a verdict with --judge takes the pull request's number, not a URL: give 5, with --repo OWNER\/NAME/u);
+  assert.deepEqual(read, [], 'nothing is read');
+  assert.equal(JSON.stringify(readLocalState(r.project(), 5)), before, 'nothing written');
+});
+
 test('aidrian pr waive on a repository that is not private posts the waiver line and the record with no reason', async (t) => {
   for (const visibility of ['PUBLIC', 'INTERNAL', null]) {
     const r = repo(t, { local: ON });

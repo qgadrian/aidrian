@@ -607,8 +607,9 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   is, refused `init`, `resume`, and `aidrian project decision`, until the Human types into it.
   Both marks are filed before the custody row and never undone, which only restricts: a move whose row is not written
   leaves a session with no custody, held as a driver of that run, its stores held and its driver commands refused,
-  until the run records its end, and the driver mark it filed replaces any earlier one of another run; the Human typing
-  into it lifts only the unattended hold.
+  until the run records its end; the Human typing into it lifts only the unattended hold.
+  So that a failed move replaces no mark of another run, `--custody` refuses, filing nothing, a session that already
+  holds the driver mark of another run, or one that cannot be read.
   Until a run's ledger records its end, read from the ledgers alone and never from a mark, the
   [agent gates](hooks.md#agent-gates) refuse every session and subagent a write to the host's transcripts, where the
   custody reader reads them, so no session forges the row.

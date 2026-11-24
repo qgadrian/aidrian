@@ -19,7 +19,7 @@ import { projectRunActive, resumeWords } from '../plugins/aidrian/lib/project-ru
 import { runWriter } from '../plugins/aidrian/lib/project-report.mjs';
 import { drivesRun } from '../plugins/aidrian/lib/run-driver.mjs';
 import { projectId } from '../plugins/aidrian/lib/project.mjs';
-import { markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { markDriver, markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { hookCall } from './hook-call.mjs';
 import { DRIVER, OTHER, runFixture } from './project-start-fixture.mjs';
 
@@ -77,6 +77,17 @@ test('resume --custody from the continuation the host names, unattended, under f
   // Once it drives, the session may neither lift the halt nor record a decision the Human made.
   assert.match(fx.cmd(['resume', 'launch'], { session: NEXT }).err[0], /drives the run launch, or did|background handoff route started this session/u);
   assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Export format', '--record'], { session: NEXT }).err.join('\n'), /background handoff route started this session/u);
+});
+
+test('resume --custody refuses, filing nothing, a session that holds the driver mark of another run', (t) => {
+  const fx = continued(t);
+  assert.ok(markDriver(NEXT, { run: 'other-run', root: fx.dir, state: fx.state, env: fx.env }));
+  const refused = fx.cmd(['resume', 'launch', '--custody'], { session: NEXT });
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.err[0], /this session holds the driver mark of the run other-run/u);
+  assert.deepEqual(fx.custodyRows(), []);
+  assert.equal(readDriverMark(NEXT, { env: fx.env, home: fx.home })?.run, 'other-run', 'its mark stays');
+  assert.equal(readUnattendedMark(NEXT, { env: fx.env, home: fx.home }), null, 'no unattended mark');
 });
 
 test('the custody waiver files an unattended mark beside the driver mark, which holds a session no Human attended before', (t) => {

@@ -86,7 +86,7 @@ import { pushPreflight } from './push-preflight.mjs';
 import { signoffFolder, signoffFolders, storePathProblem } from './review/signoff-store.mjs';
 import { recordsStart } from './run-driver.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
-import { markDriver, markUnattended, PENDING_AGE, readBeacon, readUnattendedMark } from './unattended-mark.mjs';
+import { markDriver, markUnattended, PENDING_AGE, readBeacon, readDriverMark, readUnattendedMark } from './unattended-mark.mjs';
 
 export { cleanText, ISSUE_ATTEMPTS, RESULT_CAP, validateResult };
 export { DECISION_CLASSES, RESULT_STATUSES } from './project-result.mjs';
@@ -1258,6 +1258,11 @@ export function resumeRun({ project, config, run, custody: custodyOnly = false, 
   const recorded = named ? hostContinued(opened.found, { env, home }) : null;
   // Only the session the host names takes custody this way; any other may still lift a halt, and takes no custody.
   const continued = recorded && recorded.id === session ? recorded : null;
+  // A failed move would leave its driver mark in place of the one the session holds: a session that holds one of
+  // another run, or one that cannot be read, takes no custody with --custody, and nothing is filed.
+  const held = custodyOnly && named ? readDriverMark(session, { env, ...(home ? { home } : {}) }) : null;
+  const foreign = held && (held.run !== run || held.state === null || resolvedPath(held.state) !== resolvedPath(opened.state));
+  if (foreign) return refuse(`this session holds the driver mark of ${held.run ? `the run ${held.run}` : 'a run it cannot read'}, and --custody files a driver mark for the run ${run} only in a session that holds none of another run`);
   const waiver = custodyOnly && continued ? fullAutoWaiver({ project, opened, session, env, home, now, forge }) : { waived: false };
   if (waiver.retry) return retryAnswer('resume', waiver.retry);
   if (waiver.problem) return refuse(waiver.problem);

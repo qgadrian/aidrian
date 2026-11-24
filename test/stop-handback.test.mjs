@@ -273,8 +273,8 @@ test('mergeHandBack counts the item in any reply of the turn after the refusal, 
 });
 
 test('a label that opens with an emoji is read, by the hand-back check and the merge hand-back check', () => {
-  for (const label of ['### 🙋 For the Human', '**🙋 For Adrian**', '🙋‍♂️ **Needs Adrian:**', '## 👍🏽 Questions for you', '### 🇪🇸 For the Human',
-    '### 1️⃣ For the Human', '**1️⃣ For Adrian:**', '🇪🇸 For Adrian:']) {
+  for (const label of ['### 🙋 For the Human', '**🙋 For Adrian**', '## 🙋‍♂️ Needs Adrian', '## 👍🏽 Questions for you', '### 🇪🇸 For the Human',
+    '### 1️⃣ For the Human', '### 1⃣ For the Human', '**1️⃣ For Adrian:**', '🇪🇸 For Adrian:', '### ✅ 🙋 For Adrian']) {
     const lists = handBackLists(`${label}\n- Merge order of the two branches.`, 'Adrian|the Human|the user|you');
     assert.equal(lists.length, 1, label);
     assert.match(lists[0].label, /^\p{L}/u, lists[0].label);
@@ -282,6 +282,19 @@ test('a label that opens with an emoji is read, by the hand-back check and the m
   }
   assert.equal(merge(`### 🙋 For the Human\n- **Medium:** pull request #401 touches \`${KILL}\`, a path auto-merge never merges.`), null,
     'the hand-over a driver wrote under an emoji heading');
+});
+
+test('only the emoji a label opens with are dropped: a quote, a name that opens with a digit, and a long run of markup', () => {
+  assert.equal(handBackReason({ message: '> For Adrian: merge it once green.', human: HUMAN }), null, 'a quoted example is no label');
+  assert.equal(merge(`> For Adrian: **High:** PR #401 touches ${KILL}`) === null, false, 'nor does a quoted item hand the refusal over');
+  const named = "### 7 of 9's to-do\n- Rotate the token.";
+  assert.equal(handBackLists(named, '7 of 9|the Human')[0]?.label, "7 of 9's to-do", 'a configured name that opens with a digit');
+  assert.ok(handBackReason({ message: named, human: '7 of 9' }), 'and its unrated item is sent back');
+  const stars = `${'*'.repeat(8000)} text`;
+  const started = performance.now();
+  assert.deepEqual(handBackLists(stars, 'Adrian|the Human'), []);
+  assert.equal(handBackReason({ message: stars, human: HUMAN }), null);
+  assert.ok(performance.now() - started < 50, `${'*'.repeat(3)}… took ${Math.round(performance.now() - started)} ms`);
 });
 
 test('mergeHandBack asks once per refusal, in a session no Human types into, by its own earlier send-back', () => {

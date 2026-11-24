@@ -2144,7 +2144,8 @@ do it, and how critical it is. It sends a turn back at most once ([Send-backs pe
 - A list counts when a label addressed to the Human comes before it: a heading, a bold line, or a line that ends in a colon,
   such as "For Adrian", "Needs the Human", "Open items for the user", "Waiting on Adrian", or "Adrian's to-do", where the
   Human is the name from [names](config.md#names), "the Human", "the user", or "you". Text after the label's colon is an item too.
-  Everything before a label's first letter, such as an emoji, a flag, or a keycap, as in "### 🙋 For the Human", is not part of it.
+  A run of emoji a label opens with, such as "🙋", a flag, or a keycap, as in "### 🙋 For the Human", is not part of it.
+  Nothing else is dropped: a quoted (`>`) line is no label, and a name that opens with a digit, such as "7 of 9", is matched whole.
 - An item is a top-level list entry with its continuation lines. The list ends at a heading, or at a paragraph after a blank line
   that is neither an entry nor indented under one.
 - A fenced code block, read as the pull request body rule reads one (`lib/markdown-sections.mjs`), is skipped:

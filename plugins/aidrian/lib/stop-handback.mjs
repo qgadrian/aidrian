@@ -26,20 +26,36 @@ const alternatives = (names) => [...new Set(names.filter((name) => typeof name =
 // The words that rate an item: the scale the orchestrator and issue-implement reports use, with `critical` and `blocker`.
 export const RATINGS = /\b(?:blocking|blocker|critical|high|medium|low)\b/iu;
 
-// Everything before a label's first letter, such as the emoji in "### 🙋 For the Human", a flag, or a keycap.
-const BEFORE_LETTER = /^\P{L}+/u;
+// One character of an emoji, or a space between emoji: a pictograph, a skin tone, a regional indicator of a flag, a
+// variation selector, or a joiner. A keycap, a digit, `#`, or `*` followed by U+20E3, optionally after U+FE0F, is read in withoutEmoji.
+const EMOJI_PART = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\uFE0F\u200D ]$/u;
+const KEYCAP_BASE = /^[0-9#*]$/u;
 
-// A heading, a bold line, or a line that ends in a colon, with its markup, everything before its first letter, and that
-// colon removed; null for any other line. A bold label may follow such characters, as in "🙋 **Needs Adrian:**". The text
-// after a colon on the same line, such as "For Adrian: merge it", is returned as `inline`.
+// `label` without the run of emoji it opens with, as in "🙋 For the Human", "🇪🇸 For Adrian", or "1️⃣ For you", read one
+// code point at a time: a label that opens with anything else, such as "7 of 9's to-do", is returned as it is.
+function withoutEmoji(label) {
+  const points = [...label];
+  let at = 0;
+  for (;;) {
+    if (at < points.length && EMOJI_PART.test(points[at])) at += 1;
+    else if (KEYCAP_BASE.test(points[at] ?? '') && points[at + 1] === '\u20E3') at += 2;
+    else if (KEYCAP_BASE.test(points[at] ?? '') && points[at + 1] === '\uFE0F' && points[at + 2] === '\u20E3') at += 3;
+    else break;
+  }
+  return points.slice(at).join('').trim();
+}
+
+// A heading, a bold line, or a line that ends in a colon, with its markup, the emoji it opens with (withoutEmoji), and
+// that colon removed; null for any other line. The text after a colon on the same line, such as "For Adrian: merge it",
+// is returned as `inline`.
 function labelOf(line) {
   const heading = /^#{1,6}\s+(.*)$/u.exec(line);
   const text = (heading ? heading[1] : line).trim();
-  const bold = /^\P{L}*?(?:\*\*|__)(.+?)(?:\*\*|__)\s*(?::\s*(.*))?$/u.exec(text);
-  if (bold) return { label: bold[1].replace(BEFORE_LETTER, '').replace(/:\s*$/u, '').trim(), inline: bold[2]?.trim() ?? '' };
+  const bold = /^(?:\*\*|__)(.+?)(?:\*\*|__)\s*(?::\s*(.*))?$/u.exec(text);
+  if (bold) return { label: withoutEmoji(bold[1].replace(/:\s*$/u, '')), inline: bold[2]?.trim() ?? '' };
   const colon = /^([^:]{1,60}):\s*(.*)$/u.exec(text);
-  if (colon) return { label: colon[1].replace(BEFORE_LETTER, '').trim(), inline: colon[2].trim() };
-  return heading ? { label: text.replace(BEFORE_LETTER, ''), inline: '' } : null;
+  if (colon) return { label: withoutEmoji(colon[1]), inline: colon[2].trim() };
+  return heading ? { label: withoutEmoji(text), inline: '' } : null;
 }
 
 // A label addressed to the Human: "For Adrian", "Open items for the Human", "Needs Adrian", "Waiting on the user",

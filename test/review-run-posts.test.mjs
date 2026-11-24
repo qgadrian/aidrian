@@ -61,14 +61,17 @@ test('a pass attested before its round opened is read again at that round: a lat
   state.rounds = Array.from({ length: N - 1 }, () => ({ head: base, at: new Date().toISOString() }));
   writeLocalState(r.project, state);
   const late = filed({ severity: 'low', likelihood: 'routine', cost: 'trivial', state: 'accepted' });
-  attestFile(r, dispatched.pass, head, [late]);
+  const axisless = { title: 'Copy names no next step', file: 'src/booking/a.js', line: 3, severity: 'low', state: 'accepted' };
+  attestFile(r, dispatched.pass, head, [late, axisless]);
   const attested = readLocalState(r.project, 7).passes[dispatched.pass];
-  assert.deepEqual([attested.list[0].disposition, attested.open], ['fix_now', 1], 'attested at round 4, where a trivial low is fixed');
+  assert.deepEqual([attested.list.map((each) => each.disposition), attested.open], [['fix_now', 'needs_axis'], 2], 'attested at round 4, where a trivial low is fixed and an axisless one needs axes');
   const two = await r.step({ exec: clean });
   const after = readLocalState(r.project, 7);
   assert.notEqual(two.status, 'extension_check');
   assert.equal(after.rounds.length, N, 'the step opened round 5 for the attested head');
-  assert.deepEqual([after.passes[dispatched.pass].list[0].disposition, after.passes[dispatched.pass].open], ['accepted_residual', 0], 'read again at round 5');
+  const pass = after.passes[dispatched.pass];
+  assert.deepEqual([pass.list.map((each) => each.disposition), pass.open], [['accepted_residual', 'accepted_residual'], 0], 'read again at round 5, lateRound with or without axes');
+  assert.deepEqual(pass.list.map((each) => [after.index[each.id]?.state, after.index[each.id]?.disposition]), [['accepted', 'accepted_residual'], ['accepted', 'accepted_residual']], 'the index takes the new reading');
 });
 
 test('the exec step keeps a finding`s id while it is reported again with its title and file', async (t) => {

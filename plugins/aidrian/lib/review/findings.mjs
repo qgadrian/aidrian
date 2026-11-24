@@ -160,16 +160,20 @@ function agentReading({ severity, likelihood, affects, cost, cites }, round) {
 
 // A pass result `aidrian pr attest` recorded with its findings one by one, read again at review round `round`: the
 // round the step opens for the result's head, which an attestation made before that step could not know. Each
-// finding's disposition and the result's counts follow the table at that round; a counts-only result is left as it is.
+// finding's disposition and the result's open count follow the table at that round. Whether it changed anything:
+// a result whose open count its list does not give, such as counts attested over a kept list, is left as it is.
 export function rereadAt(result, round) {
-  if (!isObject(result) || !Array.isArray(result.list)) return result;
+  if (!isObject(result) || !Array.isArray(result.list) || result.list.filter(blocks).length !== result.open) return false;
+  let changed = false;
   for (const finding of result.list) {
-    if (!isObject(finding) || (!ACCEPTABLE.has(finding.disposition) && finding.disposition !== 'fix_now')) continue;
+    if (!isObject(finding) || typeof finding.severity !== 'string') continue;
     const decided = agentReading(finding, round);
-    if (decided.disposition !== 'invalid') finding.disposition = decided.disposition;
+    if (decided.disposition === 'invalid' || decided.disposition === finding.disposition) continue;
+    finding.disposition = decided.disposition;
+    changed = true;
   }
   result.open = result.list.filter(blocks).length;
-  return result;
+  return changed;
 }
 
 // A reviewer's `security` flag (--findings-file, and an exec reviewer's key): absent or false is no flag, and any other

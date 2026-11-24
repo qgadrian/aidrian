@@ -105,7 +105,13 @@ export async function runStages(s) {
     if (openRound() === 'round_limit') return capReached({ max_rounds: maxRounds });
     recorded = true;
     // An attestation made before this round opened read its findings at the round before: read them again at this one.
-    if (!wasOpen) for (const pass of passes) if (sameCommit(resultFor(pass)?.head, head)) rereadAt(resultFor(pass), state.rounds.length);
+    // The index takes the new readings too, as the step's own call gives ids to findings attest stored without one.
+    if (!wasOpen) {
+      for (const pass of passes) {
+        const result = resultFor(pass);
+        if (sameCommit(result?.head, head) && rereadAt(result, state.rounds.length)) recordFindings(state, pass.id, result, { mint: state.floored === true, kept: true });
+      }
+    }
   }
 
   // The review bot's request: the gate's marker sums every code-reviewer pass that counts for this head (a

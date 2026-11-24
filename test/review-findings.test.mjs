@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
-import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
+import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, rereadAt, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
 import { gitPaths } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
 import { cleanOutput, FINDINGS_SCHEMA, REQUEST_BRIEF, reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
@@ -59,6 +59,17 @@ test('parseFindings: from the late round on, an agent\'s low finding is a residu
   assert.deepEqual(late.list.map((each) => each.disposition), ['accepted_residual', 'accepted_residual', 'fix_now', 'accepted_residual', 'needs_axis', 'accepted_residual'], 'the loop\'s late reading; a routine medium stays, a finding with no axes still needs them, and a late low takes lateRound with or without');
   assert.equal(late.open, 2);
   assert.deepEqual(parseFindings(raw).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'needs_axis', 'needs_axis'], 'no round: early');
+});
+
+test('rereadAt: a result read again at a late round follows the table there, unless its open count is not its list\'s', () => {
+  const N = loadTable().lateRoundFrom;
+  const list = () => [{ title: 'Late nit', file: 'a.js', severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', state: 'accepted', disposition: 'fix_now' }];
+  const listed = { list: list(), open: 1 };
+  assert.deepEqual([rereadAt(listed, N), listed.list[0].disposition, listed.open], [true, 'accepted_residual', 0]);
+  assert.deepEqual([rereadAt(listed, N), listed.open], [false, 0], 'nothing changes a second time');
+  const counted = { list: list(), open: 3 };
+  assert.deepEqual([rereadAt(counted, N), counted.list[0].disposition, counted.open], [false, 'fix_now', 3], 'counts attested over a kept list stand');
+  assert.equal(rereadAt({ list: null, open: 2 }, N), false, 'a counts-only result is left as it is');
 });
 
 test('parseFindings: a malformed file is refused, never read as zero findings', () => {

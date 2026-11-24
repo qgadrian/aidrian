@@ -94,6 +94,24 @@ test('a .prior that is itself a link is refused: the snapshot reports it, and a 
   assert.deepEqual(readdirSync(elsewhere), [], 'nothing was written through the link');
 });
 
+test('a snapshot taken after the write keeps the prior and exits 2; the same bytes again are kept with no write', (t) => {
+  const dir = tempDir(t);
+  const file = write(dir, '2026-01-02-widget.md', brief());
+  assert.equal(takeSnapshot(file).snapshot, snapshotPath(file));
+  const { ino } = statSync(snapshotPath(file));
+  const again = run(dir, 'snapshot', file);
+  assert.deepEqual([again.status, again.stdout], [0, `${snapshotPath(file)} already holds ${file}\n`]);
+  assert.equal(statSync(snapshotPath(file)).ino, ino, 'the same bytes are not written again');
+
+  writeFileSync(file, brief('Supersedes: 2026-01-01-widget.md'));
+  const late = run(dir, 'snapshot', file);
+  assert.equal(late.status, 2);
+  assert.match(late.stderr, new RegExp(`^${file} differs from the snapshot ${snapshotPath(file)}, .*remove it to snapshot this file instead\\n$`, 'u'));
+  assert.equal(readFileSync(snapshotPath(file), 'utf8'), brief(), 'the good prior is kept');
+  assert.match(takeSnapshot(file, write(dir, 'other.md', 'other\n')).problem, /^differs from the snapshot /u);
+  assert.equal(readFileSync(snapshotPath(file), 'utf8'), brief(), 'a --prior with other bytes keeps it too');
+});
+
 test('the handoff command says it holds the sections a resume needs', () => {
   assert.match(commands.handoff.about, /check the new brief holds the sections a resume needs, carries its identifiers, and wraps its lines/u);
 });

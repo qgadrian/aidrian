@@ -145,7 +145,9 @@ export function writeSnapshot(briefPath, bytes) {
 }
 
 // Copies what the coming write supersedes into the snapshot, or clears a stale snapshot when nothing is. A snapshot the
-// disk refuses to write or to clear, such as a folder at its name, is a problem: { source, problem }.
+// disk refuses to write or to clear, such as a folder at its name, is a problem: { source, problem }. So is a snapshot
+// file already there with other bytes: a snapshot taken after the write would copy the new text over the good prior.
+// The same bytes are kept as they are, with no write: { source, snapshot, unchanged: true }.
 export function takeSnapshot(briefPath, explicitPrior) {
   const snapshot = snapshotPath(briefPath);
   const source = explicitPrior ?? (existsSync(briefPath) ? briefPath : findSupersededBrief(briefPath));
@@ -159,8 +161,13 @@ export function takeSnapshot(briefPath, explicitPrior) {
   }
   const reason = unreadable(source);
   if (reason) return { source, problem: reason };
+  const bytes = readFileSync(source);
+  // Only a regular file, read with no link followed, is a kept prior: a link planted at the name is replaced below.
+  const kept = linkedPrior(briefPath) ? null : cappedRead(snapshot, BRIEF_CAP);
+  if (kept?.equals(bytes)) return { source, snapshot, unchanged: true };
+  if (kept) return { source, problem: `differs from the snapshot ${snapshot}, which check compares with: a snapshot taken after the write would replace that prior, so it is kept; remove it to snapshot this file instead` };
   try {
-    writeSnapshot(briefPath, readFileSync(source));
+    writeSnapshot(briefPath, bytes);
   } catch (error) {
     return { source, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` };
   }

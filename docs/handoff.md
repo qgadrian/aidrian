@@ -1316,6 +1316,9 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
   A `--prior` that is the brief itself exits 2 for both `check` and `snapshot`: its earlier text is gone. Same file
   means the same device and inode, so a symlink, a hard link, and a letter-case variant on a case-insensitive disk count.
   A header that names this same file, with no snapshot to compare, is a finding the session tells the Human.
+  `snapshot` never replaces a snapshot file that holds other bytes: taken after the write, it would copy the new text
+  over the good prior. It exits 2, names that snapshot, and keeps it; remove the file to snapshot the brief instead.
+  A snapshot that holds the same bytes is kept with no write, and the command exits 0.
   A snapshot is written to a temporary file of a random name in `.prior/` and renamed over its name, so a link planted
   there is replaced, never written through. Every snapshot file is 0600, and a `.prior/` the command creates is 0700;
   one that exists keeps its mode. A `.prior` that is itself a link is refused: nothing is written or removed through it.

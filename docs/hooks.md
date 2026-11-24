@@ -2116,6 +2116,10 @@ earlier in the turn, is read there as well.
   matched, so the named form passes. A sentence outside such a list does not. A wake, such as a task notification,
   does not start a new turn, so a report before it still counts, and a short reply after it with no item before it is
   sent back.
+- It asks once per refusal: a refusal that one of its own send-backs after it names is not asked for again.
+  A session no Human types into, woken only by other sessions' messages and task notifications, has one turn that spans every reply.
+  There an item added in a form the check does not read was asked for again on every later stop.
+  A later refusal of the same pull request is a new one, and is asked for.
 - With several pull requests refused and not handed over, the one send-back names each, with its path, and asks for
   one item per pull request: after it the check is spent for the turn.
 - The path is branch text. The reason quotes it as one JSON string that holds printable ASCII alone, every other
@@ -2140,6 +2144,7 @@ do it, and how critical it is. It sends a turn back at most once ([Send-backs pe
 - A list counts when a label addressed to the Human comes before it: a heading, a bold line, or a line that ends in a colon,
   such as "For Adrian", "Needs the Human", "Open items for the user", "Waiting on Adrian", or "Adrian's to-do", where the
   Human is the name from [names](config.md#names), "the Human", "the user", or "you". Text after the label's colon is an item too.
+  A label may open with emoji, as in "### 🙋 For the Human"; they are not part of it.
 - An item is a top-level list entry with its continuation lines. The list ends at a heading, or at a paragraph after a blank line
   that is neither an entry nor indented under one.
 - A fenced code block, read as the pull request body rule reads one (`lib/markdown-sections.mjs`), is skipped:

@@ -9,6 +9,7 @@ import test from 'node:test';
 import { HAND_BACK_LEAD, handBackLists, handBackReason, mergeHandBack, MERGE_HAND_BACK_LEAD, quoteData } from '../plugins/aidrian/lib/stop-handback.mjs';
 import { ANNOUNCE_LEAD } from '../plugins/aidrian/lib/stop-announce.mjs';
 import { REVIEW_LOOP_LEAD } from '../plugins/aidrian/lib/stop-review-loop.mjs';
+import { turnActions } from '../plugins/aidrian/lib/transcript.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
 const HUMAN = 'Adrian';
@@ -267,6 +268,59 @@ test('mergeHandBack counts the item in any reply of the turn after the refusal, 
   assert.ok(merge('The scout finished; nothing changes.', [refused(), reply('Done. #401 is ready.')]), 'no reply carried it');
   assert.ok(merge('Done.', [reply(ITEM), refused()]), 'a reply before the refusal');
   assert.ok(merge('Done.', [refused(), reply(ITEM), { kind: 'gate', pr: 401, path: 'AGENTS.md' }]), 'a later refusal on another path');
+});
+
+test('a label that opens with an emoji is read, by the hand-back check and the merge hand-back check', () => {
+  for (const label of ['### 🙋 For the Human', '**🙋 For Adrian**', '🙋‍♂️ **Needs Adrian:**', '## 👍🏽 Questions for you']) {
+    const lists = handBackLists(`${label}\n- Merge order of the two branches.`, 'Adrian|the Human|the user|you');
+    assert.equal(lists.length, 1, label);
+    assert.ok(!/\p{Extended_Pictographic}/u.test(lists[0].label), lists[0].label);
+    assert.ok(fires(`${label}\n- Merge order of the two branches.`), `${label}: an unrated item is sent back`);
+  }
+  assert.equal(merge(`### 🙋 For the Human\n- **Medium:** pull request #401 touches \`${KILL}\`, a path auto-merge never merges.`), null,
+    'the hand-over a driver wrote under an emoji heading');
+});
+
+test('mergeHandBack asks once per refusal, in a session no Human types into, by its own earlier send-back', () => {
+  const asked = merge('Done.');
+  const sentBack = { kind: 'sent-back', text: `Stop hook feedback:\n[node hook-stop.mjs]: ${asked}` };
+  const reply = (text) => ({ kind: 'reply', text });
+  assert.equal(merge('Still holding; nothing changes.', [refused(), reply('Done.'), sentBack, reply('Added.')]), null,
+    'a later stop with no gate run after the send-back');
+  assert.ok(merge('Done.', [refused(), sentBack, refused()]), 'a refusal after the send-back is a new one');
+  assert.ok(merge('Done.', [sentBack, refused()]), 'a send-back before the refusal');
+  const both = { kind: 'sent-back', text: `Stop hook feedback:\n[x]: ${merge('Done.', [refused(), refused(402, 'AGENTS.md')])}` };
+  assert.equal(merge('Done.', [refused(), refused(402, 'AGENTS.md'), both]), null, 'one send-back that named two refusals');
+  assert.match(merge('Done.', [refused(), sentBack, refused(402, 'AGENTS.md')]), /^This turn's `aidrian pr auto-merge` run refused #402 at/u,
+    'a refusal of another pull request the send-back did not name');
+  const quoted = { kind: 'sent-back', text: `Stop hook feedback:\n[x]: ${HAND_BACK_LEAD}an item ("${MERGE_HAND_BACK_LEAD}401 at its path check")` };
+  assert.ok(merge('Done.', [refused(), quoted]), 'the lead quoted inside another check`s reason is data');
+});
+
+test('the driver shape: a refusal handed over under an emoji heading is not asked for on the stops of later wakes', () => {
+  const line = (entry) => JSON.stringify(entry);
+  const said = (text) => line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+  const meta = (content) => line({ type: 'user', isMeta: true, message: { role: 'user', content } });
+  const HANDED = `### 🙋 For the Human\n- **Medium:** pull request #16 touches \`.aidrian/config.json\`, a path auto-merge never merges.`;
+  const head = [
+    line({ type: 'user', origin: { kind: 'human' }, message: { role: 'user', content: 'run the project' } }),
+    line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'g1', name: 'Bash', input: { command: 'gh pr ready 16 && aidrian pr auto-merge 16' } }] } }),
+    line({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'g1', is_error: true,
+      content: 'Exit code 1\nauto-merge off for #16: it changes ".aidrian/config.json", a policy file of aidrian' }] } }),
+    said('## Pull request #16 is reviewed and ready: it needs the Human\'s merge'),
+  ];
+  const stopAt = (entries, message) => {
+    const text = `${entries.join('\n')}\n`;
+    return mergeHandBack({ stop_hook_active: false, last_assistant_message: message }, text, turnActions(text), { human: 'the Human' });
+  };
+  const first = stopAt(head, 'Pull request #16 is reviewed and ready.');
+  assert.match(first, /^This turn's `aidrian pr auto-merge` run refused #16 at its path check/u, 'the first report left it out');
+  const wake = meta('[Cross-session idle notice] another session is idle now. This is an automated notice, not a message from a person.');
+  const handed = [...head, meta(`Stop hook feedback:\n[command hook 4]: ${first}`), said(HANDED)];
+  assert.equal(stopAt([...handed, wake, said('Holding.')], 'Holding.'), null, 'the stop of a later wake that ran no gate');
+  const ignored = [...head, meta(`Stop hook feedback:\n[command hook 4]: ${first}`), said('Done.')];
+  assert.equal(stopAt([...ignored, wake, said('Holding.')], 'Holding.'), null, 'asked once already, even with no item read');
+  assert.ok(stopAt([...head, wake, said('Holding.')], 'Holding.'), 'a refusal never asked for is still asked for');
 });
 
 test('quoteData escapes every code point outside printable ASCII, and < > and the backtick, as JSON reads them', () => {

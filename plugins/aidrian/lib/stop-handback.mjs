@@ -18,6 +18,7 @@
 import { fencedIn } from './markdown-sections.mjs';
 import { lastReply } from './names.mjs';
 import { backgroundRunning } from './stop-announce.mjs';
+import { sentBackLines } from './transcript.mjs';
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 const alternatives = (names) => [...new Set(names.filter((name) => typeof name === 'string' && name.trim()).map((name) => escape(name.trim())))].join('|');
@@ -25,13 +26,17 @@ const alternatives = (names) => [...new Set(names.filter((name) => typeof name =
 // The words that rate an item: the scale the orchestrator and issue-implement reports use, with `critical` and `blocker`.
 export const RATINGS = /\b(?:blocking|blocker|critical|high|medium|low)\b/iu;
 
-// A heading, a bold line, or a line that ends in a colon, with its markup and that colon removed; null for any other line.
-// The text after a colon on the same line, such as "For Adrian: merge it", is returned as `inline`.
+// The emoji, with their joiners, modifiers, and spaces, that open a label such as "### 🙋 For the Human".
+const LEADING_EMOJI = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️\s]+/u;
+
+// A heading, a bold line, or a line that ends in a colon, with its markup, the emoji it opens with, and that colon
+// removed; null for any other line. The text after a colon on the same line, such as "For Adrian: merge it", is returned
+// as `inline`.
 function labelOf(line) {
   const heading = /^#{1,6}\s+(.*)$/u.exec(line);
-  const text = (heading ? heading[1] : line).trim();
+  const text = (heading ? heading[1] : line).trim().replace(LEADING_EMOJI, '');
   const bold = /^(?:\*\*|__)(.+?)(?:\*\*|__)\s*(?::\s*(.*))?$/u.exec(text);
-  if (bold) return { label: bold[1].replace(/:\s*$/u, '').trim(), inline: bold[2]?.trim() ?? '' };
+  if (bold) return { label: bold[1].replace(LEADING_EMOJI, '').replace(/:\s*$/u, '').trim(), inline: bold[2]?.trim() ?? '' };
   const colon = /^([^:]{1,60}):\s*(.*)$/u.exec(text);
   if (colon) return { label: colon[1].trim(), inline: colon[2].trim() };
   return heading ? { label: text, inline: '' } : null;
@@ -130,7 +135,10 @@ export const HAND_BACK_LEAD = 'The last message lists ';
 // or `pull request <n>`, with no digit after it, the path as written, JSON-quoted, or as quoteData writes it, or its first
 // PATH_CUT characters when longer, and a rating (RATINGS). The wording is not matched: the skill's line holds "your",
 // which a report that names the Human writes as the name. The reason names every refusal not handed over, so the one
-// send-back the check makes in a turn asks for each item. Null while a background task still runs, as its end wakes the
+// send-back the check makes in a turn asks for each item. A refusal a send-back of this check after it names
+// ({ kind: 'sent-back', text }, askedFor) is asked for once: a session no Human types into, woken only by other sessions'
+// messages and task notifications, has one turn that spans every reply since its start, and an item the agent added in a
+// form this does not read, as under an emoji label once, is never asked for again on each later stop. Null while a background task still runs, as its end wakes the
 // session, and with no final message to read.
 export function mergeHandBack(input, transcript, actions, { human = 'the Human' } = {}) {
   if (!Array.isArray(actions) || backgroundRunning(input)) return null;
@@ -155,11 +163,23 @@ export function mergeHandBack(input, transcript, actions, { human = 'the Human' 
   const itemsOf = (text) => handBackLists(text, names).flatMap(({ items }) => items);
   const finalItems = itemsOf(message);
   const missing = refused.filter(([pr, { file, at }]) => {
-    const later = actions.slice(at + 1).filter((action) => action?.kind === 'reply' && typeof action.text === 'string');
-    return ![finalItems, ...later.map((action) => itemsOf(action.text))].some((items) => items.some((item) => handsOver(item, pr, file)));
+    const later = actions.slice(at + 1).filter((action) => typeof action?.text === 'string');
+    if (later.some((action) => action.kind === 'sent-back' && askedFor(action.text).includes(pr))) return false;
+    const replies = later.filter((action) => action.kind === 'reply');
+    return ![finalItems, ...replies.map((action) => itemsOf(action.text))].some((items) => items.some((item) => handsOver(item, pr, file)));
   });
   if (!missing.length) return null;
   return missing.length === 1 ? oneRefusal(missing[0], human) : severalRefusals(missing, human);
+}
+
+// The pull requests a send-back's text asks this check to hand over: those a reason line that starts with
+// MERGE_HAND_BACK_LEAD names, as oneRefusal and severalRefusals write them, `#<n>` or `#<n>, #<m>`.
+export function askedFor(text) {
+  return sentBackLines(text).flatMap((line) => {
+    if (!line.startsWith(MERGE_HAND_BACK_LEAD)) return [];
+    const named = /^\d+(?:, #\d+)*(?= at (?:its|their) path checks?\b)/u.exec(line.slice(MERGE_HAND_BACK_LEAD.length));
+    return named ? named[0].split(', #').map(Number) : [];
+  });
 }
 
 // The reason for one refusal not handed over, [pr, { file }].

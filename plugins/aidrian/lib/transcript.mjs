@@ -677,6 +677,14 @@ const humanPrompt = (entry) => {
 // The start of the text Claude Code writes into the transcript when a Stop hook sends a turn back: a `user` entry marked
 // isMeta, `Stop hook feedback:` then each blocking hook's command in brackets and its reason.
 export const SENT_BACK = 'Stop hook feedback:';
+// What the host writes before a hook's reason in a send-back: the hook's command in brackets.
+const HOOK_PREFIX = /^\[.*?\]: /u;
+
+// The lines of a send-back's text, each as a reason starts: after `Stop hook feedback:` on its first line and after the
+// `[<command>]: ` the host writes before a hook's reason, when it does. A check's reason is one line, so a check's lead
+// at the start of one marks its send-back, and a lead inside a reason, as in a path it quotes, is data.
+export const sentBackLines = (text) => text.split('\n')
+  .map((line) => (line.startsWith(SENT_BACK) ? line.slice(SENT_BACK.length).trimStart() : line).replace(HOOK_PREFIX, ''));
 
 // What the main session did since the Human's last prompt, in transcript order: { kind: 'draft' | 'review', pr },
 // { kind: 'gate', pr, path }, { kind: 'merge', pr }, { kind: 'reply', text }, and { kind: 'sent-back', text }, or the
@@ -696,7 +704,7 @@ export const SENT_BACK = 'Stop hook feedback:';
 // call that ran merged, one with no help, `--auto`, or `--disable-auto`.
 // A reply is the text of an assistant message, for the merge hand-back check to find an item an earlier report of the
 // turn gave. A sent-back is the text of a Stop hook's send-back (SENT_BACK), for the stop hook to tell which of its
-// checks already sent the turn back. A subagent's entries are skipped. The stop hook's review-loop check reads it
+// checks already sent the turn back, and for the merge hand-back check to ask once per refusal. A subagent's entries are skipped. The stop hook's review-loop check reads it
 // (stop-review-loop.mjs), its merge hand-back check the gates, merges, and replies (stop-handback.mjs mergeHandBack), and
 // the hook the send-backs. It is read in the hook only: the replies and send-backs are the session's own text, and no
 // caller writes them anywhere.

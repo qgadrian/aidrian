@@ -60,7 +60,7 @@ import { continuation, stopMarkerPath, stopReminder } from '../lib/session-lengt
 import { ANNOUNCE_LEAD, announcedWork, QUESTION_TOOL } from '../lib/stop-announce.mjs';
 import { HAND_BACK_LEAD, handBack, MERGE_HAND_BACK_LEAD, mergeHandBack } from '../lib/stop-handback.mjs';
 import { REVIEW_LOOP_LEAD, reviewLoopOwed } from '../lib/stop-review-loop.mjs';
-import { readText, SENT_BACK, turnActions } from '../lib/transcript.mjs';
+import { readText, SENT_BACK, sentBackLines, turnActions } from '../lib/transcript.mjs';
 
 // A refusal as the transcript holds the gate's output: its plain line, or its --json object's reason, whose quotes the
 // transcript's own JSON escapes (lib/transcript.mjs gateVerdicts reads both).
@@ -68,8 +68,6 @@ const GATE_REFUSAL = ['auto-merge off for #', '\\"reason\\":\\"paths\\"'];
 
 // The start of each check's reason, by which its send-back is known (sentBack).
 const MARKS = [ANNOUNCE_LEAD, REVIEW_LOOP_LEAD, MERGE_HAND_BACK_LEAD, HAND_BACK_LEAD];
-// What the host writes before a hook's reason in a send-back: the hook's command in brackets (marked).
-const HOOK_PREFIX = /^\[.*?\]: /u;
 
 // The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
 export async function handle(input) {
@@ -161,10 +159,7 @@ function sentBack(actions) {
 // not name each reason's hook reliably. It can only skip a send-back, and another hook writing this plugin's words is
 // contrived.
 function marked(text) {
-  return text.split('\n').flatMap((line) => {
-    const reason = (line.startsWith(SENT_BACK) ? line.slice(SENT_BACK.length).trimStart() : line).replace(HOOK_PREFIX, '');
-    return MARKS.filter((mark) => reason.startsWith(mark));
-  });
+  return sentBackLines(text).flatMap((reason) => MARKS.filter((mark) => reason.startsWith(mark)));
 }
 
 // Whether this stop ends the session `id` so its terminal opens the background session it handed off to. The modules

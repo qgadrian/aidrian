@@ -5,7 +5,7 @@ import path from 'node:path';
 import { checkDeadline } from '../../deadline.mjs';
 import { isDirectory, joinSpelled } from '../../fs.mjs';
 import { inlineShellCommand, isLongOption, lexSteps, readGit, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from '../../shell-lex.mjs';
-import { cdChange, directoryChange } from './directory-change.mjs';
+import { cdChange, directoryChange, subshells } from './directory-change.mjs';
 import { expandHome, WRITERS, written } from './writers.mjs';
 
 // git subcommands whose every path is written: git mv removes its sources, git rm its paths.
@@ -34,31 +34,50 @@ const FOLDERS_LIMIT = 16;
 // paths it can be, as spelled from each folder, with no `..` folded away (fs.mjs joinSpelled), and `unsure` when the shell may be in a folder no path names, as after `cd "$dir"`. `globs` keeps a
 // target with a glob, which bashTargets drops, as { text, files: [], dirs, unsure, glob: true }, `dirs` the folders it
 // is relative to; `restores` counts git
-// checkout -- and git restore as writes.
-// Every record also has `cds`, the directory changes before it on its line, inline shells' callers included, each
+// checkout -- and git restore as writes; `expansions` keeps a target with a `$` or a backtick, which every other read
+// drops, as { text, files: [], dirs, unsure, expansion: true, vars }, `vars` the line's assignments before it.
+// Every record also has `program`, what writes it: the program's name, `>` or `>>` for a redirection, or `git <sub>`;
+// `cds`, the directory changes before it on its line, inline shells' callers included, each
 // { from, to, program, shown }: `from` the folders before the change, `to` its folder token (null for none, `-`, `+N`,
 // or `popd`), and `shown` the change as a deny reason names it; and `via`, the folder tokens of each `env -C` or git
 // `-C` that moved the target after the last of them, in order.
 // By default a `cd` makes the shell's folder unknown, as bashTargets reads it. `followCd` follows each `cd` to a named
 // folder, and, since a `cd` that fails leaves the shell where it was, keeps the folders before it as well. `shells` also
 // reads the command line of each `sh -c` or `bash -c`, which, like a substitution, starts where its command runs.
-export function bashWrites(command, cwd, { followCd = false, shells = false, restores = false, globs = false } = {}) {
+export function bashWrites(command, cwd, { followCd = false, shells = false, restores = false, globs = false, expansions = false } = {}) {
   const targets = [];
+  // The variables a bare assignment or `export` on the line set, by name, each { text, dynamic } as the lexer reads its
+  // value, for `expansions`.
+  const vars = new Map();
   const visit = (line, place, depth) => {
+    // The shell's place before each subshell the line opens, which its end gives back (directory-change.mjs subshells).
+    const outer = [];
+    let closing = 0;
     for (const { segment, substitutions } of lexSteps(line)) {
       // Under the agent gate hook's time budget (lib/deadline.mjs); a no-op elsewhere.
       checkDeadline();
+      for (; closing > 0 && outer.length; closing -= 1) place = outer.pop();
+      const { opens, closes } = subshells(segment);
+      for (let n = 0; n < opens; n += 1) outer.push(place);
+      closing = closes;
       if (depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) visit(body, place, depth + 1);
       segment.forEach((token, i) => {
         const next = segment[i + 1];
-        if ((token.operator === '>' || token.operator === '>>') && next && !next.fdDup && !next.operator) targets.push({ token: next, place });
+        if ((token.operator === '>' || token.operator === '>>') && next && !next.fdDup && !next.operator) targets.push({ token: next, place, program: token.operator, vars: new Map(vars) });
       });
       const invocation = readInvocation(segment);
       const { program, args, chdir } = invocation;
       // A wrapper's directory change moves the command's own paths, never the shell's redirections above.
       const own = chdir === null ? place : within(place, chdir);
-      if (WRITERS.has(program)) for (const token of written(program, args, WRITERS.get(program), invocation)) targets.push({ token, place: own });
+      if (WRITERS.has(program)) for (const token of written(program, args, WRITERS.get(program), invocation)) targets.push({ token, place: own, program, vars: new Map(vars) });
       else if (program === 'git') targets.push(...gitWritten(segment, own, restores));
+      if (!program) for (const { name, value } of invocation.environment ?? []) vars.set(name, { text: value.text, dynamic: value.dynamic === true });
+      if (program === 'export') {
+        for (const { text, dynamic } of args) {
+          const set = /^([A-Za-z_]\w*)=(.*)$/su.exec(text);
+          if (set) vars.set(set[1], { text: set[2], dynamic: dynamic === true });
+        }
+      }
       const inner = shells && depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
       if (inner !== null) visit(inner, own, depth + 1);
       const directory = directoryChange(invocation);
@@ -70,14 +89,15 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
   };
   visit(command, { dirs: [cwd], unsure: false, cds: [], via: [] }, 0);
   return targets
-    .filter(({ token }) => (!token.dynamic || (globs && !/[$`]/u.test(token.text))) && token.text !== '')
+    .filter(({ token }) => (!token.dynamic || (globs && !/[$`]/u.test(token.text)) || (expansions && /[$`]/u.test(token.text))) && token.text !== '')
     .filter(({ token, place }) => !token.joined || token.joined.certain || intoFolder(token.joined.into, place.dirs))
-    .map(({ token, place: { dirs, unsure, cds, via } }) => {
+    .map(({ token, place: { dirs, unsure, cds, via }, program, vars: set }) => {
       const { dynamic } = token;
       const text = expandHome(token);
-      if (dynamic) return { text, files: [], dirs, unsure, glob: true, cds, via };
-      if (path.isAbsolute(text)) return { text, files: [text], unsure: false, cds, via };
-      return { text, files: dirs.map((dir) => joinSpelled(dir, text)), unsure, cds, via };
+      if (dynamic && /[$`]/u.test(text)) return { text, files: [], dirs, unsure, expansion: true, vars: set, cds, via, program };
+      if (dynamic) return { text, files: [], dirs, unsure, glob: true, cds, via, program };
+      if (path.isAbsolute(text)) return { text, files: [text], unsure: false, cds, via, program };
+      return { text, files: dirs.map((dir) => joinSpelled(dir, text)), unsure, cds, via, program };
     });
 }
 
@@ -133,5 +153,5 @@ function gitWritten(segment, place, restores) {
   if (call.subcommand === 'restore' && has('S', '--staged', '--st') && !has('W', '--worktree', '--w')) return [];
   // git mv moves as mv does, into a folder by the name of each source too.
   const program = call.subcommand === 'mv' ? 'mv' : 'git';
-  return written(program, rest, writers.get(call.subcommand)).map((token) => ({ token, place: at }));
+  return written(program, rest, writers.get(call.subcommand)).map((token) => ({ token, place: at, program: `git ${call.subcommand}` }));
 }

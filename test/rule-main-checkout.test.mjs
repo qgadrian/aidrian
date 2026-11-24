@@ -682,7 +682,7 @@ test('after a cd that leaves the repository, or that the rule cannot read, the m
     'cd /tmp && git status', 'cd /tmp && git log --oneline', 'cd /tmp && git branch', 'cd /tmp && git worktree list',
     'cd /tmp && git stash list', 'cd /tmp && git config --get user.name', 'cd /tmp && git remote -v', 'cd /tmp && npm test',
     'cd /tmp && echo x > /tmp/a.txt', 'cd "$S" && git -C "$S" init -q', 'cd /tmp && git -C /tmp/x init -q',
-    'cd /tmp && env -C /tmp/x git init -q', 'cd "$S" && echo x > "$S/a.txt"', 'cd wt/task && git add -A',
+    'cd /tmp && env -C /tmp/x git init -q', 'cd wt/task && git add -A',
     `cd ${path.join(base, 'beside')} && echo x > src/app.js`, 'cd wt/task && cd /tmp && git init', 'x=$(cd /tmp); git status',
     'builtin cd wt/task && git add -A', "bash -c 'builtin cd wt/task && git add -A'", `builtin cd ${path.join(base, 'beside')} && git add -A`,
     // A residual: a git folder held in an expansion is not read after an untrusted cd.
@@ -937,4 +937,76 @@ test('on a disk that folds case, a target spelled in another case than git\'s ro
   const { repo } = fixture(t);
   const upper = path.join(path.dirname(repo), path.basename(repo).toUpperCase(), 'SRC', 'app.js');
   assert.match(edit(upper, repo, 'Write') ?? '', /^Blocked: this writes 'src\/app\.js'/u, upper);
+});
+
+// After a cd into a linked worktree, the rest of the line is judged there, not skipped: a return trip into the main
+// checkout is judged as any line that starts there.
+test('a return trip into the main checkout after a cd into a worktree is denied, and a relative write in the worktree is not', (t) => {
+  const { repo } = fixture(t);
+  const wt = path.join(repo, 'wt/task');
+  const at = (command) => check(command, { cwd: repo, env: ENV });
+  for (const command of [
+    `cd ${wt} && cd ${repo} && echo x > src/app.js`,
+    `cd ${wt} && git -C ${repo} switch -c x`,
+    `cd ${wt} && cd - && git switch -c x`,
+    `cd ${wt} && cd - && echo x > src/app.js`,
+    `(cd ${wt} && ls) && echo x > src/app.js`,
+    `( cd ${wt} ; ls ) ; git switch -c x`,
+    `pushd ${wt} && popd && echo x > src/app.js`,
+    `cd ${wt} && GIT_DIR=${repo}/.git git commit -m x`,
+    `cd ${wt} && git --git-dir=${repo}/.git commit -m x`,
+    `cd ${wt} && git --work-tree=${repo} --git-dir=${repo}/.git checkout -b x`,
+  ]) assert.match(at(command) ?? '', /^Blocked/u, command);
+  for (const command of [`cd ${wt} && echo x > src/app.js`, `cd ${wt} && git switch -c x`, `(cd ${wt} && echo x > src/app.js)`, `cd ${wt} && cd /tmp && git init`]) {
+    assert.equal(at(command), null, command);
+  }
+});
+
+// After an untrusted cd, a relative write is judged where the cd leads too, when the cd names its folder.
+test('a relative write that climbs back into the main checkout from an untrusted cd is denied', (t) => {
+  const { base, repo } = fixture(t);
+  mkdirSync(path.join(base, 'next'));
+  const at = (command) => check(command, { cwd: repo, env: ENV });
+  assert.match(at(`cd ${repo}/.git && echo x > ../src/app.js`) ?? '', /^Blocked: this command writes '\.\.\/src\/app\.js' after a cd/u);
+  assert.match(at(`cd ${path.join(base, 'next')} && echo x > ../repo/src/app.js`) ?? '', /^Blocked: this command writes '\.\.\/repo\/src\/app\.js' after a cd/u);
+});
+
+test('removing or moving the main checkout, or a folder above it, and writing its git folder are denied; a worktree keeps both', (t) => {
+  const { base, repo } = fixture(t);
+  const at = (command, cwd = repo) => check(command, { cwd, env: ENV });
+  assert.match(at(`rm -rf ${repo}`) ?? '', /^Blocked: this command removes or moves '[^']+', which holds the main checkout \(/u);
+  assert.match(at('rm -rf ..') ?? '', /which holds the main checkout/u, 'an ancestor, from inside it');
+  assert.match(at(`mv ${repo} ${base}/old`) ?? '', /which holds the main checkout/u);
+  assert.match(at(`rm -rf ${repo}`, path.join(repo, 'wt/task')) ?? '', /which holds the main checkout/u, 'from a linked worktree too');
+  assert.match(at('echo x > .git/refs/heads/main') ?? '', /^Blocked: this command writes '\.git\/refs\/heads\/main', inside the main checkout's git folder/u);
+  assert.match(checkTool({ tool_name: 'Write', tool_input: { file_path: path.join(repo, '.git/HEAD') }, cwd: repo }, { env: ENV }) ?? '', /inside the main checkout's git folder/u);
+  const wt = path.join(repo, 'wt/task');
+  mkdirSync(path.join(wt, 'build'));
+  for (const command of ['rm -rf build', 'echo x > src/app.js', 'rm -rf src']) assert.equal(at(command, wt), null, command);
+  mkdirSync(path.join(repo, 'build'));
+  assert.equal(at('rm -rf build'), null, 'an ignored folder of the main checkout');
+});
+
+test('a state folder the project keeps in the git folder still takes writes', (t) => {
+  const { repo } = fixture(t, { version: 1, state: { dir: '.git/aidrian' }, git: { mainCheckout: { guard: true } } });
+  mkdirSync(path.join(repo, '.git/aidrian/plans'), { recursive: true });
+  assert.equal(check(`echo x > ${repo}/.git/aidrian/plans/a.md`, { cwd: repo, env: ENV }), null);
+  assert.match(check(`echo x > ${repo}/.git/config`, { cwd: repo, env: ENV }) ?? '', /inside the main checkout's git folder/u);
+});
+
+// A target built from a variable: read from the line's own assignments and the hook's environment, and blocked from a
+// shell that may be in the main checkout when it still holds one (the design choice of the rule: fail closed).
+test('a write through a variable is judged where it leads, and blocked from the main checkout when the rule cannot read it', (t) => {
+  const { repo } = fixture(t);
+  const at = (command, env = ENV) => check(command, { cwd: repo, env });
+  assert.match(at('cat > "$S/x"') ?? '', /^Blocked: this command writes '\$S\/x', a path built from a variable this rule cannot read/u);
+  assert.match(at('echo x > "$DIR/src/app.js"', { DIR: repo }) ?? '', /^Blocked: this command writes 'src\/app\.js', a tracked file/u, 'from the environment');
+  assert.match(at(`S=${repo}; echo x > "$S/src/app.js"`) ?? '', /a tracked file/u, 'an assignment earlier on the line');
+  assert.match(at(`export S=${repo} && echo x > "\${S}/src/app.js"`) ?? '', /a tracked file/u);
+  assert.match(at('cd "$S" && echo x > "$S/a.txt"') ?? '', /a path built from a variable/u, 'pinned as allowed before: the variable may name the main checkout');
+  assert.match(at('for f in a b; do echo x > "$f"; done') ?? '', /a path built from a variable/u);
+  assert.match(at('t=$(mktemp); echo x > "$t"') ?? '', /a path built from a variable/u, 'a value from a substitution is not read');
+  for (const command of ['S=/tmp/x; echo x > "$S/a"', 'echo x > "$TMPDIR/a"', 'echo x > "/tmp/$name.txt"', `cd ${path.join(repo, 'wt/task')} && echo x > "$f"`]) {
+    assert.equal(at(command, { ...ENV, TMPDIR: tmpdir() }), null, command);
+  }
 });

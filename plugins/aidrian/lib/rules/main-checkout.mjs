@@ -11,14 +11,18 @@
 //
 // It is off until a project sets config.json `"git": { "mainCheckout": { "guard": true } }`. A target is allowed when it is outside
 // every main checkout (in a worktree, or outside the repository), in a project without a project folder or with the
-// guard off, matched by `git.mainCheckout.allowWrites`, or git-ignored. When git cannot tell, a tool write is denied to be
-// safe and a Bash command runs: a command line is never as certain as a file path.
+// guard off, matched by `git.mainCheckout.allowWrites`, or git-ignored, but never inside the main checkout's git folder,
+// outside the project's state folder. A removal or move of the main checkout's top folder or a folder above it, and a
+// target built from a variable the rule cannot read while the shell may be in the main checkout, are denied too. When
+// git cannot tell, a tool write is denied to be safe and a Bash command runs: a command line is never as certain as a
+// file path.
 
 import path from 'node:path';
 
+import { joinSpelled } from '../fs.mjs';
 import { fileEditOf, isFileEditTool } from '../hosts/index.mjs';
 import { bashTargets, bashWrites } from './main-checkout/bash-writes.mjs';
-import { canonical, cdLead, decide, failedCdLead, guardedMain, OVERRIDE, reason } from './main-checkout/checkout.mjs';
+import { canonical, cdLead, decide, existingFolder, failedCdLead, guardedMain, holdsMainDenial, OVERRIDE, reason } from './main-checkout/checkout.mjs';
 import { afterChanges } from './main-checkout/directory-change.mjs';
 import { gitStateDenial } from './main-checkout/git-state.mjs';
 
@@ -31,7 +35,57 @@ export { bashTargets, bashWrites, canonical, OVERRIDE };
 // and for each folder a `cd` names from a guarded main checkout.
 export function check(command, { cwd = process.cwd(), env = process.env } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  return decide(bashTargets(command, cwd), cwd, false, 'this command writes') ?? afterCdDenial(command, cwd) ?? gitStateDenial(command, cwd);
+  return decide(bashTargets(command, cwd), cwd, false, 'this command writes') ?? removalDenial(command, cwd) ?? afterCdDenial(command, cwd)
+    ?? expansionDenial(command, cwd, env) ?? gitStateDenial(command, cwd);
+}
+
+// A variable's name in a target: `$NAME` or `${NAME}`.
+const VARIABLE = /\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/gu;
+// The variables the shell sets for itself, whose value in the hook's environment is not the shell's.
+const SHELL_OWN = new Set(['PWD', 'OLDPWD']);
+
+// A write whose target is built from a variable, from a shell that may be in a guarded main checkout: the deny reason,
+// or null. Each `$NAME` or `${NAME}` is read from a bare assignment or `export` earlier on the line, and else from the
+// hook's environment `env`, which the session's shell starts with, so `S=/tmp/x; echo x > "$S/a"` and `"$TMPDIR/a"`
+// are judged where they lead. A target that still holds a `$` or a backtick is blocked, unless the literal path before its first `$` is an absolute
+// folder outside every guarded main checkout, as `/tmp/$x` is: it may name a tracked file there.
+function expansionDenial(command, cwd, env) {
+  for (const write of bashWrites(command, cwd, { followCd: true, shells: true, expansions: true })) {
+    if (!write.expansion) continue;
+    const vars = write.vars ?? new Map();
+    const value = (name) => {
+      if (vars.has(name)) return vars.get(name).dynamic ? null : vars.get(name).text;
+      return SHELL_OWN.has(name) || typeof env[name] !== 'string' ? null : env[name];
+    };
+    const text = write.text.replace(VARIABLE, (whole, braced, bare) => value(braced ?? bare) ?? whole);
+    // After a directory change, the shell is where the rule's own walk says (afterChanges), a worktree's trusted `cd`
+    // taken as done; none when the line starts in no guarded main checkout.
+    const walk = write.cds.length ? afterChanges(write.cds) : null;
+    if (write.cds.length && !walk) continue;
+    const dirs = walk ? walk.at : write.dirs.length ? write.dirs : [cwd];
+    if (!/[$`]/u.test(text)) {
+      const denial = decide(dirs.map((dir) => joinSpelled(dir, text)), cwd, false, 'this command writes');
+      if (denial) return denial;
+      continue;
+    }
+    const main = dirs.map((dir) => guardedMain(dir)).find(Boolean);
+    if (!main) continue;
+    const literal = text.slice(0, text.search(/[$`]/u));
+    const folder = literal.endsWith(path.sep) ? literal : path.dirname(literal);
+    if (path.isAbsolute(literal) && !guardedMain(existingFolder(folder))) continue;
+    return reason(`Blocked: this command writes '${write.text}', a path built from a variable this rule cannot read, while the shell may be in the main checkout (${main.roots.main}), where it may name a tracked file. Name the path literally, or set the variable earlier in the same command.`, main.project, main.config);
+  }
+  return null;
+}
+
+// What removes or moves a path it names: a folder that holds the main checkout goes with it.
+const REMOVERS = new Set(['rm', 'unlink', 'mv', 'git rm', 'git mv']);
+
+// The removal or move of the main checkout's top folder, or of a folder above it, the shell followed through each `cd`:
+// the deny reason, or null.
+function removalDenial(command, cwd) {
+  const removed = bashWrites(command, cwd, { followCd: true }).filter((write) => REMOVERS.has(write.program));
+  return holdsMainDenial(removed.flatMap((write) => write.files), cwd, 'this command removes or moves');
 }
 
 // The relative writes after a directory change, judged where the shell may still be: the deny reason, or null.
@@ -55,7 +109,7 @@ function afterCdDenial(command, cwd) {
       }
       continue;
     }
-    const files = (list) => list.map((dir) => path.resolve(through(dir), write.text));
+    const files = (list) => list.map((dir) => joinSpelled(through(dir), write.text));
     const verb = 'this command writes';
     if (walk.cd) {
       const denial = decide(files(walk.at), cwd, false, verb, (root) => cdLead(`${verb} '${write.text}'`, 'the write lands in', walk.cd, root));

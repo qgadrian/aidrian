@@ -963,6 +963,17 @@ target, so `<state>/inner/../src/x`, with `inner` a link to the repository's `sr
 path spelled in another letter case than git's root, on a disk that folds case, lands there too.
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
+The git folder is never tracked, so git calls it ignored: a write inside the main checkout's `.git`, as
+`echo x > .git/refs/heads/main`, is blocked anyway, since only git writes there, unless it lies in the project's state
+folder or `git.mainCheckout.allowWrites` names it. A removal or move (`rm`, `unlink`, `mv`, `git rm`, `git mv`) of the
+main checkout's top folder, or of a folder above it, as `rm -rf <main>` or `rm -rf ..` from inside it, is blocked too,
+from a linked worktree of the same repository as well.
+A target built from a variable is read from a bare assignment or `export` earlier on the same line, and else from the
+hook's environment, which the session's shell starts with, so `S=/tmp/x; echo x > "$S/a"` and `"$TMPDIR/a"` are judged
+where they lead. One that still holds a `$` or a backtick, such as `cat > "$S/x"` with `S` set in no way the rule
+reads, a loop's variable, or `$(…)`, is blocked while the shell may be in the main checkout, unless the literal path
+before its first `$` is an absolute folder outside it, as `/tmp/$x` is: it may name a tracked file. `$PWD` and
+`$OLDPWD` are the shell's own, and never read from the hook's environment.
 A file edit whose payload names no file the host's adapter can read, such as a Write with no path or a patch it cannot
 parse, is blocked from the main checkout too, since the rule cannot tell it writes no tracked file.
 
@@ -999,8 +1010,11 @@ A `cd` can fail and still return 0: a shell alias or function for `cd` can. The 
 and what follows runs there. So from a session in a guarded main checkout, the rule reads each `cd`, `pushd`, and
 `popd` on the command line, `builtin cd` included, its folder taken past one `--` (`cd -- X` names `X`), and sorts it:
 
-- **Into a linked worktree** of the same repository, a folder that exists: trusted. Nothing after it is judged, as
-  before; this is the documented `cd <worktree> && …` workflow.
+- **Into a linked worktree** of the same repository, a folder that exists: trusted. What follows is judged there, as
+  a line that starts in that worktree is: a relative write there passes, which is the documented
+  `cd <worktree> && …` workflow, and a return trip into the main checkout is judged as one, whether a later `cd` names
+  it, `cd -` or `popd` goes back, `git -C`, `--git-dir`, `--work-tree`, or `GIT_DIR` names it, or a subshell ends,
+  as in `(cd <worktree> && …) && echo x > src/app.js`.
 - **Inside the main checkout**, a folder that exists (`cd src`, `cd .`): trusted. The shell is in the main checkout
   whether the `cd` works or not, so what follows is judged by the rules above, at the folders before and after it.
   A write that reaches the main checkout only when the `cd` fails, such as `cd build && echo x > a.txt` into the
@@ -1008,7 +1022,10 @@ and what follows runs there. So from a session in a guarded main checkout, the r
   which fails closed: if the `cd` fails, it runs at the folder before it.
 - **Any other `cd`**: untrusted. It leaves the repository's checkouts (`cd /tmp`, `cd ..` above the root), names a
   folder that does not exist (`cd wt/typo`), or names one the rule cannot read (`cd "$S"`, `cd`, `cd -`, `popd`,
-  `cd ~/x`). For the rest of the line, a second `cd` included, what follows is judged against the folders before it:
+  `cd ~/x`). For the rest of the line, a second `cd` included, what follows is judged where the shell was before it
+  and at each folder it, or a later `cd`, names literally, so `cd <repo>/.git && echo x > ../src/app.js` is a write in
+  the repository; after one that names no folder (`cd -`, `popd`, `cd "$S"`), at every folder the shell has been in on
+  the line:
   - a relative write, as the rules above judge it there, and a relative glob (`rm -rf *`), which is blocked outright;
   - the same inside `sh -c` and `bash -c`, and, for the git calls below, in a heredoc or here-string fed to a shell:
     such a shell starts where its command runs;
@@ -1022,6 +1039,7 @@ and what follows runs there. So from a session in a guarded main checkout, the r
     an unknown one included, counts as a change.
   - a git call whose subcommand an expansion hides (`git "$sub"`, `git $opts commit`).
 
+A `cd` inside a subshell, `( … )`, moves nothing after the subshell ends, by the lexer's unquoted parentheses.
 A `builtin cd` skips a shell alias or function, so it fails loudly, but it can still fail, as on a missing folder: it is
 sorted the same, and its reason says only that it may fail.
 A `cd` or `pushd` through `command`, as in `command cd <worktree>`, is untrusted: zsh's `command` runs no builtin, so the shell stays where it was.
@@ -1037,6 +1055,8 @@ What it does not stop:
   Only a commit is refused, by the [commit guard](#commit-guard) where the project installs it.
 - After an untrusted `cd`, a git folder held in an expansion (`git -C "$PWD"`, `git -C "$(pwd)"`, `--git-dir="$D"`)
   is not read, although after a failed `cd` it may name the main checkout.
+- A subshell's end is read from its unquoted `)`: a quoted `)` glued to it, as in `(cd x; echo "a)")`, may end it early,
+  which only judges more of the line where it began; and a redirect after it, as `(cd x) > log`, is judged inside.
 - A write reached only through a heredoc fed to a shell is not read, with or without a `cd`.
 
 From a guarded main checkout, `cd <other repository> && git pull` is blocked as well; `git -C <other repository> pull`
@@ -1055,10 +1075,8 @@ blocks a tracked or new file there, and `rm` of a tracked link in the main check
 A state folder that is, holds, or sits in the main checkout (config.json `state.dir` set to `.`, `..`, or `~` around
 the repository) is judged as the main checkout and the folders around it are.
 
-Not covered: a target held in an expansion (`cat > "$S/x.md"`) is not read, so it passes, wherever it points; a state
-folder inside the git folder (`state.dir` under `.git`) takes writes, since a write inside the git folder is not judged,
-and after `cd <state>` there, a relative write that climbs back (`../../src/app.js`) is judged from the folder before
-the `cd` and passes. A link whose text climbs out of another link (`<state>/inner -> <repo>/src`, then
+A state folder inside the git folder (`state.dir` under `.git`) takes writes, and after `cd <state>` there, a relative
+write that climbs back (`../../src/app.js`) is judged where it lands, in the repository. Not covered: a link whose text climbs out of another link (`<state>/inner -> <repo>/src`, then
 `<state>/x -> inner/../src/app.js`) is judged where the system lands while its target is there; one whose target is
 not there yet is read with `..` taken from the text, not after the link, so the file it would make may be misjudged. A chain of links not made yet is followed for 40 links at most, as Linux does.
 

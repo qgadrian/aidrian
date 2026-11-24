@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { GIT_VALUE_GLOBALS, inlineShellCommand, lexInputs, lexSteps, readGit, readInvocation, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from '../../shell-lex.mjs';
 import { cdLead, guardedMain, reason } from './checkout.mjs';
-import { cdChange, directoryChange, mainsOf, trustOf } from './directory-change.mjs';
+import { cdChange, directoryChange, moveShell, shellAt, subshells } from './directory-change.mjs';
 import { GIT_ASSIGNMENT, gitFolders, JUDGED, knownChange } from './git-calls.mjs';
 
 // The GIT_* assignments of one command: the words before it runs (and an `env` wrapper's), never its arguments, so in
@@ -22,29 +22,28 @@ function assignmentsOf(segment, invocation, call = null) {
   return head.filter((token) => !token.operator && GIT_ASSIGNMENT.test(token.text.replace(/^\(+/u, ''))).map((token) => ({ ...token, text: token.text.replace(/^\(+/u, '') }));
 }
 
-// The state of the shell a line runs in, for gitStateChanges: { folders }, where it may be, at the start and after a
-// `cd` inside the main checkout; { skipped: true } after a `cd` into a linked worktree or from a folder no guarded main
-// checkout holds, where nothing is judged; or { strict: { cd, from } } after a `cd` this rule cannot trust, `from` the
-// folders before it.
+// The state of the shell a line runs in, for gitStateChanges: { folders }, where it may be, at the start, after a `cd`
+// inside the main checkout, and after one into a linked worktree, where a call is judged as at the start, so one that
+// names the main checkout by `-C` or `--git-dir` is judged there; { skipped: true } from a folder no guarded main
+// checkout holds, where nothing is judged; or { strict: { cd, from } } after a `cd` this rule cannot trust, `from` every
+// folder the shell may be in (directory-change.mjs moveShell). `shell` is moveShell's state.
 const SKIPPED = Object.freeze({ skipped: true });
 
 // The state after the directory change `invocation`. Untrusted stays so for the rest of the line.
 function stateAfterCd(state, invocation) {
   if (!state.folders) return state;
-  const mains = mainsOf(state.folders);
-  if (!mains.size) return SKIPPED;
-  const change = cdChange(invocation, state.folders);
-  const trust = trustOf(change, state.folders, mains);
-  if (trust.kind === 'worktree') return SKIPPED;
-  if (trust.kind === 'main') return { folders: [...new Set([...trust.dests, ...state.folders])] };
-  return { strict: { cd: change.shown, from: state.folders } };
+  const shell = state.shell ?? shellAt(state.folders);
+  if (!shell) return SKIPPED;
+  const moved = moveShell({ ...shell, at: state.folders }, cdChange(invocation, state.folders));
+  if (moved.untrusted) return { strict: { cd: moved.untrusted, from: moved.at } };
+  return { folders: moved.at, shell: moved };
 }
 
 // The state a command with a wrapper's directory change `chdir` runs in, or null when the folder may expand.
 function stateIn(state, chdir) {
   if (state.skipped || !chdir) return state;
   if (chdir.dynamic) return null;
-  if (state.folders) return { folders: state.folders.map((dir) => path.resolve(dir, chdir.text)) };
+  if (state.folders) return { ...state, folders: state.folders.map((dir) => path.resolve(dir, chdir.text)) };
   if (path.isAbsolute(chdir.text)) return { folders: [chdir.text] };
   return { strict: { ...state.strict, from: state.strict.from.map((dir) => path.resolve(dir, chdir.text)) } };
 }
@@ -110,21 +109,33 @@ function gitStateChanges(command, state, depth = 0, inherited = []) {
     const { segments, inputs } = lexInputs(command);
     const lineEnv = [...inherited];
     let here = state;
+    const outer = [];
     segments.forEach((segment, i) => {
       const invocation = readInvocation(segment);
-      // A directory change moves the shell as in the main pass.
+      const { opens, closes } = subshells(segment);
+      for (let n = 0; n < opens; n += 1) outer.push(here);
+      // A directory change moves the shell as in the main pass, and a subshell's no further than its end.
       const change = directoryChange(invocation);
       if (change) here = stateAfterCd(here, change);
-      if (here.skipped) return;
+      const inside = here;
+      for (let n = 0; n < closes && outer.length; n += 1) here = outer.pop();
+      if (inside.skipped) return;
       const own = assignmentsOf(segment, invocation);
       if (invocation.program === 'export' || (own.length && !invocation.program)) lineEnv.push(...own);
       if (!inputs[i].length || !readsShellInput(invocation)) return;
-      const where = stateIn(here, invocation.chdir);
+      const where = stateIn(inside, invocation.chdir);
       if (where) for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, [...lineEnv, ...own]));
     });
   }
   let now = state;
+  const outer = [];
+  let closing = 0;
   for (const { segment, substitutions } of lexSteps(command)) {
+    // A subshell that ended with the step before moves the shell back to where it was before the subshell began.
+    for (; closing > 0 && outer.length; closing -= 1) now = outer.pop();
+    const { opens, closes } = subshells(segment);
+    for (let n = 0; n < opens; n += 1) outer.push(now);
+    closing = closes;
     if (!now.skipped && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, now, depth + 1, env));
     const invocation = readInvocation(segment);
     const call = readGit(segment);

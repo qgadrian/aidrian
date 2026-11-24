@@ -5,11 +5,11 @@ import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkDeadline } from '../../deadline.mjs';
-import { globPattern, joinSpelled, systemPath } from '../../fs.mjs';
+import { foldCase, globPattern, isWithin, joinSpelled, systemPath } from '../../fs.mjs';
 
 import { loadConfig } from '../../config.mjs';
 import { checkoutRoots, isIgnored } from '../../git.mjs';
-import { findProject, worktreesDir } from '../../project.mjs';
+import { findProject, stateDir, worktreesDir } from '../../project.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
@@ -67,7 +67,10 @@ function entryOf(file) {
 
 // The deny reason for a write to `file`, a path with links resolved, or null.
 function judged(file, failSafe, verb, leadFor) {
-  const folder = existingFolder(path.dirname(file));
+  // git answers nothing from inside a git folder, so a target there is read from the checkout that holds it.
+  const parts = existingFolder(path.dirname(file)).split(path.sep);
+  const git = parts.findIndex((part) => foldCase(part) === '.git');
+  const folder = git > 0 ? parts.slice(0, git).join(path.sep) || path.sep : parts.join(path.sep);
   const project = findProject(folder);
   if (!project) return null;
   const { config } = loadConfig(project);
@@ -78,6 +81,13 @@ function judged(file, failSafe, verb, leadFor) {
   const rel = path.relative(canonical(root), file);
   if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
   if (config.git.mainCheckout.allowWrites.some((glob) => globPattern(glob).test(rel.split(path.sep).join('/')))) return null;
+  // The git folder is never tracked, so git calls it ignored, and only git writes there: a ref or the index written by
+  // hand moves the branch every session shares. A state folder the project keeps there is the project's own.
+  if (foldCase(rel.split(path.sep)[0]) === '.git') {
+    const state = canonical(stateDir(project, { config }));
+    if (isWithin(state, file)) return null;
+    return reason(leadFor ? leadFor(root) : `Blocked: ${verb} '${rel}', inside the main checkout's git folder (${root}), which only git writes.`, project, config);
+  }
   const ignored = isIgnored(root, rel || '.');
   if (ignored === true || (ignored === null && !failSafe)) return null;
   const lead = leadFor
@@ -86,6 +96,27 @@ function judged(file, failSafe, verb, leadFor) {
       ? `Blocked: git could not tell whether '${rel}' is tracked in the main checkout (${root}), so ${verb} nothing to be safe.`
       : `Blocked: ${verb} '${rel}', a tracked file in the main checkout (${root}).`;
   return reason(lead, project, config);
+}
+
+// The deny reason for removing or moving `targets`, or null: a target that is a guarded main checkout's top folder, or
+// a folder above it, as `rm -rf <main>` or `rm -rf ..` from inside it, which `decide` never judges, since it reads the
+// project from a target's folder. The main checkout is the one of the repository `cwd` is in, read from a linked
+// worktree too. Each target is read folded as text and where the system lands.
+export function holdsMainDenial(targets, cwd, verb) {
+  const folder = existingFolder(cwd);
+  const project = findProject(folder);
+  if (!project || !targets.length) return null;
+  const { config } = loadConfig(project);
+  const roots = config.git.mainCheckout.guard ? checkoutRoots(folder) : null;
+  if (!roots) return null;
+  const root = canonical(roots.main);
+  for (const target of targets) {
+    const system = systemPath(joinSpelled(cwd, target));
+    for (const file of new Set([canonical(path.resolve(cwd, target)), ...(system ? [canonical(system)] : [])])) {
+      if (isWithin(foldCase(file), foldCase(root))) return reason(`Blocked: ${verb} '${target}', which holds the main checkout (${roots.main}).`, project, config);
+    }
+  }
+  return null;
 }
 
 export function reason(lead, project, config) {

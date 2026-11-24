@@ -13,6 +13,8 @@
 //   aidrian project handoff RUN BRIEF      # the driver records the brief its background continuation starts from
 //   aidrian project resume RUN             # an attended session lifts the run's halt, such as a failed start proof's or a
 //                                          # limit's, or takes custody of a run whose driver's sessions ended
+//                    [--custody]           # takes custody only, never lifting a halt; where the team sets
+//                                          # projectRun.fullAuto, the host's continuation of the driver needs no person
 //   aidrian project report RUN [--json]    # the driver: the status, label, and comment the run owes each settled issue
 //   aidrian project recorded RUN ISSUE     # the driver: closes the report on ISSUE once it wrote it (lib/project-report.mjs)
 //   aidrian project preflight [RUN]        # every check a start would refuse or halt on, before init (lib/project-preflight.mjs)
@@ -47,13 +49,13 @@ import { openPullHead } from './project-result.mjs';
 import { recordedCommand, reportCommand } from './project-report.mjs';
 import { runConfine } from './project-confine.mjs';
 import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
-import { runStore } from './project-run-guard.mjs';
+import { resumeWords, runStore } from './project-run-guard.mjs';
 import { stopAction } from './project-stops.mjs';
 import { endRun, recordHandoff, recordResult, resumeRun, RETRY_EXIT, runParallel, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
 import { usageLines } from './usage.mjs';
 
 const USAGE = 'init RUN --file PATH [--check] [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
-  'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--project DIR] | end RUN [--project DIR] | ' +
+  'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--custody] [--project DIR] | end RUN [--project DIR] | ' +
   'report RUN [--json] [--project DIR] | recorded RUN ISSUE [--project DIR] | preflight [RUN] [--project DIR] | stop-action RUN ISSUE [--project DIR] | confine RUN ISSUE | decision ISSUE --heading TEXT [--record] [--project DIR] | decision ISSUE --forget [--project DIR]';
 // The actions the command takes; lib/project-run-guard.mjs holds a rule for each (test/project-start-guard.test.mjs).
 export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff', 'resume', 'end', 'report', 'recorded', 'preflight', 'stop-action', 'confine', 'decision'];
@@ -65,7 +67,7 @@ export const commands = {
     usage: USAGE,
     about: 'keep the record of a project run that works through a tracker project: init validates the snapshot input the driver session wrote from the tracker and starts run RUN, from the attended main session only; next prints the issue or issues to start, by blockers, then priority, then key, or done; summary writes the run\'s summary.md from its ledger; ' +
       'start, for the run\'s driver, starts the issue\'s own session in the background in a fresh clone of its own, under the caps; wait waits for an issue\'s session to end or record its result; result records it, from that session only; handoff records the brief the driver\'s background continuation takes the run on with; ' +
-      'resume, from an attended session only, lifts the run\'s halt, such as a failed start proof\'s or a usage limit\'s, or takes custody of a run whose driver\'s sessions ended; end, for the run\'s driver at the end of its loop, records the run\'s end, which releases the driver\'s hold; ' +
+      'resume, from an attended session only, lifts the run\'s halt, such as a failed start proof\'s or a usage limit\'s, or takes custody of a run whose driver\'s sessions ended, and with --custody takes custody only, which under projectRun.fullAuto the host\'s continuation of the driver takes with no person; end, for the run\'s driver at the end of its loop, records the run\'s end, which releases the driver\'s hold; ' +
       'report, for the driver, prints the status, label, and comment the run owes each settled issue, and recorded closes one once written; preflight runs every check a start would refuse or halt on, before init; ' +
       'stop-action, for the issue\'s own session only, prints the one action for an issue whose pull request did not merge, takes the forge\'s part of it, and records it against its cap; ' +
       'confine, the first call of an issue\'s session on a host that proves its sandbox per start, tries from inside the sandbox what it must refuse, and hands the verdict to the start; ' +
@@ -103,6 +105,8 @@ export { RETRY_EXIT };
 function projectAction(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform, autoMerge, exec } = {}) {
   const [action, ...rest] = args;
   if (!ACTIONS.includes(action)) return fail(`project takes ${ACTIONS.slice(0, -1).join(', ')}, or ${ACTIONS.at(-1)}${action ? `, not "${action}"` : ''}`);
+  // resume's words as the hook reads them too (project-run-guard.mjs resumeWords): an option twice is refused.
+  if (action === 'resume' && !resumeWords(rest)) return fail('project resume takes one run id, and --custody and --project DIR at most once each');
   const word = { type: 'string' };
   const { values, positionals } = parseArgs({
     args: rest,
@@ -114,6 +118,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
       ...(['next', 'report'].includes(action) ? { json: { type: 'boolean' } } : {}),
       ...(action === 'wait' ? { 'max-wait': word } : {}),
       ...(action === 'decision' ? { heading: word, record: { type: 'boolean' }, forget: { type: 'boolean' } } : {}),
+      ...(action === 'resume' ? { custody: { type: 'boolean' } } : {}),
     },
   });
   // preflight takes the run it checks for, once init has made it, or none before.
@@ -156,7 +161,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     return recordResult({ ...gate, key: second, file: path.resolve(cwd, values.file) });
   }
   if (action === 'handoff') return recordHandoff({ ...gate, brief: path.resolve(cwd, second) });
-  if (action === 'resume') return resumeRun({ ...gate, spawn });
+  if (action === 'resume') return resumeRun({ ...gate, custody: values.custody === true, spawn });
   if (action === 'end') return endRun({ ...gate, spawn });
   if (action === 'stop-action') return stopAction({ ...gate, key: second, ...(autoMerge ? { autoMerge } : {}) });
   if (action === 'wait') {

@@ -12,7 +12,7 @@ import { configDir } from './claude-code-config.mjs';
 import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
-import { continuedIn } from './claude-code-continuation.mjs';
+import { continuedIn, transcriptRoot } from './claude-code-continuation.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
 import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, localBindingRisk, loopbackReach, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
 import { trustProblem } from './claude-code-trust.mjs';
@@ -258,7 +258,9 @@ export default {
   humanAnswer,
   humanPrompt,
   ownTranscript,
-  transcriptFolders: (home) => [path.join(home, '.claude', 'projects')],
+  // The account home's, and the folder continuedIn reads, from the environment alone, as the command reads it
+  // (claude-code-continuation.mjs transcriptRoot): a host whose HOME is not the account's home reads there.
+  transcriptFolders: (home, env = process.env) => [...new Set([path.join(home, '.claude', 'projects'), transcriptRoot(env, home), transcriptRoot(env)])],
   sessionStart: { programs: ['claude'], starts: startsSession },
   // The npm package that installs its program, which a package runner runs as `claude` (lib/package-runner.mjs).
   packages: { '@anthropic-ai/claude-code': 'claude' },

@@ -79,14 +79,14 @@ import { decisionStoreFolder, decisionStoreFolders, readRecordedDecision } from 
 import { DECISION_SCOPE, recordedDecision, writeDecisionFile } from './project-decision.mjs';
 import { fenceFor, writeIssueFile } from './project-issue-text.mjs';
 import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, recordedHead, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
-import { custody, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
+import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { pushPreflight } from './push-preflight.mjs';
 import { signoffFolder, signoffFolders, storePathProblem } from './review/signoff-store.mjs';
 import { recordsStart } from './run-driver.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
-import { markDriver, markUnattended, PENDING_AGE, readBeacon, readUnattendedMark } from './unattended-mark.mjs';
+import { markDriver, markUnattended, PENDING_AGE, readBeacon, readDriverMark, readUnattendedMark } from './unattended-mark.mjs';
 
 export { cleanText, ISSUE_ATTEMPTS, RESULT_CAP, validateResult };
 export { DECISION_CLASSES, RESULT_STATUSES } from './project-result.mjs';
@@ -159,8 +159,8 @@ export function guardedStore({ env, home }) {
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
 // and through the forge at the repository init pinned, `repository`. { maxParallel, maxStarts, issueHours, solo,
 // unverifiedHosts, workflowSecretsAccepted, forgeProtectionAccepted, outsideSandbox, mcpServers, registries, localBinding,
-// recordedDecisions, reviewer, includeGuardedPaths } with each number the lowest of the two reads and its
-// CEILINGS value, each switch, recordedDecisions among them, true only when both reads set it, outsideSandbox and
+// recordedDecisions, fullAuto, reviewer, includeGuardedPaths } with each number the lowest of the two reads and its
+// CEILINGS value, each switch, recordedDecisions and fullAuto among them, true only when both reads set it, outsideSandbox and
 // registries the names both reads list, mcpServers the servers both reads define alike, `reviewer` the forge's github.reviewer
 // when both reads name the same, else null, and `includeGuardedPaths` github.autoMerge.includeGuardedPaths as a switch,
 // or { problem }: with `transient` when the forge could not answer now, and with issueHours when it answered and
@@ -191,6 +191,7 @@ export function teamPolicy(project, repository, forge, { tip = null } = {}) {
     registries: bothList(local.config.projectRun.registries, policies.policy.projectRun.registries),
     localBinding: local.config.projectRun.localBinding === true && policies.policy.projectRun.localBinding === true,
     recordedDecisions: local.config.projectRun.recordedDecisions === true && policies.policy.projectRun.recordedDecisions === true,
+    fullAuto: local.config.projectRun.fullAuto === true && policies.policy.projectRun.fullAuto === true,
     reviewer: sameReviewer(local.config.github?.reviewer, policies.policy.github?.reviewer),
     includeGuardedPaths: local.config.github?.autoMerge?.includeGuardedPaths === true && policies.policy.github?.autoMerge?.includeGuardedPaths === true,
   };
@@ -1261,26 +1262,38 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
 // is the continuation custody would move to (project-run-guard.mjs resumerProblem): a `resume` row, and `resumed RUN`.
 // A run that is not halted answers `not halted`. The driver never runs it: a halt waits on a person, but for one the
 // driver's start of its issue re-checks and lifts (project-recheck.mjs).
-export function resumeRun({ project, config, run, env = process.env, home, now = Date.now(), spawn }) {
+// The session the host continued the driver as (hostContinued) takes custody with it and never lifts a halt: the halt
+// waits for another attended session or the Human's shell. With `custody` (`--custody`) it takes custody only, and
+// writes no `resume` row for any session; where the team's policy sets projectRun.fullAuto (teamPolicy, through `forge`),
+// the host-named continuation takes it with no attended check (custodyWaiverProblem), and files a plain unattended mark
+// beside its driver mark, so it is held as a background continuation is until the Human types into it.
+export function resumeRun({ project, config, run, custody: custodyOnly = false, env = process.env, home, now = Date.now(), spawn, forge }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project resume: ${why}`] });
   const { session } = sessionIdentity(env);
   const opened = openRun(project, config, run, { env, home });
   if (opened.problem) return refuse(opened.problem);
   // The Human's own shell names no session; a session must be an attended one that never drove the run.
   const named = session !== null && session !== undefined;
-  if (named) {
-    const attended = attendedProblem({ session, project, config, state: opened.state, env, ...(home ? { home } : {}), now });
-    if (attended) return refuse(`a halt is lifted by a person, and ${attended}`);
-    const member = resumerProblem({ found: opened.found, store: opened.store, session, now });
-    if (member) return refuse(member);
-  }
-  if (endedIn(opened.found)) return refuse(`the run ${run} ended`);
-  // A run whose driver chain the host lists as ended is stranded: the attended session that resumes it takes custody.
   const recorded = named ? hostContinued(opened.found, { env, home }) : null;
   // Only the session the host names takes custody this way; any other may still lift a halt, and takes no custody.
   const continued = recorded && recorded.id === session ? recorded : null;
+  // A failed move would leave its driver mark in place of the one the session holds: a session that holds one of
+  // another run, or one that cannot be read, takes no custody with --custody, and nothing is filed.
+  const held = custodyOnly && named ? readDriverMark(session, { env, ...(home ? { home } : {}) }) : null;
+  const foreign = held && (held.run !== run || held.state === null || resolvedPath(held.state) !== resolvedPath(opened.state));
+  if (foreign) return refuse(`this session holds the driver mark of ${held.run ? `the run ${held.run}` : 'a run it cannot read'}, and --custody files a driver mark for the run ${run} only in a session that holds none of another run`);
+  const waiver = custodyOnly && continued ? fullAutoWaiver({ project, opened, session, env, home, now, forge }) : { waived: false };
+  if (waiver.retry) return retryAnswer('resume', waiver.retry);
+  if (waiver.problem) return refuse(waiver.problem);
+  const eligible = (found) => resumerEligibility({ found, session, waived: waiver.waived, project, config, opened, env, home, now });
+  if (named && !waiver.waived) {
+    const problem = eligible(opened.found);
+    if (problem) return refuse(problem);
+  }
+  if (endedIn(opened.found)) return refuse(`the run ${run} ended`);
   const other = recorded && !continued ? [`note: the host continued the run's driver ${driverOf(opened.found).session} as ${recorded.id}, and only that session takes custody of it`] : [];
   const stranded = named && !(recorded && !continued) && strandedDriver({ found: opened.found, env, spawn, continued });
+  if (custodyOnly && !stranded) return refuse(`--custody takes custody only, of a run whose driver the host continued as this session or lists as ended, and the run ${run}'s driver is neither`);
   if (!haltOf(opened.found) && !stranded) {
     // A driver the host does not list as an ended background session may be an interactive session that closed, which
     // keeps its id: the Human resumes that same session, and it keeps custody.
@@ -1288,21 +1301,56 @@ export function resumeRun({ project, config, run, env = process.env, home, now =
     const note = named ? [`note: the driver ${driver} is not a background session the host lists as ended; if it was a session the Human ran and closed, resume that same host session, which keeps its id and so the run's custody`] : [];
     return { exitCode: 0, out: [`not halted ${run}`, ...(other.length ? other : note)], err: [] };
   }
-  const written = appendToRun(opened.state, run, (fresh) => {
-    const driver = driverOf(fresh);
-    // Under the lock, the run must still be live, and a continuation still the host's word for this session.
-    if (endedIn(fresh)) return { problem: `the run ${run} ended` };
-    const again = stranded ? hostContinued(fresh, { env, home }) : null;
-    if (stranded && (continued ? again?.id !== session : again !== null)) return { problem: 'the host\'s record of the run\'s driver changed while this command read it; run resume again' };
-    const take = stranded && driver.session === stranded ? [{ event: 'driver', session, from: driver.session, sha256: sha256(Buffer.from(`resume ${run} ${session} ${iso(now)}`)), via: 'resume', at: iso(now) }] : [];
-    // The driver mark comes before the custody row, under the lock and only once every check passed and custody moves:
-    // a session that would drive without one would not be held as a driver, and a refused resume files none.
-    if (take.length && !markCustodian(session, fresh, run, opened.state, env)) return { problem: 'this session\'s driver mark cannot be filed, so custody stays where it is; run resume again' };
-    return { rows: [...(haltOf(fresh) ? [{ event: 'resume', session, at: iso(now) }] : []), ...take] };
-  });
+  // A halt is lifted only by a resume that takes no custody as the host's continuation of the driver.
+  const lifts = !custodyOnly && !continued;
+  const written = appendToRun(opened.state, run, (fresh) => resumeRows({ fresh, run, session, named, continued, stranded, waiver, lifts, opened, env, home, now, eligible }));
   if (written.problem) return refuse(written.problem);
   const took = written.rows.some((row) => row.event === 'driver');
-  return { exitCode: 0, out: [...(written.rows.some((row) => row.event === 'resume') ? [`resumed ${run}`] : []), ...(took ? [`custody: this session now drives the run ${run}; its last driver ended`] : []), ...other], err: [] };
+  const resumed = written.rows.some((row) => row.event === 'resume');
+  const stands = !lifts && haltOf(opened.found) ? [`note: the halt stands: this resume takes custody only, and another session a person attends, or the Human's own shell, lifts it with \`aidrian project resume ${run}\``] : [];
+  return { exitCode: 0, out: [...(resumed ? [`resumed ${run}`] : []), ...(took ? [`custody: this session now drives the run ${run}; its last driver ended`] : []), ...stands, ...other], err: [] };
+}
+
+// The rows `resumeRun` writes under the ledger's lock, from `fresh`, the ledger read there: { rows } or { problem }.
+// The run must still be live, the host's record of the driver what the command read, and the session still one that
+// may resume, by `eligible`, the same check the command made before the lock, so neither the halt nor custody moves on
+// a read the lock outdated. The marks come before the custody row, only once every check passed and custody moves:
+// first the unattended mark of a continuation that took custody with no attended check, then the driver mark. Neither
+// is undone when the row is not written: both only hold the session, and grant nothing while the ledger names another
+// driver, so a failed move leaves a held session with no custody until a person types into it.
+function resumeRows({ fresh, run, session, named, continued, stranded, waiver, lifts, opened, env, home, now, eligible }) {
+  const driver = driverOf(fresh);
+  if (endedIn(fresh)) return { problem: `the run ${run} ended` };
+  const again = named ? hostContinued(fresh, { env, home }) : null;
+  const changed = continued ? again?.id !== session : again?.id === session || (stranded && again !== null);
+  if (changed) return { problem: 'the host\'s record of the run\'s driver changed while this command read it; run resume again' };
+  const problem = named ? eligible(fresh) : null;
+  if (problem) return { problem };
+  const take = stranded && driver.session === stranded ? [{ event: 'driver', session, from: driver.session, sha256: sha256(Buffer.from(`resume ${run} ${session} ${iso(now)}`)), via: 'resume', at: iso(now) }] : [];
+  if (take.length && waiver.waived && !markUnattended(session, { root: fresh.init.main, cwd: fresh.init.main, env, now })) return { problem: 'this session\'s unattended mark cannot be filed, so custody stays where it is; run resume again' };
+  if (take.length && !markCustodian(session, fresh, run, opened.state, env)) return { problem: 'this session\'s driver mark cannot be filed, so custody stays where it is; run resume again' };
+  return { rows: [...(lifts && haltOf(fresh) ? [{ event: 'resume', session, at: iso(now) }] : []), ...take] };
+}
+
+// Why `session` may not run the resume on the run `found` it reads, or null: under the fullAuto waiver (`waived`), what
+// custodyWaiverProblem refuses; else what a plain resume refuses, the attended check and resumerProblem.
+export function resumerEligibility({ found, session, waived, project, config, opened, env, home, now }) {
+  if (waived) return custodyWaiverProblem({ found, store: opened.store, session, env, now, ...(home ? { home } : {}) });
+  const attended = attendedProblem({ session, project, config, state: opened.state, env, ...(home ? { home } : {}), now });
+  if (attended) return `a halt is lifted by a person, and ${attended}`;
+  return resumerProblem({ found, store: opened.store, session, now, env });
+}
+
+// Whether `resume --custody` from `session`, the session the host continued the run's driver as, skips the attended
+// check: { waived: true } when the team's policy sets projectRun.fullAuto and custodyWaiverProblem passes; { problem }
+// when it sets it and that refuses; { retry } when the forge cannot answer now; else { waived: false }, and the resume
+// asks what a plain resume asks.
+function fullAutoWaiver({ project, opened, session, env, home, now, forge }) {
+  const policy = teamPolicy(project, opened.found.init.repository, forge ?? forgeFor(project.root));
+  if (policy.transient) return { retry: policy.problem };
+  if (policy.fullAuto !== true) return { waived: false };
+  const problem = custodyWaiverProblem({ found: opened.found, store: opened.store, session, env, now, ...(home ? { home } : {}) });
+  return problem ? { problem } : { waived: true };
 }
 
 // The session of the run `found`'s driver when the host lists it as ended, or, with `continued`, recorded that it

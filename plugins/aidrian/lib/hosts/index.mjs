@@ -65,9 +65,11 @@ export function sessionIdentity(env = process.env) {
 // so a rule that needs one refuses there.
 export const humanAnswer = (entry, hosts = HOSTS) => hosts.some((host) => host.humanAnswer?.(entry) === true);
 
-// The folders under the account's home folder `home` where any host keeps the transcripts its `ownTranscript` vouches
-// for: the write guard refuses them to every unattended session (lib/unattended-write.mjs).
-export const transcriptFolders = (home, hosts = HOSTS) => hosts.flatMap((host) => host.transcriptFolders?.(home) ?? []);
+// The folders where any host keeps the transcripts its `ownTranscript` vouches for, and a project run reads the
+// driver's continuation from (`capabilities.continuedIn`): under the account's home folder `home`, and where `env`
+// moves a host's config folder. The write guard refuses them to every unattended session (lib/unattended-write.mjs),
+// and the transcripts in them to every session while a project run is under way (lib/transcript-guard.mjs).
+export const transcriptFolders = (home, { env = process.env, hosts = HOSTS } = {}) => hosts.flatMap((host) => host.transcriptFolders?.(home, env) ?? []);
 
 // The prompt the Human typed into a session, as the adapter of the host the call runs under (`input`, a hook's
 // payload) reads its transcript: { file, isHuman }, where `file` is the real path of the session's own transcript, kept

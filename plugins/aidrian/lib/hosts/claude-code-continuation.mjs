@@ -21,9 +21,14 @@ import { configFolder } from './claude-code-sandbox.mjs';
 const TAIL = 64 * 1024;
 const ID = /^[0-9A-Za-z][\w-]{3,127}$/u;
 
+// The folder of the project folders that hold a session's transcripts, as continuedIn reads them: under the config
+// folder `env` names (CLAUDE_CONFIG_DIR), else under `home`, else under `env.HOME`. The transcript guard takes its
+// folders from here too (claude-code.mjs transcriptFolders), so it protects the folder this reader reads.
+export const transcriptRoot = (env = process.env, home) => path.join(configFolder(env, home), 'projects');
+
 // The transcript of `session`: the one in `cwd`'s project folder, else the only one in any project folder, or null.
 function transcriptFile({ session, cwd, env, home }) {
-  const projects = path.join(configFolder(env, home), 'projects');
+  const projects = transcriptRoot(env, home);
   const name = `${session}.jsonl`;
   const isFile = (file) => {
     try {

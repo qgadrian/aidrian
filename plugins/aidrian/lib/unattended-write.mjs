@@ -169,7 +169,7 @@ function userRefused(refuse, user, env) {
   refuse(path.join(user, 'Library', 'LaunchAgents'), 'the user\'s launch agents, which macOS runs at every login', true);
   // Whatever the session's places, as a checkout at the home folder's own root: a host's transcripts there are its proof
   // that the Human typed into a session (lib/unattended-mark.mjs liftAttended), which no unattended session may write.
-  for (const folder of transcriptFolders(user)) refuse(folder, 'the host\'s session transcripts, the proof that a Human typed into a session', true, null, true);
+  for (const folder of transcriptFolders(user, { env })) refuse(folder, 'the host\'s session transcripts, the proof that a Human typed into a session', true, null, true);
 }
 
 // The user's and the system's git config files git names under `env`: a git call each, so read only when needed.

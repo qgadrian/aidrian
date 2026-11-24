@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { repoName } from '../plugins/aidrian/lib/remotes.mjs';
+import { transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 import { check, REASON, signoffMiss, SUBAGENT_REASON, TEXT_ROUTE, textReason, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 
 // A deny of the sign-off: REASON, and after it the miss, when the session holds answers to go by.
@@ -196,6 +197,41 @@ test('a plain-words question whose chosen option names the id lets that sign-off
   assert.equal(miss(accept, 'Approve ui/wrap', both), 'the option the Human chose names `ui/wrap`, not `ui/fit`');
   assert.equal(miss(accept.replace('--accept fit', '--accept wrap'), 'Approve ui/wrap', both), null);
   assert.equal(miss(accept, 'Approve o/r#9', both), null, 'a repository is no sign-off id');
+  // Only the word right after "Approve" is read, whole: a dotted path or a dotted repository is no prefix of an id.
+  assert.equal(miss(accept, 'Approve ui/fit.js', both), 'the option the Human chose names `ui/fit.js`, not `ui/fit`');
+  assert.equal(miss(accept, 'Approve o/r.js#9 at abc1234', 'o/r#9 at abc1234: ui/fit?'), null, 'a dotted owner/repo#PR names no id, so the question decides');
+  assert.notEqual(miss(accept, 'Approve o/r.js#9'), null, 'and under a plain question it approves nothing');
+  assert.equal(miss(accept, 'Approve "ui/fit".'), null, 'a quoted id with closing punctuation');
+  assert.equal(miss(accept, 'Approve, ui/fit-more is fine', both), null, 'an id not right after "Approve" is not read');
+});
+
+// A later refusal under the same plain-words question carries no id of its own: the offered options scope it, so it
+// outweighs the approval before it for every kind of sign-off.
+test('a refusal after an approval under a plain-words question denies, whichever sign-off it is', () => {
+  const q = 'Does the page still fit on a phone screen? Pull request o/r#9 at abc1234.';
+  const words = (command) => command.split(' ').slice(1).map((text) => ({ text, dynamic: false }));
+  for (const [command, id] of [
+    [`aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`, 'ui/fit'],
+    [`aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`, 'ui/*'],
+    [`aidrian pr signoff 9 --flow ui --overrule fit --reason ok --head ${HEAD}`, 'ui/fit'],
+    [`aidrian pr signoff 9 --flow ui --head ${HEAD}`, 'ui/signoff'],
+    [`aidrian pr signoff 9 --stage independent --head ${HEAD}`, 'stage:independent/signoff'],
+  ]) {
+    const options = [`Approve ${id} (Recommended)`, 'Keep it open'];
+    const approve = { question: q, answer: options[0], options };
+    assert.equal(signoffMiss(words(command), [approve], { repo: 'o/r' }), null, `${id} approved`);
+    assert.equal(signoffMiss(words(command), [approve, { question: q, answer: 'Keep it open', options }], { repo: 'o/r' }),
+      'the Human picked "Keep it open", not the option that starts with "Approve"', `${id} refused later`);
+    const elsewhere = ['Approve pay/fit', 'Keep it open'];
+    assert.equal(signoffMiss(words(command), [approve, { question: q, answer: 'Keep it open', options: elsewhere }], { repo: 'o/r' }), null, `${id}: a refusal offered for another id`);
+  }
+  // With the options as the host writes them to the transcript, read in the test's process: the hook reads them so.
+  const asked = [{ question: q, options: [{ label: 'Approve ui/fit (Recommended)' }, { label: 'Keep it open' }] }];
+  const entry = (answer) => JSON.stringify({ type: 'user', toolUseResult: { questions: asked, answers: { [q]: answer } }, timestamp: '2026-11-09T00:00:00Z' });
+  const accept = words(`aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`);
+  const read = (...answers) => signoffMiss(accept, transcriptAnswers(answers.map(entry).join('\n')), { repo: 'o/r' });
+  assert.equal(read('Approve ui/fit (Recommended)'), null);
+  assert.equal(read('Approve ui/fit (Recommended)', 'Keep it open'), 'the Human picked "Keep it open", not the option that starts with "Approve"');
 });
 
 test('the deny tells the session to keep the question in plain words and put the id in the option label', () => {

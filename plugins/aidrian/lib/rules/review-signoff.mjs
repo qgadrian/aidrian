@@ -12,8 +12,10 @@
 // A long-form sign-off also runs when this session's transcript holds the Human's answer to it: an AskUserQuestion whose
 // question names the pull request with the repository the command acts on (`<owner>/<name>#<PR>`) and the head's first seven characters,
 // with a chosen option that starts with "Approve", where that option or the question names what is signed (`<flow>/<invariant>`,
-// `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff` for --stage). An option that names
-// such an id decides alone: "Approve ui/a" under a question naming ui/a and ui/b approves ui/a only. So the question stays
+// `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff` for --stage), as the word right after
+// "Approve". An option that names such an id decides alone: "Approve ui/a" under a question naming ui/a and ui/b approves
+// ui/a only. Any other answer, a refusal too, counts for the ids its question or its offered "Approve" options name, and
+// the latest answer that counts decides. So the question stays
 // in plain words and the option carries the id, and the first answer runs the command: a session once asked each sign-off
 // twice, in plain words and then again with the id. The
 // host writes that answer, not the agent; a push changes the head, so it asks again. Without such a transcript the
@@ -152,21 +154,29 @@ export function signoffMiss(words, answers, target) {
   if (!onPr.length) return `no question answered names \`${named}\``;
   const onHead = onPr.filter(({ question }) => question.includes(head.slice(0, 7)));
   if (!onHead.length) return `no question naming ${named} names the head \`${head.slice(0, 7)}\``;
-  // The option the Human chose decides when it names an id; else the question does.
-  const matching = onHead.filter(({ question, answer }) => (idsOf(answer).length ? idsOf(answer).some((id) => tokens.includes(id)) : namesToken(question)));
+  // An answer whose own "Approve" label names an id counts for that id alone. Any other answer, a refusal included,
+  // counts for every id its question names or any of its offered "Approve" options names, so a later "Keep it open"
+  // under a plain-words question outweighs the approval before it.
+  const counts = ({ question, answer, options }) => {
+    const own = labelId(answer);
+    if (own) return tokens.includes(own);
+    return namesToken(question) || (options ?? []).some((label) => tokens.includes(labelId(label)));
+  };
+  const matching = onHead.filter(counts);
   if (!matching.length) {
-    const other = onHead.map(({ answer }) => idsOf(answer)).find((ids) => ids.length);
-    if (other) return `the option the Human chose names \`${other.join('`, `')}\`, not \`${tokens[0]}\``;
+    const other = onHead.map(({ answer }) => labelId(answer)).find(Boolean);
+    if (other) return `the option the Human chose names \`${other}\`, not \`${tokens[0]}\``;
     return `neither a question naming ${named} at ${head.slice(0, 7)} nor the option the Human chose names \`${tokens[0]}\`, written as one word with no space around the \`/\``;
   }
   const last = matching.at(-1).answer;
   return /^\s*approve\b/iu.test(last) ? null : `the Human picked "${last}", not the option that starts with "Approve"`;
 }
 
-// The sign-off ids an answer names, as `<flow>/<invariant>`, `<flow>/*`, or `stage:<name>/signoff`: a word with one `/`
-// that is no repository's `<owner>/<name>#<PR>`, path, or URL.
-const ID = /(?<![\w.:/-])(?:stage:)?[\w.-]+\/(?:\*|[\w-]+)(?![\w#/-])/gu;
-const idsOf = (answer) => answer.match(ID) ?? [];
+// The sign-off id an option label names, or null: only the word right after a leading "Approve", read whole, as
+// `<flow>/<invariant>`, `<flow>/*`, or `stage:<name>/signoff`, optionally quoted, and ended by a space, the end, or
+// closing punctuation before one. So `ui/fit.js` is the id `ui/fit.js`, never `ui/fit`, and `o/r.js#9` is no id.
+const APPROVE_ID = /^\s*approve\s+[`"']?((?:stage:)?[\w.-]+\/(?:\*|[\w.-]*[\w-]))[`"']?(?=[)\],.;:!?]*(?:\s|$))/iu;
+const labelId = (label) => (typeof label === 'string' ? APPROVE_ID.exec(label)?.[1] ?? null : null);
 
 const TARGET_MISS = {
   remotes: 'this checkout\'s remotes name more than one repository: end the command with `--repo <owner>/<name>`, the one the question names',

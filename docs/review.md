@@ -324,9 +324,12 @@ A long-form sign-off, `--accept`, `--overrule`, or `--stage` runs from the sessi
 the question names `<owner>/<name>#<PR>` of the repository the command acts on and the short head, the chosen option starts with "Approve",
 and the option or the question names what is signed: `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
 `stage:<name>/signoff`. So the session asks once: the question names the flow and the invariant in plain words, and the
-recommended option's label carries the exact id, such as "Approve checkout/total-shown". An option that names an id decides
-alone, so "Approve ui/wrap" under a question naming `ui/fit` and `ui/wrap` approves `ui/wrap` only, and an option naming
-another invariant approves nothing. The latest answer naming it decides, and a push asks
+recommended option's label carries the exact id, such as "Approve checkout/total-shown". The rule reads an option's id only
+as the word right after "Approve", whole, so "Approve ui/fit.js" names `ui/fit.js` and "Approve o/r.js#9" names none.
+An option that names an id decides alone, so "Approve ui/wrap" under a question naming `ui/fit` and `ui/wrap` approves
+`ui/wrap` only, and an option naming another invariant approves nothing. Any other answer, a refusal such as "Keep it open"
+included, counts for every id its question names or its offered "Approve" options name. The latest answer that counts
+decides, so a refusal after an approval under the same question refuses, and a push asks
 again. The command is one plain `aidrian pr` call run from the pull request's checkout, with no shell variables, repeated flags, `cd`, `env -C`, or chain.
 Before it asks, a session on a host that offers a tool to send the Human a push notification sends one, so a Human away from the session, such as on a phone, sees that a decision waits.
 `--last` stays in the Human's shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).

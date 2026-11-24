@@ -1189,7 +1189,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `${NAME}` the hook's environment gives an absolute path and each leading `~` expanded, and each absolute path
   normalized, so `~/.local/state/./opencode` and `~/.local/state//opencode` count, as does a path in an interpreter's
   code; the refusal says the host's "local service starts a session no guard holds". A store path holding a space,
-  as under a home folder whose name has one, is normalized only when spelled as the store's own path. A path or port built at run time,
+  as under a home folder whose name has one, may not be normalized in full, since quoting is dropped before paths
+  are split at spaces. A path or port built at run time,
   a relative path from a folder above, a port given apart from its host, as `nc localhost 49374` or a Python
   `('127.0.0.1', 49374)` tuple, a port `service set` moved, or a read of a store by the file tools, as Read, Grep, or
   Glob in a session no sandbox confines, is not read ([OpenCode limits](providers/opencode.md#limits)).
@@ -1483,8 +1484,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     names a host's program or package is the program, wherever the runner's options stand, so `npm --cache /d exec
     codex login` counts. A call that names none is read through only when the runner's word is its first word that is
     no option, as `npm exec -- lerna publish`, so `npm -w web exec lerna publish` reads as npm and passes. Its false
-    refusals: a runner call that names a host's program as a later argument of another program, such as `npx prettier claude`,
-    and a runner option's value whose last path part is a host's program, such as `npx --cache /tmp/codex prettier x`.
+    refusals: a runner call that names a host's program as a later argument of another program, such as
+    `npx prettier codex login`, and a runner option's value whose last path part is a host's program, when the words
+    after it spell one of that program's guarded subcommands.
   - A review manifest takes the name of the review gate's old attest record, `pr-<n>.json`, so a write that may give it
     a top-level `reviewer` key is refused: a file tool's text that parses as JSON with that key, escapes read as JSON
     reads them, or, when it does not parse, holds the key or a quoted key with an escape in it; a shell write of a

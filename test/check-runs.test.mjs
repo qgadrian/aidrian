@@ -847,7 +847,8 @@ test('aidrian test changed runs a test file whose path holds pattern characters,
     'npx --yes jest', 'pnpm exec jest', 'node --import tsx node_modules/jest/bin/jest.js', 'node --inspect-port 9230 --test', 'node --test-reporter spec --test',
     'node scripts/run.mjs --test', 'node scripts/run.mjs node_modules/jest/bin/jest.js', 'jest -- --runTestsByPath', 'npx --cache /tmp/npm jest',
     'node -- ./node_modules/jest/bin/jest.js --runTestsByPath', 'node -- ./node_modules/jest/bin/jest.js', 'node node_modules/.bin/jest -- --runTestsByPath',
-  ].map((command) => testRunner(path.join(ROOT, 'none'), command)), ['jest', null, 'jest', null, 'jest', 'jest', 'jest', 'node', 'node', null, null, 'jest', 'jest', null, 'jest', 'jest']);
+    'node --title ./fixtures/jest/bin/jest.js -- ./node_modules/jest/bin/jest.js --runTestsByPath',
+  ].map((command) => testRunner(path.join(ROOT, 'none'), command)), ['jest', null, 'jest', null, 'jest', 'jest', 'jest', 'node', 'node', null, null, 'jest', 'jest', null, 'jest', 'jest', null]);
   const pattern = literalPattern(file, 'jest');
   assert.equal(pattern, 'app/\\[org\\]/\\(group\\)/\\[...slug\\]/page.test.mjs');
   assert.ok(new RegExp(pattern).test(file) && !new RegExp(file).test(file), 'the escaped path matches itself, as the raw one does not');

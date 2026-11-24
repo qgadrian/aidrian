@@ -117,9 +117,9 @@ export function testRunner(root, command, depth = 0, scripts = null) {
   const [program, ...rest] = words;
   if (program === 'jest') return jestMode(rest);
   if (program === 'node') {
-    const runner = nodeRunner(rest);
-    // Jest reads only the words after its entry point; node's own `--` comes before it.
-    return runner === 'jest' ? jestMode(rest.slice(rest.findIndex((word) => JEST_ENTRY.test(word)) + 1)) : runner;
+    const { runner, at } = nodeRunner(rest);
+    // Jest reads only the words after its entry point, the script node's scan found; node's own `--` comes before it.
+    return runner === 'jest' ? jestMode(rest.slice(at + 1)) : runner;
   }
   const script = scriptName(words);
   if (script === null || depth >= 5) return null;
@@ -149,22 +149,24 @@ const NODE_VALUE_OPTIONS = new Set(['-r', '--require', '--import', '--loader', '
   '--inspect-port', '--input-type', '--title', '--watch-path', '--test-reporter', '--test-reporter-destination', '--test-name-pattern',
   '--test-skip-pattern', '--test-concurrency', '--test-shard', '--test-timeout']);
 
-// What `node <words>` runs: jest when its script is jest's entry point, the node runner when `--test` comes before the
-// script, else none: a script's own arguments name no runner.
+// What `node <words>` runs, as { runner, at }: jest when its script, at `at`, is jest's entry point, the node runner when
+// `--test` comes before the script, else none: a script's own arguments name no runner.
 // SHORTCUT: an option that takes its value as the next word and is not in NODE_VALUE_OPTIONS ends the scan there, as
 // does a package runner option of that kind outside dropOptions's list; and words forwarded to a package script reach
 // its command as written, though an npm it runs with no `--` of its own takes their options for npm's. Each review
 // round found one more such case, and a full argument reader per runner and package manager would replace these rules.
 function nodeRunner(words) {
+  // The script at `at`: jest when it is jest's entry point.
+  const script = (at) => ({ runner: JEST_ENTRY.test(words[at] ?? '') ? 'jest' : null, at });
   for (let i = 0; i < words.length; i += 1) {
     const word = words[i];
-    if (word === '--test') return 'node';
+    if (word === '--test') return { runner: 'node', at: i };
     // After node's own `--`, the next word is the script.
-    if (word === '--') return JEST_ENTRY.test(words[i + 1] ?? '') ? 'jest' : null;
-    if (!word.startsWith('-')) return JEST_ENTRY.test(word) ? 'jest' : null;
+    if (word === '--') return script(i + 1);
+    if (!word.startsWith('-')) return script(i);
     if (NODE_VALUE_OPTIONS.has(word)) i += 1;
   }
-  return null;
+  return { runner: null, at: words.length };
 }
 
 // Jest's entry point as a node script.

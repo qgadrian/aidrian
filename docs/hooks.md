@@ -2338,7 +2338,8 @@ manager passes them, each file goes with its pattern characters escaped:
 jest reads a file as a regular expression, so `[`, `]`, `(`, `)`, `{`, `}`, `*`, `?`, `+`, `|`, `^`, `$`, and `\` get a
 backslash, and node reads it as a glob, so `[`, `]`, `{`, `}`, `*`, and `?` each go inside a class, as `[[]`.
 A Next.js segment such as `[org]` or `(group)` found no test before, and the run exited 1. Any other runner gets the
-paths as they are, and so does jest given `--runTestsByPath` before any `--` on the way, which reads exact paths.
+paths as they are, and so does jest given `--runTestsByPath` among its own words before a `--` of them, which reads exact
+paths: a `--` that node or a package manager reads before jest's entry point does not count.
 Node's options and a package runner's are read from a fixed list of those that take the next word as their value, and a
 node script's own arguments name no runner; an option outside that list ends the scan there, and words forwarded to a
 package script reach its command as written, though an npm it runs with no `--` of its own takes their options for its

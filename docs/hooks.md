@@ -1739,7 +1739,7 @@ each wake it ([Background agents](providers/claude-code.md#background-agents)), 
 wake, even past the check's cap. The file is then neither a send-back reason, an occurrence of the lesson, nor `missing`
 on the row, which says `delivered: pending` and leaves it out of `paths`, even when the report names it on a delivery line; another path the report names still counts. Such stops
 once made most of the lesson's occurrences, though the next stop wrote the file. The lesson's note tells the two causes
-apart: a path the report presented as written, and a handoff file the brief named that the agent left with no report to write. A stop let end with only tasks that
+apart: a path the report presented as written, and a handoff file the brief named that is still unwritten, with no report to write there or a write that failed. A stop let end with only tasks that
 nothing wakes the agent for, such as any task on a host that declares no wake, may be its last, so the hook writes the
 file then. A shell that never ends, such as a dev server, never wakes the agent either, and its file waits for a stop
 with that shell stopped. It writes the file only on a stop it lets end: a stop sent back, as for another missing path, has a report the agent will correct, and the file holds
@@ -1945,7 +1945,8 @@ do it, and how critical it is. It sends a turn back at most once ([Send-backs pe
 
 With no such item, the same check sends back once a question for the Human about doing more in the change at hand,
 one that names this pull request, the same one, or this branch, whose own recommendation, on its line or in the three
-lines after it, is yes: "Recommended: yes", "Recommendation: yes", or "Yes (recommended)". The AI once asked whether to
+lines after it up to the next question, is yes: "Recommended: yes", "Recommendation: yes", or "Yes (recommended)".
+The reason quotes the question as data. The AI once asked whether to
 add a missing check to the pull request that fixed the bug class the check guards, and the Human answered that it should
 not have to ask. A gap the work finds in its own scope is a defect to fix there, through its owner; the Human is asked
 only a real choice the work opens, such as a product behavior or a cost the scope did not plan. The question tool's hook

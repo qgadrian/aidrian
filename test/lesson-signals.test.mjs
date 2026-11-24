@@ -462,10 +462,10 @@ test('signals write nothing with lessons.auto off, and the hooks still block', (
 // agent "presented as written", which sent the lesson's triage looking for a claim the agent never made.
 test('a handoff left unwritten is filed as one the brief named, never as a file the agent presented as written', (t) => {
   const unwritten = deliverySignal({ agentType: 'aidrian:content-creator', missing: [], unwritten: ['/s/dispatch/x-content-creator.json'] });
-  assert.equal(unwritten.note, 'aidrian:content-creator ended its turn with no report to write to the handoff file its brief named, /s/dispatch/x-content-creator.json.');
+  assert.equal(unwritten.note, 'aidrian:content-creator ended its turn with the handoff file its brief named, /s/dispatch/x-content-creator.json, unwritten: it gave no report to write there, or the hook\'s write failed.');
   assert.match(unwritten.title, /left the handoff file its brief named unwritten$/u);
   const both = deliverySignal({ agentType: 'Explore', missing: ['a.md'], unwritten: ['/s/h.json'] });
-  assert.match(both.note, /^Explore presented a\.md as written, and it did not exist\. Explore ended its turn with no report to write to the handoff file its brief named, \/s\/h\.json\.$/u);
+  assert.match(both.note, /^Explore presented a\.md as written, and it did not exist\. Explore ended its turn with the handoff file its brief named, \/s\/h\.json, unwritten/u);
   const { dir, plugin, hook } = project(t);
   const file = path.join(stateDir(projectAt(dir)), 'dispatch', 'docs-ANNOUNCE-content-creator.json');
   const transcript = path.join(dir, 'agent-c1.jsonl');
@@ -475,5 +475,5 @@ test('a handoff left unwritten is filed as one the brief named, never as a file 
   });
   assert.equal(sent.status, 2, 'no report to write sends the agent back for its handoff');
   assert.match(sent.stderr, /Your brief asks you to write your machine handoff to/u);
-  assert.deepEqual(plugin().map((lesson) => lesson.note), [`aidrian:content-creator ended its turn with no report to write to the handoff file its brief named, ${file}.`]);
+  assert.deepEqual(plugin().map((lesson) => lesson.note), [`aidrian:content-creator ended its turn with the handoff file its brief named, ${file}, unwritten: it gave no report to write there, or the hook's write failed.`]);
 });

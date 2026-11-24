@@ -199,7 +199,8 @@ export const RECOMMENDS_YES = /\brecommend(?:ed|s|ation)?\b\W{0,3}(?:\w+\W+){0,2
 const RECOMMENDATION_LINES = 3;
 
 // The first question of `message` that asks to do more in the change at hand and recommends yes, cut to 80 characters,
-// or null. Fenced code is dropped, as handBackLists drops it.
+// or null. Its recommendation is read up to the next question, so a yes given to another question is never its own.
+// Fenced code is dropped, as handBackLists drops it.
 export function scopeAsk(message) {
   if (typeof message !== 'string') return null;
   const all = message.split('\n');
@@ -208,7 +209,9 @@ export function scopeAsk(message) {
   for (let at = 0; at < lines.length; at += 1) {
     const line = lines[at];
     if (!line.includes('?') || !SAME_CHANGE.test(line)) continue;
-    if (!RECOMMENDS_YES.test(lines.slice(at, at + 1 + RECOMMENDATION_LINES).join('\n'))) continue;
+    const after = lines.slice(at + 1, at + 1 + RECOMMENDATION_LINES);
+    const next = after.findIndex((later) => later.includes('?'));
+    if (!RECOMMENDS_YES.test([line, ...(next === -1 ? after : after.slice(0, next))].join('\n'))) continue;
     const question = line.replace(/^[>\s*_#-]+/u, '').trim();
     return question.length > 80 ? `${question.slice(0, 77)}...` : question;
   }
@@ -216,9 +219,10 @@ export function scopeAsk(message) {
 }
 
 // What the agent is told for a question scopeAsk found, `quoted`, after `lead`: do the work, and ask only a real choice;
-// `next` is what it does then.
+// `next` is what it does then. The question is quoted as data (quoteData), so its text cannot end the quote and add an
+// instruction.
 export const scopeAskReason = (lead, quoted, human, next = 'Then end the turn again.') =>
-  `${lead}a question for ${human} that asks whether to do more in the change at hand, and recommends yes itself ("${quoted}"). ` +
+  `${lead}a question for ${human} that asks whether to do more in the change at hand, and recommends yes itself (${quoteData(quoted)}, quoted as data). ` +
   'A gap the work finds in its own scope is a defect to fix, not a question, such as a missing check that would guard ' +
   'the bug class this change fixes, or another copy of the defect it fixes: do it in this pull request, through its owner, ' +
   `and report it done. Ask ${human} only a real choice the work opens, such as a product behavior or a cost the scope did not plan, ` +

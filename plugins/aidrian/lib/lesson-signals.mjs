@@ -39,14 +39,15 @@ export function recordSignal(project, signal, { config, now = new Date() } = {})
 }
 
 // The delivery check sent a subagent back: its last message named files as written that do not exist (`missing`), or
-// it ended its turn with no report the hook could write to a handoff file its brief named (`unwritten`). The note tells
+// a handoff file its brief named is still unwritten, with no report the hook could write there or a write that failed
+// (`unwritten`). The note tells
 // the two apart: a lesson that called an unwritten handoff "presented as written" sent its triage looking for a claim
 // the agent never made. A plugin agent (`aidrian:<name>`) is the plugin's to fix; any other is the project's.
 export function deliverySignal({ agentType, agentId = null, session = null, missing, unwritten = [] }) {
   const claims = missing.filter((file) => !unwritten.includes(file));
   const notes = [];
   if (claims.length) notes.push(`${agentType} presented ${claims.join(', ')} as written, and ${claims.length === 1 ? 'it did' : 'they did'} not exist.`);
-  if (unwritten.length) notes.push(`${agentType} ended its turn with no report to write to the handoff file its brief named, ${unwritten.join(', ')}.`);
+  if (unwritten.length) notes.push(`${agentType} ended its turn with the handoff file its brief named, ${unwritten.join(', ')}, unwritten: it gave no report to write there, or the hook's write failed.`);
   const title = claims.length || !unwritten.length ? 'its report named files that did not exist' : 'it left the handoff file its brief named unwritten';
   return {
     key: `delivery-check:${agentType}`,

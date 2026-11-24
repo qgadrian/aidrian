@@ -3,7 +3,7 @@
 import path from 'node:path';
 
 import { checkDeadline } from '../../deadline.mjs';
-import { isDirectory } from '../../fs.mjs';
+import { isDirectory, joinSpelled } from '../../fs.mjs';
 import { inlineShellCommand, isLongOption, lexSteps, readGit, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from '../../shell-lex.mjs';
 import { cdChange, directoryChange } from './directory-change.mjs';
 import { expandHome, WRITERS, written } from './writers.mjs';
@@ -31,7 +31,7 @@ export function bashTargets(command, cwd) {
 const FOLDERS_LIMIT = 16;
 
 // Every target a Bash command writes, as { text, files, unsure }: `text` as the command names it, `files` the absolute
-// paths it can be, and `unsure` when the shell may be in a folder no path names, as after `cd "$dir"`. `globs` keeps a
+// paths it can be, as spelled from each folder, with no `..` folded away (fs.mjs joinSpelled), and `unsure` when the shell may be in a folder no path names, as after `cd "$dir"`. `globs` keeps a
 // target with a glob, which bashTargets drops, as { text, files: [], dirs, unsure, glob: true }, `dirs` the folders it
 // is relative to; `restores` counts git
 // checkout -- and git restore as writes.
@@ -77,7 +77,7 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
       const text = expandHome(token);
       if (dynamic) return { text, files: [], dirs, unsure, glob: true, cds, via };
       if (path.isAbsolute(text)) return { text, files: [text], unsure: false, cds, via };
-      return { text, files: dirs.map((dir) => path.resolve(dir, text)), unsure, cds, via };
+      return { text, files: dirs.map((dir) => joinSpelled(dir, text)), unsure, cds, via };
     });
 }
 

@@ -1645,3 +1645,24 @@ test('a script whose text names a home dot path is refused with the file tool as
   assert.equal(fx.ask(write(brief, { tool_input: { file_path: brief, content: `Run ${quoted} report --since 24h.\n` } })), null);
   assert.equal(fx.ask({ tool_name: 'Edit', tool_input: { file_path: brief, old_string: 'old', new_string: `run ${quoted} report` } }), null);
 });
+
+// A file tool's target is judged both folded as text and where the system lands (fs.mjs systemPath): a `..` after a
+// link climbs from the link's target, so `<worktree>/a/out/../x`, with `out` a link outside the places, lands outside
+// while its folded text stays in the worktree.
+test('a Write or an Edit through a link and a `..` that lands outside the places is refused, and one that stays in passes', (t) => {
+  const fx = fixture(t);
+  const outside = path.join(fx.root, 'outside', 'deep');
+  mkdirSync(outside, { recursive: true });
+  mkdirSync(path.join(fx.worktree, 'a'));
+  symlinkSync(outside, path.join(fx.worktree, 'a', 'out'));
+  const ask = fx.steady();
+  const through = `${fx.worktree}/a/out/../x.txt`;
+  assert.equal(path.resolve(through), path.join(fx.worktree, 'a', 'x.txt'), 'the text folds into the worktree');
+  for (const input of [write(through), { tool_name: 'Edit', tool_input: { file_path: through, old_string: 'a', new_string: 'b' } }, write('a/out/../x.txt')]) {
+    assert.match(ask(input)?.reason ?? '', /outside the places a session no Human attends may write/u, JSON.stringify(input));
+  }
+  assert.equal(ask(write(path.join(fx.worktree, 'a', 'x.txt'))), null, 'the same file named without the link');
+  mkdirSync(path.join(fx.worktree, 'b'));
+  symlinkSync(path.join(fx.worktree, 'b'), path.join(fx.worktree, 'a', 'in'));
+  assert.equal(ask(write(`${fx.worktree}/a/in/../y.txt`)), null, 'a link that stays in the worktree');
+});

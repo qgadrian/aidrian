@@ -913,3 +913,28 @@ test('the Bash hook blocks a commit after a cd that leaves the repository', (t) 
   assert.equal(run.status, 2, run.stderr);
   assert.match(run.stderr, /^Blocked: `git commit` runs after a cd that leaves the repository, or that this rule cannot read\. The cd is `cd \/tmp`/);
 });
+
+// A write target is judged both folded as text and where the system lands (fs.mjs systemPath): with a link from a
+// folder outside the repository into it, a `..` after the link climbs from the link's target.
+test('a write through a link and a `..` that lands in the main checkout is denied, by a command, a link whose text climbs, and a file tool', (t) => {
+  const { base, repo } = fixture(t);
+  const state = path.join(base, 'state');
+  mkdirSync(state);
+  symlinkSync(path.join(repo, 'src'), path.join(state, 'inner'));
+  symlinkSync('inner/../src/app.js', path.join(state, 'dotdot2.js'));
+  const at = (command) => check(command, { cwd: repo, env: ENV });
+  assert.match(at(`echo x > ${state}/inner/../src/app2.js`), /^Blocked: this command writes 'src\/app2\.js'/u, 'the kernel takes inner, then ..');
+  assert.match(at(`echo x > ${state}/dotdot2.js`), /^Blocked: this command writes 'src\/app\.js'/u, 'a link whose own text climbs out of a link');
+  assert.match(at(`cd ${state} && echo x > inner/../src/app2.js`) ?? '', /^Blocked/u, 'relative, after a cd');
+  assert.match(edit(`${state}/inner/../src/app3.js`, repo, 'Write'), /^Blocked: this writes 'src\/app3\.js'/u);
+  // A write inside a linked worktree, and one outside the repository with no link into it, stay allowed.
+  assert.equal(at(`echo x > ${path.join(repo, 'wt/task/src/app.js')}`), null);
+  assert.equal(at(`echo x > ${state}/note.txt`), null);
+  assert.equal(edit(`${path.join(repo, 'wt/task')}/src/../src/app.js`, repo, 'Write'), null);
+});
+
+test('on a disk that folds case, a target spelled in another case than git\'s root is still judged in the main checkout', { skip: process.platform !== 'darwin' && 'only a disk that folds case spells one folder two ways' }, (t) => {
+  const { repo } = fixture(t);
+  const upper = path.join(path.dirname(repo), path.basename(repo).toUpperCase(), 'SRC', 'app.js');
+  assert.match(edit(upper, repo, 'Write') ?? '', /^Blocked: this writes 'src\/app\.js'/u, upper);
+});

@@ -22,7 +22,7 @@ import { bashCall, writeTargets } from './config-guard.mjs';
 import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
-import { foldCase, isWithin } from './fs.mjs';
+import { foldCase, isWithin, systemPath } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
@@ -760,8 +760,6 @@ function renameProblem(write, file, files) {
 // sees, plus what shellWrites reads.
 export function unattendedWriteDenial(input, { names: { human } }, { mark = null, places = () => null, env = process.env } = {}) {
   if (!mark) return null;
-  // Accepted residual, tracked in #513: each write target is judged folded as text (writeTargets resolves it with
-  // path.resolve), so a `..` after a link counts where the spelling folds, not where the system lands.
   const { files, names, globs, code = [] } = writeTargets(input);
   // Each text the guard judges by name, with whether an interpreter reads it (config-guard.mjs writeTargets).
   const named = names.map((text, i) => ({ text, code: code[i] === true }));
@@ -854,10 +852,16 @@ function madeFolders(files, shell) {
 // write of it, such as rm, rmdir, or mv, the folder's own rule judges.
 const madeOnly = (spelled, made, found) => made.has(path.resolve(spelled)) && found.reviews.includes(real(spelled));
 
+// Each path of `spelled` is judged folded as text and where the system lands (fs.mjs systemPath), where a `..` after a
+// link climbs from the link's target, and refused when either is.
 function pathDenial(spelled, found, say) {
   for (const each of spelled) {
-    const denial = say.meets(placed(each, found), each);
-    if (denial) return denial;
+    checkDeadline();
+    const system = systemPath(each);
+    for (const at of [each, ...(system && system !== path.resolve(each) ? [system] : [])]) {
+      const denial = say.meets(placed(at, found), each);
+      if (denial) return denial;
+    }
   }
   return null;
 }

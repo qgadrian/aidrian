@@ -5,7 +5,7 @@ import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkDeadline } from '../../deadline.mjs';
-import { globPattern } from '../../fs.mjs';
+import { globPattern, joinSpelled, systemPath } from '../../fs.mjs';
 
 import { loadConfig } from '../../config.mjs';
 import { checkoutRoots, isIgnored } from '../../git.mjs';
@@ -44,11 +44,14 @@ export function guardedMain(at) {
 
 // The deny reason for writing `targets`, or null. A target is judged where it is and, when it is a link, where it leads:
 // `rm`, `mv`, and `ln -sf` change the link, and a write through it changes its target, or creates one not made yet.
+// It is read both folded as text and where the system lands (fs.mjs systemPath), where a `..` after a link climbs from
+// the link's target, so `<state>/inner/../src/x`, with `inner` a link into the repository, is judged in it.
 // `leadFor(root)`, when given, writes the reason's first line in place of today's.
 export function decide(targets, cwd, failSafe, verb, leadFor = null) {
   for (const target of targets) {
-    const absolute = path.resolve(cwd, target);
-    for (const file of new Set([entryOf(absolute), canonical(absolute)])) {
+    const system = systemPath(joinSpelled(cwd, target));
+    const spellings = new Set([path.resolve(cwd, target), ...(system ? [system] : [])]);
+    for (const file of new Set([...spellings].flatMap((absolute) => [entryOf(absolute), canonical(absolute)]))) {
       const denial = judged(file, failSafe, verb, leadFor);
       if (denial) return denial;
     }

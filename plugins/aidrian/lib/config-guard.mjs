@@ -17,7 +17,7 @@ import path from 'node:path';
 import { projectRuleReason } from './agent-gates.mjs';
 import { localForgeTokenKeychain } from './config-local.mjs';
 import { checkDeadline } from './deadline.mjs';
-import { foldCase, globParts, isEntry, isWithin } from './fs.mjs';
+import { foldCase, globParts, isEntry, isWithin, joinSpelled } from './fs.mjs';
 import { folderOf, GLOB_WORD, globLinksTo, globStarts, linkBelow, linkReaches, linkWalk, partMatches, reachesFile, realOf, sameFile } from './glob-links.mjs';
 import { fileEditOf, isFileEditTool, opaqueShellCommand } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
@@ -318,7 +318,7 @@ const written = new WeakMap();
 
 function readTargets(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [], globs: [] };
+  if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => joinSpelled(cwd, target)), names: [], globs: [] };
   const opaque = opaqueShellCommand(input);
   if (opaque !== null) {
     if (READ_ONLY.test(opaque)) return { files: [], names: [], globs: [] };

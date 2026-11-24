@@ -958,6 +958,9 @@ The deny reason names `aidrian worktree new <branch>`, which creates one.
 The rule blocks a write to a file git tracks, or would track, in the main checkout.
 It allows a git-ignored path, a path in `git.mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
 A target that is a link is judged as itself too, wherever it points ([The state folder](#the-state-folder)).
+Every target is read both folded as text and where the system lands, where a `..` after a link climbs from the link's
+target, so `<state>/inner/../src/x`, with `inner` a link to the repository's `src`, is a write in the repository; a
+path spelled in another letter case than git's root, on a disk that folds case, lands there too.
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
 A file edit whose payload names no file the host's adapter can read, such as a Write with no path or a patch it cannot
@@ -1056,8 +1059,8 @@ Not covered: a target held in an expansion (`cat > "$S/x.md"`) is not read, so i
 folder inside the git folder (`state.dir` under `.git`) takes writes, since a write inside the git folder is not judged,
 and after `cd <state>` there, a relative write that climbs back (`../../src/app.js`) is judged from the folder before
 the `cd` and passes. A link whose text climbs out of another link (`<state>/inner -> <repo>/src`, then
-`<state>/x -> inner/../src/app.js`) is read with `..` taken from the text, not after the link, so its target may be
-misjudged. A chain of links not made yet is followed for 40 links at most, as Linux does.
+`<state>/x -> inner/../src/app.js`) is judged where the system lands while its target is there; one whose target is
+not there yet is read with `..` taken from the text, not after the link, so the file it would make may be misjudged. A chain of links not made yet is followed for 40 links at most, as Linux does.
 
 ## Agent gates
 
@@ -1358,7 +1361,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   builds in its temporary folder or a state work folder link nothing; so must its git folder hold no `commondir` or
   `config.worktree` but the gate's placeholders. Any other reader, and a clone that fails a check, read every machine switch off.
 - **The write allowlist of a session no Human attends** (`lib/unattended-write.mjs`). A session its own unattended
-  mark holds, read by the hook payload's session id, and every subagent of it, writes only:
+  mark holds, read by the hook payload's session id, and every subagent of it, writes only the places below. A path a
+  file tool or a command names is judged both folded as text and where the system lands, where a `..` after a link
+  climbs from the link's target, and refused when either is: `<worktree>/a/out/../x`, with `out` a link outside the
+  places, lands outside. It writes only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names: a linked worktree from any folder inside it, such as a package of a
     monorepo, and the main checkout only from its own top, so a removed worktree's folder left as a plain one inside the

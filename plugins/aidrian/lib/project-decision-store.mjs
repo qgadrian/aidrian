@@ -7,13 +7,13 @@
 // switch is on (lib/project-run-gate.mjs decisionFor). It lies apart from `<state>/decisions/`, the decision-review records.
 // Only file and path imports, so the hooks that guard the folder load nothing more.
 
-import { mkdirSync, unlinkSync } from 'node:fs';
+import { unlinkSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import path from 'node:path';
 
 import { isObject } from './fs.mjs';
 import { stateRoot } from './project.mjs';
-import { readStoreJson, storePathProblem, writeStoreFile } from './review/signoff-store.mjs';
+import { makeStoreFolder, readStoreJson, storePathProblem, writeStoreFile } from './review/signoff-store.mjs';
 
 // The store's folder under the state root; lib/handoff-guard.mjs guards it by this name.
 export const DECISION_STORE_FOLDER = 'recorded-decisions';
@@ -50,9 +50,10 @@ const isEntry = (value) => isObject(value) && typeof value.heading === 'string' 
   && SHA256.test(value.sha256) && value.by === 'human' && typeof value.at === 'string';
 
 // The decision the Human recorded on issue `key` of the project `projectKey` on this machine: { entry } with
-// { heading, sha256, by, at }, { entry: null } when none is recorded, or { problem }. The file is read only when it and
-// every folder above it to the store's are this user's alone (storePathProblem, readStoreJson), and only an entry of the
-// shape the store writes counts.
+// { heading, sha256, by, at }, { entry: null } when none is recorded, or { problem }, with `malformed: true` when the file
+// passed every check of its place, owner, type, and links and only its content is no entry. The file is read only when it
+// and every folder above it to the store's are this user's alone (storePathProblem, readStoreJson), and only an entry of
+// the shape the store writes counts.
 export function readRecordedDecision({ projectKey, key, env = process.env }) {
   const file = decisionFile(projectKey, key, { env });
   if (!file) return { problem: `${JSON.stringify(String(projectKey))} and ${JSON.stringify(String(key))} name no project and issue the recorded-decision store keeps` };
@@ -60,34 +61,35 @@ export function readRecordedDecision({ projectKey, key, env = process.env }) {
   if (above) return { problem: `the recorded-decision store cannot be trusted: ${above}` };
   const read = readStoreJson(file, KIND);
   if (read.missing) return { entry: null };
-  if (read.problem) return { problem: read.problem };
-  if (!isEntry(read.value)) return { problem: `${file} is not ${KIND}` };
+  if (read.problem) return { problem: read.problem, ...(read.malformed ? { malformed: true } : {}) };
+  if (!isEntry(read.value)) return { problem: `${file} is not ${KIND}`, malformed: true };
   const { heading, sha256, by, at } = read.value;
   return { entry: { heading, sha256, by, at } };
 }
 
 // Records the decision on issue `key` of the project `projectKey` as the section headed `heading` whose sha256 is
-// `sha256`, replacing any earlier one, and returns { file, entry }. Each folder is made this user's alone, and the file
-// is written whole and moved into place. Throws, writing nothing, when the store cannot be read or written.
+// `sha256`, replacing any earlier one, a malformed one too, and returns { file, entry }. Each folder is made this user's
+// alone, only once those there passed their checks (makeStoreFolder), and the file is written whole and moved into
+// place. Throws, writing nothing, when the store cannot be trusted or written.
 export function recordDecision({ projectKey, key, heading, sha256, env = process.env, now = Date.now() }) {
   const file = decisionFile(projectKey, key, { env });
   if (!file) throw new Error(`${JSON.stringify(String(projectKey))} and ${JSON.stringify(String(key))} name no project and issue the recorded-decision store keeps`);
   const entry = { heading: String(heading).trim(), sha256: String(sha256), by: 'human', at: new Date(now).toISOString() };
   if (!isEntry(entry)) throw new Error('a recorded decision takes a heading and a sha256 of 64 lowercase hex characters');
-  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  makeStoreFolder(file, decisionStoreFolder(env), 'the recorded-decision store');
   const current = readRecordedDecision({ projectKey, key, env });
-  if (current.problem) throw new Error(current.problem);
+  if (current.problem && !current.malformed) throw new Error(current.problem);
   writeStoreFile(file, `${JSON.stringify(entry, null, 2)}\n`);
   return { file, entry };
 }
 
-// Removes the decision recorded on issue `key` of the project `projectKey`: { file, removed }, `removed` false when none
-// was. Throws when the store cannot be trusted or the file cannot be removed.
+// Removes the decision recorded on issue `key` of the project `projectKey`, a malformed one too: { file, removed },
+// `removed` false when none was. Throws when the store cannot be trusted or the file cannot be removed.
 export function forgetDecision({ projectKey, key, env = process.env }) {
   const file = decisionFile(projectKey, key, { env });
   if (!file) throw new Error(`${JSON.stringify(String(projectKey))} and ${JSON.stringify(String(key))} name no project and issue the recorded-decision store keeps`);
   const current = readRecordedDecision({ projectKey, key, env });
-  if (current.problem) throw new Error(current.problem);
+  if (current.problem && !current.malformed) throw new Error(current.problem);
   if (current.entry === null) return { file, removed: false };
   unlinkSync(file);
   return { file, removed: true };

@@ -157,7 +157,7 @@ export function decisionCommand({ project, config, key, heading, record = false,
     `${fence}text`, section, fence,
     'Write the section so it stands alone: it names the question and the chosen path in full, since a reference to text outside it, such as an option\'s number, settles nothing.',
   ];
-  if (!record) return { exitCode: 0, out: [...shown, `sha256 ${sha256}; record it with \`aidrian project decision ${key} --heading ${JSON.stringify(title)} --record\``], err: [] };
+  if (!record) return { exitCode: 0, out: [...shown, `sha256 ${sha256}; record it with \`aidrian project decision ${key} --heading ${shellQuoted(title)} --record\``], err: [] };
   let written;
   try {
     written = recordDecision({ projectKey: projectId(project), key, heading: title, sha256, env });
@@ -166,6 +166,10 @@ export function decisionCommand({ project, config, key, heading, record = false,
   }
   return { exitCode: 0, out: [...shown, `recorded-decision: ${key} recorded in ${written.file}, sha256 ${sha256}`], err: [] };
 }
+
+// `text` as one POSIX shell word: single-quoted, each `'` closed, escaped, and opened again, so no `$`, backtick, or
+// other character of it is ever expanded where the printed command is pasted.
+export const shellQuoted = (text) => `'${String(text).replaceAll('\'', '\'\\\'\'')}'`;
 
 // `--forget` of issue `key`: the answer of forgetDecision.
 function forgotten(project, key, env) {

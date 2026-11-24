@@ -2334,6 +2334,8 @@ driver, and a confined session's sandbox denies the folder.
 `aidrian project decision ISSUE --heading TEXT` prints that section and its sha256, from the attended session's recorded
 tracker read of the issue, the bytes `init` keeps, and writes nothing.
 With `--record` it then writes the store's entry and prints where; `aidrian project decision ISSUE --forget` removes it.
+Either replaces or removes an entry whose content is malformed, once its place, owner, type, and links pass, and makes
+no folder before the ones already there pass; the printed `--record` command quotes the heading as one shell word.
 It runs only from an attended main session that never drove a project run, in every form.
 It exits 1 when the session recorded no read of the issue, the description was cut off or holds hidden markup, no
 single section has that heading, or the store cannot be written.

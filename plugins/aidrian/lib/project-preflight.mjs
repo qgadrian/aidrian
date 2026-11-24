@@ -461,18 +461,19 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
 // any other void, a store that cannot be trusted included, is a note, and the run goes on without the grant; one that
 // stands is a note naming its heading. A policy that cannot be read, while the base branch's config `base`
 // (baseBranchConfig) turns the switch on and the store holds a decision of one of `mayStart`, is a blocker: whether it
-// stands cannot be told.
-function decisionChecks({ policy, base, mayStart, texts, project, env }) {
+// stands cannot be told. The switch is asked first, as start asks it: with it off, no store is opened. `read` is the
+// store's reader, a test's stand-in.
+export function decisionChecks({ policy, base, mayStart, texts, project, env, read = readRecordedDecision }) {
   const blockers = [];
   const notes = [];
+  const on = policy.problem ? base.config?.projectRun?.recordedDecisions === true : policy.recordedDecisions === true;
+  if (!on) return { blockers, notes };
   const projectKey = projectId(project);
-  const stored = [...mayStart].sort().map((key) => ({ key, ...readRecordedDecision({ projectKey, key, env }) })).filter((each) => each.problem || each.entry);
+  const stored = [...mayStart].sort().map((key) => ({ key, ...read({ projectKey, key, env }) })).filter((each) => each.problem || each.entry);
   if (policy.problem) {
-    const pinned = base.config?.projectRun?.recordedDecisions === true ? stored.map(({ key }) => key) : [];
-    if (pinned.length) blockers.push(`blocker recorded-decision: the team's policy cannot be read (${policy.problem}), so whether the decisions recorded for ${pinned.join(', ')} stand cannot be told; check again once it can`);
+    if (stored.length) blockers.push(`blocker recorded-decision: the team's policy cannot be read (${policy.problem}), so whether the decisions recorded for ${stored.map(({ key }) => key).join(', ')} stand cannot be told; check again once it can`);
     return { blockers, notes };
   }
-  if (policy.recordedDecisions !== true) return { blockers, notes };
   for (const { key, entry, problem } of stored) {
     const description = texts[key]?.description ?? '';
     if (problem) {

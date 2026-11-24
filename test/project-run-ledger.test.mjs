@@ -138,6 +138,10 @@ test('a landed row that names no branch carries nothing on', (t) => {
   const { state, input, init } = setup(t);
   const at = new Date().toISOString();
   const issue = { issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }] };
+  // The run the row names, and the run that wrote it, both on the snapshot's branch: neither tells which branch the
+  // merge was checked for, so a match with either proves nothing.
+  assert.equal(init('zero', input({ issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted' }] }, 'zero.json')).exitCode, 0);
+  appendToRun(state, 'zero', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'parked', decision: 'pr-open', at }] }));
   assert.equal(init('first', input(issue, 'first.json')).exitCode, 0);
   appendToRun(state, 'first', () => ({ rows: [{ event: 'landed', key: 'ENG-1', run: 'zero', attempt: 1, pr: 12, at }, { event: 'issue', key: 'ENG-1', state: 'done', at }] }));
   const next = init('second', input(issue, 'second.json'));

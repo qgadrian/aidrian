@@ -2028,9 +2028,9 @@ the review bot, github.reviewer on the default branch, passed exactly that head 
 the harness-config flow on that head, or the default branch sets `github.autoMerge.includeGuardedPaths` and no policy
 file changed; otherwise its clone holds the base branch's copies, git leaves them out of its commits, and a push that
 changes one is refused.
-A low or medium review finding whose fix lies in a host file, whose title and file the review step's own post already
-shows, is a stated residual, never a decision; once it is the one stop left, the result is `pr_open`; a finding the
-review withholds parks as before ([Host files no review saw](handoff.md#a-project-run)).
+A low or medium review finding whose fix lies in a host file, whose id and file the review step's own post already
+shows, is a stated residual named by that id and file, never a decision; once it is the one stop left, the result is
+`pr_open`; a finding no such post shows parks as before ([Host files no review saw](handoff.md#a-project-run)).
 The start pins the base tip, reads the team policy once with its local half at that commit, and decides everything
 from that read: the machine's switch and solo, projectRun.unverifiedHosts, the caps, maxStarts asked again under the
 ledger's lock with the write-ahead row, the access check with outsideSandbox and localBinding, the clone's checks, and

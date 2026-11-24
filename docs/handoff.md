@@ -667,13 +667,13 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   git leaves them out of its commits, and a push that changes one is refused.
   The branch's own changes stay in its commits for the pull request's review.
   An issue's session never writes a host file, on any attempt and whatever `github.autoMerge.includeGuardedPaths` says.
-  A low or medium review finding whose fix lies in one, whose title and file the review step's own post on the pull
-  request already shows, is a stated residual, never a decision: an Accepted residuals item that copies only that title
-  and file, with the reason that the run may not write this host file.
+  A low or medium review finding whose fix lies in one, whose [id](review.md#finding-ids) and file the review step's own
+  post on the pull request already shows, as the record its summary comment carries does, is a stated residual, never a
+  decision: an Accepted residuals item, `<id>: the run may not write this host file (<file>)`, with no title or reason.
   The session reuses the engine's [publication decision](review.md#publishing) and makes none of its own.
   Every other finding of the round takes its own route first and keeps any decision it raises.
   Only when such residuals are the one stop left is the result `pr_open`, with only that shown file in its stop, for the Human's merge.
-  A finding whose title or file no such post shows, as one the review withholds, parks as before.
+  A finding whose id or file no such post shows, as under `review.record: "local"`, which posts none, parks as before.
   A finding outside host files keeps its route.
   A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
   It parks a pull request into another branch than the default.

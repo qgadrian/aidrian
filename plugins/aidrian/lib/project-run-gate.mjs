@@ -259,17 +259,18 @@ const baseCopiesLine = (file) => `This branch changes host config or instruction
 
 // What an issue's session does with a review finding whose fix lies in a host file, which it never writes: the one
 // route, in projectPrompt and the autopilot skill's project-run rules alike. The pull request still waits for the
-// Human's merge, so the finding needs no decision. It reuses the review engine's own publication decision and fails
-// closed: only a title and file the engine already posted on the pull request are copied, so the body and the stop show
-// nothing the engine withholds (docs/review.md, Publishing and Inline reviews), whatever the reason it withholds it.
-export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file, whose title and file the review step\'s own post '
-  + 'on this pull request already shows, in its summary comment, an inline thread, or its review body, is a stated residual, never a decision: '
-  + 'an item of the pull request body\'s Accepted residuals that copies only that shown title and file, '
-  + 'as `<title>: the run may not write this host file (<file>)`. '
+// Human's merge, so the finding needs no decision: the line only tells the Human. It reuses the review engine's own
+// publication decision and fails closed: it names the finding by the id and file the engine already posted on the pull
+// request, as the record its summary comment carries holds them under the default publish settings (docs/review.md,
+// Finding ids and Publishing), never by a title or a reason, so the body and the stop show nothing the engine withholds.
+export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file, whose id and file the review step\'s own post '
+  + 'on this pull request already shows, as the record its summary comment carries does, is a stated residual, never a decision: '
+  + 'an item of the pull request body\'s Accepted residuals that names it only by that shown id and file, '
+  + 'as `<id>: the run may not write this host file (<file>)` with its `R<round>-<n>` id, and no title or reason. '
   + 'Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result. '
   + 'Only when such residuals are the one stop left, record the result pr_open with only that shown file in its stop and no decisions, and run no merge: '
   + 'the Human reads the file\'s diff and merges it. '
-  + 'A finding whose title or file no such post shows, as one the review withholds, parks as before.';
+  + 'A finding whose id or file no such post shows, as under review.record "local", which posts none, parks as before.';
 
 // The line of projectPrompt for an attempt on an existing branch: stop-action's catch-up, whose line names the one way
 // it merges a base its pull request conflicts with (project-stops.mjs catchUpStop), and parks one into another branch.

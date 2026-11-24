@@ -2177,14 +2177,16 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   `init` and its check give it the check `wait` gives a merged `pr_open` result, into the default branch of the pinned
   repository after that attempt started. When it passes, the
   issue counts as done for the plan, so its dependents may start, `init` prints `landed: <n> started issues whose pull
-  request an earlier run left open merged since, which this run records done: <issue> (#<n>)`, and writes a `landed` row
+  request an earlier run named merged since, which this run records done: <issue> (#<n>)`, and writes a `landed` row
   and the issue done after its init row. That owes the report a merge owes, the done status, which also takes the
   decision label the earlier run's report set off (Linear `removeLabels`), as that report's `recorded` row names it; a
   ledger from before those rows named a label takes none off, since the team's label may have changed since. The
   driver's first `report` makes that write, within its tracker guard. A run that ends before that report is recorded
   leaves the issue started in the tracker: the next run's `init` takes it in as landed again, with no second forge
-  read, while its snapshot names the same branch. When the check fails, or the forge cannot answer, the issue is a `blocker snapshot` line
-  naming why, and `init` refuses.
+  read, while its snapshot names the same branch. When the check fails, or the forge cannot answer, a `pr_open` issue
+  is a `blocker snapshot` line naming why, and `init` refuses.
+  A `parked` one resumes instead, as before: nothing tied the pull request its result names to the issue's branch, so
+  only a merge that passes the check takes it in.
   A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none;
   a `pr_open` result records the head its pull request's check read, with no second read. A `pr_open` result whose
   pull request the forge shows merged by the time `wait` takes it in is checked as a `merged` one is, into the default

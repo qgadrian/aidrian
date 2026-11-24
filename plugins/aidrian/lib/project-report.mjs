@@ -31,7 +31,7 @@ import { trackerById, trackerOfTools } from './trackers/index.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
 
 // The ledger rows that settle an attempt, each followed at once, under the same lock, by the issue row it leads to: a
-// `landed` row is init's, for an issue whose pull request an earlier run left open merged since (project-run.mjs
+// `landed` row is init's, for an issue whose pull request an earlier run named merged since (project-run.mjs
 // landedRows), and names that run's attempt.
 const SETTLES = new Set(['result', 'ended', 'orphan', 'landed']);
 // The issue states a report is owed on: an issue in either never starts again in its run.

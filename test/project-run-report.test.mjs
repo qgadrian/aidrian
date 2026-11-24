@@ -1378,7 +1378,7 @@ test('init takes in an issue whose pull request an earlier run left open and tha
   const later = input(issues('started'), 'second');
   const check = fx.cmd(['init', 'second', '--file', later, '--check']);
   assert.equal(check.exitCode, 0, check.out.join('\n'));
-  assert.ok(check.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), check.out.join('\n'));
+  assert.ok(check.out.includes('landed: 1 started issue whose pull request an earlier run named merged since, which this run records done: ENG-1 (#12)'), check.out.join('\n'));
   assert.equal(check.out.some((line) => line.startsWith('resumed:')), false, 'never resumed');
   assert.ok(check.out.includes('next ENG-2 feat/eng-2-import'), 'its dependent may start');
 
@@ -1395,7 +1395,7 @@ test('init takes in an issue whose pull request an earlier run left open and tha
   view = merged();
   const init = fx.cmd(['init', 'second', '--file', later]);
   assert.equal(init.exitCode, 0, init.err.join('\n'));
-  assert.ok(init.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), init.out.join('\n'));
+  assert.ok(init.out.includes('landed: 1 started issue whose pull request an earlier run named merged since, which this run records done: ENG-1 (#12)'), init.out.join('\n'));
   const found = readRun(fx.state, 'second');
   assert.equal(found.states.get('ENG-1').state, 'done');
   assert.equal(found.snapshot.resumed, undefined);
@@ -1417,7 +1417,7 @@ test('init takes in an issue whose pull request an earlier run left open and tha
   assert.ok(moved.out.includes('blocker snapshot: ENG-1 is started in the tracker, which a run does not start from'), moved.out.join('\n'));
   const carried = fx.cmd(['init', 'third', '--file', input([{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }], 'third')]);
   assert.equal(carried.exitCode, 0, carried.err.join('\n'));
-  assert.ok(carried.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), carried.out.join('\n'));
+  assert.ok(carried.out.includes('landed: 1 started issue whose pull request an earlier run named merged since, which this run records done: ENG-1 (#12)'), carried.out.join('\n'));
   const [again] = JSON.parse(fx.cmd(['report', 'third', '--json']).out[0]).owed;
   assert.deepEqual([again.key, again.unlabel], ['ENG-1', 'old-decision']);
   assert.deepEqual(fx.cmd(['recorded', 'third', 'ENG-1']).out, ['recorded ENG-1']);
@@ -1448,7 +1448,7 @@ test('init takes in an issue an earlier run parked on a decision whose pull requ
   const later = input(issues('started'), 'second');
   const check = fx.cmd(['init', 'second', '--file', later, '--check']);
   assert.equal(check.exitCode, 0, check.out.join('\n'));
-  assert.ok(check.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), check.out.join('\n'));
+  assert.ok(check.out.includes('landed: 1 started issue whose pull request an earlier run named merged since, which this run records done: ENG-1 (#12)'), check.out.join('\n'));
   assert.equal(check.out.some((line) => line.startsWith('resumed:')), false, 'never resumed on its merged branch');
   assert.ok(check.out.includes('next ENG-2 feat/eng-2-import'), 'its dependent may start');
   // Its pull request still open: it resumes as before.
@@ -1456,6 +1456,13 @@ test('init takes in an issue an earlier run parked on a decision whose pull requ
   const open = fx.cmd(['init', 'second', '--file', later, '--check']);
   assert.ok(open.out.includes('resumed: 1 started issue an earlier run parked on its branch, which this run starts again: ENG-1'), open.out.join('\n'));
   assert.equal(open.out.some((line) => line.startsWith('landed:')), false);
+  // A parked result's pull request is checked against the issue's branch by nothing before: one merged from another
+  // branch is not the issue's work, and it resumes, never a blocker.
+  view = merged({ headRefName: 'feat/other-work' });
+  const unrelated = fx.cmd(['init', 'second', '--file', later, '--check']);
+  assert.equal(unrelated.exitCode, 0, unrelated.out.join('\n'));
+  assert.ok(unrelated.out.includes('resumed: 1 started issue an earlier run parked on its branch, which this run starts again: ENG-1'), unrelated.out.join('\n'));
+  assert.equal(unrelated.out.some((line) => line.startsWith('landed:') || line.startsWith('blocker')), false, unrelated.out.join('\n'));
 });
 
 test('a landed report whose earlier label the ledger does not name takes no label off', () => {

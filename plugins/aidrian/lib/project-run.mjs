@@ -381,7 +381,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // other run still active. Each issue's text is the tracker's own answer the session's reads recorded
 // (project-issue-text.mjs recordedTexts), never a file a session wrote. Throws jsonl.mjs's LOCKED when another process
 // holds the runs lock. `pullHead` reads an old ledger's pull request head (resumedIssues), none by default, and `landed`
-// whether a pull request an earlier run left open merged since (project-result.mjs landedPull), none by default. `home`
+// whether a pull request an earlier run named merged since (project-result.mjs landedPull), none by default. `home`
 // is for a test.
 export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now(), pullHead, landed: mergedSince }) {
   // Recorded issue reads past their age go first, on every host, whatever init then answers.
@@ -595,7 +595,8 @@ function resumedOf(value, issues) {
 // have merged since that run ended:
 // `landed({ pr, branch, repository, since })` (project-result.mjs landedPull), with `since` that attempt's start, says
 // so. One that merged as the run's work comes back with `landed: { run, attempt, pr }`, never to be resumed but taken in
-// as done (splitLanded); one the forge cannot clear comes back with `problem`, a line naming why. A run that took one in
+// as done (splitLanded). A `pr_open` one the forge cannot clear comes back with `problem`, a line naming why; a
+// `parked` one resumes, since no check tied the pull request its result names to the issue's branch. A run that took one in
 // as landed, and whose report on it no `recorded` row closed, carries it on the same way, with no second forge read,
 // while the snapshot names the branch that take-in checked.
 export function resumedIssues(state, snapshot, { except, repository, pullHead = () => null, landed = () => null } = {}) {
@@ -635,7 +636,7 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
       const reported = found.rows.findLast((row) => row.event === 'recorded' && row.key === issue.key && row.kind !== 'started');
       const label = typeof reported?.label === 'string' ? { label: reported.label } : {};
       const open = held.state === 'parked' && (result?.status === 'pr_open' || result?.status === 'parked') && Number.isInteger(result.pr) && result.pr > 0
-        ? { pr: result.pr, attempt: result.attempt, since: Date.parse(found.rows.findLast((row) => row.event === 'start' && row.key === issue.key && row.attempt === result.attempt)?.at), ...label }
+        ? { pr: result.pr, attempt: result.attempt, status: result.status, since: Date.parse(found.rows.findLast((row) => row.event === 'start' && row.key === issue.key && row.attempt === result.attempt)?.at), ...label }
         : null;
       // A run that took the issue in as landed and ended before its report was recorded: the next run carries it on.
       const landedRow = held.state === 'done' ? found.rows.findLast((row) => row.event === 'landed' && row.key === issue.key) : null;
@@ -671,7 +672,7 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
         // With no start row to date the attempt, as a ledger of an older version, the merge cannot be checked: it resumes.
         const merged = Number.isFinite(open.since) ? landed({ pr: open.pr, branch, repository, since: open.since }) : null;
         if (merged?.merged === true) return { key: issue.key, landed: { run, attempt: open.attempt, pr: open.pr, branch: issue.branch, ...(open.label ? { label: open.label } : {}) } };
-        if (merged?.problem) return { key: issue.key, problem: `${issue.key} left pull request #${open.pr} open in the run ${run}, which merged since, and it cannot be taken in: ${merged.problem}` };
+        if (merged?.problem && open.status === 'pr_open') return { key: issue.key, problem: `${issue.key} left pull request #${open.pr} open in the run ${run}, which merged since, and it cannot be taken in: ${merged.problem}` };
       }
       const read = legacy === null ? head : pullHead({ pr: legacy, branch, repository });
       return { key: issue.key, run, pr, head: typeof read === 'string' && SHA.test(read) ? read : null, branch };
@@ -688,9 +689,9 @@ export function splitLanded(entries) {
   };
 }
 
-// The line init and its check print for the issues `landed` (splitLanded) an earlier run left on an open pull request
-// that merged since, which the run records done.
-export const landedLine = (landed) => `landed: ${landed.length} started ${landed.length === 1 ? 'issue' : 'issues'} whose pull request an earlier run left open merged since, which this run records done: ${landed.map(({ key, pr }) => `${key} (#${pr})`).join(', ')}`;
+// The line init and its check print for the issues `landed` (splitLanded) whose pull request an earlier run named
+// merged since, which the run records done.
+export const landedLine = (landed) => `landed: ${landed.length} started ${landed.length === 1 ? 'issue' : 'issues'} whose pull request an earlier run named merged since, which this run records done: ${landed.map(({ key, pr }) => `${key} (#${pr})`).join(', ')}`;
 
 // The ledger rows init writes after its init row for the issues `landed` (splitLanded), at `at`: for each, a `landed`
 // row naming the earlier run, its attempt, the pull request, the snapshot branch whose work it checked, and the label

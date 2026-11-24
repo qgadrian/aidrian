@@ -420,8 +420,8 @@ function secretsLine({ facade, named, repository, policy, check, asks }) {
 // written: a `blocker snapshot` line for each problem, for each issue blocked by a cycle or by a status the run does not
 // start from, a started issue an earlier run parked on its branch excepted, as init excepts it (project-run.mjs
 // resumedIssues, in the state folder runPlace resolves; none when it refuses), which a `resumed:` line names, or one whose
-// pull request that run left open merged since, which init takes in as done, as a `landed:` line names, or which, when
-// the forge cannot clear that merge, is a `blocker snapshot` line, and,
+// pull request that run's latest result named merged since, which init takes in as done, as a `landed:` line names, or
+// which, when the forge cannot clear the merge of a pull request left open, is a `blocker snapshot` line, and,
 // when the base branch's projectRun.mcpServers holds no tracker server an issue's session could read
 // the tracker through, a `blocker texts` line for each issue that may still start, ready or waiting on a blocker,
 // whose text no tracker read of `session` recorded

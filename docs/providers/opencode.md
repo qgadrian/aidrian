@@ -74,8 +74,8 @@ To turn it off for one project while the global configuration names it, add `"-a
 
 - The bridge puts the plugin's `bin/` first on the `PATH` of every shell OpenCode starts, so `aidrian` and
   `aidrian-knowledge` run in its shell tool, and the `aidrian` that reads the ledger is the copy whose hook wrote it.
-  It adds nothing when that `PATH` already holds the folder, when the shell and OpenCode have no `PATH`, or when the
-  folder's path is not absolute or holds the path delimiter.
+  It adds nothing when that `PATH` already holds the folder, or when the folder's path is not absolute or holds the
+  path delimiter. A shell with no `PATH` of its own, such as one on another machine, is left as it is.
 - In a terminal outside OpenCode, put the folder on the `PATH` first; from a checkout:
   `export PATH="/absolute/path/to/aidrian-harness/plugins/aidrian/bin:$PATH"`.
 - The hook scripts need Node 22, and OpenCode's own binary is Bun. Server plugins run in OpenCode's background

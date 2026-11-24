@@ -89,7 +89,7 @@ async function registerAll(context, seams) {
     if (!isFile(file)) continue;
     if (await register(() => context.tool.hook(route.on, (event) => onCall(runner, route, file, event)))) registered += 1;
   }
-  await register(() => context.shell.hook('create.before', (event) => addBin(event, bin, env)));
+  await register(() => context.shell.hook('create.before', (event) => addBin(event, bin)));
   runner.trace('setup', { status: registered });
 }
 
@@ -261,13 +261,14 @@ function kill(child) {
 
 // The PATH hook: prepends `bin` to a shell's PATH unless the PATH holds it. A `bin` that is not absolute, or that holds
 // the delimiter, would add a relative entry or more than one, so it changes nothing.
-function addBin(event, bin, env) {
+function addBin(event, bin) {
   try {
     if (!absolute(bin) || bin.includes(path.delimiter)) return;
     const vars = event?.env;
     if (typeof vars !== 'object' || vars === null) return;
-    // A shell with no PATH of its own or the process's keeps none: bin alone would hide every system program.
-    const current = vars.PATH ?? env?.PATH;
+    // A shell with no PATH of its own keeps none: bin alone would hide every system program. In OpenCode 2.4.0 the event
+    // lacks a PATH only for a shell on another machine, where the server's own PATH is not that machine's.
+    const current = vars.PATH;
     if (typeof current !== 'string' || current === '' || current.split(path.delimiter).includes(bin)) return;
     vars.PATH = `${bin}${path.delimiter}${current}`;
   } catch {

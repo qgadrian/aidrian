@@ -384,7 +384,7 @@ test('a route whose script is not a file in the scripts folder registers nothing
   assert.deepEqual(Object.keys(context.hooks), ['create.before']);
 });
 
-test('create.before prepends bin once, leaves a PATH that holds it, and reads the process PATH when the shell`s has none', async () => {
+test('create.before prepends bin once, leaves a PATH that holds it, and leaves a shell with no PATH of its own as it is', async () => {
   const { context } = await bridge({ bin: BIN });
   const shell = (env) => {
     const event = { command: 'ls', cwd: PROJECT_DIR, timeout: 1, shell: '/bin/sh', env };
@@ -395,7 +395,8 @@ test('create.before prepends bin once, leaves a PATH that holds it, and reads th
   assert.equal(once.PATH, `${BIN}:/usr/local/bin:/usr/bin`);
   assert.equal(shell({ ...once }).PATH, once.PATH, 'a PATH that holds bin is left as it is');
   assert.deepEqual(shell({ PATH: `/usr/bin:${BIN}` }), { PATH: `/usr/bin:${BIN}` });
-  assert.deepEqual(shell({ TERM: 'dumb' }), { TERM: 'dumb', PATH: `${BIN}:${ENV.PATH}` }, 'the process PATH, with bin first');
+  // A shell on another machine has no PATH in the event: the server's PATH is not that machine's.
+  assert.deepEqual(shell({ TERM: 'dumb' }), { TERM: 'dumb' }, 'a shell with no PATH of its own is left as it is');
   assert.equal(context.hooks['create.before']({ command: 'ls' }), undefined, 'an event with no env changes nothing');
 });
 
@@ -410,7 +411,7 @@ test('create.before changes nothing when bin is relative or holds the path delim
   }
 });
 
-test('create.before changes nothing when neither the shell nor the process has a PATH', async () => {
+test('create.before changes nothing when the shell has no PATH, an empty one, or one that is no text', async () => {
   const { context } = await bridge({ bin: BIN, env: { HOME: ROOT } });
   for (const env of [{ TERM: 'dumb' }, { PATH: '' }, { PATH: 7 }]) {
     const event = { command: 'ls', env };

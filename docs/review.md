@@ -957,10 +957,10 @@ Every commit on its first-parent chain back to the last round's head is a two-pa
 Each merge's other parent is an ancestor of the base branch tip.
 And the pull request's own diff, from its merge base with the base branch tip, is the same at both heads.
 That diff keeps git's three lines of context around each change, so one edit moved to another occurrence of a line reads differently.
-A text file's blob ids and each hunk header, whole, do not count in it.
+The `index` lines with their blob ids, and each hunk header, whole, do not count in it.
 That header holds line numbers, and a function or section label git may take from a line far outside the context, so a base edit there still carries.
-A binary file keeps its blob ids, since git prints none of its contents, so another payload is never the same diff.
-So does a file whose bytes are not UTF-8: each such byte reads back as U+FFFD, so two different byte changes could read the same.
+A pull request whose own diff, at either head, holds a binary file's patch or any U+FFFD never catches up.
+Git prints no contents for a binary file, and each byte that is not UTF-8 reads back as U+FFFD, so that text is no proof the change is the same.
 A change the base made within three lines of the pull request's own changes alters that context, and that head is reviewed.
 Such a head runs no reviewer, opens no round, and asks no extra-round question.
 The step returns `round_limit` on it, with `carried_from`, `carried_base`, the last round's cause, and the `raise` command, but no question.
@@ -968,7 +968,7 @@ A merge whose resolution changes the pull request's own diff, or any git failure
 The Human may still raise the cap with that command.
 A check at the cap still waiting for its judge or the Human is retired in the same write: `stopped` by `catch_up`, with `superseded_by` the new head.
 So a judge's verdict for the new head, as the step's `dispatch` offers it, records with no check of the old step in its way.
-A later step at the cap that is no catch-up opens that check again, as a fresh one.
+A later step at the cap that is no catch-up opens that check again, as a fresh one, with the mode and ceiling of the policy in force.
 
 Neither the carry, the catch-up, nor the resolution-only round applies when the base branch, from the merge base of the reviewed head
 and the merge's base parent to the base branch's current tip, changes how the project is reviewed: a rule that lands on

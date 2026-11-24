@@ -267,28 +267,26 @@ export function baseMergeOf(root, head, { priorHead, base }) {
 // The most merges a catch-up walks back from its head to the reviewed head (baseCatchUp).
 const CATCH_UP_MERGES = 20;
 
-// A file entry of a diff whose patch is binary: git prints no lines of it, so its blob ids are all that tell two
-// payloads apart.
-const BINARY_ENTRY = /^(?:Binary files .* differ|GIT binary patch)$/mu;
+// A patch whose text alone cannot tell two changes apart: one git printed for a binary file, as a marker line with no
+// contents, or one that read back with U+FFFD, bytes that are not UTF-8 or that character itself.
+const LOSSY = /(?:^|\n)(?:Binary files |GIT binary patch)|\uFFFD/u;
 
 // The pull request's own diff at `tip`: from its merge base with `base`, the base branch tip, to `tip`, with git's
 // three lines of context, so an edit reads with the lines around it. What only says where the change sits on a moved
-// base is left out: a text file's blob ids, and each hunk header whole, its line numbers and the function or section
-// label git takes from a line that may sit well outside the context. An entry whose blob ids are all that tell two
-// patches apart keeps them: a binary one, and one whose bytes are not UTF-8, which reads back with U+FFFD in place of
-// the bytes, so two different byte changes could read the same.
+// base is left out: the `index` lines with their blob ids, and each hunk header whole, its line numbers and the
+// function or section label git takes from a line that may sit well outside the context. Null when the patch is LOSSY:
+// its text is no proof that the change is the same.
 function ownDiff(root, tip, base) {
   const text = git(root, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', mergeBase(root, base, tip), tip]);
-  return text.split(/^(?=diff --git )/mu).map((entry) => {
-    const opaque = BINARY_ENTRY.test(entry) || entry.includes('\uFFFD');
-    return entry.split('\n').filter((line) => opaque || !line.startsWith('index ')).map((line) => (line.startsWith('@@') ? '@@' : line)).join('\n');
-  }).join('');
+  if (LOSSY.test(text)) return null;
+  return text.split('\n').filter((line) => !line.startsWith('index ')).map((line) => (line.startsWith('@@') ? '@@' : line)).join('\n');
 }
 
 // Whether `head` only caught up with the base branch since `reviewed`, the head the last round reviewed: every commit
 // on the first-parent chain from `head` back to `reviewed` is a two-parent merge whose other parent is an ancestor of
 // `base`, the base branch tip, and the pull request's own diff (ownDiff) is the same at `head` as at `reviewed`. A merge
-// whose resolution changed the pull request's own files changes that diff, and is no catch-up. Throws on a git failure.
+// whose resolution changed the pull request's own files changes that diff, and is no catch-up; nor is a pull request
+// whose own diff, at either head, holds a binary or a lossy patch. Throws on a git failure.
 export function baseCatchUp(root, { reviewed, head, base }) {
   const from = resolve(root, reviewed);
   let at = resolve(root, head);
@@ -299,7 +297,8 @@ export function baseCatchUp(root, { reviewed, head, base }) {
     if (list.length !== 2 || !isAncestor(root, list[1], base)) return false;
     at = list[0];
   }
-  return ownDiff(root, from, base) === ownDiff(root, head, base);
+  const before = ownDiff(root, from, base);
+  return before !== null && before === ownDiff(root, head, base);
 }
 
 // Whether `head` is a merge from the base branch onto `priorHead` that changed nothing git's own merge would not

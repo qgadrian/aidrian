@@ -464,22 +464,26 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     Object.assign(entry, { status, by, reasons, decided_at: now() });
     log(rowOf(entry));
   };
+  // What a fresh check takes from the policy in force (its mode, its ceiling, and the rounds granted before it), and its
+  // stop at the ceiling: true when it stopped there.
+  const fromPolicy = () => ({ mode: policy.mode, max: policy.max, granted_before: granted });
+  const atCeiling = () => granted >= policy.max && (decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]), true);
   if (entry) revalidate({ state, source, round, head, history, reviewer, log, now });
   else {
-    entry = { source, round, head, ...(reviewer ? { reviewer } : {}), at: now(), mode: policy.mode, max: policy.max, granted_before: granted, status: 'new', by: null, reasons: [] };
+    entry = { source, round, head, ...(reviewer ? { reviewer } : {}), at: now(), ...fromPolicy(), status: 'new', by: null, reasons: [] };
     state.extensions.push(entry);
-    if (granted >= policy.max) decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]);
+    atCeiling();
   }
   // A stop an older version made on a red flag, with no way on, and a check a catch-up retired (retireChecks): it goes
-  // to the judge as a red flag now does. It goes the way a fresh check does: the ceiling first, and the judge without
-  // any verdict made on the old head.
+  // to the judge as a red flag now does. It goes the way a fresh check does: the policy in force, the ceiling first, and
+  // the judge without any verdict made on the old head.
   if (entry.status === 'stopped' && (entry.by === 'mechanical' || entry.by === 'catch_up')) {
     delete entry.superseded_by;
     if (entry.judge) entry.stale_judge = entry.judge;
     delete entry.judge;
     delete entry.human;
-    if (granted >= policy.max) decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]);
-    else decide('judging', null, []);
+    Object.assign(entry, fromPolicy());
+    if (!atCeiling()) decide('judging', null, []);
   }
   // A grant the policy does not count (the base branch moved from "auto" to "ask") waits for the Human again.
   if (entry.status === 'granted' && policy.mode === 'ask' && entry.human?.answer !== 'approve') entry.status = 'asking';

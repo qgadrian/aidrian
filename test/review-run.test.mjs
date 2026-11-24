@@ -458,11 +458,11 @@ async function mergeResolving(r, file, text) {
   r.commit('merge main');
 }
 
-test('a merge at the cap that swaps the pull request\'s binary payload for another gets no carry', async (t) => {
+test('a merge at the cap where the pull request changes a binary file gets no carry', async (t) => {
   const { r, capped } = await atCapRepo(t, 'off', { baseFiles: { 'src/booking/logo.bin': '\0base\0' }, change: (write) => write('src/booking/logo.bin', '\0reviewed\0') });
   await mergeResolving(r, 'src/booking/logo.bin', '\0swapped\0');
   const step = await r.step({ exec: clean });
-  assert.equal(step.carried_from, undefined, 'git prints the same "Binary files differ" line; the blob ids tell them apart');
+  assert.equal(step.carried_from, undefined, 'git prints no contents for a binary file, so its patch is no proof the change is the same');
   assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
 });
 
@@ -476,13 +476,13 @@ test('a merge at the cap that moves the pull request\'s edit to another occurren
   assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
 });
 
-test('a merge at the cap that swaps bytes that are not UTF-8 for others gets no carry', async (t) => {
+test('a merge at the cap where the pull request changes bytes that are not UTF-8 gets no carry', async (t) => {
   // Latin-1 bytes, no NUL: git prints the patch as text, and each byte reads back as U+FFFD.
   const latin = (char) => Buffer.from(`export const name = 'caf${char}';\n`, 'latin1');
   const { r, capped } = await atCapRepo(t, 'off', { baseFiles: { 'src/booking/name.js': latin('\xe9') }, change: (write) => write('src/booking/name.js', latin('\xe8')) });
   await mergeResolving(r, 'src/booking/name.js', latin('\xea'));
   const step = await r.step({ exec: clean });
-  assert.equal(step.carried_from, undefined, 'the two byte changes decode the same; their blob ids tell them apart');
+  assert.equal(step.carried_from, undefined, 'each byte reads back as U+FFFD, so the patch is no proof the change is the same');
   assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
 });
 

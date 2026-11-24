@@ -105,7 +105,14 @@ const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-
 // that throws is a CLI with no login. The push probe with a token, as the start checks the issue session's, answers what
 // `tokenPush(token)` gives: true, false (the forge's 403), or a throw. `trails` holds each pull request's review trail by
 // number, a value or a function that gives one or throws; one it lacks is the forge's 404. `calls` records each call.
+// What guards the default branch, the tags, and the secrets is `holds()`, by default a ruleset the user cannot bypass on
+// each and no secret (HELD_REFS), which a test changes by setting `forge.holds`; each read records the token it was
+// asked with, as 'given' or 'none'.
 export const FIXTURE_TOKEN = 'github_pat_FIXTURE0123456789';
+export const HELD_REFS = Object.freeze({
+  refs: { branch: 'main', protected: true, why: null, tags: [{ name: 'tags', all: true, creation: true, update: true, bypass: 'never' }] },
+  secrets: { secrets: 0, workflowPush: false },
+});
 export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true, has = () => true } = {}) {
   const calls = [];
   const missing = () => Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
@@ -146,6 +153,19 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
       const view = views[ref];
       if (!view) throw missing();
       return typeof view === 'function' ? view() : view;
+    },
+    holds: () => HELD_REFS,
+    refProtection: (repo, options) => {
+      calls.push(['refProtection', repo, { host: options?.host, token: typeof options?.token === 'string' ? 'given' : 'none' }]);
+      const { refs } = forge.holds();
+      if (refs instanceof Error) throw refs;
+      return refs;
+    },
+    workflowSecrets: (repo, options) => {
+      calls.push(['workflowSecrets', repo, { host: options?.host, token: typeof options?.token === 'string' ? 'given' : 'none' }]);
+      const { secrets } = forge.holds();
+      if (secrets instanceof Error) throw secrets;
+      return secrets;
     },
     trails: {},
     reviewTrail: (repo, n, options) => {

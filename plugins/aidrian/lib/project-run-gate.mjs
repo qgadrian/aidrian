@@ -36,8 +36,9 @@
 //      (capProblem); each attempt counts once, and one given back (`void`) not at all, nor, toward ISSUE_ATTEMPTS, one a
 //      usage or rate limit ended, which the run's LIMIT_WAITS bounds instead; then a user the forge does not let push,
 //      or a session the host says could not push, reach the forge, run as confined as it is meant to, or would be let
-//      write a guarded folder (a halt); a forge that cannot be asked now; a state file with a second hard link (a
-//      halt). No session loads the main checkout's host files: it works in its clone, which loads none of them, under a
+//      write a guarded folder (a halt); a forge that cannot be asked now; a default branch, tags, or CI secrets the
+//      forge, read with the token the session gets, does not hold it to (project-forge-holds.mjs holdsProblem: a halt,
+//      or a retry for a read that fails); a state file with a second hard link (a halt). No session loads the main checkout's host files: it works in its clone, which loads none of them, under a
 //      sandbox that may also deny it reads there;
 //   7. a clone whose host config or instruction files differ from the base tip, or from the branch's head the review
 //      bot and the Human passed (reviewedProblem), or hold any such file untracked or git-ignored, each compared by its
@@ -82,6 +83,7 @@ import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped,
 import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
+import { holdsProblem } from './project-forge-holds.mjs';
 import { pushPreflight } from './push-preflight.mjs';
 import { signoffFolder, signoffFolders, storePathProblem } from './review/signoff-store.mjs';
 import { recordsStart } from './run-driver.mjs';
@@ -499,14 +501,20 @@ function startPlace(context) {
   if (early) return refuse(early, orphans);
   const capped = capProblem({ found: current, key, policy, today: startsToday(state, context.now) });
   if (capped.problem) return refuse(capped.problem, orphans);
+  const holds = (token) => holdsProblem({ facade, repository: found.init.repository, policy, token });
   const access = accessProblem({
     cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding,
-    keychain: project.localForgeTokenKeychain, ...(context.exec ? { exec: context.exec } : {}),
+    keychain: project.localForgeTokenKeychain, ...(context.exec ? { exec: context.exec } : {}), holds,
   });
   // A token read the forge could not answer, with none refused, may pass when tried again.
   if (access?.refuse && access.retry) return { answer: noted(retryAnswer('start', access.refuse, orphans)) };
   if (access?.refuse) return refuse(access.refuse, orphans);
-  const tripped = access?.halt ?? linkTripwire({ state, run, store, env, home, main });
+  // What the forge holds the session's token to, asked again at every start: a protection or a secret changed since the
+  // preflight, or read there for another account, starts nothing. A host with no access check of its own is asked with
+  // the forge CLI's login, which its session keeps.
+  const forgeHeld = access?.halt ? null : access && 'holds' in access ? access.holds : holds(null);
+  if (forgeHeld?.retry) return { answer: noted(retryAnswer('start', forgeHeld.retry, orphans)) };
+  const tripped = access?.halt ?? forgeHeld?.halt ?? linkTripwire({ state, run, store, env, home, main });
   if (tripped) return { answer: noted(haltAnswer(tripped, { lines: orphans })) };
   // The branch the issue's latest start worked on, which every attempt goes on on.
   const branch = issueBranch(current, key);

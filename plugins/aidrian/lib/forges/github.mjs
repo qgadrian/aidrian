@@ -729,6 +729,9 @@ function branchHold(read, admin, viewer) {
   return { held: true, why: null };
 }
 
+// Why no rule of a repository holds a user who administers it (refProtection).
+const ADMIN_HOLDS_NOTHING = 'the signed-in user administers the repository, and that token can turn off or edit any rule on it, its bypass list included';
+
 // The adapter for the repository at `cwd`. `run` is gh, the test seam: the adapter's methods call it, and it stays in
 // this closure, so no caller of the facade gets a raw gh. Every method returns GitHub's payload, parsed, and throws
 // what gh throws. A method that names no `repo` reads gh's default repository for `cwd`.
@@ -741,6 +744,15 @@ function branchHold(read, admin, viewer) {
 // A method that takes `{ host }` names that host to every REST call it makes (`--hostname`), as `aidrian pr auto-merge`
 // does with the host of the pull request's URL; without one, gh picks its default host.
 export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null, probe = receivePackStatus, readProbe = apiStatus } = {}) {
+  // This adapter with every gh call made with `token` in each variable gh reads one from (TOKEN_VARS), and GH_HOST
+  // unset, so gh takes no other login whichever variable it picks for the host; only for a read that names its `host`,
+  // so the token goes to that host alone.
+  const asToken = (token, host) => {
+    if (typeof token !== 'string' || token === '' || typeof host !== 'string' || host === '') throw new Error('a read with a token names the token and its host');
+    const env = { ...process.env, ...Object.fromEntries(TOKEN_VARS.map((name) => [name, token])) };
+    delete env.GH_HOST;
+    return createGithubForge({ cwd, run: (args, options) => run(args, { ...options, env }), mediaType, timeoutMs, killSignal, probe, readProbe });
+  };
   const gh = (args, { timeoutMs: limit = timeoutMs, input } = {}) =>
     run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }) });
   const json = (args) => JSON.parse(gh(args));
@@ -934,16 +946,23 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // each active tag ruleset (tagRule). A repository whose plan offers neither rulesets nor branch protection, GitHub's
     // 403 for a private repository on the free plan, has none: `protected` false, `plan` true, no tag rule, and a `why`
     // that names the plan the owner's kind of account needs (planWhy).
-    refProtection: (repo, { host } = {}) => {
+    // With `token`, every read is made with that token, on `host` alone (asToken). An administrator of the repository,
+    // `permissions.admin` on its read, a missing one counting as admin, is held by no rule: that token can turn off
+    // branch protection's "include administrators" and edit any ruleset's bypass list, so `protected` is false, `admin`
+    // true, and `why` says so, whatever the rules say, and `tags` still lists them.
+    refProtection: (repo, { host, token = null } = {}) => {
+      if (token !== null) return asToken(token, host).refProtection(repo, { host });
       const about = rest(`repos/${repo}`, { host });
       const branch = about?.default_branch;
       if (typeof branch !== 'string' || branch === '') throw new Error('GitHub named no default branch');
+      let read;
       try {
-        return guards(repo, branch, about, host);
+        read = guards(repo, branch, about, host);
       } catch (error) {
         if (planGated(error)) return { branch, protected: false, plan: true, why: planWhy(about?.owner?.type), tags: [] };
         throw error;
       }
+      return about?.permissions?.admin !== false ? { ...read, protected: false, admin: true, why: ADMIN_HOLDS_NOTHING } : read;
     },
     // What a project run's issue session's token could run with the repository's secrets, for the run's preflight:
     // { secrets, workflowPush }. `secrets` counts the Actions secrets of the repository, those its organization
@@ -954,7 +973,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // its deployment branch policy (openEnvironments). `workflowPush` is whether the signed-in token's scopes include
     // `workflow`, which GitHub asks of a push that changes a workflow file, or null for a token that names no scopes, as
     // a fine-grained one.
-    workflowSecrets: (repo, { host } = {}) => {
+    // With `token`, every read is made with that token, on `host` alone (asToken).
+    workflowSecrets: (repo, { host, token = null } = {}) => {
+      if (token !== null) return asToken(token, host).workflowSecrets(repo, { host });
       const count = (route) => {
         const total = rest(route, { host })?.total_count;
         if (!Number.isSafeInteger(total)) throw new Error('GitHub answered no count of secrets');

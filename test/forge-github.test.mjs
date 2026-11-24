@@ -266,8 +266,9 @@ function routed(answers) {
 
 // What GitHub answers for a repository whose default branch a ruleset with no bypass holds to a pull request, and whose
 // tags a ruleset over all of them, with no bypass, holds against creation and update.
+// The signed-in user may push but does not administer the repository.
 const HELD = {
-  'repos/acme/notes': { default_branch: 'main', permissions: { admin: true } },
+  'repos/acme/notes': { default_branch: 'main', permissions: { admin: false, push: true } },
   'repos/acme/notes/rules/branches/main': [[{ type: 'pull_request', ruleset_id: 1 }, { type: 'deletion', ruleset_id: 1 }]],
   'repos/acme/notes/rulesets/1': { id: 1, name: 'main', enforcement: 'active', current_user_can_bypass: 'never' },
   'repos/acme/notes/rulesets?targets=tag&includes_parents=true': [[{ id: 7, target: 'tag', enforcement: 'active' }, { id: 8, target: 'tag', enforcement: 'evaluate' }, { id: 9, target: 'branch', enforcement: 'active' }]],
@@ -292,11 +293,19 @@ test('refProtection holds the default branch protected only by a rule the signed
     'repos/acme/notes/branches/main/protection': protection, user: { login: 'octo' }, ...more,
   }).forge.refProtection('acme/notes');
   const reviews = { required_approving_review_count: 1 };
-  assert.deepEqual([classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }).protected, classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }).why],
-    [false, 'its branch protection does not include administrators, and the signed-in user is one'], 'an admin past a protection that does not include administrators');
+  const admin = { default_branch: 'main', permissions: { admin: true } };
+  const ADMIN = 'the signed-in user administers the repository, and that token can turn off or edit any rule on it, its bypass list included';
   assert.equal(classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: true } }).protected, true, 'administrators included');
-  assert.equal(classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }, { default_branch: 'main', permissions: { admin: false, push: true } }).protected, true, 'a user with no admin rights');
-  assert.equal(classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }, { default_branch: 'main' }).protected, false, 'no permissions said: counted an admin');
+  assert.equal(classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }).protected, true, 'a user with no admin rights');
+  // An administrator's token can turn off "include administrators" and edit a ruleset's bypass list: no rule holds it,
+  // a ruleset it may never bypass and a protection that includes administrators among them.
+  for (const [why, read] of [
+    ['administrators included', classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: true } }, admin)],
+    ['administrators not included', classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }, admin)],
+    ['no permissions said: counted an admin', classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: true } }, { default_branch: 'main' })],
+    ['a ruleset with no bypass', routed({ ...HELD, 'repos/acme/notes': admin }).forge.refProtection('acme/notes')],
+  ]) assert.deepEqual([read.protected, read.admin, read.why], [false, true, ADMIN], why);
+  assert.deepEqual(routed({ ...HELD, 'repos/acme/notes': admin }).forge.refProtection('acme/notes').tags, [ALL_HELD], 'the tag rules are still listed');
   assert.equal(classic({ enforce_admins: { enabled: true } }).protected, false, 'no pull request asked');
   assert.equal(classic({ required_pull_request_reviews: { ...reviews, bypass_pull_request_allowances: { users: [{ login: 'Octo' }] } }, enforce_admins: { enabled: true } }).protected, false, 'the user may skip it');
   assert.equal(classic({ required_pull_request_reviews: { ...reviews, bypass_pull_request_allowances: { users: [{ login: 'other' }], teams: [] } }, enforce_admins: { enabled: true } }).protected, true, 'another user may skip it');
@@ -316,6 +325,36 @@ test('refProtection holds the default branch protected only by a rule the signed
   assert.throws(() => recorded(() => '{}').forge.refProtection('acme/notes'), /named no default branch/u);
 });
 
+test('refProtection and workflowSecrets with a token: every gh call carries that token in each variable gh reads, no GH_HOST, and names the host', () => {
+  const answers = {
+    ...HELD, 'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 },
+    user: 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\n{"login":"octo"}', 'repos/acme/notes/environments': [{ total_count: 0, environments: [] }],
+  };
+  const { forge, calls } = routed(answers);
+  const before = process.env.GH_HOST;
+  process.env.GH_HOST = 'other.example';
+  try {
+    assert.equal(forge.refProtection('acme/notes', { host: 'github.com', token: 'github_pat_SESSION' }).protected, true);
+    assert.equal(forge.workflowSecrets('acme/notes', { host: 'github.com', token: 'github_pat_SESSION' }).secrets, 0);
+  } finally {
+    if (before === undefined) delete process.env.GH_HOST;
+    else process.env.GH_HOST = before;
+  }
+  assert.ok(calls.length > 4);
+  for (const { args, options } of calls) {
+    assert.deepEqual(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'].map((name) => options.env?.[name]), Array(4).fill('github_pat_SESSION'), args.join(' '));
+    assert.equal(options.env.GH_HOST, undefined, 'gh picks no other host');
+    assert.equal(args[args.indexOf('--hostname') + 1], 'github.com', args.join(' '));
+  }
+  // Without a token, gh's own login: no environment of its own.
+  const own = routed(answers);
+  own.forge.refProtection('acme/notes', { host: 'github.com' });
+  assert.ok(own.calls.every(({ options }) => options.env === undefined));
+  // A token goes to a named host alone.
+  assert.throws(() => forge.refProtection('acme/notes', { token: 'github_pat_SESSION' }), /names the token and its host/u);
+  assert.throws(() => forge.workflowSecrets('acme/notes', { token: 'github_pat_SESSION' }), /names the token and its host/u);
+});
+
 test('refProtection reads a private repository whose plan offers no rules as unprotected for that reason, and throws any other refusal', () => {
   // As gh fails on GitHub's answer for a private repository on the free plan: the body on stdout, the line on stderr.
   const gated = (route) => Object.assign(new Error(`Command failed: gh api --hostname github.com ${route} --paginate --slurp\ngh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)`), {
@@ -329,7 +368,8 @@ test('refProtection reads a private repository whose plan offers no rules as unp
   // Branch protection's settings: the plan's 403, not an administrator's view.
   const classic = { ...HELD, ...free, 'repos/acme/notes/rules/branches/main': [[]], 'repos/acme/notes/branches/main': { protected: true } };
   assert.deepEqual(routed({ ...classic, 'repos/acme/notes/branches/main/protection': gated('protection') }).forge.refProtection('acme/notes'), PLAN, 'branch protection');
-  assert.equal(routed({ ...classic, 'repos/acme/notes/branches/main/protection': new Error('gh: Not Found (HTTP 404)') }).forge.refProtection('acme/notes').protected, null, 'a hidden protection is still asked');
+  const member = { ...classic, 'repos/acme/notes': { ...free['repos/acme/notes'], permissions: { admin: false, push: true } } };
+  assert.equal(routed({ ...member, 'repos/acme/notes/branches/main/protection': new Error('gh: Not Found (HTTP 404)') }).forge.refProtection('acme/notes').protected, null, 'a hidden protection is still asked');
   assert.throws(() => routed({ ...free, 'repos/acme/notes/rules/branches/main': new Error('gh: Forbidden (HTTP 403)') }).forge.refProtection('acme/notes'), /Forbidden/u, 'another 403 throws');
   // GitHub Pro is a personal account's plan: an organization's repository needs GitHub Team, and an owner GitHub does not
   // name is told both.

@@ -1715,3 +1715,19 @@ test('the session-folder guard`s checkout read stops at what is left of the guar
   // git's own 2 s limit would show as well over a second; the guards' 0.6 s budget as less.
   assert.ok(over < 1200, `the stalled checkout read cost ${over} ms over the ${baseline} ms baseline`);
 });
+
+// A glob is read both folded as text and with its folder where the system lands (glob-links.mjs globStarts): a `..`
+// after a link climbs from the link's target, which the folded text does not show.
+test('a subagent\'s glob whose folder climbs out of a link to a config file is refused, and one that stays clear runs', async (t) => {
+  const { dir } = project(t);
+  mkdirSync(path.join(dir, 'a'));
+  mkdirSync(path.join(dir, 'sub'));
+  symlinkSync(path.join(dir, 'a'), path.join(dir, 'sub', 'lnk'));
+  const run = (command) => inHook({ input: JSON.stringify(subagent(dir, 'Bash', { command })), cwd: dir, encoding: 'utf8' });
+  // An innocently named link in the folder the system lands in, which only that folder's walk finds.
+  symlinkSync(path.join(dir, '.aidrian', 'config.json'), path.join(dir, 'notes-alias'));
+  const climbed = await run('printf x | tee sub/lnk/../notes-al*');
+  assert.equal(climbed.status, 2, climbed.stderr);
+  assert.match(climbed.stderr, /config\.json/u);
+  assert.equal((await run('printf x | tee sub/lnk/../other*')).status, 0, 'a glob that reaches no guarded file');
+});

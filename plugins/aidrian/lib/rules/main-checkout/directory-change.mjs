@@ -2,9 +2,10 @@
 //
 // A `cd` can fail and still return 0, as a shell alias or function for cd can: the shell then stays where it was. From
 // a guarded main checkout, a `cd`, `pushd`, or `popd` is trusted only when it names folders that exist, each in a
-// checkout of the same repository. Into a linked worktree, nothing after it is judged, as before; inside the main
-// checkout, the shell is there whether it works or not, so what follows is judged at the folders before and after it.
-// Any other `cd` is untrusted: what follows is judged against the folders before it, for the rest of the line. So is
+// checkout of the same repository. Into a linked worktree, what follows is judged there; inside the main checkout, the
+// shell is there whether it works or not, so what follows is judged at the folders before and after it. Any other `cd`
+// is untrusted: what follows is judged where the shell was and at each folder it names literally, or, for one that names
+// none, at every folder the shell has been in on the line, for the rest of the line (moveShell). So is
 // one the shell may never run, which the lexer marks `uncertain`, as behind `repeat 0`, zsh's `noglob` in bash, or a
 // case arm or function body spaced from its parentheses. So is one through `command` (`viaCommand`): zsh's `command` runs
 // no builtin, only a `cd` program, and the shell stays where it was.
@@ -44,19 +45,57 @@ export function mainsOf(dirs) {
 }
 
 // How the directory change `change` ({ program, to, uncertain, viaCommand }) moves a shell that may be in any of `from`, when one of them is
-// a guarded main checkout in `mains`: { kind: 'worktree' }, { kind: 'main', dests }, or { kind: 'untrusted' }.
+// a guarded main checkout in `mains`: { kind: 'worktree', dests }, { kind: 'main', dests }, or { kind: 'untrusted', dests },
+// `dests` the folders it names when it names them literally, which an untrusted change may never reach.
 export function trustOf(change, from, mains) {
   const { program, to, uncertain = false, viaCommand = false } = change;
-  if (uncertain || viaCommand || program === 'popd' || !to || to.dynamic || to.text.startsWith('~')) return { kind: 'untrusted' };
-  const dests = path.isAbsolute(to.text) ? [to.text] : from.map((dir) => path.resolve(dir, to.text));
-  if (!dests.length) return { kind: 'untrusted' };
+  const unnamed = program === 'popd' || !to || to.dynamic || to.text.startsWith('~');
+  const named = unnamed ? [] : from.map((dir) => path.resolve(dir, to.text));
+  if (uncertain || viaCommand || !named.length) return { kind: 'untrusted', dests: named };
   let inMain = false;
-  for (const dest of dests) {
+  for (const dest of named) {
     const roots = isDirectory(dest) ? rootsOf(dest) : null;
-    if (!roots || !mains.has(canonical(roots.main))) return { kind: 'untrusted' };
+    if (!roots || !mains.has(canonical(roots.main))) return { kind: 'untrusted', dests: named };
     if (canonical(roots.current) === canonical(roots.main)) inMain = true;
   }
-  return inMain ? { kind: 'main', dests } : { kind: 'worktree' };
+  return { kind: inMain ? 'main' : 'worktree', dests: named };
+}
+
+// The folders a shell may be in after the directory change `change` from `state`, { at, seen, mains, untrusted }, for
+// both readers of a line, the writes' (afterChanges) and the git calls' (git-state.mjs): `at` where it is if every
+// trusted change worked, `seen` every folder it may have been in on the line, the start among them, `mains` the guarded
+// main checkouts of the start, and `untrusted` the first change it cannot trust, as shown. A change into a linked worktree
+// moves it there, and what follows is judged there, so a later `cd` back into the main checkout is judged as one; one
+// inside the main checkout keeps the folders before it too, as a failed `cd` stays. Once a change is untrusted, the
+// shell is where it was or where that change and each later one names literally, as `cd ../x` from inside the git folder
+// leads back; a change that names no folder, as `cd -`, `popd`, or `cd "$S"`, may take it to any folder it has been in
+// on the line.
+export function moveShell(state, change) {
+  const trust = trustOf(change, state.at, state.mains);
+  const union = (...lists) => [...new Set(lists.flat())];
+  let at;
+  if (trust.kind === 'untrusted' || state.untrusted) at = trust.dests.length ? union(state.at, trust.dests) : union(state.seen, state.at);
+  else at = trust.kind === 'worktree' ? trust.dests : union(trust.dests, state.at);
+  const untrusted = state.untrusted ?? (trust.kind === 'untrusted' ? change.shown : null);
+  return { at, seen: union(state.seen, at), mains: state.mains, untrusted, kind: trust.kind, dests: trust.dests };
+}
+
+// The state of a shell that starts in `from`, for moveShell, or null when no folder of it is in a guarded main checkout,
+// where nothing is judged.
+export function shellAt(from) {
+  const mains = mainsOf(from);
+  return mains.size ? { at: from, seen: from, mains, untrusted: null } : null;
+}
+
+// How many subshells the segment `segment` opens at its start and closes, by the lexer's unquoted parentheses (`paren`,
+// `closes`): `(cd x` opens one, and `ls)` closes one; a case arm's pattern, the first of a segment's several words,
+// closes none. A
+// directory change inside a subshell moves nothing after it, so the readers keep the shell where it was before it.
+export function subshells(segment) {
+  const first = segment[0];
+  const opens = first?.paren && !first.operator ? /^\(*/u.exec(first.text)[0].length : 0;
+  const closes = segment.filter((token, at) => token.closes && (at > 0 || segment.length === 1)).reduce((sum, token) => sum + /\)*$/u.exec(token.text)[0].length, 0);
+  return { opens, closes };
 }
 
 // The directory change an invocation makes, as { program, args }, or null: a `cd`, `pushd`, or `popd`, also behind
@@ -84,21 +123,17 @@ export function cdChange({ program, args, builtin = false, uncertain = false, vi
 }
 
 // Where a target after the changes `cds` is judged, or null when it is not: { at, cd, last }, `at` the folders the
-// shell may be in, `cd` the untrusted change shown, or null after changes inside the main checkout only, and `last`
-// the last of those, as { shown, dests }.
+// shell may be in (moveShell), `cd` the first untrusted change shown, or null after trusted changes only, and `last`
+// the last trusted one, as { shown, dests }.
 export function afterChanges(cds) {
-  const mains = mainsOf(cds[0].from);
-  if (!mains.size) return null;
-  let at = cds[0].from;
+  let state = shellAt(cds[0].from);
+  if (!state) return null;
   let last = null;
   for (const change of cds) {
-    const trust = trustOf(change, at, mains);
-    if (trust.kind === 'untrusted') return { at, cd: change.shown, last };
-    if (trust.kind === 'worktree') return null;
-    at = [...new Set([...trust.dests, ...at])];
-    last = { shown: change.shown, dests: trust.dests };
+    state = moveShell(state, change);
+    if (!state.untrusted) last = { shown: change.shown, dests: state.dests };
   }
-  return { at, cd: null, last };
+  return { at: state.at, cd: state.untrusted, last };
 }
 
 // The folder a `cd` or `pushd` names: its first word that is not an option, past one `--` that ends the options. Null

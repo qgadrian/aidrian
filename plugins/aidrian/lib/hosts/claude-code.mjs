@@ -315,6 +315,13 @@ export default {
     // The tool calls that end a resume in its transcripts, a file edit or a dispatch: lib/resume-tokens.mjs measures what
     // a session resumed from a brief read before the first of them (docs/handoff.md#the-cost-model).
     workTools: ['Edit', 'Write', 'NotebookEdit', 'Agent', 'Task'],
+    // The settings files whose `env` reaches every later session and its hooks (code.claude.com/docs/en/settings): the
+    // project's and its local one in each checkout of `roots`, and the user's. The override guard refuses an
+    // AIDRIAN_ALLOW_* name written there (lib/override-guard.mjs).
+    envSettings: (roots, env) => [
+      ...roots.flatMap((root) => [path.join(root, '.claude/settings.local.json'), path.join(root, '.claude/settings.json')]),
+      path.join(configDir(env), 'settings.json'),
+    ],
     // The settings files that say whether Claude Code asks for its generated-by footer, first that sets it wins.
     prFooterSettings: (root, env) => [
       path.join(root, '.claude/settings.local.json'),

@@ -17,7 +17,7 @@ import path from 'node:path';
 import { projectRuleReason } from './agent-gates.mjs';
 import { localForgeTokenKeychain } from './config-local.mjs';
 import { checkDeadline } from './deadline.mjs';
-import { foldCase, globParts, isEntry, isWithin } from './fs.mjs';
+import { foldCase, globParts, isEntry, isWithin, joinSpelled } from './fs.mjs';
 import { folderOf, GLOB_WORD, globLinksTo, globStarts, linkBelow, linkReaches, linkWalk, partMatches, reachesFile, realOf, sameFile } from './glob-links.mjs';
 import { fileEditOf, isFileEditTool, opaqueShellCommand } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
@@ -318,14 +318,14 @@ const written = new WeakMap();
 
 function readTargets(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [], globs: [] };
+  if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => joinSpelled(cwd, target)), names: [], globs: [] };
   const opaque = opaqueShellCommand(input);
   if (opaque !== null) {
     if (READ_ONLY.test(opaque)) return { files: [], names: [], globs: [] };
     const words = opaqueWords(opaque);
     const read = words.slice(0, OPAQUE_WORDS).map(fromHome);
     return {
-      files: read.filter((word) => !GLOB_WORD.test(word)).map((word) => path.resolve(cwd, word)),
+      files: read.filter((word) => !GLOB_WORD.test(word)).map((word) => joinSpelled(cwd, word)),
       names: words,
       globs: read.filter((word) => GLOB_WORD.test(word)).map((text) => ({ text, dirs: path.isAbsolute(text) ? [] : [cwd], unsure: false, opaque: true })),
     };
@@ -369,7 +369,7 @@ export const OPAQUE_WORDS = 512;
 export const WRITE_TARGETS = 1024;
 
 // A word as such a shell reads a leading `~`: `~` and `~/x` (`~\x`, its backslash read as a `/`) are in the home folder.
-const fromHome = (word) => (word === '~' || word.startsWith('~/') ? path.join(homedir(), word.slice(1)) : word);
+const fromHome = (word) => (word === '~' || word.startsWith('~/') ? `${homedir()}${word.slice(1)}` : word);
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
 

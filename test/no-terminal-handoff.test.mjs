@@ -15,6 +15,8 @@ const BREAK_GLASS = new Set([
   // A project run's halt: only the Human's own shell, or another session a person attends, lifts it, never a session's answer.
   'lib/project-run-gate.mjs',
   'lib/project-run-guard.mjs',
+  // An override is the Human's, set in their own shell before a session; a session writing one is what it refuses.
+  'lib/override-guard.mjs',
   'lib/rules/attribution.mjs',
   'lib/rules/dependency-link.mjs',
   'lib/rules/git-amend.mjs',

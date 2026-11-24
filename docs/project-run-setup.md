@@ -112,10 +112,10 @@ The first of three sources that gives a token is used:
    account, shared by every project on the machine.
 3. The forge CLI's own login, `gh auth token --hostname <host>`.
 
-Whichever source gives it, the token must belong to the same GitHub account as the driver's gh login. The preflight
-checks branch protection, the tag rules, and the environment reviewers as that login, so those checks say nothing of a
-token of another account, which may bypass them. The start does not check that the two match yet (issue
-#496 of the plugin's repository), so a token of another account would pass the push probe.
+The preflight and every start read branch protection, the tag rules, and the secrets the workflows see with that very
+token ([Forge rules](#forge-rules)), so a token of any account is held to what the forge holds that account to, and
+nothing is compared or recorded across time. Each read names the repository's host alone, with the token in each
+variable gh reads one from, so gh takes no other login.
 
 An entry that is not there passes to the next source. A token that is there but may not push does not: the start
 halts. Push rights are checked twice: the forge must let gh's own login push to the repository (the access check asks
@@ -170,6 +170,9 @@ A fine-grained token's repository permissions, by the names GitHub's token page 
 | Commit statuses | Read-only | read its commit's statuses, as `gh pr checks` does |
 | Actions | Read and write | read its workflow runs, as `gh pr checks` does, and rerun failed jobs |
 | Metadata | Read-only | comes with any of the above |
+| Administration | Read-only | none: the preflight and each start read the branch protection and the rulesets with it ([Forge rules](#forge-rules)) |
+| Secrets | Read-only | none: they count the repository's and its organization's Actions secrets with it |
+| Environments | Read-only | none: they read the environments, their reviewers, and their secrets with it |
 
 Leave Workflows off, so the token cannot push a change to a workflow file. GitHub offers a fine-grained token no
 Checks permission. The preflight and every start check the reads with the token the issue session gets, each one that
@@ -317,10 +320,19 @@ and with no pull request yet a `note` says the first one proves it.
 ## Forge rules
 
 An issue's session gets the forge token the start read ([Forge token in the keychain](#forge-token-in-the-keychain)).
-The preflight reads these rules as the driver's gh login, so they hold the session only while that token belongs to
-the same account (issue #496 of the plugin's repository). The forge must hold what a script the session runs could do
-with it:
+The preflight reads these rules with that token, and so does every start, before it launches the session, so a rule
+removed after the preflight, or a token of another account, starts nothing: a rule or secret that does not hold, or
+that the forge cannot say, halts the run, whatever else failed to read, and only when nothing is known to fail does a
+read that failed retry the start (exit 75). A read with a
+fine-grained token needs the read permissions [Forge token permissions](#forge-token-permissions) names. On a host
+that hands its sessions no token, both read as the forge CLI's own login, which those sessions keep. The forge must
+hold what a script the session runs could do with the token:
 
+- The token's account administers no part of it: an administrator's token can turn off branch protection's "include
+  administrators" and edit any ruleset's bypass list, so no rule holds it, and both protection lines are blockers for
+  it whatever the rules say. Give the run the token of an account that may push but does not administer the
+  repository. Accepted residual: a rule set by an organization that a repository administrator cannot edit holds that
+  administrator, and still counts as none.
 - `branch-protection`: a rule on the default branch that asks for a pull request, includes administrators, and lets
   that user bypass nothing.
 - `release-tags`: an active tag ruleset over every tag (`~ALL` or `refs/tags/**/*`, excluding none; `refs/tags/*`

@@ -250,6 +250,10 @@ export const localServices = ({ env = process.env, home } = {}, hosts = HOSTS) =
 // (`protectedPaths`): their union, so a session of one host cannot plant what another loads. The write guard refuses
 // them at the root of the session's worktree, of each checkout nested in it, of each folder between the two, and of its
 // attempt's clone (lib/unattended-write.mjs hostRefused).
+// The settings files of every host whose `env` reaches the later sessions started in each of `roots`, and their hooks
+// (capabilities.envSettings), and the user's, each once: where an AIDRIAN_ALLOW_* override would turn a guard off unseen.
+// A host that names none, as Codex and OpenCode, adds none.
+export const envSettingsFiles = (roots, env = process.env, hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.capabilities?.envSettings?.(roots, env) ?? []))];
 export const protectedPaths = (hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.protectedPaths ?? []))];
 
 // Whether the path whose parts from a confined attempt's clone root, or from a temporary folder, are `segments` is a

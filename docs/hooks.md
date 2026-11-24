@@ -918,8 +918,8 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
 - A GitHub MCP server installed under a name that holds no "github", such as a plugin `gh` with a server `gh`, or a connector
   Codex suffixes with a hash: the merge guard and the review gate share this gap
   ([A GitHub MCP server from a plugin](providers/claude-code.md#a-github-mcp-server-from-a-plugin)).
-- An `AIDRIAN_ALLOW_UNHELD_READY` entry in a host's settings `env` reaches every later session, as it does for every override;
-  a follow-up covers them all.
+- An `AIDRIAN_ALLOW_UNHELD_READY` entry the Human puts in a host's settings `env` reaches every later session, as it does
+  for every override; a session's own write of one is refused ([Agent gates](#agent-gates)).
 - `origin/HEAD` names the default branch for the call `status` skips: a session that rewrites it, on a pull request stacked
   on its own branch, chooses both branches whose config is read.
 - An off read from stale or rewritten git refs: [The commands](config.md#the-commands) names both limits, which the hold
@@ -1013,8 +1013,23 @@ The deny reason names `aidrian worktree new <branch>`, which creates one.
 The rule blocks a write to a file git tracks, or would track, in the main checkout.
 It allows a git-ignored path, a path in `git.mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
 A target that is a link is judged as itself too, wherever it points ([The state folder](#the-state-folder)).
+Every target is read both folded as text and where the system lands, where a `..` after a link climbs from the link's
+target, so `<state>/inner/../src/x`, with `inner` a link to the repository's `src`, is a write in the repository; a
+path spelled in another letter case than git's root, on a disk that folds case, lands there too.
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
+The git folder is never tracked, so git calls it ignored: a write inside the main checkout's `.git`, as
+`echo x > .git/refs/heads/main`, is blocked anyway, since only git writes there, unless it lies in the project's state
+folder or `git.mainCheckout.allowWrites` names it. A removal or move (`rm`, `unlink`, `mv`, `git rm`, `git mv`) of the
+main checkout's top folder, or of a folder above it, as `rm -rf <main>` or `rm -rf ..` from inside it, is blocked too,
+from a linked worktree of the same repository as well.
+A target built from a variable is read with `$HOME`, `$TMPDIR`, `$XDG_CONFIG_HOME`, and `$ZDOTDIR` expanded from the
+hook's environment, which the session's shell starts with, unless the command sets that variable itself, so
+`"$TMPDIR/a"` is judged where it leads. One that still holds a `$` or a backtick, such as `cat > "$S/x"`, a loop's
+variable, or `$(…)`, is blocked while the shell may be in the main checkout, unless the literal path before its first `$`
+is an absolute folder outside it, as `/tmp/$x` is: it may name a tracked file. A variable the line assigns is not read,
+`S=/tmp/x; echo x > "$S/a"` included, since whether an assignment runs, and in which shell, the text does not say:
+name the path literally.
 A file edit whose payload names no file the host's adapter can read, such as a Write with no path or a patch it cannot
 parse, is blocked from the main checkout too, since the rule cannot tell it writes no tracked file.
 
@@ -1051,8 +1066,11 @@ A `cd` can fail and still return 0: a shell alias or function for `cd` can. The 
 and what follows runs there. So from a session in a guarded main checkout, the rule reads each `cd`, `pushd`, and
 `popd` on the command line, `builtin cd` included, its folder taken past one `--` (`cd -- X` names `X`), and sorts it:
 
-- **Into a linked worktree** of the same repository, a folder that exists: trusted. Nothing after it is judged, as
-  before; this is the documented `cd <worktree> && …` workflow.
+- **Into a linked worktree** of the same repository, a folder that exists: trusted. What follows is judged there, as
+  a line that starts in that worktree is: a relative write there passes, which is the documented
+  `cd <worktree> && …` workflow, and a return trip into the main checkout is judged as one, whether a later `cd` names
+  it, `cd -` or `popd` goes back, `git -C`, `--git-dir`, `--work-tree`, or `GIT_DIR` names it, or a subshell ends,
+  as in `(cd <worktree> && …) && echo x > src/app.js`.
 - **Inside the main checkout**, a folder that exists (`cd src`, `cd .`): trusted. The shell is in the main checkout
   whether the `cd` works or not, so what follows is judged by the rules above, at the folders before and after it.
   A write that reaches the main checkout only when the `cd` fails, such as `cd build && echo x > a.txt` into the
@@ -1060,7 +1078,10 @@ and what follows runs there. So from a session in a guarded main checkout, the r
   which fails closed: if the `cd` fails, it runs at the folder before it.
 - **Any other `cd`**: untrusted. It leaves the repository's checkouts (`cd /tmp`, `cd ..` above the root), names a
   folder that does not exist (`cd wt/typo`), or names one the rule cannot read (`cd "$S"`, `cd`, `cd -`, `popd`,
-  `cd ~/x`). For the rest of the line, a second `cd` included, what follows is judged against the folders before it:
+  `cd ~/x`). For the rest of the line, a second `cd` included, what follows is judged where the shell was before it
+  and at each folder it, or a later `cd`, names literally, so `cd <repo>/.git && echo x > ../src/app.js` is a write in
+  the repository; after one that names no folder (`cd -`, `popd`, `cd "$S"`), at every folder the shell has been in on
+  the line:
   - a relative write, as the rules above judge it there, and a relative glob (`rm -rf *`), which is blocked outright;
   - the same inside `sh -c` and `bash -c`, and, for the git calls below, in a heredoc or here-string fed to a shell:
     such a shell starts where its command runs;
@@ -1074,6 +1095,8 @@ and what follows runs there. So from a session in a guarded main checkout, the r
     an unknown one included, counts as a change.
   - a git call whose subcommand an expansion hides (`git "$sub"`, `git $opts commit`).
 
+A `cd` inside a subshell, `( … )`, moves nothing after the subshell ends, by the lexer's unquoted parentheses, and a
+later literal `cd` after an untrusted one still moves the folders what follows is judged at.
 A `builtin cd` skips a shell alias or function, so it fails loudly, but it can still fail, as on a missing folder: it is
 sorted the same, and its reason says only that it may fail.
 A `cd` or `pushd` through `command`, as in `command cd <worktree>`, is untrusted: zsh's `command` runs no builtin, so the shell stays where it was.
@@ -1089,6 +1112,8 @@ What it does not stop:
   Only a commit is refused, by the [commit guard](#commit-guard) where the project installs it.
 - After an untrusted `cd`, a git folder held in an expansion (`git -C "$PWD"`, `git -C "$(pwd)"`, `--git-dir="$D"`)
   is not read, although after a failed `cd` it may name the main checkout.
+- A subshell's end is read from its unquoted `)`: a quoted `)` glued to it, as in `(cd x; echo "a)")`, may end it early,
+  which only judges more of the line where it began; and a redirect after it, as `(cd x) > log`, is judged inside.
 - A write reached only through a heredoc fed to a shell is not read, with or without a `cd`.
 
 From a guarded main checkout, `cd <other repository> && git pull` is blocked as well; `git -C <other repository> pull`
@@ -1107,12 +1132,10 @@ blocks a tracked or new file there, and `rm` of a tracked link in the main check
 A state folder that is, holds, or sits in the main checkout (config.json `state.dir` set to `.`, `..`, or `~` around
 the repository) is judged as the main checkout and the folders around it are.
 
-Not covered: a target held in an expansion (`cat > "$S/x.md"`) is not read, so it passes, wherever it points; a state
-folder inside the git folder (`state.dir` under `.git`) takes writes, since a write inside the git folder is not judged,
-and after `cd <state>` there, a relative write that climbs back (`../../src/app.js`) is judged from the folder before
-the `cd` and passes. A link whose text climbs out of another link (`<state>/inner -> <repo>/src`, then
-`<state>/x -> inner/../src/app.js`) is read with `..` taken from the text, not after the link, so its target may be
-misjudged. A chain of links not made yet is followed for 40 links at most, as Linux does.
+A state folder inside the git folder (`state.dir` under `.git`) takes writes, and after `cd <state>` there, a relative
+write that climbs back (`../../src/app.js`) is judged where it lands, in the repository. Not covered: a link whose text climbs out of another link (`<state>/inner -> <repo>/src`, then
+`<state>/x -> inner/../src/app.js`) is judged where the system lands while its target is there; one whose target is
+not there yet is read with `..` taken from the text, not after the link, so the file it would make may be misjudged. A chain of links not made yet is followed for 40 links at most, as Linux does.
 
 ## Agent gates
 
@@ -1149,8 +1172,20 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   A glob counts when it may match one of the files, and so does a bracket class, such as `conf[i]g.json`, which the shell expands.
   A glob from a folder the guard knows also counts when a link already on disk, in any part it expands, leads to one of
   the files or a folder that holds it, as `printf x | tee out/alias*` does when `out/alias` links to config.json.
+  A glob's folder is read folded as text and where the system lands, so `sub/lnk/../alias*`, with `lnk` a link, is read
+  from the folder the link's target is in too. Accepted residual: a `..` after the glob's first wildcard part is a plain
+  part to the link walk, which cannot tell where it climbs from a link a wildcard matched.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
+- With or without gates, no session, attended or not, nor any subagent, may write an [override](#overrides) into a
+  host settings file whose `env` reaches every later session's hooks: a Write, Edit, or apply_patch whose input names
+  `AIDRIAN_ALLOW_`, a JSON escape such as `\u0041` read as its letter, or a Bash command that names it and writes that
+  file, by its path or by a name an interpreter's code gives. The host adapter names the files
+  (`capabilities.envSettings`): on Claude Code, `.claude/settings.json` and `.claude/settings.local.json` of each
+  checkout of the project, and the user's `settings.json` in its config folder, outside a project too; Codex and
+  OpenCode name none. An edit that only removes one is refused as well: the Human sets and lifts overrides, in their
+  own shell. The block is recorded as `config-guard`. Its known limits, as the command text alone shows: a name built at
+  run time, and a copy or move of a file that already holds one.
 - With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes a machine switch,
   or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`, whether it names the file, a glob
   that matches it, such as `.aidrian.local.js*`, or a glob that passes a link to it already on disk, such as `tee out/alias*`:
@@ -1404,7 +1439,14 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   builds in its temporary folder or a state work folder link nothing; so must its git folder hold no `commondir` or
   `config.worktree` but the gate's placeholders. Any other reader, and a clone that fails a check, read every machine switch off.
 - **The write allowlist of a session no Human attends** (`lib/unattended-write.mjs`). A session its own unattended
-  mark holds, read by the hook payload's session id, and every subagent of it, writes only:
+  mark holds, read by the hook payload's session id, and every subagent of it, writes only the places below. A call that
+  writes anything and names a target that climbs with `..` from a folder it names, as `<worktree>/a/out/../x`,
+  `"$d/../x"`, or `~/a/../x`, by a file tool, a redirect, a writer, a glob, a removal, a mode change, or a link, is
+  refused first, whatever the folder is: the system takes that `..` from where a link there leads, and the guard's
+  readers fold it as text, so it names the path without `..` instead. A target that starts with `..` climbs from the
+  call's own folder, which the host names as the system resolves it, and is placed as usual. In an interpreter's code,
+  where a quote or an escape may end a path anywhere, any `/..` counts, `../../x` and `a/..draft` included. It writes
+  only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names: a linked worktree from any folder inside it, such as a package of a
     monorepo, and the main checkout only from its own top, so a removed worktree's folder left as a plain one inside the
@@ -1494,8 +1536,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   the real path's parts and by the path as written, so a `.git` that is a link counts, by a glob part that may name
   `.git` (`.g*`), and, for a session its own mark holds, by a `.git` named in a folder no path gives; the pointer of each
   checkout of the repository nested in the worktree is refused too when a write, a delete, a move, or a glob reaches a
-  folder that holds it, the worktree itself included, as `rm -rf .claude/worktrees` does; a glob is judged from its
-  folder as written. A removal, move, or glob that reaches the `.git` of a standalone repository nested in a place, which
+  folder that holds it, the worktree itself included, as `rm -rf .claude/worktrees` does; so is a write, a delete, or a
+  move of any folder that holds a checkout git lists for the repository, wherever it lies, as `rm -rf /tmp/work` over a
+  sibling worktree in it; a glob is judged from its folder as written. A removal, move, or glob that reaches the `.git` of a standalone repository nested in a place, which
   no git listing names, without naming `.git` itself, such as `rm -rf vendor`, is not refused; `~/.gitconfig`, the `git` folder of `$XDG_CONFIG_HOME`
   and of `~/.config`, and the global and system git config files git itself names (`git var GIT_CONFIG_GLOBAL` and
   `GIT_CONFIG_SYSTEM`, such as a package manager's `etc/gitconfig`, asked only for a write that would otherwise pass);
@@ -1696,8 +1739,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   program the session runs, or `curl` with the token, can still push or call the forge, a command an earlier call left
   running in the background can still commit between the hook's read and the push, and git in the session's own
   checkout can move its copy of origin's default branch, the base the workflow diff starts from; the forge itself holds
-  that, so `aidrian project preflight` blocks a run whose default branch asks the signed-in user, admin or not, for no
-  pull request, or whose tags no rule that user cannot bypass stops being created or moved, unless the team sets
+  that, so `aidrian project preflight` blocks, and every start halts, read with the token the session gets, a run whose
+  default branch asks the signed-in user, admin or not, for no pull request, or whose tags no rule that user cannot
+  bypass stops being created or moved, or whose user administers the repository, which no rule holds, unless the team sets
   `projectRun.forgeProtectionAccepted`, which removes that backstop, so a script the session runs can push to the
   default branch or a tag; and one whose workflows see CI secrets, whatever that token's `workflow` scope, unless the
   team sets `projectRun.workflowSecretsAccepted`, which accepts all current and future workflow secret exposure for
@@ -2557,6 +2601,8 @@ A project whose CI cannot run the suite leaves `testing.pushFirstMinutes` at 0, 
 An override is for a human, and agents must never set one, `AIDRIAN_ALLOW_UNHELD_READY` of the [ready hold](#ready-hold) included.
 A Bash rule's override is read by the hook, which runs in the session's environment,
 so the Human sets it in their own shell before they start the session.
+The agent gate hook refuses a session's write of an `AIDRIAN_ALLOW_*` name into a host settings file whose `env`
+reaches later sessions ([Agent gates](#agent-gates)), which would turn a guard off for each of them unseen.
 
 `AIDRIAN_ALLOW_MAIN_COMMIT=1` is different: git runs the [commit guard](#commit-guard) inside the commit, so it reads the
 commit's own environment. The Human puts it in front of one command in their own terminal,

@@ -95,7 +95,8 @@ const remotePart = (token) => ({ ...token, text: token.text.slice(SHELL_REMOTE.e
 // `~user` stays as written, and so does a token marked `literal`, cut from inside a word or built by this rule: the shell
 // expands `~` only at a word's start, so `-t~/x` and `of=~/x` name a folder called `~`. Accepted residual: the lexer drops quotes, so a quoted "~/x", a literal folder named `~`, reads the same.
 const isHomeWord = ({ text, literal = false }) => !literal && (text === '~' || text.startsWith('~/'));
-export const expandHome = (token) => (isHomeWord(token) ? path.join(homedir(), token.text.slice(1)) : token.text);
+// The home folder and the rest as spelled, with no `..` folded away, for a guard that reads where the system lands.
+export const expandHome = (token) => (isHomeWord(token) ? `${homedir()}${token.text.slice(1)}` : token.text);
 
 // The operands a writer writes: all of them, every path of mv, the destination of cp and rsync (and rsync's sources
 // under --remove-source-files), and the files of sed -i, never its script; for cp, ln, install, mv, and rsync, also the

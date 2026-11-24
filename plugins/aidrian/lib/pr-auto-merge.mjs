@@ -401,7 +401,9 @@ export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
 
 // Why `file`, from the top of the repository, is no regular file at the head commit `pr.head`, or null: its entry in its
 // folder's listing through the forge's contents route at that commit must be of type "file". A link is "symlink" there,
-// never followed. With `optional`, no entry is no file and passes. A listing that fails, or is no list, refuses.
+// never followed. With `optional`, no entry is no file and passes. A listing that fails, or is no list, refuses, and so
+// does one of LISTING_CAP entries or more: GitHub's contents route lists at most that many, so the entry may be left out.
+const LISTING_CAP = 1000;
 function headEntryProblem(forge, pr, file, { optional = false } = {}) {
   const at = String(pr.head).slice(0, 7);
   const cut = file.lastIndexOf('/');
@@ -414,6 +416,7 @@ function headEntryProblem(forge, pr, file, { optional = false } = {}) {
     return `it changes a policy file, and the folder of ${JSON.stringify(file)} at head ${at} cannot be listed (${ghError(error)}), so whether it is a regular file cannot be told`;
   }
   if (!Array.isArray(listing)) return `it changes a policy file, and ${JSON.stringify(folder || '.')} at head ${at} is no folder the forge lists, so whether ${JSON.stringify(file)} is a regular file cannot be told`;
+  if (listing.length >= LISTING_CAP) return `it changes a policy file, and the forge lists ${listing.length} entries of ${JSON.stringify(folder || '.')} at head ${at}, at or past its cap of ${LISTING_CAP}, so whether ${JSON.stringify(file)} is a regular file cannot be told`;
   const entry = listing.find((each) => each?.name === name);
   if (!entry) return optional ? null : `it changes a policy file, and head ${at} lists no ${JSON.stringify(file)}`;
   if (entry.type !== 'file') return `${JSON.stringify(file)} at head ${at} is a ${typeof entry.type === 'string' ? entry.type : 'entry of no known type'}, not a regular file, which includePolicyFiles never lets through`;

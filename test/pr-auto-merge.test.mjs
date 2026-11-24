@@ -1019,6 +1019,12 @@ test('includeGuardedPaths true on the default branch and the base lets a guarded
   const unlisted = { ...headed(configText(policies)).files, [`acme/notes@${HEAD}:.aidrian`]: () => { throw Object.assign(new Error('gh: Server Error (HTTP 500)'), { stderr: 'gh: Server Error (HTTP 500)\n' }); } };
   assert.match(run(t, r, ['7'], { ...headed(configText(policies)), files: unlisted }).out[0], /the folder of "\.aidrian\/config\.json" at head abcdef1 cannot be listed/u, 'a listing that fails');
   assert.deepEqual(reasonOf(t, r, headed(configText(policies))), [0, null], 'a regular config and no pointer');
+  // A listing of 1,000 entries or more may be cut at GitHub's cap: one that leaves out the pointer, or the config, is off.
+  const many = (keep) => () => [...keep, ...Array.from({ length: 1000 - keep.length }, (_, i) => ({ type: 'file', name: `f${i}.md`, path: `f${i}.md` }))];
+  const rootCut = { ...headed(configText(policies)).files, [`acme/notes@${HEAD}:`]: many([{ type: 'dir', name: '.aidrian', path: '.aidrian' }]) };
+  assert.match(run(t, r, ['7'], { ...headed(configText(policies)), files: rootCut }).out[0], /the forge lists 1000 entries of "\." at head abcdef1, at or past its cap of 1000, so whether "\.aidrian\.json" is a regular file cannot be told/u, 'a capped listing that omits the pointer');
+  const folderCut = { ...headed(configText(policies)).files, [`acme/notes@${HEAD}:.aidrian`]: many([]) };
+  assert.match(run(t, r, ['7'], { ...headed(configText(policies)), files: folderCut }).out[0], /the forge lists 1000 entries of "\.aidrian" at head abcdef1, at or past its cap of 1000, so whether "\.aidrian\/config\.json" is a regular file cannot be told/u, 'a capped listing that omits the config');
   assert.equal(headPolicyProblem(null, { repo: 'acme/notes', head: HEAD }, { policy: JSON.parse(configText(LIFTED)), basePolicy: JSON.parse(configText(LIFTED)), policyFiles: [] }, [{ path: '.aidrian/config.json' }]), null, 'no lift, no read');
 });
 

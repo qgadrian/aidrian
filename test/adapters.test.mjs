@@ -1211,6 +1211,7 @@ test('Claude Code leaves out a row it cannot hold to a background session, and r
     { kind: 'background', sessionId: 'cccc3333-0000', name: 'two\nlines', cwd: '/x\u202e', status: 'IDLE', state: 'done' },
     { kind: 'background', id: 'bad id!', sessionId: 'dddd4444-0000', name: 7, cwd: null, startedAt: '2023-11-14T22:20:00.000Z', status: 'idle' },
     { kind: 'background', id: 'eeee5555', sessionId: 'eeee5555-0000', name: 'stopped', cwd: '/x', startedAt: Number.NaN, state: 'stopped', status: 'idle' },
+    { kind: 'background', id: 'ffff6666', sessionId: 'ffff6666-0000', name: '   ', cwd: ' ', state: 'done', status: 'idle' },
     null,
     'text',
   ];
@@ -1220,8 +1221,9 @@ test('Claude Code leaves out a row it cannot hold to a background session, and r
       { id: 'cccc3333-0000', session: 'cccc3333-0000', name: null, cwd: null, startedAt: null, idle: false, waiting: false },
       { id: 'dddd4444-0000', session: 'dddd4444-0000', name: null, cwd: null, startedAt: null, idle: false, waiting: false },
       { id: 'eeee5555', session: 'eeee5555-0000', name: 'stopped', cwd: '/x', startedAt: null, idle: false, waiting: false },
+      { id: 'ffff6666', session: 'ffff6666-0000', name: null, cwd: null, startedAt: null, idle: true, waiting: false },
     ],
-  }, 'a status other than idle, in any case, is never idle, nor idle in no state or another state; with no row id, the session id names it; a startedAt that is no number reads null');
+  }, 'a status other than idle, in any case, is never idle, nor idle in no state or another state; with no row id, the session id names it; a startedAt that is no number reads null; a name or folder of spaces only reads null');
 });
 
 test('Claude Code answers a problem when claude is not on PATH and when the listing gives no answer', () => {

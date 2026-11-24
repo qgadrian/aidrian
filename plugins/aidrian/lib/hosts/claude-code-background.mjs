@@ -16,7 +16,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { pauseSync } from '../fs.mjs';
-import { hasHidden } from '../hidden-text.mjs';
+import { plainLine } from '../hidden-text.mjs';
 import { recordTrust } from './claude-code-trust.mjs';
 import { configDir } from './claude-code-config.mjs';
 import { configFolder, mcpConfig, npmGlobalConfigs, sandboxSettings, secretVars } from './claude-code-sandbox.mjs';
@@ -614,9 +614,6 @@ function namesSession(row, { id, session }) {
 // The background rows of a listing whose `sessionId` has the id shape: what the host holds that the harness can name.
 const backgroundRows = (list) => list.filter((each) => each.kind === 'background' && typeof each.sessionId === 'string' && ID.test(each.sessionId));
 
-// Plain text a listing gives for a name or a folder, or null.
-const plainText = (value) => (typeof value === 'string' && value !== '' && !hasHidden(value) ? value : null);
-
 // The states in which a background row whose `status` is `idle` waits for nothing more of its own: its turn ended
 // (`done`), or it waits on a response (`blocked`). A row in `working` with `status: "idle"` ended its turn while a task
 // it started still runs (read on 2.1.331), so it is not idle, and neither is a row in a state not named here.
@@ -644,8 +641,8 @@ export function listBackground({ env, run = runCommand, resolve = claudeOnPath }
     sessions: backgroundRows(read.list).map((each) => ({
       id: typeof each.id === 'string' && ID.test(each.id) ? each.id : each.sessionId,
       session: each.sessionId,
-      name: plainText(each.name),
-      cwd: plainText(each.cwd),
+      name: plainLine(each.name),
+      cwd: plainLine(each.cwd),
       startedAt: Number.isFinite(each.startedAt) ? each.startedAt : null,
       idle: each.status === 'idle' && RESTING.has(each.state),
       waiting: each.state === 'blocked',

@@ -260,6 +260,7 @@ test('a could-not-be-stopped line names the session, and falls back to the host\
     ['a zero-width space', '`st\u200Bop x` stops it'],
     ['a tab', '`stop x`\tstops it'],
     ['an empty line', ''],
+    ['spaces only', '   '],
   ]) {
     assert.equal(notStopped({ stopLine: () => text }, { id: 'c0ffee01' }), plain, why);
   }

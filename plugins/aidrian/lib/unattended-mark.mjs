@@ -40,7 +40,7 @@ import { stateRoot } from './project.mjs';
 // The folder's name under the state root; lib/handoff-guard.mjs guards it by this name too.
 export const MARK_FOLDER = 'unattended';
 // A short id a mark may be filed under, as a chain floor may (lib/handoff-markers.mjs).
-const SHORT = /^([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
+const SHORT_ID = /^[0-9A-Za-z][0-9A-Za-z-]{3,63}$/u;
 const MARK = /^[\w-]{1,128}\.json$/u;
 // A pending mark, named for the session that ran the gate; the dot keeps it apart from a mark under a short id.
 const PENDING = /^pending\.[\w-]{1,128}\.json$/u;
@@ -261,6 +261,11 @@ export function proofStateOf(mark) {
   return mark.issue && attempt && exists(path.join(attempt.folder, CONFINE_PLAN)) ? { attempt, state: true } : null;
 }
 
+// Whether a mark filed under `name`, its file's name without `.json`, is the session `session`'s: `name` is its full id,
+// or a short id (SHORT_ID) the full id starts with, as a host prints one before it lists the full id.
+export const markNames = (name, session) => typeof name === 'string' && typeof session === 'string'
+  && (name === session || (SHORT_ID.test(name) && session.startsWith(name)));
+
 // Every mark of `session`'s own that holds, under its full id or a short one, in each of markFolders, as `holds`,
 // [{ mark, folder }]; the pending marks of those folders, as `pending`; and `unchecked`, whether an entry or a folder
 // could not be checked.
@@ -277,7 +282,7 @@ function scanMarks(session, { env, home, now }) {
       if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') unchecked = true;
       continue;
     }
-    for (const name of names.filter((each) => each === `${session}.json` || (SHORT.exec(each)?.[1] !== undefined && session.startsWith(SHORT.exec(each)[1])))) {
+    for (const name of names.filter((each) => each.endsWith('.json') && markNames(each.slice(0, -'.json'.length), session))) {
       const mark = readMark(path.join(folder, name), uid, now);
       if (mark === 'unchecked') unchecked = true;
       else if (mark) holds.push({ mark, folder });
@@ -415,6 +420,48 @@ export function marksNaming(roots, { env = process.env, home, now = Date.now() }
     }
   }
   return false;
+}
+
+// Every plain or issue mark of this user within MARK_AGE in markFolders, for a reader that lists what the harness started
+// (lib/sessions-cli.mjs): [{ session, root, cwd, at, project, issue }], where `session` is the id the mark is filed
+// under, the full one or a short one, `cwd`, `project`, and `issue` are null when the mark names none, and `at` is the
+// mark's own time, else its file's. Pending, driver, attended, beacon, and temporary files are left out, and so is a
+// mark it cannot read for a main checkout, or whose tags have a wrong shape; a name filed in both folders is given once,
+// from the first. It makes no folder, writes nothing, and sweeps nothing. `home` is a test's, as in markFolders.
+export function listMarks({ env = process.env, home, now = Date.now() } = {}) {
+  const uid = processUid();
+  const marks = new Map();
+  for (const folder of markFolders({ env, home })) {
+    let names;
+    try {
+      names = readdirSync(folder);
+    } catch {
+      continue;
+    }
+    for (const name of names.filter((each) => MARK.test(each))) {
+      const session = name.slice(0, -'.json'.length);
+      const found = marks.has(session) ? null : listedMark(path.join(folder, name), uid, now);
+      if (found) marks.set(session, { session, ...found });
+    }
+  }
+  return [...marks.values()];
+}
+
+// One mark file as listMarks gives it, without its `session`, or null when it does not hold or cannot be read.
+function listedMark(file, uid, now) {
+  let stat;
+  try {
+    stat = lstatSync(file);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile() || stat.size >= MARK_CAP || (Number.isInteger(uid) && stat.uid !== uid)) return null;
+  if (now - Math.floor(stat.mtimeMs) > MARK_AGE) return null;
+  const value = readJson(file);
+  const mark = markOf(value);
+  if (mark.root === null || mark.project === null) return null;
+  const at = Number.isFinite(value.at) ? value.at : Math.floor(stat.mtimeMs);
+  return { root: mark.root, cwd: mark.cwd ?? null, at, project: mark.project ?? null, issue: mark.issue ?? null };
 }
 
 // Files the beacon of `session`, `beacon.<session>.json`, { session, at }, in markFolder(env), once, when a pending mark

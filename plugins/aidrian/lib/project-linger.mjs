@@ -13,7 +13,7 @@
 // passes beside a session the run still answers for.
 
 import { SESSION_ID } from './handoff-markers.mjs';
-import { hasHidden } from './hidden-text.mjs';
+import { plainLine } from './hidden-text.mjs';
 import { appendToRun, readRun } from './project-run.mjs';
 import { issueChain, startRows, startsOf, timeOf } from './project-run-guard.mjs';
 import { safely } from './session-start-gate.mjs';
@@ -40,14 +40,14 @@ export function chainEnded({ cap, store, id, session, env, spawn, now }) {
 // it did first: `a session of it, <id>, ...could not be stopped; <how>`, with the id its start printed, the one the
 // `started` line names, and how the Human stops it by hand, from the host adapter's `stopLine`
 // (`capabilities.projectStart`, `cap`). An id of no session's shape (SESSION_ID) is neither printed nor passed to the
-// adapter, and an empty answer, or one with a character no display text keeps (hidden-text.mjs hasHidden), as a
+// adapter, and an answer of nothing but spaces, or one with a character no display text keeps (hidden-text.mjs plainLine), as a
 // control, a line or paragraph separator, a bidirectional mark, or a zero-width character, is not printed: the line
 // then points to the host's own command.
 export function notStopped(cap, member, doing = '') {
   const id = typeof member?.id === 'string' && SESSION_ID.test(member.id) ? member.id : null;
-  const how = id && typeof cap?.stopLine === 'function' ? safely(() => cap.stopLine({ id })) : null;
-  const plain = typeof how === 'string' && how !== '' && !hasHidden(how);
-  return `a session of it${id ? `, ${id},` : ''} ${doing}could not be stopped; ${plain ? how : 'the host\'s own command stops it'}`;
+  const answer = id && typeof cap?.stopLine === 'function' ? safely(() => cap.stopLine({ id })) : null;
+  const how = plainLine(answer);
+  return `a session of it${id ? `, ${id},` : ''} ${doing}could not be stopped; ${how ?? 'the host\'s own command stops it'}`;
 }
 
 // Stops every session of the issue's chain from the start row `start` that the host does not list as ended: the first

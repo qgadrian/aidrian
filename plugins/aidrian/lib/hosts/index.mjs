@@ -4,7 +4,7 @@
 
 import path from 'node:path';
 
-import { hasHidden } from '../hidden-text.mjs';
+import { plainLine } from '../hidden-text.mjs';
 import claudeCode from './claude-code.mjs';
 import codex from './codex.mjs';
 import opencode from './opencode.mjs';
@@ -309,8 +309,7 @@ export function pushPermission(host, ask) {
 // one-line reason the host by design holds no such session, from a host that declares `unsupported` or whose call
 // answers it; or { problem }, a one-line reason it cannot say now, for a host with no capability, a call that throws or
 // answers a promise, and an answer of the wrong shape.
-const isLine = (text) => typeof text === 'string' && text.trim() !== '' && !hasHidden(text);
-const plainOrNull = (value) => (isLine(value) ? value : null);
+const isLine = (text) => plainLine(text) !== null;
 const isRow = (row) => row !== null && typeof row === 'object' && isLine(row.id);
 
 // The wrappers' own reasons, each one line that follows the host's name, as `note <host name>: <reason>` prints it.
@@ -353,9 +352,9 @@ export function backgroundList(host, ask) {
     return {
       sessions: sessions.map((row) => ({
         id: row.id,
-        session: plainOrNull(row.session),
-        name: plainOrNull(row.name),
-        cwd: plainOrNull(row.cwd),
+        session: plainLine(row.session),
+        name: plainLine(row.name),
+        cwd: plainLine(row.cwd),
         startedAt: Number.isFinite(row.startedAt) ? row.startedAt : null,
         idle: row.idle === true,
         waiting: row.waiting === true,

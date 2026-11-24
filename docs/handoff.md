@@ -903,6 +903,48 @@ Limits:
   `claude attach <id>` typed in the shell is the way that follows every hop
   ([provider page](providers/claude-code.md#replacing-the-terminal)).
 
+### Idle sessions
+
+`aidrian sessions idle [--json]` lists the background sessions the harness started that a host still holds after
+their work ended: handoff continuations, and the attempts of a [project run](#a-project-run). It is read-only. It stops
+nothing, writes no file, and sweeps no mark, so the Human, or a session the Human asks, runs the stop line it prints.
+
+A session is listed only when both hold:
+
+- An [unattended mark](#the-background-route) names it, under its full id or a short id of at least 4 characters
+  that the full id starts with. A mark holds 30 days, so an older session is not listed. A mark whose tags name a run
+  and an issue makes the session that run's attempt; any other is a handoff continuation.
+- Its host's listing, through the adapter's `backgroundSessions.list`, says its work ended and it waits for nothing
+  of its own. A session still working is never listed, nor an interactive session. A background session the Human
+  attached to is listed once its work ended, as any other.
+
+Each session prints one line, oldest first:
+
+```text
+idle <id> <age> <what>: <stop line>
+```
+
+`<age>` is `<m>m`, `<h>h<mm>m`, or `<d>d<h>h`, from the host's start time, else the mark's. `<what>` is
+`handoff continuation` or `attempt of <issue> in run <run>`, then the session's name in quotes when it is plain words:
+up to 100 characters, each an ASCII letter or digit, a space, or one of `_ . @ : · -`. Then `in <folder>` when the folder holds no hidden character, then
+`(waiting on a response)` when the host says it waits on one. `<stop line>` is the host's, such as
+`` `claude stop 189eaf3d` stops it ``. An id with any character but a letter, a digit, `_`, or `-` gets none, and
+neither does a host whose line is empty or holds a hidden character: the line then ends `<host name> gave no stop line
+it is safe to print`.
+
+A host whose listing failed, such as one whose program is not on PATH, prints `note <host name>: <reason>`. A host
+that by design holds no such session prints nothing. With no session listed and no host failed, the one line is
+`none`. `--json` prints `{ "idle": [...], "notes": [...] }`: each session as `{ host, id, session, name, cwd,
+startedAt, ageMs, waiting, kind, run, issue, root, stop }`, with `kind` `continuation` or `attempt`, and each host
+that gave no listing as `{ host, problem, byDesign }`, the by-design hosts included. It exits 0 whatever it finds, and 1
+with its usage for any other argument.
+
+| Host | What it lists |
+| --- | --- |
+| Claude Code | The background rows of `claude agents --json` with `status` `idle` and `state` `done` or `blocked` ([provider page](providers/claude-code.md#background-sessions)) |
+| Codex | None, by design: a `codex exec` session exits once its turn ends ([provider page](providers/codex.md#background-sessions)) |
+| OpenCode | None, by design: the harness starts no background session there |
+
 ## The snapshot
 
 `aidrian session snapshot` prints what a status line shows about the session and the project at the current folder.

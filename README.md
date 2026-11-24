@@ -118,8 +118,8 @@ export PATH="$plugin/bin:$PATH"
 ```
 
 If that fails, run the commands from the plugin folder instead: [Running aidrian](docs/providers/claude-code.md#running-aidrian).
-For Codex, see [Running aidrian](docs/providers/codex.md#running-aidrian); in OpenCode's shell the bridge puts it on the
-PATH ([Running aidrian](docs/providers/opencode.md#running-aidrian)).
+For Codex, see [Running aidrian](docs/providers/codex.md#running-aidrian); the OpenCode bridge puts it on the PATH of a
+local shell, by the 2.4.0 source ([Running aidrian](docs/providers/opencode.md#running-aidrian), [Limits](docs/providers/opencode.md#limits)).
 
 1. Set up the project folder and index the existing docs:
 

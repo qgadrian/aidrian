@@ -7,6 +7,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { NATIVE_NAMES, RAW_NAMES, standardToolName } from './opencode-names.mjs';
 import { setUp } from './opencode-setup.mjs';
 import { patchEdit } from './patch.mjs';
 import { responseObjects } from './response.mjs';
@@ -16,10 +17,6 @@ const isObject = (value) => typeof value === 'object' && value !== null && !Arra
 // The bridge puts the mark at the top level of the payload, where only the host process writes; a tool's own input sits
 // under `tool_input`, so no tool call can add it.
 const payloadMark = (input) => isObject(input?.opencode);
-
-// Its built-in shell tool is `shell`, and its file tools `edit`, `write`, and `patch` (embedded source of 2.4.0).
-const RAW_TOOLS = { Bash: 'shell', Edit: 'edit', Write: 'write' };
-const NATIVE_TOOLS = { Bash: 'shell' };
 
 // Whether the path whose parts from a confined clone's root are `segments` is a host file of OpenCode at any depth: a
 // `.opencode` folder and all it holds, or a config file, either of which can load plugins, or an `.agents` folder and
@@ -97,19 +94,23 @@ export default {
   runEnv: () => null,
   pluginAgentPrefix: 'aidrian-',
   agentAliases: (type) => (type.startsWith('aidrian-') ? [type.slice('aidrian-'.length)] : []),
-  // The bridge forwards no MCP tool call, so no MCP name is mapped yet.
-  toolName: (name) => name,
+  // Its tool names come from one table, opencode-names.mjs. The bridge forwards no MCP tool call, so no MCP name is
+  // mapped yet.
+  toolName: (name) => standardToolName(name) ?? name,
   serverSpelling: (server) => server,
-  nativeToolName: (standard) => (Object.hasOwn(NATIVE_TOOLS, standard) ? NATIVE_TOOLS[standard] : standard),
-  rawToolName: (standard) => (Object.hasOwn(RAW_TOOLS, standard) ? RAW_TOOLS[standard] : standard),
+  nativeToolName: (standard) => NATIVE_NAMES[standard] ?? standard,
+  rawToolName: (standard) => RAW_NAMES[standard] ?? standard,
   toolResponse: responseObjects,
   // A shell call's result, `{ output: { output, exitCode }, content, metadata }`: the command's output is the text under
   // `output.output`. The bridge sends only a call that completed, so none is interrupted.
   shellOutput: (response) => ({ output: typeof response?.output?.output === 'string' ? response.output.output : null, interrupted: false }),
-  // A marked shell call reads as the standard Bash; `raw_tool_name` keeps what OpenCode sent (lib/hosts/index.mjs toolNames).
+  // A marked call reads under its standard name, as the shell tool reads as Bash; `raw_tool_name` keeps what OpenCode sent
+  // (lib/hosts/index.mjs toolNames). A name the leaf cannot read stays as it came.
   hookInput(input) {
-    if (!payloadMark(input) || input.tool_name !== 'shell') return input;
-    return { ...input, tool_name: 'Bash', raw_tool_name: 'shell' };
+    if (!payloadMark(input)) return input;
+    const standard = standardToolName(input.tool_name, input.opencode.info);
+    if (standard === null || standard === input.tool_name) return input;
+    return { ...input, tool_name: standard, raw_tool_name: input.tool_name };
   },
   // Its file tools and their inputs, read as text from the tool schemas embedded in the installed OpenCode 2.4.0 binary
   // (the `edit` tool's is { path, oldString, newString, replaceAll }), not from a recorded live payload: `write` { path,

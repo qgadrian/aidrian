@@ -69,6 +69,10 @@ export PATH="${aidrian_dir}bin:$PATH"
   A trust that an update made stale keeps its hash in Codex's config, so only `/hooks` shows that one.
 - Codex has no Edit, Write, or Agent tool, so the hooks on those tools never run. [hooks.md](../hooks.md) marks them Claude Code.
 - Shell commands reach the hooks as `Bash`, file edits as `apply_patch`, and MCP tools as `mcp__<server>__<tool>`.
+- Codex reads a matcher of letters, digits, `_`, and `|` as exact names, and any other as a pattern that may match anywhere
+  in the name. Unlike Claude Code, a `-`, a space, or a comma makes it a pattern (`HookMatcher` in the Codex source).
+- Codex compiles a pattern with Rust's regex crate, which has no lookaround and no backreferences,
+  so the build refuses a `hooks.json` matcher that holds one.
 - An app connector, such as Linear's, runs through the host's own MCP server, `codex_apps`, so its tools reach the hooks too.
   `codex mcp list` does not list them. They arrive as `mcp__codex_apps__<connector>__<tool>`,
   and the [adapter](../../plugins/aidrian/lib/hosts/codex.mjs) gives the hooks `mcp__codex_apps_<connector>__<tool>`,

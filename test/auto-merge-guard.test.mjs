@@ -55,8 +55,8 @@ const LOADERS = /\bimport\s*\(|import\.meta\.(?:dirname|filename|url|resolve)|cr
 // line that `line` matches, so a second load on an excused line fails. An entry nothing uses fails, so the list never
 // keeps a stale reason.
 const EXCEPTIONS = [
-  { file: 'opencode/bridge.mjs', loader: 'import.meta.url', line: /^const \{ spawn = nodeSpawn, env = process\.env, scripts = fileURLToPath\(new URL\('\.\.\/scripts', import\.meta\.url\)\),$/u, reason: 'the scripts folder it runs each ROUTES script from, which GUARDED_PATHS covers whole' },
-  { file: 'opencode/bridge.mjs', loader: 'import.meta.url', line: /^bin = fileURLToPath\(new URL\('\.\.\/bin', import\.meta\.url\)\), node = nodeOf\(env\) \} = seams \?\? \{\};$/u, reason: 'the bin folder it puts on each shell\'s PATH, which GUARDED_PATHS covers whole' },
+  { file: 'opencode/bridge.mjs', loader: 'import.meta.url', line: /^const \{ spawn = nodeSpawn, env = process\.env, scripts = fileURLToPath\(new URL\('\.\.\/scripts', import\.meta\.url\)\),$/u, reason: 'the scripts folder it runs each generated route\'s script from, which GUARDED_PATHS covers whole' },
+  { file: 'opencode/bridge.mjs', loader: 'import.meta.url', line: /^bin = fileURLToPath\(new URL\('\.\.\/bin', import\.meta\.url\)\), node = nodeOf\(env\),$/u, reason: 'the bin folder it puts on each shell\'s PATH, which GUARDED_PATHS covers whole' },
   { file: 'lib/cli.mjs', loader: 'import(', line: /^const \{ commands \} = await import\(COMMANDS\[command\]\);$/u, reason: 'command dispatch: the gate runs as `aidrian pr`, and lib/pr.mjs is an entry of the walk' },
   { file: 'lib/cli.mjs', loader: 'import(', line: /^const \{ usage: args, about \} = \(await import\(file\)\)\.commands\[name\];$/u, reason: 'help text: reads each command module only for its usage line' },
   { file: 'lib/config.mjs', loader: 'import.meta.dirname', line: /^const root = path\.resolve\(import\.meta\.dirname, '\.\.'\);$/u, reason: 'the plugin folder, named in a version message' },
@@ -138,7 +138,7 @@ const guarded = (file) => /decides CI's verdict or auto-merge/u.test(pathsProble
 test('every plugin file the gate, its command, its review, and the hooks load keeps auto-merge off', () => {
   const { files, used } = closure(ENTRIES);
   // The walk reaches deep, so a broken walk cannot pass by reaching nothing.
-  for (const file of ['lib/cli.mjs', 'lib/knowledge-cli.mjs', 'lib/review/state.mjs', 'lib/hosts/index.mjs', 'lib/finding-disposition.json', 'lib/usage.mjs', 'lib/hook-io.mjs', 'lib/transcript.mjs', 'scripts/hook-bash.mjs', 'scripts/session-row.mjs', 'opencode/server.mjs', 'opencode/bridge.mjs', 'opencode/routes.mjs']) {
+  for (const file of ['lib/cli.mjs', 'lib/knowledge-cli.mjs', 'lib/review/state.mjs', 'lib/hosts/index.mjs', 'lib/finding-disposition.json', 'lib/usage.mjs', 'lib/hook-io.mjs', 'lib/transcript.mjs', 'scripts/hook-bash.mjs', 'scripts/session-row.mjs', 'opencode/server.mjs', 'opencode/bridge.mjs', 'opencode/routes.mjs', 'opencode/route-select.mjs']) {
     assert.ok(files.includes(`${PLUGIN}/${file}`), `the walk reaches ${file}`);
   }
   const open = files.filter((file) => file.startsWith(`${PLUGIN}/`) && !guarded(file));
@@ -193,7 +193,7 @@ test('the reviewers, the hooks, and the manifests are guarded', () => {
 });
 
 test("the OpenCode bridge and the plugin folder's package manifest are guarded, and an eval fixture's manifest is not", () => {
-  for (const file of [`${PLUGIN}/opencode/bridge.mjs`, `${PLUGIN}/opencode/server.mjs`, `${PLUGIN}/opencode/routes.mjs`, `${PLUGIN}/package.json`]) assert.ok(guarded(file), file);
+  for (const file of [`${PLUGIN}/opencode/bridge.mjs`, `${PLUGIN}/opencode/server.mjs`, `${PLUGIN}/opencode/routes.mjs`, `${PLUGIN}/opencode/route-select.mjs`, `${PLUGIN}/package.json`]) assert.ok(guarded(file), file);
   for (const file of [`${PLUGIN}/evals/harness-setup-onboard/fixture/package.json`, `${PLUGIN}/evals/harness-setup-rerun/fixture/package.json`, 'examples/consumer/package.json', 'package.json']) {
     assert.equal(guarded(file), false, file);
   }

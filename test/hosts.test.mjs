@@ -11,7 +11,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import test from 'node:test';
 
-import { ROUTES } from '../plugins/aidrian/opencode/routes.mjs';
+import { EVENTS } from '../plugins/aidrian/opencode/routes.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PLUGIN = path.join(ROOT, 'plugins/aidrian');
@@ -234,5 +234,5 @@ test('OpenCode loads the plugin folder as a package from its config, and the bri
   }
   assert.notEqual(found.length, 0, `no models --standalone of ${ATTEMPTS} ran the bridge's setup within OpenCode 2.4.0's 5-second plugin.list wait`);
   assert.equal(found.length, 1, 'models --standalone ran the bridge\'s setup once');
-  assert.equal(found[0].status, ROUTES.length, 'setup registered every route');
+  assert.equal(found[0].status, new Set(Object.values(EVENTS)).size, 'setup registered one tool hook for each OpenCode hook of EVENTS');
 });

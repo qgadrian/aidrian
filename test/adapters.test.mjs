@@ -35,52 +35,63 @@ const recorded = (host) => JSON.parse(readFileSync(path.join(ROOT, 'test/fixture
 
 const DELIVERIES = new Set(['hooks-json', 'installer', 'bridge']);
 const script = (event, name) => HOOKS[event].find((group) => group.hooks.some(({ command }) => command.includes(name)));
-const fires = (matcher, name) => matcher === '*' || new RegExp(`^(?:${matcher})$`, 'u').test(name);
+// How each hooks-json host reads a hooks.json matcher: "*", empty, or none fires on every tool; one made only of the
+// `list` characters is exact names split on `separator`; any other is a regular expression that may match anywhere in
+// the name. Claude Code: code.claude.com/docs/en/hooks, Matcher patterns. Codex: HookMatcher in
+// codex-rs/hooks/src/engine/matcher.rs (openai/codex bd4204ef), whose list takes no `-`, space, or comma.
+const MATCHER_READINGS = {
+  'claude-code': { list: /^[A-Za-z0-9_ ,|-]+$/u, separator: /\s*[|,]\s*/u },
+  codex: { list: /^[A-Za-z0-9_|]+$/u, separator: '|' },
+  [fakeHost.id]: { list: /^[A-Za-z0-9_ ,|-]+$/u, separator: /\s*[|,]\s*/u },
+};
+// Whether the hooks.json matcher `matcher` fires on the tool `name` on the host `hostId`, as that host reads it.
+const fires = (hostId, matcher, name) => {
+  const reading = MATCHER_READINGS[hostId];
+  if (reading === undefined) throw new Error(`no matcher reading for host ${hostId}; add it to MATCHER_READINGS`);
+  if (matcher === undefined || matcher === '' || matcher === '*') return true;
+  if (reading.list.test(matcher)) return matcher.split(reading.separator).includes(name);
+  return new RegExp(matcher, 'u').test(name);
+};
 
-// The routes a bridge host's plugin runs, the ROUTES its plugins/aidrian/<id>/routes.mjs exports: each { on, event, tool,
-// standard, script, timeoutMs }. Null for a host that reads hooks.json as it is, and for a bridge host with no such file,
-// which routeTableProblems fails.
+// The routes a bridge host's plugin runs: of its generated routes, plugins/aidrian/<id>/routes.generated.json, each
+// { event, matcher, script, args, timeoutMs }, those whose event its plugins/aidrian/<id>/routes.mjs EVENTS maps to a
+// hook of the host and whose matcher fires on a name its leaf, lib/hosts/<id>-names.mjs, can return (STANDARD_NAMES).
+// Null for a host that reads hooks.json as it is, and for a bridge host that lacks one of the three, which
+// routeTableProblems fails.
+const routeFires = (matcher, name) => matcher === '*' || (typeof matcher === 'string' && new RegExp(matcher, 'u').test(name));
 async function bridgeRoutes(host) {
   if (host.delivery !== 'bridge') return null;
-  const file = path.join(ROOT, 'plugins/aidrian', host.id, 'routes.mjs');
-  return existsSync(file) ? (await import(pathToFileURL(file).href)).ROUTES : null;
+  const dir = path.join(ROOT, 'plugins/aidrian', host.id);
+  const [events, generated, leaf] = [path.join(dir, 'routes.mjs'), path.join(dir, 'routes.generated.json'), path.join(ROOT, 'plugins/aidrian/lib/hosts', `${host.id}-names.mjs`)];
+  if (![events, generated, leaf].every((file) => existsSync(file))) return null;
+  const { EVENTS } = await import(pathToFileURL(events).href);
+  const { STANDARD_NAMES } = await import(pathToFileURL(leaf).href);
+  const routes = JSON.parse(readFileSync(generated, 'utf8'));
+  if (typeof EVENTS !== 'object' || EVENTS === null || !Array.isArray(STANDARD_NAMES) || !Array.isArray(routes)) return null;
+  return routes.filter((route) => Object.hasOwn(EVENTS, route.event) && STANDARD_NAMES.some((name) => routeFires(route.matcher, name)));
 }
 const ROUTES = new Map(await Promise.all([...HOSTS, fakeHost].map(async (host) => [host.id, await bridgeRoutes(host)])));
 
 // Whether the hook script `name` runs on `host`: every hook does on a hooks-json host, and on a bridge host the ones a route names.
 const delivers = (host, name) => host.delivery === 'hooks-json' || (ROUTES.get(host.id) ?? []).some((route) => route.script === name);
 
-// The hooks.json entry that runs `name` under `event`, as { group, entry }, or null.
-function hookEntry(event, name) {
-  const runs = ({ command }) => command.includes(`/scripts/${name}"`);
-  const group = HOOKS[event]?.find((each) => each.hooks.some(runs));
-  return group ? { group, entry: group.hooks.find(runs) } : null;
-}
-
-// What a bridge host's route table lacks: the routes.mjs file, a ROUTES list, or a row in it. A bridge that routes no
-// hook runs nothing on its host, so it is no delivery.
+// What a bridge host's routes lack: its event map, generated route list, or names leaf, or a route among them. A bridge
+// that routes no hook runs nothing on its host, so it is no delivery.
 function routeTableProblems(routes) {
-  if (routes === null || routes === undefined) return ['it has no routes.mjs, or the file exports no ROUTES'];
-  if (!Array.isArray(routes)) return ['its ROUTES is not a list'];
-  return routes.length > 0 ? [] : ['its ROUTES is empty'];
+  if (routes === null || routes === undefined) return ['it lacks routes.mjs EVENTS, routes.generated.json, or a names leaf with STANDARD_NAMES'];
+  if (!Array.isArray(routes)) return ['its routes are not a list'];
+  return routes.length > 0 ? [] : ['no generated route of its events fires on a name its leaf returns'];
 }
 
-// What a bridge's routes break of hooks.json: each route's script is listed under its event, that entry's matcher fires
-// on its standard tool, its timeout is the entry's, and its tool is the host's raw name of that standard tool.
-// Until the bridge handles a blocking route, turning exit 2 into a throw with stderr first, a row may only run after a
-// call: `execute.after`, under PostToolUse.
-function routeProblems(host, routes) {
-  return routes.flatMap((route) => {
-    if (route.on !== 'execute.after' || route.event !== 'PostToolUse') return [`${route.script} runs on ${route.on} under ${route.event}, and the bridge runs no blocking route`];
-    const listed = hookEntry(route.event, route.script);
-    if (!listed) return [`${route.script} is not listed under ${route.event}`];
-    const { group, entry } = listed;
-    return [
-      ...(fires(group.matcher ?? '*', route.standard) ? [] : [`${route.event} ${route.script} does not fire on ${route.standard}`]),
-      ...(entry.timeout * 1000 === route.timeoutMs ? [] : [`${route.script} waits ${route.timeoutMs} ms, hooks.json ${entry.timeout} s`]),
-      ...(host.rawToolName(route.standard) === route.tool ? [] : [`${route.tool} is not ${host.id}'s name of ${route.standard}`]),
-    ];
-  });
+// What a bridge's routes break. scripts/build.mjs writes each route from its hooks.json entry, with its matcher and
+// timeout, and `--check` fails a stale list, so what is left is what the build does not hold: until the bridge handles
+// a blocking route, turning exit 2 into a throw with stderr first, a route may only run after a call, under
+// PostToolUse; and its script is a file in scripts/, since the bridge skips one that is not.
+function routeProblems(routes) {
+  return routes.flatMap((route) => [
+    ...(route.event === 'PostToolUse' ? [] : [`${route.script} runs under ${route.event}, and the bridge runs no blocking route`]),
+    ...(existsSync(path.join(ROOT, 'plugins/aidrian/scripts', route.script)) ? [] : [`${route.script} is not in scripts/`]),
+  ]);
 }
 
 // Why a host that delivers no tracker hook fails to say so: its tracker guard must be verified `none`, with the routes
@@ -109,7 +120,7 @@ function matcherProblems(host) {
     ['PreToolUse', 'hook-mcp-github.mjs', raw('mcp__github__merge_pull_request')],
     ...Object.keys(host.githubTools ?? {}).map((standard) => ['PreToolUse', 'hook-mcp-github.mjs', raw(standard)]),
   ];
-  return samples.filter(([event, name, tool]) => !fires(script(event, name).matcher, tool)).map(([event, name, tool]) => `${event} ${name} misses ${tool}`);
+  return samples.filter(([event, name, tool]) => !fires(host.id, script(event, name).matcher, tool)).map(([event, name, tool]) => `${event} ${name} misses ${tool}`);
 }
 
 for (const host of [...HOSTS, fakeHost]) {
@@ -248,32 +259,34 @@ for (const host of [...HOSTS, fakeHost].filter((each) => each.delivery === 'hook
 }
 
 for (const host of HOSTS.filter((each) => each.delivery === 'bridge')) {
-  test(`host ${host.id}'s bridge routes each hook as hooks.json lists it`, () => {
+  test(`host ${host.id}'s bridge runs only routes after a call, each a script on disk`, () => {
     const routes = ROUTES.get(host.id);
     assert.deepEqual(routeTableProblems(routes), []);
-    assert.deepEqual(routeProblems(host, routes), []);
+    assert.deepEqual(routeProblems(routes), []);
   });
 }
 
-test('a bridge host with no routes.mjs, or with an empty ROUTES, fails the route table check', () => {
-  assert.deepEqual(routeTableProblems(null), ['it has no routes.mjs, or the file exports no ROUTES']);
-  assert.deepEqual(routeTableProblems(undefined), ['it has no routes.mjs, or the file exports no ROUTES']);
-  assert.deepEqual(routeTableProblems({}), ['its ROUTES is not a list']);
-  assert.deepEqual(routeTableProblems([]), ['its ROUTES is empty']);
+test('a bridge host that lacks its event map, route list, or leaf, or routes nothing, fails the route table check', () => {
+  const lacks = ['it lacks routes.mjs EVENTS, routes.generated.json, or a names leaf with STANDARD_NAMES'];
+  assert.deepEqual(routeTableProblems(null), lacks);
+  assert.deepEqual(routeTableProblems(undefined), lacks);
+  assert.deepEqual(routeTableProblems({}), ['its routes are not a list']);
+  assert.deepEqual(routeTableProblems([]), ['no generated route of its events fires on a name its leaf returns']);
   assert.deepEqual(routeTableProblems(ROUTES.get('opencode')), []);
 });
 
-test('a bridge route that leaves hooks.json is told apart: its event, matcher, timeout, and tool name are each checked', () => {
-  const opencode = HOSTS.find((host) => host.id === 'opencode');
-  const route = { on: 'execute.after', event: 'PostToolUse', tool: 'shell', standard: 'Bash', script: 'hook-bash-post.mjs', timeoutMs: 5000 };
-  assert.deepEqual(routeProblems(opencode, [route]), []);
-  assert.deepEqual(routeProblems(opencode, [{ ...route, event: 'PreToolUse' }]), ['hook-bash-post.mjs runs on execute.after under PreToolUse, and the bridge runs no blocking route']);
-  assert.deepEqual(routeProblems(opencode, [{ ...route, on: 'execute.before', event: 'PreToolUse', script: 'hook-bash.mjs' }]), ['hook-bash.mjs runs on execute.before under PreToolUse, and the bridge runs no blocking route']);
-  assert.deepEqual(routeProblems(opencode, [{ ...route, on: 'execute.before' }]), ['hook-bash-post.mjs runs on execute.before under PostToolUse, and the bridge runs no blocking route']);
-  assert.deepEqual(routeProblems(opencode, [{ ...route, script: 'hook-bash.mjs' }]), ['hook-bash.mjs is not listed under PostToolUse']);
-  assert.deepEqual(routeProblems(opencode, [{ ...route, standard: 'Edit', tool: 'edit' }]), ['PostToolUse hook-bash-post.mjs does not fire on Edit']);
-  assert.deepEqual(routeProblems(opencode, [{ ...route, timeoutMs: 4000 }]), ['hook-bash-post.mjs waits 4000 ms, hooks.json 5 s']);
-  assert.deepEqual(routeProblems(opencode, [{ ...route, tool: 'bash' }]), ['bash is not opencode\'s name of Bash']);
+test('a bridge route that blocks a call, or whose script is gone, is told apart', () => {
+  const route = { event: 'PostToolUse', matcher: '^(?:Bash)$', script: 'hook-bash-post.mjs', args: [], timeoutMs: 5000 };
+  assert.deepEqual(routeProblems([route]), []);
+  assert.deepEqual(routeProblems([{ ...route, event: 'PreToolUse', script: 'hook-bash.mjs' }]), ['hook-bash.mjs runs under PreToolUse, and the bridge runs no blocking route']);
+  assert.deepEqual(routeProblems([{ ...route, script: 'hook-gone.mjs' }]), ['hook-gone.mjs is not in scripts/']);
+});
+
+test('a bridge host`s routes are its generated routes of its events that fire on a name its leaf returns', () => {
+  assert.deepEqual(ROUTES.get('opencode').map((route) => [route.event, route.script]), [['PostToolUse', 'hook-bash-post.mjs']]);
+  assert.equal(routeFires('^(?:Edit|Write)$', 'edit'), false, 'the leaf`s edit is not the standard Edit, so the markdown hook does not run');
+  assert.equal(routeFires(null, 'Bash'), false, 'a route of an event with no matcher fires on no tool');
+  assert.equal(routeFires('*', 'Bash'), true);
 });
 
 test('which hooks a host delivers: every one on a hooks-json host, and on a bridge host only those a route names', () => {
@@ -337,6 +350,20 @@ test('Claude Code continues by clear and in the background: its own clear and co
   assert.equal(hookHostPid(4242), 4242);
   for (const pid of [1, 0, -5, 2.5, '4242', null, Number.NaN]) assert.equal(hookHostPid(pid), null, String(pid));
   assert.deepEqual(codex.capabilities.handoffContinue, { routes: [] });
+});
+
+test('each hooks-json host has its own matcher reading, and Claude Code and Codex differ on a comma and a hyphen', () => {
+  for (const host of [...HOSTS, fakeHost].filter((each) => each.delivery === 'hooks-json')) assert.ok(Object.hasOwn(MATCHER_READINGS, host.id), host.id);
+  assert.equal(fires('claude-code', 'Edit, Write', 'Edit'), true, 'Claude Code reads a comma list as names');
+  assert.equal(fires('codex', 'Edit, Write', 'Edit'), false, 'Codex reads it as a pattern that needs the comma');
+  assert.equal(fires('claude-code', 'code-reviewer', 'my-code-reviewer'), false, 'Claude Code reads a hyphen name exactly');
+  assert.equal(fires('codex', 'code-reviewer', 'my-code-reviewer'), true, 'Codex reads it as a pattern, unanchored');
+  for (const id of ['claude-code', 'codex']) {
+    assert.equal(fires(id, 'Edit|Write', 'NotebookEdit'), false, `${id} reads a | list exactly`);
+    assert.equal(fires(id, 'ash.*', 'Bash'), true, `${id} reads a pattern unanchored`);
+    assert.equal(fires(id, undefined, 'Bash') && fires(id, '', 'Bash') && fires(id, '*', 'Bash'), true, `${id} fires on every tool`);
+  }
+  assert.throws(() => fires('nohost', 'Bash', 'Bash'), /no matcher reading for host nohost/);
 });
 
 test('a host whose raw names miss the matchers is told apart: it fails that check, and has to name another delivery', () => {
@@ -480,7 +507,7 @@ test('a tracker whose calls name their workspace judges each call, with no sessi
 test('the page on adding a host says what the adapter does not cover, and names every delivery case and file', () => {
   const text = readFileSync(path.join(ROOT, 'docs/providers/adding-a-host.md'), 'utf8');
   for (const delivery of DELIVERIES) assert.ok(text.includes(`\`${delivery}\``), delivery);
-  for (const name of ['plugins/aidrian/hooks/hooks.json', 'scripts/version.mjs', 'test/hosts.test.mjs', 'lib/agent-models.mjs', 'What the fixtures do not prove', 'plugins/aidrian/<id>/routes.mjs', 'plugins/aidrian/<id>/bridge.mjs']) assert.ok(text.includes(name), name);
+  for (const name of ['plugins/aidrian/hooks/hooks.json', 'scripts/version.mjs', 'test/hosts.test.mjs', 'lib/agent-models.mjs', 'What the fixtures do not prove', 'plugins/aidrian/<id>/routes.mjs', 'plugins/aidrian/<id>/routes.generated.json', 'plugins/aidrian/lib/hosts/<id>-names.mjs', 'plugins/aidrian/<id>/bridge.mjs']) assert.ok(text.includes(name), name);
   assert.doesNotMatch(text, /hookEvents/u);
   for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes', 'capabilities.pushPermission', 'payloadMark', 'nestedGlobs', 'packages', 'credentialStores']) assert.ok(text.includes(`\`${field}`), field);
 });

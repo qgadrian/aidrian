@@ -762,7 +762,7 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   if (!mark) return null;
   // Accepted residual, tracked in #513: each write target is judged folded as text (writeTargets resolves it with
   // path.resolve), so a `..` after a link counts where the spelling folds, not where the system lands.
-  const { files, names, globs } = writeTargets(input);
+  const { files, names, globs, code = [] } = writeTargets(input);
   const modes = modeTargets(input);
   const command = bashCall(input) && typeof input.tool_input?.command === 'string' ? input.tool_input.command : null;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
@@ -787,7 +787,7 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
     ?? shellDenial(shell, found, say, texts)
     ?? globDenial(globs.filter((each) => !each.unsure), found, say)
     ?? manifestDenial(input, shell, found, say)
-    ?? nameDenial(texts, found, say);
+    ?? nameDenial(texts, found, say, new Set(code));
 }
 
 // The folders a project run's issue session pushes from, as `places` (unattendedPlaces) give them, each { root, common },
@@ -975,7 +975,8 @@ function manifestDenial(input, shell, found, say) {
 
 // What no path places, judged by name: a startup file or a git config (REFUSED_NAME), a home dot entry (HOME_DOT), a
 // `.git` entry for a session its own mark holds (GIT_WORD), or a path in the text that meets a refused entry.
-function nameDenial(texts, found, say) {
+// A path read from `code`, the texts that are an interpreter's code or words, gets the refusal that says so (say.named).
+function nameDenial(texts, found, say, code = new Set()) {
   for (const text of texts) {
     checkDeadline();
     if (REFUSED_NAME.test(text) || HOME_DOT.test(text)) return say.deny('unattended write to a refused name', `it ${say.verb} a file named in \`${text.slice(0, 80)}\`, which names a shell startup file, a git config, or a dot entry of the home folder, and no Human attends this session`);
@@ -983,7 +984,7 @@ function nameDenial(texts, found, say) {
     for (const [word] of text.matchAll(PATH_IN_TEXT)) {
       const spelled = word.startsWith('~') ? path.join(found.home, word.slice(1)) : word;
       const met = placed(spelled, found, { holds: false });
-      if (met?.refused) return say.named(met.refused, spelled);
+      if (met?.refused) return code.has(text) ? say.named(met.refused, spelled) : say.refused(met.refused, spelled);
     }
   }
   return null;

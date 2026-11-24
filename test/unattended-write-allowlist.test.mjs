@@ -1630,6 +1630,10 @@ test('a script whose text names a home dot path is refused with the file tool as
   const direct = fx.ask(bash(`echo x > ${quoted}`))?.reason ?? '';
   assert.match(direct, /a dot file or folder of the user's home folder/u);
   assert.doesNotMatch(direct, /in the text of code it runs/u);
+  // So does a target the guard reads by its name, in a folder no path gives: it is no interpreter's text.
+  const unplaced = fx.ask(bash(`cd "$X" && echo x > a/${quoted}`))?.reason ?? '';
+  assert.match(unplaced, /a dot file or folder of the user's home folder/u, unplaced);
+  assert.doesNotMatch(unplaced, /in the text of code it runs/u);
   // The route it names: the file tool writes the brief, whatever path its text quotes.
   assert.equal(fx.ask(write(brief, { tool_input: { file_path: brief, content: `Run ${quoted} report --since 24h.\n` } })), null);
   assert.equal(fx.ask({ tool_name: 'Edit', tool_input: { file_path: brief, old_string: 'old', new_string: `run ${quoted} report` } }), null);

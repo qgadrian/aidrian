@@ -328,10 +328,11 @@ What each rule matches:
   `"$(command -v aidrian)" pr signoff`) and a call only text names: `xargs`, `parallel`, `npx`, an interpreter's code,
   or a variable or alias whose words hold `aidrian … pr signoff`, as the product-feedback rule reads its own (its
   `textDenial`). A `--check` in such text is no dry run. A command that only handles text, such as `echo`, `grep`, or
-  `git commit -m`, still runs. A refusal for a sign-off named only in an interpreter's code or input, or in text piped
-  into a shell, adds that text which only quotes the command, as a handoff brief or a body for the Human does, goes in
-  a file the file tool writes, which the rule does not read: a background session that rewrote its brief through a
-  Python heredoc was refused three times in one run, then split the command's words to get past the rule. A subagent and a session no Human attends are refused these shapes outside a project too.
+  `git commit -m`, still runs. A refusal for a sign-off named only in an interpreter's code or input opens with the
+  route for text that only quotes the command, as a handoff brief or a body for the Human does: write the file with
+  the file tool, which the rule does not read, and go on. The sign-off's own refusal follows, for text meant to record
+  one. A background session that rewrote its brief through a Python heredoc was refused three times in one run, told
+  only to stop, then split the command's words to get past the rule. Text piped into a shell keeps the refusal alone. A subagent and a session no Human attends are refused these shapes outside a project too.
   When the session holds answers and none approves the call, the deny names the nearest miss: a word the shell builds,
   no question naming `<owner>/<name>#<PR>`, the head, or the `<flow>/<invariant>` written as one word, an answer that
   is not "Approve", or a checkout whose remotes need `--repo`. A subagent is told to return `status: needs_input` with

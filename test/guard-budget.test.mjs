@@ -180,9 +180,13 @@ test('a call the guards start three seconds late, as on a loaded machine, still 
     const result = run(input, env);
     assert.equal(result.status, 0, `${input.tool_name}: ${result.stderr}`);
   }
-  // An attended main session's call, which runs past its budget anyway, keeps the short one: it waits no longer.
-  assert.ok(GUARD_BUDGET_MS < HELD_BUDGET_MS);
-  assert.equal(run(main(subagent(dir, 'Bash', 'echo x > src/app.js')), late(dir, GUARD_BUDGET_MS + 200)).status, 0);
+  // Past the held budget, the same calls are refused: the held budget is what let them run.
+  const past = late(dir, HELD_BUDGET_MS + 200);
+  assert.equal(run(subagent(dir, 'Bash', 'echo x > src/app.js'), past).status, 2);
+  // An attended main session's call, which runs past its budget anyway, keeps the short one, so it waits no longer:
+  // the test "a subagent's Bash call that writes more than ... targets" holds it, as its main session's 20,000-target
+  // call, which only the budget bounds, must end within WELL_INSIDE of processor time, short of the held budget.
+  assert.ok(WELL_INSIDE < HELD_BUDGET_MS && GUARD_BUDGET_MS < WELL_INSIDE);
 });
 
 // Each hook that runs under the guards' budget answers before the host stops it, with room to record a refusal.

@@ -298,9 +298,10 @@ function switchIn(text, valueIn) {
   }
 }
 
-// What the call writes: { files, names, globs }. `files` are absolute paths; `names` are texts that may name a file in a
-// folder no path gives: a relative target written after a `cd` to an unknown folder, code an interpreter runs, and the
-// words of a command in a shell the lexer cannot read (opaqueWords); `globs` are bashWrites's glob targets.
+// What the call writes: { files, names, globs, code }. `files` are absolute paths; `names` are texts that may name a file
+// in a folder no path gives: a relative target written after a `cd` to an unknown folder, code an interpreter runs, and
+// the words of a command in a shell the lexer cannot read (opaqueWords); `globs` are bashWrites's glob targets; `code`,
+// for a Bash call only, the names that are an interpreter's code or words.
 // lib/handoff-guard.mjs reads them too. A path with a bracket class is a file and a glob both. A command in a shell the
 // lexer cannot read writes, failing closed, to the path each of its first OPAQUE_WORDS words gives, from the call's folder
 // when it is relative and from the home folder after a leading `~`, and to the glob each such word with `*`, `?`, or `[`
@@ -333,9 +334,12 @@ function readTargets(input) {
   if (input.tool_name !== 'Bash' || typeof command !== 'string') return { files: [], names: [], globs: [] };
   const writes = bashWrites(command, cwd, { followCd: true, shells: true, restores: true, globs: true });
   const files = writes.flatMap((write) => write.files);
+  const code = interpretedCode(command);
   return {
     files,
-    names: [...writes.filter((write) => write.unsure && !write.glob && !path.isAbsolute(write.text)).map((write) => write.text), ...interpretedCode(command)],
+    names: [...writes.filter((write) => write.unsure && !write.glob && !path.isAbsolute(write.text)).map((write) => write.text), ...code],
+    // The names that are an interpreter's code or words, for a refusal that says where it read the path.
+    code,
     // The lexer reads a bracket class, as in `[.]continue`, as a plain word; the shell expands it as a glob.
     globs: [...writes.filter((write) => write.glob), ...files.filter((file) => BRACKET.test(file)).map((text) => ({ text, dirs: [], unsure: false }))],
   };

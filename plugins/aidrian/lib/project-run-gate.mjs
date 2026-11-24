@@ -259,15 +259,17 @@ const baseCopiesLine = (file) => `This branch changes host config or instruction
 
 // What an issue's session does with a review finding whose fix lies in a host file, which it never writes: the one
 // route, in projectPrompt and the autopilot skill's project-run rules alike. The pull request still waits for the
-// Human's merge, so the finding needs no decision. It fails closed where the body would show what review keeps out of
-// posts: a security finding (docs/review.md, The security key), and any finding under review.record "local".
-export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file, that is no security finding, '
-  + 'under a review.record other than "local", is a stated residual, never a decision: '
-  + 'an item of the pull request body\'s Accepted residuals with the finding\'s exact title, a colon, the reason, and the file\'s path. '
+// Human's merge, so the finding needs no decision. It reuses the review engine's own publication decision and fails
+// closed: only a title and file the engine already posted on the pull request are copied, so the body and the stop show
+// nothing the engine withholds (docs/review.md, Publishing and Inline reviews), whatever the reason it withholds it.
+export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file, whose title and file the review step\'s own post '
+  + 'on this pull request already shows, in its summary comment, an inline thread, or its review body, is a stated residual, never a decision: '
+  + 'an item of the pull request body\'s Accepted residuals that copies only that shown title and file, '
+  + 'as `<title>: the run may not write this host file (<file>)`. '
   + 'Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result. '
-  + 'Only when such residuals are the one stop left, record the result pr_open with that file in its stop and no decisions, and run no merge: '
+  + 'Only when such residuals are the one stop left, record the result pr_open with only that shown file in its stop and no decisions, and run no merge: '
   + 'the Human reads the file\'s diff and merges it. '
-  + 'A security finding in a host file, and any host-file finding under review.record "local", parks as before.';
+  + 'A finding whose title or file no such post shows, as one the review withholds, parks as before.';
 
 // The line of projectPrompt for an attempt on an existing branch: stop-action's catch-up, whose line names the one way
 // it merges a base its pull request conflicts with (project-stops.mjs catchUpStop), and parks one into another branch.

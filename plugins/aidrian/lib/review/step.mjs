@@ -4,7 +4,7 @@
 
 import { roundCapProblem } from '../pr-await-review.mjs';
 import { isolate } from './env.mjs';
-import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, mergeBase, mergesBetween, parents, QUIET_TEST_FILES, quietDelta, remergeDiff, resolve } from './diff.mjs';
+import { baseCatchUp, baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, mergeBase, mergesBetween, parents, QUIET_TEST_FILES, quietDelta, remergeDiff, resolve } from './diff.mjs';
 import { checkReview } from './config.mjs';
 import { invariantsOf } from './flows.mjs';
 import { packageRoots } from './split.mjs';
@@ -71,6 +71,9 @@ function planNote(plan, map, earlier, base) {
     pairs: [...new Map(pairs.map((pair) => [JSON.stringify([pair.flow, pair.invariant]), pair])).values()],
   };
 }
+
+// The outcomes of a step stopped at the round cap: the cap, its check waiting for the judge, or for the Human.
+const AT_CAP = new Set(['round_limit', 'extension_check', 'extension_ask']);
 
 // Whether `since`, the change from `from` to `head`, is quiet (diff.mjs quietDelta: prose, tests that only gained
 // lines, comment-only code). Quiet decides round accounting alone: the round on `from` stays open on `head`, with its
@@ -222,7 +225,7 @@ export async function prepareStep(s) {
   // head never met that rule, whether it came with the merge or landed on the base after it.
   const last = state.outcome ?? null;
   const reviewedHead = last?.status === 'received' && typeof last.head === 'string' && !sameCommit(last.head, head) ? last.head
-    : sameCommit(last?.head, head) && typeof last?.carried_from === 'string' ? last.carried_from
+    : last?.status === 'received' && sameCommit(last?.head, head) && typeof last?.carried_from === 'string' ? last.carried_from
       : sameCommit(state.remerge?.head, head) && typeof state.remerge?.from === 'string' ? state.remerge.from : null;
   let baseMerge = null;
   let mergeNote = null;
@@ -254,6 +257,18 @@ export async function prepareStep(s) {
     // Published as the review step publishes, so another machine's merge guard reads the same record.
     const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, n, body), edit: (id, body) => forge.editComment(repo, id, body), viewer }, 'received', post()) : null;
     return summaryError ? { ...carried, summary_error: summaryError } : carried;
+  }
+  // A head at the round cap that only caught up with the base branch since the last round's head (diff.mjs
+  // baseCatchUp): the cap carries to it (run.mjs capReached), with no round and no extra-round question, unless the
+  // base branch changes how the project is reviewed (baseReviewMoved). Any git failure reads as no catch-up.
+  const roundHead = state.rounds.at(-1)?.head ?? null;
+  if (AT_CAP.has(last?.status) && typeof roundHead === 'string' && !sameCommit(roundHead, head)) {
+    try {
+      if (baseCatchUp(root, { reviewed: roundHead, head, base: baseTip })
+        && !baseReviewMoved(project, { from: mergeBase(root, roundHead, baseTip), to: baseTip, flows: review.flows, harnessFiles }).length) {
+        s.catchUp = { from: roundHead, base: parents(root, head)[1] };
+      }
+    } catch {}
   }
   const scope = baseMerge ? baseMerge.scope : null;
   if (scope) state.remerge = { head, from: reviewedHead };

@@ -696,6 +696,7 @@ function allowlisted(state, post, counter) {
       stale_judge: (value) => (decision(value) ? object(value, { verdict: word(), head: sha, at: date }) : undefined),
       human: (value) => (decision(value) ? object(value, { answer: word(), at: date }) : undefined),
       unreviewed: (value) => object(value, { head: sha, from: sha }),
+      superseded_by: sha,
       signals: (value) => object(value, {
         converging: nullableBool,
         looping: nullableBool,

@@ -22,7 +22,9 @@
 // `carried_from` and `carried_base`), with no reviewer and no round, and answers no owed review; otherwise the round
 // reviews only the changes the merge commit itself made, `git show --remerge-diff` (lib/review/diff.mjs baseMergeOf).
 // A merge where the base branch, up to its current tip, changes how the project is reviewed (baseReviewMoved), and a
-// merge git cannot read this way, are reviewed as before, and the plan's reasons say why.
+// merge git cannot read this way, are reviewed as before, and the plan's reasons say why. At the round cap, a head
+// that only merged the base since the last round, the pull request's own diff the same (diff.mjs baseCatchUp), takes
+// the cap as it stood (`round_limit` with `carried_from`), with no reviewer and no extra-round check (capReached).
 //
 // docs/review.md describes the plan, the stages, and the record.
 //
@@ -45,7 +47,7 @@ import { loadTable } from '../finding-disposition.mjs';
 import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
 import { where } from './settled.mjs';
-import { atCap } from './extension.mjs';
+import { atCap, grantedRounds, raiseAsk, retireChecks } from './extension.mjs';
 import { settleCaptures } from './dispatch.mjs';
 import { answerPending, CAPPED, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, sameCommit, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
@@ -172,7 +174,19 @@ function capCause(s, extra) {
   const pastCap = round?.head !== head;
   const onHead = !pastCap || passes.some(({ pass }) => sameCommit(resultFor(pass)?.head, head));
   if (!onHead) {
-    const kept = isObject(round?.cap) && round.cap.head === round.head ? round.cap : null;
+    let kept = isObject(round?.cap) && round.cap.head === round.head ? round.cap : null;
+    // A round an older plugin kept no cause for, its `cap` missing altogether (a cause of another head, as `past_cap`
+    // leaves, is never rebuilt): this same function gives it, on that round's own head, from the results the passes
+    // recorded there alone, and keeps it on the round. A pass with none there is `unrun`. The record holds none of that
+    // round's evidence beyond its reviewers (its flow checks, the bot's limit, its sign-offs), so the cause is
+    // `reconstructed`, which no waiver passes, and every flow of the plan reads unsigned.
+    if (round && round.cap === undefined && typeof round.head === 'string') {
+      const onRound = (pass) => (isObject(state.passes?.[pass.id]) && sameCommit(state.passes[pass.id].head, round.head) ? state.passes[pass.id] : null);
+      if (passes.some(({ pass }) => onRound(pass))) {
+        kept = capCause({ state, plan, map, head: round.head, resultFor: onRound }, {});
+        kept.reconstructed = true;
+      }
+    }
     if (!kept) return { head, reviewed: round?.head ?? null, items: [], counted: null, itemized: false, unrun: [], unsigned: null, flows: [], tests_removed: tests, checks_failing: 0, bot, human };
     return {
       ...kept, head, reviewed: kept.head, unsigned: [...(kept.flows ?? [])], flows: [],
@@ -215,6 +229,14 @@ function capReached(s, extra) {
   const { state, head, policy, n, repo, info, planHistory, extensionLog, repoArg = '', opts } = s;
   noteFindings(s, extra);
   const cause = capCause(s, extra);
+  // A head that only caught up with the base since the last round (step.mjs `catchUp`): the cap carries to it as it
+  // stood, with the last round's cause, and no extra-round check runs: one still waiting for its judge or the Human is
+  // retired in the same write (extension.mjs retireChecks). The Human may still raise the cap.
+  if (s.catchUp && !sameCommit(state.rounds.at(-1)?.head, head)) {
+    retireChecks(state, { source: 'plan', head, log: extensionLog });
+    const { raise } = raiseAsk({ pr: n, repo, source: 'plan', round: state.rounds.length, granted: grantedRounds(state, 'plan', policy), withBot: Boolean(opts?.withBot) });
+    return finish(s, 'round_limit', { ...extra, carried_from: s.catchUp.from, carried_base: s.catchUp.base, ...(raise ? { raise } : {}), cap: cause });
+  }
   // The bot's cap may be what stopped the step: the question then raises past the bot's rounds, with the bot.
   const botRounds = Number.isInteger(extra?.bot?.codex_rounds) ? extra.bot.codex_rounds : null;
   const decision = atCap({

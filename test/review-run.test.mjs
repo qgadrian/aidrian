@@ -1,6 +1,6 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,8 @@ import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { capProblem } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
+import { offerLand, runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { repo, clean, OPEN, unnamed, unverifiedNext, finding, scripted, found, holdsAll, holdComment, APPROVED_FLOWS } from './review-run-fixture.mjs';
 
 test('a docs-only change needs no review and posts nothing', async (t) => {
@@ -403,6 +405,160 @@ test('the round cap with extraRounds off: the last round goes to the final stage
   const unreviewed = readLocalState(r.project, 7).outcome.cap;
   assert.deepEqual([unreviewed.head, unreviewed.reviewed, unreviewed.counted, unreviewed.itemized, unreviewed.unsigned], [pushed, capped.head, 1, false, ['booking']]);
   assert.match(capProblem(readLocalState(r.project, 7), pushed) ?? '', /flow booking has an invariant violated/u);
+});
+
+// A pull request at its round cap on head `capped`, one open finding on its agent pass, its flow unsigned.
+// `extraRounds` is the base branch's github.extraRounds: under "ask" the cap's check waits for its judge. `baseFiles`
+// seeds the base branch, and `change` writes the pull request's own change.
+async function atCapRepo(t, extraRounds = 'off', { baseFiles = {}, change = (write) => write('src/booking/a.js', '1\n') } = {}) {
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 1, extraRounds }, review: { flows: { booking: { files: ['src/booking/**'] } } } }, baseFiles, change });
+  const first = await r.step({ exec: clean });
+  assert.equal(first.status, 'dispatch');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 1, fixed: 0 });
+  const capped = await r.step({ exec: clean });
+  assert.equal(capped.status, extraRounds === 'off' ? 'round_limit' : 'extension_check');
+  // The base branch moves on with a change of its own, outside the pull request's files.
+  r.git('switch', '-q', 'main');
+  r.write('docs/notes.md', 'base notes\n');
+  r.commit('base docs');
+  r.git('switch', '-q', 'feat');
+  return { r, capped };
+}
+
+test('a head at the cap that only merged the base carries the cap: no round, no extra-round check, the last round\'s cause', async (t) => {
+  // The cap's check waits for its judge on the reviewed head; the merge needs no judge and no Human.
+  const { r, capped } = await atCapRepo(t, 'ask');
+  r.git('merge', '-q', '--no-edit', 'main');
+  const merged = r.git('rev-parse', 'HEAD');
+  let ran = 0;
+  const step = await r.step({ exec: async () => (ran += 1, clean()) });
+  assert.deepEqual([step.status, step.head, step.carried_from, ran], ['round_limit', merged, capped.head, 0], 'no reviewer runs');
+  assert.equal(step.extension, undefined, 'no extra-round check');
+  assert.match(step.raise ?? '', /^AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 7 --max-rounds 2 --repo o\/r$/u, 'the Human may still raise the cap');
+  assert.deepEqual([step.question, step.options], [undefined, undefined], 'and is asked nothing');
+  const state = readLocalState(r.project, 7);
+  assert.deepEqual([state.rounds.length, state.outcome.carried_from, state.outcome.cap.head, state.outcome.cap.reviewed, state.outcome.cap.unsigned], [1, capped.head, merged, capped.head, ['booking']]);
+});
+
+test('a merge at the cap that changes the pull request\'s own diff gets no carry: the head is reviewed as today', async (t) => {
+  const { r, capped } = await atCapRepo(t);
+  // The merge also edits the pull request's own file.
+  r.git('merge', '-q', '--no-commit', 'main');
+  r.write('src/booking/a.js', '2\n');
+  r.commit('merge main, and change app');
+  const step = await r.step({ exec: clean });
+  assert.equal(step.carried_from, undefined, 'nothing carries');
+  assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
+});
+
+// A merge from the base whose resolution also writes `file` as `resolve` gives it: the pull request's own diff differs.
+async function mergeResolving(r, file, text) {
+  r.git('merge', '-q', '--no-commit', 'main');
+  r.write(file, text);
+  r.commit('merge main');
+}
+
+test('a clean merge at the cap gets no carry when the pull request changes a binary file, even one the merge leaves alone', async (t) => {
+  const { r, capped } = await atCapRepo(t, 'off', { baseFiles: { 'src/booking/logo.bin': '\0base\0' }, change: (write) => write('src/booking/logo.bin', '\0reviewed\0') });
+  // The base changed only an unrelated file: the pull request's own diff is the very one the last round reviewed.
+  r.git('merge', '-q', '--no-edit', 'main');
+  const step = await r.step({ exec: clean });
+  assert.equal(step.carried_from, undefined, 'git prints no contents for a binary file, so its patch is no proof the change is the same');
+  assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
+});
+
+test('a merge at the cap that moves the pull request\'s edit to another occurrence of the same line gets no carry', async (t) => {
+  const twice = (first, second) => `export function a() {\n  return 1;\n}\n\nexport function b() {\n  return 2;\n}\n\nexport function c() {\n  ok(${first});\n}\n\nexport function d() {\n  ok(${second});\n}\n`;
+  const { r, capped } = await atCapRepo(t, 'off', { baseFiles: { 'src/booking/a.js': twice('x', 'x') }, change: (write) => write('src/booking/a.js', twice('y', 'x')) });
+  // The reviewed edit is undone in c and made in d: with no context and no hunk positions the two diffs read the same.
+  await mergeResolving(r, 'src/booking/a.js', twice('x', 'y'));
+  const step = await r.step({ exec: clean });
+  assert.equal(step.carried_from, undefined, 'the lines around each edit tell the two occurrences apart');
+  assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
+});
+
+test('a clean merge at the cap gets no carry when the pull request changes bytes that are not UTF-8, even ones the merge leaves alone', async (t) => {
+  // Latin-1 bytes, no NUL: git prints the patch as text, and each byte reads back as U+FFFD.
+  const latin = (char) => Buffer.from(`export const name = 'caf${char}';\n`, 'latin1');
+  const { r, capped } = await atCapRepo(t, 'off', { baseFiles: { 'src/booking/name.js': latin('\xe9') }, change: (write) => write('src/booking/name.js', latin('\xe8')) });
+  // The base changed only an unrelated file: the pull request's own diff is the very one the last round reviewed.
+  r.git('merge', '-q', '--no-edit', 'main');
+  const step = await r.step({ exec: clean });
+  assert.equal(step.carried_from, undefined, 'each byte reads back as U+FFFD, so the patch is no proof the change is the same');
+  assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
+});
+
+test('a base rename of the declaration above the pull request\'s edit, outside its context, still carries the cap', async (t) => {
+  const body = (name, last) => `export function ${name}() {\n  const a = 1;\n  const b = 2;\n  const c = 3;\n  const d = 4;\n  const e = ${last};\n  return a + e;\n}\n`;
+  const { r, capped } = await atCapRepo(t, 'off', { baseFiles: { 'src/booking/sum.js': body('alpha', 5) }, change: (write) => write('src/booking/sum.js', body('alpha', 6)) });
+  // The base renames the function, four lines above the edit: git's hunk header names it, the context does not.
+  r.git('switch', '-q', 'main');
+  r.write('src/booking/sum.js', body('beta', 5));
+  r.commit('rename alpha');
+  r.git('switch', '-q', 'feat');
+  r.git('merge', '-q', '--no-edit', 'main');
+  const step = await r.step({ exec: clean });
+  assert.deepEqual([step.status, step.carried_from], ['round_limit', capped.head], 'a hunk header\'s label is no part of the comparison');
+});
+
+test('a catch-up at a check waiting for its judge retires the check, and the verdict the step offers for the new head records', async (t) => {
+  const { r, capped } = await atCapRepo(t, 'ask');
+  assert.equal(readLocalState(r.project, 7).extensions[0].status, 'judging');
+  r.git('merge', '-q', '--no-edit', 'main');
+  const merged = r.git('rev-parse', 'HEAD');
+  const step = await r.step({ exec: clean });
+  assert.deepEqual([step.status, step.head, step.carried_from], ['round_limit', merged, capped.head]);
+  const check = readLocalState(r.project, 7).extensions[0];
+  assert.deepEqual([check.status, check.by, check.superseded_by], ['stopped', 'catch_up', merged], 'retired in the same write');
+  // The judge the step offers when the waiver gate says one may rule: its record line, for the new head.
+  const [judge] = offerLand({ ...step, pr: 7 }, { may: true, why: null }).dispatch;
+  assert.equal(judge.record, `aidrian pr extend 7 --verdict land|stop --reason "<evidence>" --head ${merged} --judge <agent id>`);
+  // That judge, dispatched in its session, records `stop` as the line says.
+  const session = 'sess-judge';
+  const project = projectAt(r.dir);
+  const config = loadConfig(project).config;
+  const log = logPath(project, config);
+  mkdirSync(path.dirname(log), { recursive: true });
+  writeFileSync(log, `${JSON.stringify({ event: 'dispatch', ts: new Date().toISOString(), session_id: session, dispatcher: 'main', agent_id: 'judge-1', agent_type: 'aidrian:code-reviewer' })}\n`);
+  const printed = [];
+  t.mock.method(console, 'log', (line) => printed.push(line));
+  const code = await runExtend(['7', '--verdict', 'stop', '--reason', 'R1-1 is open', '--head', merged, '--judge', 'judge-1'], project, config, { forge: r.forge, repo: 'o/r', env: { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: session } });
+  t.mock.restoreAll();
+  assert.equal(code, 0);
+  const out = JSON.parse(printed.at(-1));
+  assert.deepEqual([out.status, out.extension, out.waiver.head, out.waiver.verdict], ['recorded', null, merged, 'refuse'], 'no check of the old step waits to refuse it');
+});
+
+test('a cap record whose round kept no cause, from an older plugin, gets it from the round\'s results by the same code', async (t) => {
+  const { r, capped } = await atCapRepo(t);
+  const old = readLocalState(r.project, 7);
+  delete old.rounds.at(-1).cap;
+  delete old.outcome.cap;
+  writeLocalState(r.project, old);
+  r.git('merge', '-q', '--no-edit', 'main');
+  const step = await r.step({ exec: clean });
+  assert.equal(step.carried_from, capped.head);
+  const state = readLocalState(r.project, 7);
+  assert.deepEqual([state.outcome.cap.reviewed, state.outcome.cap.counted, state.outcome.cap.unrun, state.outcome.cap.unsigned], [capped.head, 1, [], ['booking']], 'a cause, not "cannot be told"');
+  assert.equal(state.rounds.at(-1).cap.head, capped.head, 'kept on the round');
+  assert.deepEqual([state.outcome.cap.reconstructed, state.rounds.at(-1).cap.reconstructed], [true, true], 'marked rebuilt, on the outcome and the round');
+  assert.match(capProblem(state, step.head) ?? '', /rebuilt from an older plugin's record/u, 'its flow checks and the bot\'s limit are unknown: no waiver');
+});
+
+test('a round whose kept cause is a head past the cap is never rebuilt: the waiver stays refused', async (t) => {
+  const { r } = await atCapRepo(t);
+  const record = readLocalState(r.project, 7);
+  // An attestation past the cap replaced the round's cause with that head's `past_cap` one; the passes still hold
+  // their results on the round's head.
+  const pastCap = { ...record.rounds.at(-1).cap, head: '0'.repeat(40), reviewed: '0'.repeat(40), past_cap: true, unsigned: null };
+  record.rounds.at(-1).cap = pastCap;
+  writeLocalState(r.project, record);
+  r.git('merge', '-q', '--no-edit', 'main');
+  const step = await r.step({ exec: clean });
+  const state = readLocalState(r.project, 7);
+  assert.deepEqual(state.rounds.at(-1).cap, pastCap, 'the round keeps the cause past the cap');
+  assert.deepEqual([state.outcome.cap.unsigned, state.outcome.cap.reconstructed], [null, undefined], 'no cause is rebuilt');
+  assert.match(capProblem(state, step.head) ?? '', /names no flows it left unsigned/u);
 });
 
 test('a failing reviewer is incomplete, then stuck after three attempts; a quota is not a failure', async (t) => {

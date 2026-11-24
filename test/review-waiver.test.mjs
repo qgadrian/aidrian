@@ -334,7 +334,7 @@ test('a verdict takes the pull request number alone: a URL is a usage error, exi
   } finally {
     t.mock.restoreAll();
   }
-  assert.match(err[0], /^aidrian pr waive: a verdict takes the pull request's number, not a URL: give 5;/u);
+  assert.equal(err[0], 'aidrian pr waive: a verdict takes the pull request\'s number, not a URL. `aidrian pr waive 5` reads #5 in gh\'s default repository, which may not be acme/notes; to record the verdict on acme/notes, run `aidrian pr extend 5 --verdict land|stop --reason "<evidence>" --head <sha> --judge <agent id> --repo acme/notes`');
   assert.match(err[1], /^aidrian pr extend: a verdict with --judge takes the pull request's number, not a URL: give 5, with --repo OWNER\/NAME/u);
   assert.deepEqual(read, [], 'nothing is read');
   assert.equal(JSON.stringify(readLocalState(r.project(), 5)), before, 'nothing written');

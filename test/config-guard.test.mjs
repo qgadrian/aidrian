@@ -1439,6 +1439,8 @@ test('a subagent, and a session the background route started, may not write in t
     // A placeholder path beside a real one hides neither, and one that climbs out of its placeholder with `..` counts.
     ['Bash', { command: `python3 -c "open('<state>/sessions/<id>/prs.jsonl'); open('${own}/prs.jsonl', 'a')"` }],
     ['Bash', { command: 'python3 -c "open(\'<x>/../sessions/abc-1/prs.jsonl\', \'a\')"' }],
+    // A `>` that is no placeholder's ends the placeholder path: the name after it still counts.
+    ['Bash', { command: 'python3 -c "open(\'<id>>prs.jsonl\', \'a\')"' }],
     // A file appended in place, by its name alone, after a `cd` the guard cannot follow.
     ['Bash', { command: 'cd "$X" && echo {} >> prs.jsonl' }],
     ['Bash', { command: 'cd "$X" && echo {} >> links.jsonl' }],
@@ -1495,10 +1497,11 @@ test('a placeholder path is prose only while no state folder has a bracket in it
   const throughLink = `python3 -c "open('${bracketed}/sessions/abc-1/prs.jsonl', 'a')"`;
   const linkRefused = await inHook({ input: JSON.stringify({ ...subagent(viaLink, 'Bash', { command: throughLink }), session_id: 's1' }), cwd: viaLink, encoding: 'utf8' });
   assert.equal(linkRefused.status, 2, linkRefused.stderr);
-  // A long interpreter body with no placeholder is read in linear time.
-  const long = `python3 -c "x='${'a'.repeat(200_000)}'; open('prs.jsonl', 'a')"`;
+  // A long interpreter body, in a project whose folders have no bracket so the placeholder read runs, takes linear time.
+  const plain = project(t, { version: 1 }).dir;
+  const long = `python3 -c "x='${'a'.repeat(200_000)}<'; y='<id>'; open('prs.jsonl', 'a')"`;
   const started = process.cpuUsage();
-  const longRefused = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command: long }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
+  const longRefused = await inHook({ input: JSON.stringify({ ...subagent(plain, 'Bash', { command: long }), session_id: 's1' }), cwd: plain, encoding: 'utf8' });
   assert.equal(longRefused.status, 2, longRefused.stderr);
   const { user } = process.cpuUsage(started);
   assert.ok(user < 2_000_000, `${user} µs of processor time`);

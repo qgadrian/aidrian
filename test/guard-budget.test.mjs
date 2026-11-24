@@ -209,8 +209,11 @@ test('the hook gives an attended main session\'s call the short budget: a refusa
   assert.equal(finished.status, 2, 'the guards refuse it when they finish');
   assert.match(finished.stderr, /the hooks hold no rule for `aidrian project record`/u);
   assert.equal(run(attended, late(dir, GUARD_BUDGET_MS + 200)).status, 0, 'past the short budget, short of the held one');
-  // A subagent's same call, under its held budget, is still read whole and refused.
-  assert.equal(run(subagent(dir, 'Bash', 'aidrian project record r1 x'), late(dir, GUARD_BUDGET_MS + 200)).status, 2);
+  // A subagent's same call, under its held budget, is still read whole, and refused by the guard, not the deadline.
+  const held = run(subagent(dir, 'Bash', 'aidrian project record r1 x'), late(dir, GUARD_BUDGET_MS + 200));
+  assert.equal(held.status, 2);
+  assert.match(held.stderr, /the hooks hold no rule for `aidrian project record`/u);
+  assert.doesNotMatch(held.stderr, /could not finish reading this command in time/u);
 });
 
 // Each hook that runs under the guards' budget answers before the host stops it, with room to record a refusal.

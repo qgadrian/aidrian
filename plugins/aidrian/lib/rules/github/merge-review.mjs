@@ -87,7 +87,7 @@ import { budgetedForge, guardWaiver, READ_TIMEOUT_MS, runOf, trailKey, WAIVER_DE
 import { walkCommands } from '../../shell-lex.mjs';
 import { driverHold } from '../../run-driver.mjs';
 import { readUnattendedMark } from '../../unattended-mark.mjs';
-import { transcriptAnswers, waitingRoute } from '../review-extend.mjs';
+import { nextCap, transcriptAnswers, waitingRoute } from '../review-extend.mjs';
 import { severalRemotes } from '../review-signoff.mjs';
 import { commandPath, fillRepo, invocationRepo, readWords } from './review-request.mjs';
 
@@ -414,13 +414,23 @@ export const GRANT = 'Grant more review rounds';
 // SHIP holds no character a regular expression treats as special.
 const SHIP_ANSWER = new RegExp(`^\\s*${SHIP}\\b`, 'iu');
 
+// Whether the Human's answer `each` ({ question, answer }) is about `pr` at `head`: the question or the option the Human
+// chose names `#<PR>` and the head's first seven characters. So a question asked in the Human's own words counts when the
+// chosen option carries them: a session once asked the guard's decision in its own words, and the answer was ignored.
+// An option that names a pull request decides alone: "Merge anyway (#6 at <sha7>)" under a question naming #5 and #6 is about #6 only.
+export function answerNames(each, pr, head) {
+  const answer = String(each?.answer ?? '');
+  const question = String(each?.question ?? '');
+  const names = (text) => new RegExp(`#${pr}(?!\\d)`, 'u').test(text);
+  const onPr = /#\d/u.test(answer) ? names(answer) : names(question);
+  return onPr && `${question}\n${answer}`.toLowerCase().includes(String(head).slice(0, 7).toLowerCase());
+}
+
 // The Human's answer that waives the guard for `pr` at `head`, given at or after `since`: "Merge anyway", or, at a
 // review stopped at its round limit (`capped`), "Merge with the findings filed".
 export function mergeApproved(answers, { pr, head, since = null, capped = false }) {
-  const names = new RegExp(`#${pr}(?!\\d)`, 'u');
-  const sha7 = String(head).slice(0, 7).toLowerCase();
   const takes = (answer) => /^\s*merge anyway\b/iu.test(answer) || (capped && SHIP_ANSWER.test(answer));
-  return answers.some((each) => names.test(each.question) && each.question.toLowerCase().includes(sha7) && takes(each.answer) &&
+  return answers.some((each) => answerNames(each, pr, head) && takes(each.answer) &&
     (since === null || (each.at !== null && Date.parse(each.at) >= Date.parse(since))));
 }
 
@@ -445,17 +455,35 @@ export function roundLimitQuestion(pr, head, count) {
   return `Review of pull request #${pr} at ${String(head).slice(0, 7).toLowerCase()} stopped at its round limit${withOpen(count)}. Ship, and file ${left} as an issue?`;
 }
 
+// The route to one more round after the Human picked GRANT: the waiting check's own while one waits; after a judge's stop,
+// when nothing waits, the raise the review-rounds rule runs on that very answer (review-extend.mjs nextCap gives its
+// --max-rounds), named for the record's repository; else `aidrian pr extend`, whose refusal names the route.
+// Once `aidrian pr extend --human approve` was the route after a stop too, and it can only fail there: one decision took three asks.
+export function grantRoute(pr, state) {
+  const last = state?.extensions?.at(-1) ?? null;
+  const waiting = waitingRoute(pr, last);
+  if (waiting) return waiting;
+  const { next, bot } = nextCap(state);
+  if (next === null) {
+    return `Run \`aidrian pr extend ${pr} --human approve\`: it records the grant when an extension waits for the Human, and otherwise its refusal names the route to one more round.`;
+  }
+  const repo = safeRepo(state?.repo);
+  const step = bot ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
+  const withBot = bot ? '' : ' (with `--with-bot` before `--max-rounds` when the step runs the bot)';
+  return `No extension waits for the Human, so that answer itself approves one more round: run exactly \`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${step} --max-rounds ${next}${repo ? ` --repo ${repo}` : ''}\`${withBot}, ` +
+    'as one plain command from the pull request\'s checkout, and ask nothing more.';
+}
+
 // The deny's tail at a review stopped at its round limit: ship with the findings filed, or grant more rounds, with
-// neither preferred. The grant's route is the waiting check's own, else `aidrian pr extend`, whose refusal names it.
-// `delegable`: every open finding of `head` is low, so the Human may also leave the decision to the session; `repoArg`
-// is ` --repo <owner>/<name>` for the delegate command in a checkout whose remotes name several repositories.
-function cappedAsk({ pr, count, last, head, delegable, repoArg, mergeArg = repoArg }) {
+// neither preferred. The grant's route is grantRoute's. The question may be the Human's own words when the question or the chosen option
+// names `#<PR>` and the short head (answerNames). `delegable`: every open finding of `head` is low, so the Human may also leave the
+// decision to the session; `repoArg` is ` --repo <owner>/<name>` for the delegate command in a checkout whose remotes name several repositories.
+function cappedAsk({ pr, count, state, head, delegable, repoArg, mergeArg = repoArg }) {
   const question = roundLimitQuestion(pr, head, count);
-  const route = waitingRoute(pr, last) ??
-    `Run \`aidrian pr extend ${pr} --human approve\`: it records the grant when an extension waits for the Human, and otherwise its refusal names the route to one more round.`;
   return `Only the Human decides this: ask with AskUserQuestion, the question "${question}", the options "${SHIP}" and "${GRANT}", ` +
-    `and mark neither as preferred. When the Human picks "${SHIP}", file the findings the review left open as a follow-up issue, then merge. ` +
-    `When the Human picks "${GRANT}", do not merge. ${route} ${delegable ? delegateRoute(pr, head, repoArg, mergeArg) : ''}`;
+    `and mark neither as preferred; a question in other words counts when it or the chosen option names #${pr} and ${String(head).slice(0, 7).toLowerCase()}. ` +
+    `When the Human picks "${SHIP}", file the findings the review left open as a follow-up issue, then merge. ` +
+    `When the Human picks "${GRANT}", do not merge. ${grantRoute(pr, state)} ${delegable ? delegateRoute(pr, head, repoArg, mergeArg) : ''}`;
 }
 
 // The route when the Human answers in their own words that the session decides, offered only while every open finding is low.
@@ -571,15 +599,14 @@ function heldReason({ project, pr, repo, base, deadline, now }) {
 // merging session's id, or null when the hook gives none: an entry another session recorded is then not taken.
 // A later "Grant more review rounds" answer of this session to the same question (`answers`, `count`) outranks the entry.
 // `repoArg` names the repository in the merge command it suggests, as `--repo` selected it.
-function delegated({ state, pr, head, capped, named, session, answers = [], count = null, repoArg = '' }) {
+function delegated({ state, pr, head, capped, named, session, answers = [], repoArg = '' }) {
   const delegable = capped && lowOnly(state, head).ok;
   let taken = delegable ? delegationFor(state, head, { session }) : null;
-  const question = roundLimitQuestion(pr, head, count);
-  const granted = taken && answers.some((each) => each.question === question && new RegExp(`^\\s*${GRANT}\\b`, 'iu').test(each.answer ?? '') &&
+  const granted = taken && answers.some((each) => answerNames(each, pr, head) && new RegExp(`^\\s*${GRANT}\\b`, 'iu').test(each.answer ?? '') &&
     each.at !== null && Date.parse(each.at) >= Date.parse(taken.at));
   if (granted) taken = null;
   let route = '';
-  if (granted) route = ` The Human granted more review rounds after the recorded answer, so it no longer stands: do not merge; run \`aidrian pr extend ${pr} --human approve\`.`;
+  if (granted) route = ` The Human granted more review rounds after the recorded answer, so it no longer stands: do not merge. ${grantRoute(pr, state)}`;
   else if (taken && !named) route = ` The Human's recorded answer covers this head, but only for a merge that names it: merge with \`gh pr merge ${pr}${repoArg} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.`;
   return { allow: Boolean(taken) && named, delegable, route };
 }
@@ -650,7 +677,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   }
   const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
   if (mergeApproved(answers, { pr, head, since, capped })) return null;
-  const delegation = delegated({ state, pr, head, capped, named, session, answers, count, repoArg: capped ? mergeRepoArg(repo, hosts) : '' });
+  const delegation = delegated({ state, pr, head, capped, named, session, answers, repoArg: capped ? mergeRepoArg(repo, hosts) : '' });
   if (delegation.allow) return null;
   // A judge's recorded verdict, under both switches, for the round cap on this head only (waiverKind).
   const waiver = guardWaiver({ project, state, pr, head, named, repo, view, forge: waiverForge, startedAt, now, memo });
@@ -660,7 +687,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   const last = state.extensions?.at(-1) ?? null;
   let ask;
   if (unattended) ask = capped ? unattendedCap({ pr, last, local: project.paths.local }) : UNATTENDED_WAIT;
-  else if (capped) ask = cappedAsk({ pr, count, last, head, delegable: delegation.delegable, repoArg, mergeArg: mergeRepoArg(repo, hosts) });
+  else if (capped) ask = cappedAsk({ pr, count, state, head, delegable: delegation.delegable, repoArg, mergeArg: mergeRepoArg(repo, hosts) });
   else {
     ask = `Only the Human waives this: ask with AskUserQuestion, the question "${question}", the options "Wait for the review" ` +
       '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ';

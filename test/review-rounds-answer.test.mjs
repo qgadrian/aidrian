@@ -11,7 +11,9 @@ import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state
 import * as awaitReview from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { raiseAsk } from '../plugins/aidrian/lib/review/extension.mjs';
 import { noAskReason } from '../plugins/aidrian/lib/rules/review-extend.mjs';
-import { ASK_ROUTE, check, OVERRIDE_REASON } from '../plugins/aidrian/lib/rules/github/review-rounds.mjs';
+import { GRANT as GRANT_OPTION, roundLimitQuestion, SHIP } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { ASK_ROUTE, capOf, check, OVERRIDE_REASON, raiseMiss } from '../plugins/aidrian/lib/rules/github/review-rounds.mjs';
+import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 // The deny of `command`, which must start with the rule's message: what follows it is the miss the rule names.
 const missOf = (command, context) => {
@@ -411,4 +413,42 @@ test('the Human`s answer to a round_limit question approves its raise, for exact
   assert.equal(withBot.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --with-bot --max-rounds 4 --repo o/r');
   assert.equal(check(withBot.raise, setup(t, [{ [withBot.question]: withBot.options[0] }])), null);
   assert.deepEqual(raiseAsk({ pr: 12, repo: null, source: 'plan', round: 3 }), {}, 'no repository, no question the rule could read');
+});
+
+// #645: after a judge's stop, the Human's "Grant more review rounds" to the merge guard's question was sent on to
+// `aidrian pr extend --human approve`, which then failed and asked a third question. That one answer is the grant.
+test('the Human`s Grant answer to the merge guard`s round-limit question approves one more round after a judge`s stop', () => {
+  const head = 'abcdef1234567890abcdef1234567890abcdef12';
+  const outcomeAt = '2026-11-03T14:00:00.000Z';
+  const at = '2026-11-03T14:10:00.000Z';
+  const stopped = { source: 'plan', round: 3, head, status: 'stopped', by: 'judge' };
+  const state = { ...emptyState(12, 'o/r'), rounds: [{ head }, { head }, { head }], extensions: [stopped], outcome: { status: 'round_limit', head, at: outcomeAt } };
+  const cap = capOf({ pr: '12', repo: 'o/r', state });
+  assert.deepEqual(cap, { head, at: outcomeAt, next: 4, bot: false });
+  for (const [why, edit] of [
+    ['a check waiting for the judge', { extensions: [{ ...stopped, status: 'judging' }] }],
+    ['a check waiting for the Human', { extensions: [{ ...stopped, status: 'asking' }] }],
+    ['a review not stopped', { outcome: { status: 'received', head, at: outcomeAt } }],
+    ['no outcome', { outcome: null }],
+  ]) assert.equal(capOf({ pr: '12', repo: 'o/r', state: { ...state, ...edit } }), null, why);
+  const raise = 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo o/r';
+  const question = roundLimitQuestion(12, head, 2);
+  const miss = (command, answers, on = cap) => raiseMiss(readInvocation(lexCommand(command)[0]), { answers, typed: [], typedRead: true, unread: null }, { repo: 'o/r' }, on);
+  const grant = [{ question, answer: GRANT_OPTION, at }];
+  assert.equal(miss(raise, grant), null, 'the guard`s own question');
+  assert.equal(miss(raise, [{ question: 'Keep reviewing or ship?', answer: `${GRANT_OPTION} (#12 at abcdef1)`, at }]), null, 'the Human`s words, the option naming both');
+  assert.equal(miss(raise.replace('--max-rounds 4', '--with-bot --max-rounds 4'), grant), null, 'the step that runs the bot');
+  assert.equal(miss(raise.replace('--max-rounds 4', '--max-rounds 3'), grant), null, 'fewer rounds');
+  for (const [why, command, answers, on] of [
+    ['more than one round', raise.replace('--max-rounds 4', '--max-rounds 5'), grant, cap],
+    ['the bot`s command for a plan cap', 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds 4 --repo o/r', grant, cap],
+    ['the ship answer', raise, [{ question, answer: SHIP, at }], cap],
+    ['a grant before the outcome', raise, [{ question, answer: GRANT_OPTION, at: '2026-11-03T13:00:00.000Z' }], cap],
+    ['a grant on another head', raise, [{ question: question.replace('abcdef1', '1234567'), answer: GRANT_OPTION, at }], cap],
+    ['a grant on another pull request', raise, [{ question: question.replace('#12', '#13'), answer: GRANT_OPTION, at }], cap],
+    ['a later ship answer replaced the grant', raise, [...grant, { question, answer: SHIP, at: '2026-11-03T14:20:00.000Z' }], cap],
+    ['no capped record', raise, grant, null],
+  ]) assert.notEqual(miss(command, answers, on), null, why);
+  const bot = capOf({ pr: '12', repo: 'o/r', state: { ...state, extensions: [{ ...stopped, source: 'bot', round: 5 }] } });
+  assert.equal(miss('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds 6 --repo o/r', grant, bot), null, 'a bot cap raises the bot`s command');
 });

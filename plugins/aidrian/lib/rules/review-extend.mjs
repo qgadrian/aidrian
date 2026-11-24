@@ -211,7 +211,7 @@ export function mismatch(answers, { pr, round, since = null, repo = null }) {
 // check's `round` counts the rounds of its own source, the plan's or the bot's reviews; a plan check also reads the plan
 // rounds the record holds, which may have run since. The review step adds the rounds still granted to --max-rounds,
 // so they are taken off here.
-function nextCap(state) {
+export function nextCap(state) {
   const entries = state?.extensions ?? [];
   const last = entries.at(-1) ?? null;
   if (!last) return { last, next: null, bot: false };

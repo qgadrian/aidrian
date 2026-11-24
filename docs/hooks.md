@@ -375,7 +375,8 @@ What each rule matches:
   While the check waits for the judge, the deny names the judge's route: run the `dispatch` the review step prints and record
   its verdict with `aidrian pr extend <PR> --verdict`. After a judge's stop, nothing waits for an answer, so the deny names the
   route to one more round instead: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, on the Human's
-  answer or on their typed `grant up to <N> review rounds on <owner>/<name>#<PR>` ([review.md](review.md#unattended-rulings)),
+  answer, on their "Grant more review rounds" to the [merge guard](#merge-guard)'s round-limit question, or on their typed
+  `grant up to <N> review rounds on <owner>/<name>#<PR>` ([review.md](review.md#unattended-rulings)),
   naming `--repo <owner>/<name>` in a checkout whose remotes name more than one repository, as the review step's printed rerun does.
   An answer the rule cannot read, such as `--human "$X"`, counts as approve; a pull request it cannot read is refused.
 - Round limit delegation: `aidrian pr delegate <PR>`, also as `node …/cli.mjs`, in a substitution, `sh -c`, `eval`, or a
@@ -682,8 +683,10 @@ default may be the upstream; when this machine holds records of that number for 
 none of them in another's place and is refused, naming the `-R` to add.
 
 The Human waives it. The reason prints a question naming `#<PR>` and the head's first 7 characters; the merge runs when
-the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts
-with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
+the session transcript holds the Human's AskUserQuestion answer whose chosen option starts with "Merge anyway", given at
+or after the head's outcome and every owed review, where the question or that option names both. So a question in the
+Human's own words counts when the option carries them, such as "Merge anyway (#<PR> at <sha7>)". An option that names a
+pull request decides alone: under a question naming `#5` and `#6`, "Merge anyway (#6)" is about `#6` only. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
 Every denial in a session a Human attends ends with that route and the one command for it, `gh pr merge <PR> --match-head-commit <sha>`
 with the merge's `--repo` when it named one, its host included when it named exactly one, and the working copy's
@@ -700,11 +703,15 @@ an issue?", or with one, "..., with 1 finding open. Ship, and file it as an issu
 record's last round; it is left out, and the question ends "Ship, and file what it left open as an issue?", when that
 round is not for the head, records no count, or left none.
 The options are "Merge with the findings filed" and "Grant more review rounds", with neither marked preferred. "Merge with the findings filed", or
-"Merge anyway", lets the merge run under the same conditions as the paragraph above. On that answer the session files
+"Merge anyway", lets the merge run under the same conditions as the paragraph above, the question asked in other words
+included. On that answer the session files
 what the review left open as a follow-up issue first, then merges; the guard does not check the issue. "Grant more
 review rounds" merges nothing, and the reason names the route to one more round: the waiting check's own while the check
-at the cap waits for its judge or the Human, else `aidrian pr extend <PR> --human approve`, whose refusal names the
-route when no extension waits for the Human ([Extra rounds](review.md#extra-rounds)). `extension_ask` keeps the first
+at the cap waits for its judge or the Human. When none waits, as after a judge's stop, that answer is itself the grant:
+the reason names `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N> --repo <owner>/<name>`, or
+`aidrian pr await-review <PR> --request` for the review bot's cap, with `<N>` one more round and the record's repository,
+and the [review rounds rule](#bash-rules) runs it on that answer, with no second question. With no extension check in the
+record at all, it names `aidrian pr extend <PR> --human approve`, whose refusal names the route ([Extra rounds](review.md#extra-rounds)). `extension_ask` keeps the first
 question: the step waits for the Human's answer to the extra-round question there.
 
 In a session no Human attends, a question has no one to answer it, so no denial asks one. At the round cap the denial
@@ -742,8 +749,8 @@ its head (`--match-head-commit`, `sha=` in a `gh api` merge, or the merge tool's
 head is still low, and the entry is for that head, at or after its outcome. An entry another session recorded is passed
 over when the hook gives the merging session's id and the entry holds its own; one recorded with no session id counts
 for any. A merge that names no head is refused, and told to name it. A "Grant more review rounds" answer in the
-merging session's transcript to the same question, at or after the entry, outranks it: the merge is refused, and the
-reason names `aidrian pr extend <PR> --human approve`. The guard reads the entry from the record it already loaded: it
+merging session's transcript naming the pull request and head, at or after the entry, outranks it: the merge is refused, and the
+reason names the same route to one more round. The guard reads the entry from the record it already loaded: it
 makes no call for it; without a transcript, the entry stands. `aidrian pr auto-merge` reads no delegation.
 
 Under the [unattended waiver](config.md#unattended-waiver), a judge's verdict recorded with `aidrian pr extend --verdict land`,

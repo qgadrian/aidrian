@@ -102,7 +102,8 @@ const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-
 // `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, the pull requests in `views`, by number, the push
 // permission `push()` gives, and the forge CLI's login token `token()` gives, a fine-grained one by default; a `token`
 // that throws is a CLI with no login. The push probe with a token, as the start checks the issue session's, answers what
-// `tokenPush(token)` gives: true, false (the forge's 403), or a throw. `calls` records each call.
+// `tokenPush(token)` gives: true, false (the forge's 403), or a throw. `trails` holds each pull request's review trail by
+// number, a value or a function that gives one or throws; one it lacks is the forge's 404. `calls` records each call.
 export const FIXTURE_TOKEN = 'github_pat_FIXTURE0123456789';
 export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true } = {}) {
   const calls = [];
@@ -139,6 +140,13 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
       const view = views[ref];
       if (!view) throw missing();
       return typeof view === 'function' ? view() : view;
+    },
+    trails: {},
+    reviewTrail: (repo, n, options) => {
+      calls.push(['reviewTrail', repo, n, options]);
+      const trail = forge.trails[n];
+      if (!trail) throw missing();
+      return typeof trail === 'function' ? trail() : trail;
     },
   };
   return forge;
@@ -205,7 +213,7 @@ export function handVerdict(work, session, confine = passVerdict) {
 // The project, run, and helpers. `projectRun` is the committed projectRun, which allows runs and unverified hosts by
 // default; `working` a working copy config.json
 // written over the committed one; `local` the machine's git-ignored file; `forgeConfig` the config the forge answers
-// with, the committed one by default; `bootstrap` the worktrees' bootstrap command; `ignore` more .gitignore lines;
+// with, the committed one by default, which the fixture's `serveConfig` changes; `bootstrap` the worktrees' bootstrap command; `ignore` more .gitignore lines;
 // `files` more files committed with the config, by path; `links` symbolic links committed with it, each path to its
 // target; `inRepo` keeps the worktrees in `.worktrees` of the checkout;
 // `config` more keys of the committed config.json, its `git` group merged with the worktrees folder.
@@ -263,7 +271,12 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
   };
   const project = findProject(dir);
   const { config } = loadConfig(project);
-  const text = () => JSON.stringify(forgeConfig ?? committed);
+  // The config the forge answers with, which `serveConfig(value)` changes for the reads after it.
+  let served = forgeConfig ?? committed;
+  const text = () => JSON.stringify(served);
+  const serveConfig = (value) => {
+    served = value;
+  };
   const forge = fakeForge(text, () => execFileSync('git', ['-C', bare, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim());
   const claude = fakeClaude({ dir, env });
   const store = openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
@@ -278,7 +291,7 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
   const cmd = (args, { session = DRIVER, ...more } = {}) => projectCommand(args, { cwd: dir, env: as(session), home, forge, spawn: claude.run, wait: noWait, pause: noWait, platform: 'linux', ...more });
   const run = () => readRun(state, 'launch');
   const rows = () => run().rows;
-  return { root, dir, state, worktrees, home, bin, bare, env, as, git, project, config, forge, claude, store, cmd, run, rows, committed };
+  return { root, dir, state, worktrees, home, bin, bare, env, as, git, project, config, forge, claude, store, cmd, run, rows, committed, serveConfig };
 }
 
 // A decision the Human recorded on ENG-1: the issue's description in the tracker, whose section under DECIDED.heading

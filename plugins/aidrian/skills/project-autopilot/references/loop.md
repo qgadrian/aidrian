@@ -22,6 +22,7 @@ named and go on from that output as step 2 says.
 2. `aidrian project start <run> <key>`:
    - exit 0, `started <key> attempt <n> session <id>`: the issue runs in its own session. Set its started status once,
      as [tracker-writes.md](tracker-writes.md) § The started status says. Next `next` line, else step 3.
+   - exit 0, `parked <key> unreconciled: ...`: nothing started; follow [existing-work.md](existing-work.md). Next `next` line, else step 3.
    - an `unverified:` line is a note, not a refusal.
    - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: § Pause.
    - a line `halt <cause>`, exit 1: § Halt. A `recheck kept the halt:` line after it names what kept it.

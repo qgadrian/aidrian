@@ -186,26 +186,6 @@ export function readDrop(drop) {
   }
 }
 
-// { base, url }, the default branch and the pull request's canonical link, when the forge shows pull request `pr` open
-// in the pinned `repository`, into that branch, from its own `branch` at the commit `head`: the one an attempt that
-// leaves that branch has its session close as superseded. A number a result named is the session's word, so any other answer, or a forge that cannot answer, is null.
-export function openPullOf({ forge, repository, pr, branch, head }) {
-  if (!Number.isInteger(pr)) return null;
-  const named = `${repository.owner}/${repository.name}`;
-  let view;
-  let main;
-  try {
-    main = defaultBranch(forge, { repo: named, host: repository.host });
-    view = forge.change(String(pr), 'state,baseRefName,headRefName,headRefOid,url,isCrossRepository', { repo: `${repository.host}/${named}` });
-  } catch {
-    return null;
-  }
-  // The forge's adapter takes the link only as the canonical one of the pinned repository's pull request `pr` (pullUrl).
-  const url = typeof forge.pullUrl === 'function' ? forge.pullUrl({ host: repository.host, repo: named, number: pr, url: view?.url }) : null;
-  const ok = view?.state === 'OPEN' && view.baseRefName === main && view.isCrossRepository === false && view.headRefName === branch && view.headRefOid === head && url !== null;
-  return ok ? { base: main, url } : null;
-}
-
 // Why the forge does not show the pull request of a handed-over `result` as the issue's own work, null when it does,
 // or { retry } when the forge cannot answer now. Only merged and pr_open name one: it must be in the pinned
 // `repository`, from the issue's `branch`; an open one's head must be the branch's head on the forge, and a merged one

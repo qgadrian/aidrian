@@ -41,11 +41,12 @@ export function killingGit(read) {
 
 // The settings every git call of the plugin runs under, a hook's, a command's, and the start gate's alike: no fsmonitor,
 // no hooks, no submodule recursion, no look into a submodule's own files (its commit still shows, so a staged gitlink is
-// seen), no `ext::` transport, and no signature shown, which would run the gpg or ssh program a config names, whatever
-// any config file says. `-c` wins over every scope git reads, and git passes it on to the git it runs for a submodule.
+// seen), no `ext::` transport, no signature shown, which would run the gpg or ssh program a config names, and no
+// replace ref read in place of an object, whatever any config file says. `-c` wins over every scope git reads, and git
+// passes it on to the git it runs for a submodule.
 export const HARDENED_PAIRS = Object.freeze([
   ['core.fsmonitor', 'false'], ['core.hooksPath', '/dev/null'], ['submodule.recurse', 'false'],
-  ['diff.ignoreSubmodules', 'dirty'], ['protocol.ext.allow', 'never'], ['log.showSignature', 'false'],
+  ['diff.ignoreSubmodules', 'dirty'], ['protocol.ext.allow', 'never'], ['log.showSignature', 'false'], ['core.useReplaceRefs', 'false'],
 ]);
 export const GATE_CONFIG = Object.freeze(HARDENED_PAIRS.flatMap(([key, value]) => ['-c', `${key}=${value}`]));
 // The options each subcommand adds after its name: a diff runs no external diff and no textconv, and a status reads no

@@ -40,6 +40,8 @@ Read [references/loop.md](references/loop.md) once turn 1 ends, and follow it: n
   automatic move to the background. Once this turn ends, only the notice of a command the host moved to the
   background wakes the driver.
 - `paused until <time>`, from `start` or `wait`, is a usage limit, not a refusal: the loop's § Pause sits it out.
+- `parked <key> unreconciled` from `start`, or a start line that says work was left or replaced: read
+  [references/existing-work.md](references/existing-work.md) first.
 - A `halt` line from `start`, or `halted` from `next`: start nothing more, wait until no issue runs, write the owed
   reports and the summary, tell the Human the cause and the fix, and end, unless the loop's start of the halted issue
   prints `recheck lifted the halt:` first, which launches nothing: start that issue again at once. A halt kept by a re-check stays for the next driver start's re-check, and

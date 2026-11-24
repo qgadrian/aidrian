@@ -626,11 +626,12 @@ test('GUARDED_PATHS holds every host\'s instruction files, by name at any depth,
     'Cursor': ['.cursor/rules/a.mdc', 'packages/x/.cursor/rules/a.mdc', '.cursorrules', 'packages/x/.cursorrules'],
     'Cline': ['.clinerules', '.clinerules/a.md', 'pkg/.clinerules/b.md'],
     'Windsurf': ['.windsurf/rules/a.md', 'pkg/.windsurf/rules/a.md', '.windsurfrules', 'pkg/.windsurfrules'],
+    'Claude Code\'s folder, at any depth': ['.claude', '.claude/settings.json', 'apps/web/.claude/settings.json', 'a/b/.claude/agents/x.md', 'pkg/.claude'],
   };
   for (const [family, files] of Object.entries(families)) {
     for (const file of files) assert.ok(GUARDED_PATHS.test(file), `${family}: ${file}`);
   }
-  for (const file of ['docs/agents.mdx', 'docs/agent-sources.md', 'docs/claude-notes.md', 'NOTSKILL.md', '.claude.md', 'src/.cursorrules.js', '.github/instructions-old.md', 'docs/cursor/a.md', 'windsurf.md', '.github/dependabot.yml', 'README.md']) {
+  for (const file of ['docs/agents.mdx', 'docs/agent-sources.md', 'docs/claude-notes.md', 'NOTSKILL.md', '.claude.md', 'pkg/.claude.md', 'pkg/.claudex/a.md', 'src/.cursorrules.js', '.github/instructions-old.md', 'docs/cursor/a.md', 'windsurf.md', '.github/dependabot.yml', 'README.md']) {
     assert.equal(GUARDED_PATHS.test(file), false, file);
   }
 });

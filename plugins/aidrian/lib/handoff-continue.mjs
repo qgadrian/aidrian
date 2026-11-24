@@ -117,9 +117,10 @@ function teamHandoff(project) {
 
 // The config.json the base branch commits, with no machine settings: { config, errors } or { why }, where `what` names
 // what the reader wanted from it. lib/handoff-guard.mjs startedUnattended reads its state.dir. `git` gives each git read's
-// options, as config.mjs firstTip's, such as a hook's bounded timeout; one that throws, out of time, is a `why`.
-export function baseBranchConfig(project, what = 'the team\'s config', git = () => undefined) {
-  const base = baseBranchTip(project.root, git);
+// options, as config.mjs firstTip's, such as a hook's bounded timeout; one that throws, out of time, is a `why`. With
+// `commit`, the config is read at that commit, such as a base tip a start pinned, instead of the base ref's.
+export function baseBranchConfig(project, what = 'the team\'s config', git = () => undefined, commit = null) {
+  const base = commit ?? baseBranchTip(project.root, git);
   if (!base) return { why: `git names no base branch commit to read ${what} from` };
   try {
     const file = committedConfigFile(project, base, git());

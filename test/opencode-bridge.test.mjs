@@ -508,6 +508,21 @@ test('the plugin folder holds no .npmignore, and no .gitignore but the two eval 
     ['lib/.npmignore', 'evals/x/.npmignore', 'scripts/.gitignore', '.gitignore']);
 });
 
+// A folder the walk skips is never read: each one here is unreadable, so a walk that goes into it throws.
+test('the ignore-file walk never reads inside a node_modules or evals results folder', (t) => {
+  const root = mkdtempSync(path.join(ROOT, 'ignore-walk-'));
+  const locked = [path.join(root, 'node_modules', 'x'), path.join(root, 'evals', 'a', 'results', 'y')];
+  for (const dir of locked) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, '.gitignore'), '');
+  }
+  mkdirSync(path.join(root, 'lib'));
+  writeFileSync(path.join(root, 'lib', '.npmignore'), '');
+  t.after(() => { for (const dir of locked) chmodSync(dir, 0o755); });
+  for (const dir of locked) chmodSync(dir, 0o000);
+  assert.deepEqual(ignoreFiles(root), ['lib/.npmignore']);
+});
+
 // The OpenCode page (docs/providers/opencode.md) says which hooks run there: its Hooks table has one row for each
 // script hooks.json runs, and its yes rows are the scripts ROUTES names, so a route or a hook added without the page
 // fails here. The README's entry and the page's Limits say no guard holds an OpenCode session.

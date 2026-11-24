@@ -16,7 +16,7 @@ import { ownIssue, runDriver } from '../plugins/aidrian/lib/project-run-guard.mj
 
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { CEILINGS, HOST_FILE_RESIDUAL, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
+import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { recordHumanSignoff } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
@@ -45,9 +45,14 @@ test('the caps in code', () => {
 test('a low or medium finding in a host file is a stated residual by its id alone, and pr_open once it is the last stop', () => {
   // One condition beside severity: no security mark. The line publishes nothing, so no post or head condition applies.
   assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, is a stated residual, never a decision: /u);
-  assert.match(HOST_FILE_RESIDUAL, /names it by its `R<round>-<n>` id alone, as `<id>: the run may not write a host file this finding needs`, never by its file, title, or reason\./u);
-  assert.match(HOST_FILE_RESIDUAL, /record the result pr_open with that same line as its stop and no decisions, and run no merge/u);
+  // The project's residual format: its section, the id as the item's lead, and every field it requires, each filled with the fixed text.
+  assert.equal(HOST_FILE_REASON, 'the run may not write a host file this finding needs');
+  assert.ok(HOST_FILE_RESIDUAL.includes('one item of the residual section the project\'s pull request rules name, config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon, '
+    + `then \`${HOST_FILE_REASON}\`, and states each field \`github.pullRequest.residuals.fields\` lists as \`<field>: ${HOST_FILE_REASON}\`, never naming its file, title, or reason.`), HOST_FILE_RESIDUAL);
+  assert.ok(HOST_FILE_RESIDUAL.includes(`record the result pr_open with \`<id>: ${HOST_FILE_REASON}\` as its stop and no decisions, and run no merge`), HOST_FILE_RESIDUAL);
   assert.doesNotMatch(HOST_FILE_RESIDUAL, /<file>|<title>|path|post|comment|head/u, 'no file, title, or path wording, and no post condition');
+  // Where the Human reads a finding the pull request's copy lacks.
+  assert.ok(HOST_FILE_RESIDUAL.includes('whenever the pull request\'s copy of the record lacks the finding\'s details, the Human reads them in the review record on the machine that ran the review.'));
   // A security finding parks, whatever else holds.
   assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file parks as before\.$/u);
   // A mixed round: every other finding takes its own route first, and a decision it raises decides the result.

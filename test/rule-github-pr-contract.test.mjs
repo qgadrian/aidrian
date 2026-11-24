@@ -9,6 +9,8 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { check } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
+import { residualItems } from '../plugins/aidrian/lib/decisions.mjs';
+import { HOST_FILE_REASON } from '../plugins/aidrian/lib/project-run-gate.mjs';
 
 // A full contract, as a project with a closed list of sections, deferrals to tracked issues, and residuals sets it.
 const CONTRACT = {
@@ -70,6 +72,21 @@ test('the sections are a closed list, outside code fences', (t) => {
   assert.match(run(create(`${BODY}\n## Findings\nx\n`)), /^Blocked: the body adds the section\(s\) `## Findings`, which are not on the closed list/);
   assert.equal(run(create(`${BODY}\n\`\`\`\`md\n## Findings\n\`\`\`\n## Also quoted\n\`\`\`\`\n`)), null, 'a quoted heading, nested fence included');
   assert.equal(run(create(`${BODY}### Detail\n`)), null, 'only `## ` headings');
+});
+
+// A project run's host-file residual, as HOST_FILE_RESIDUAL shapes it: the finding id and a colon, the fixed text, then
+// each field the project's format requires, filled with the same text. The body rule accepts it, and names no file.
+test('a host-file residual by finding id passes the residual format, with required fields and under the default', (t) => {
+  const item = (fields) => `- R2-5: ${HOST_FILE_REASON}${fields.map((field) => `; ${field}: ${HOST_FILE_REASON}`).join('')}`;
+  const shaped = (section, fields) => `## TL;DR\nShare links expire.\n\n## ${section}\n\n${item(fields)}\n`;
+  const required = { version: 1, github: { requiredSections: ['TL;DR'], pullRequest: { residuals: { section: 'Known gaps', fields: ['risk', 'reason'] } } } };
+  const strict = project(t, required);
+  assert.equal(strict.run(create(shaped('Known gaps', ['risk', 'reason']))), null, 'every required field filled with the fixed text');
+  assert.match(strict.run(create(shaped('Known gaps', []))), /is not a valid residual: it is missing `risk:`, `reason:`/u, 'the format is the rule\'s, not the text\'s');
+  const plain = project(t, { version: 1, github: { requiredSections: ['TL;DR'] } });
+  const body = shaped('Accepted residuals', []);
+  assert.equal(plain.run(create(body)), null, 'the default section, with no fields required');
+  assert.deepEqual(residualItems(body).map((each) => each.text), [`- R2-5: ${HOST_FILE_REASON}`]);
 });
 
 test('every deferral names a reason from the list, not a never-valid one, and an issue', (t) => {

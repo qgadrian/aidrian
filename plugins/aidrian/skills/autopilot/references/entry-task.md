@@ -59,11 +59,14 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   says: a host config or instruction file, such as a `CLAUDE.md` or a skill, any file of the `.aidrian/` folder, such as
   the knowledge index or `config.json`, or another policy file.
   A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`,
-  is a stated residual, never a decision: an item of the pull request body's Accepted residuals that names it by its `R<round>-<n>` id alone,
-  as `<id>: the run may not write a host file this finding needs`, never by its file, title, or reason.
+  is a stated residual, never a decision: one item of the residual section the project's pull request rules name,
+  config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon,
+  then `the run may not write a host file this finding needs`, and states each field `github.pullRequest.residuals.fields` lists
+  as `<field>: the run may not write a host file this finding needs`, never naming its file, title, or reason.
   Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result.
-  Only when such residuals are the one stop left, record the result pr_open with that same line as its stop and no decisions, and run no merge:
-  the Human reads the finding in the review record and merges the pull request.
+  Only when such residuals are the one stop left, record the result pr_open with `<id>: the run may not write a host file this finding needs`
+  as its stop and no decisions, and run no merge: the Human reads the finding in the review record and merges the pull request;
+  whenever the pull request's copy of the record lacks the finding's details, the Human reads them in the review record on the machine that ran the review.
   A security finding in a host file parks as before.
   A finding outside host files keeps its route.
 - **The issue.** Read it from the `issue.md` file the first message names, which the driver copied from the tracker, and

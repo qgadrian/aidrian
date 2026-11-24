@@ -260,14 +260,20 @@ const baseCopiesLine = (file) => `This branch changes host config or instruction
 // What an issue's session does with a review finding whose fix lies in a host file, which it never writes: the one
 // route, in projectPrompt and the autopilot skill's project-run rules alike. The pull request still waits for the
 // Human's merge, so the finding needs no decision: the line only tells the Human, who reads the finding's file and text
-// in the review record. It publishes nothing: a finding id (docs/review.md, Finding ids) names no file, title, or
-// reason, so no publication rule applies. A security finding never takes the route.
+// in the review record. It publishes nothing: a finding id (docs/review.md, Finding ids) and HOST_FILE_REASON name no
+// file, title, or reason, so no publication rule applies. The item takes the project's residual format, the section and
+// fields of github.pullRequest.residuals that the pull request body rule checks (lib/rules/github/pr-body.mjs), each
+// field filled with HOST_FILE_REASON. A security finding never takes the route.
+export const HOST_FILE_REASON = 'the run may not write a host file this finding needs';
 export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, '
-  + 'is a stated residual, never a decision: an item of the pull request body\'s Accepted residuals that names it by its `R<round>-<n>` id alone, '
-  + 'as `<id>: the run may not write a host file this finding needs`, never by its file, title, or reason. '
+  + 'is a stated residual, never a decision: one item of the residual section the project\'s pull request rules name, '
+  + 'config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon, '
+  + `then \`${HOST_FILE_REASON}\`, and states each field \`github.pullRequest.residuals.fields\` lists as \`<field>: ${HOST_FILE_REASON}\`, `
+  + 'never naming its file, title, or reason. '
   + 'Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result. '
-  + 'Only when such residuals are the one stop left, record the result pr_open with that same line as its stop and no decisions, and run no merge: '
-  + 'the Human reads the finding in the review record and merges the pull request. '
+  + `Only when such residuals are the one stop left, record the result pr_open with \`<id>: ${HOST_FILE_REASON}\` as its stop and no decisions, and run no merge: `
+  + 'the Human reads the finding in the review record and merges the pull request; whenever the pull request\'s copy of the record lacks the finding\'s details, '
+  + 'the Human reads them in the review record on the machine that ran the review. '
   + 'A security finding in a host file parks as before.';
 
 // The line of projectPrompt for an attempt on an existing branch: stop-action's catch-up, whose line names the one way

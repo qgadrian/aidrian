@@ -2003,6 +2003,8 @@ With `--catch-up`, which the first message of a later or resumed attempt asks fo
 `park` when it targets another branch than the default, as above.
 A merged or closed pull request gets exactly the answer the command gives without `--catch-up`: `done`, or a `park`.
 A merged pull request is `done` only when the result command's own check (`mergeProblem`) would record it `merged`.
+While that check cannot be read, it gives `wait`, then this command again, under the retry cap above.
+Once that cap is spent on a pull request the forge shows merged, the `park` records `parked` on the one decision, as for a merge the check refuses.
 On a conflict it gives `merge_base`, and `wait` while the forge works it out, under the caps above; otherwise `none`.
 It reads no auto-merge answer, so a draft that conflicts gets `merge_base`, whose line then says to go on with the checks and the review on the new head.
 `stop-action` exits 1 when it refuses, such as for another session or a pull

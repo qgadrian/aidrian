@@ -312,7 +312,7 @@ test('a merge the result command refuses as merged parks on one decision that na
   assert.deepEqual(called(done, 'change')[0], ['change', '12', 'state,mergedAt,headRefName,baseRefName,url,isCrossRepository', { repo: 'github.com/acme/widgets' }]);
   // A merge check the forge cannot answer waits under the retry cap, never done.
   done.gh.fail.add('change');
-  assert.match(done.act(on()).out[0], /^wait ENG-1 #12 at aaaaaaa: the forge could not describe pull request #12 \(gh failed\) \(1 of 3 for this attempt\); wait 60 seconds, then run the pr-auto-merge skill again$/u);
+  assert.match(done.act(on()).out[0], /^wait ENG-1 #12 at aaaaaaa: the forge shows it merged, and the merge check could not be read: the forge could not describe pull request #12 \(gh failed\) \(1 of 3 for this attempt\); wait 60 seconds, then run the pr-auto-merge skill again$/u);
   done.gh.fail.delete('change');
   assert.deepEqual(handOver(t, done, { status: 'merged', pr: 12 }, done.forge), ['result ENG-1 merged -> done']);
   // Into another branch, at the start instant, or before the start: the park line names the result command's own reason.
@@ -332,6 +332,19 @@ test('a merge the result command refuses as merged parks on one decision that na
     assert.deepEqual(fx.catchUp().out, [line], `${name}: the catch-up answers the same`);
   }
   assert.equal(existsSync(path.join(fx.drop, STOPS_FILE)), false, 'a park spends no cap');
+  // A merge check the forge cannot answer waits three times in the attempt, plain or caught up; the fourth call parks
+  // on the same one decision, never on pr_open, which the result command may refuse for a merged pull request.
+  const decided = '; record the result parked with one decision of class other: whether the merge of #12 counts as the issue\'s work, options "leave the issue parked" and "count the issue done by hand once its work is on the default branch", recommended the first';
+  fx.gh.fail.add('change');
+  assert.match(fx.act(on()).out[0], /^wait .*the merge check could not be read: .*\(1 of 3 for this attempt\); wait 60 seconds, then run the pr-auto-merge skill again$/u);
+  assert.match(fx.act(on()).out[0], /\(2 of 3 for this attempt\); wait 300 seconds/u);
+  assert.match(fx.catchUp().out[0], /\(3 of 3 for this attempt\); wait 900 seconds in all, .*then run this command again$/u);
+  for (const [name, call] of [['plain', () => fx.act(on())], ['caught up', () => fx.catchUp()]]) {
+    const spent = call().out[0];
+    assert.ok(spent.startsWith('park ENG-1 #12 at aaaaaaa: the forge shows it merged, and the merge check could not be read: the forge could not describe pull request #12 (gh failed), and it failed 3 times in this attempt already; '), `${name}: ${spent}`);
+    assert.ok(spent.endsWith(decided), `${name}: ${spent}`);
+  }
+  fx.gh.fail.delete('change');
   // The outcome the line names is one the result command records, where merged is refused (project-result.test.mjs).
   const decision = { question: 'Pull request #12 merged before this attempt started, so the run cannot count it as ENG-1\'s work. Does it count?', options: ['leave the issue parked', 'count the issue done by hand once its work is on the default branch'], recommended: 0, class: 'other' };
   assert.deepEqual(handOver(t, fx, { status: 'parked', pr: 12, decisions: [decision], stop: line }, fx.forge), ['result ENG-1 parked -> parked decision-1']);

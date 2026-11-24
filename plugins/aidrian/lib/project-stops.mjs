@@ -313,18 +313,24 @@ export function stopAction({ project, config, run, key, env = process.env, home,
   const view = readMergeState(forge, repository, branch);
   if (view.problem) return refuse(view.problem);
   if (view.error) return answer(transientWait(rows, start.attempt, view.error), null);
+  // A wait on a read that failed. Once its cap is spent on a pull request the forge showed merged, the park is the
+  // merge_refused one, `parked` on one decision, since the result command may refuse pr_open on a merged pull request.
+  const retry = (why) => {
+    const waited = transientWait(rows, start.attempt, why);
+    return answer(waited.action === 'park' && view.state === 'MERGED' ? { ...waited, parkAs: 'merge_refused' } : waited, view);
+  };
   let main;
   try {
     main = defaultBranch(forge, { repo: named, host: repository.host });
   } catch (error) {
-    return answer(transientWait(rows, start.attempt, error.message), view);
+    return retry(error.message);
   }
   if (view.state === 'OPEN' && view.base !== main) return answer({ action: 'park', why: `it targets ${view.base}, not the default branch ${main}, which a project run's issue merges into` }, view);
   // A merged or closed pull request gets the answer the command gives without --catch-up.
   if (catchUp && view.state === 'OPEN') return answer(catchUpStop({ view, history: rows }), view);
   // A merged pull request is `done` only when the result command records it merged: its own check, against this start.
   const landed = view.state === 'MERGED' ? mergeProblem({ forge, repository, pr: view.number, branch, since: Date.parse(start.at) }) : null;
-  if (landed?.retry) return answer(transientWait(rows, start.attempt, landed.why), view);
+  if (landed?.retry) return retry(`the forge shows it merged, and the merge check could not be read: ${landed.why}`);
   const merged = view.state === 'OPEN' ? (autoMerge ?? ((url) => autoMergeOf(project, url, { forge, session, home })))(view.url) : null;
   const checks = merged?.result?.effective === true && merged.result.head === view.head ? readChecks(forge, repository, view, config.github) : null;
   if (checks?.error) return answer(transientWait(rows, start.attempt, checks.error), view);

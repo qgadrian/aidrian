@@ -17,7 +17,6 @@ import { setup } from '../plugins/aidrian/opencode/bridge.mjs';
 import { ROUTES } from '../plugins/aidrian/opencode/routes.mjs';
 import server from '../plugins/aidrian/opencode/server.mjs';
 
-import { cliCall } from './cli-call.mjs';
 
 const REPO = path.resolve(import.meta.dirname, '..');
 const PLUGIN = path.join(REPO, 'plugins/aidrian');
@@ -596,8 +595,10 @@ test('end to end: a removed folder skips its call, and a completed gh pr create 
 
   const bin = path.join(ROOT, 'gh-bin');
   fakeGh(bin);
-  const snapshotEnv = { ...env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, OPENCODE: '1', OPENCODE_SESSION_ID: 'ses_rootE2E' };
-  const ran = await cliCall(['session', 'snapshot', '--session', 'ses_rootE2E'], { cwd: project, env: snapshotEnv });
+  // As docs/providers/opencode.md says to run it in OpenCode's shell, which has this plugin's bin first on its PATH: the
+  // snapshot reads no host variable, so the command passes the session from OPENCODE_SESSION_ID.
+  const snapshotEnv = { ...env, PATH: [bin, BIN, process.env.PATH].join(path.delimiter), OPENCODE: '1', OPENCODE_SESSION_ID: 'ses_rootE2E' };
+  const ran = spawnSync('/bin/sh', ['-c', 'aidrian session snapshot --session "$OPENCODE_SESSION_ID"'], { cwd: project, env: snapshotEnv, encoding: 'utf8' });
   assert.equal(ran.status, 0, ran.stderr);
   const json = JSON.parse(ran.stdout);
   assert.deepEqual(json.prs.map(({ repo, number }) => `${repo}#${number}`), ['acme/widgets#12'], ran.stdout);

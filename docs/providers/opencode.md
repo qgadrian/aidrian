@@ -165,19 +165,20 @@ path or another machine's `name:path`, records nothing, since the folder it name
 ## Session ids
 
 - By the 2.4.0 source, every command OpenCode's shell tool runs has `OPENCODE=1` and `OPENCODE_SESSION_ID`, the
-  calling session's id; no live shell call has shown it. The
-  adapter reads that variable as a command's session, so `aidrian session snapshot` in an OpenCode shell finds its
-  session's pull requests.
+  calling session's id; no live shell call has shown it. The adapter reads that variable as a command's session.
+- The snapshot reads no host variable, so in an OpenCode shell pass the session to it:
+  `aidrian session snapshot --session "$OPENCODE_SESSION_ID"` shows that session's pull requests.
 - The bridge files a subagent's rows under the root session: it follows each session's `parentID` up to the root, at
   most 8 steps, and sends the root as `session_id` and the calling session as `agent_id`, as a subagent's rows land on
   Claude Code. A read that fails gives the calling session's own id.
-- A subagent's own shell names the child session in `OPENCODE_SESSION_ID`, so a snapshot run there shows none of the
-  root session's pull requests.
+- A subagent's own shell names the child session in `OPENCODE_SESSION_ID`, so that command run there shows none of
+  the root session's pull requests.
 - A command in an OpenCode that was itself started from a Claude Code or Codex shell reads the outer host's session:
   the variables of that host stay in its environment, and detection asks OpenCode's variables last. A hook the bridge
   runs is OpenCode's by its `opencode` mark, whatever variables the process inherited. A background service that a
   command in a Claude Code or Codex shell started gives that host's variables to every OpenCode session it serves, so
   their shell commands read the outer host's session too; restarting the service from a plain terminal clears them.
+  The snapshot command above still names the OpenCode session, since it passes `OPENCODE_SESSION_ID` itself.
 - Whether a subagent's child session carries `parentID` has not been checked on a live OpenCode.
 
 ## Troubleshooting

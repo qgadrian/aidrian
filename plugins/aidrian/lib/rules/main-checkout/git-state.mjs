@@ -123,12 +123,12 @@ function gitStateChanges(command, state, depth = 0, inherited = []) {
       const inside = here;
       const own = assignmentsOf(segment, invocation);
       if (invocation.program === 'export' || (own.length && !invocation.program)) lineEnv.push(...own);
-      const inEnv = [...lineEnv];
+      const reads = !inside.skipped && inputs[i].length > 0 && readsShellInput(invocation);
+      const inEnv = reads ? [...lineEnv, ...own] : null;
       for (let n = 0; n < closes && outer.length; n += 1) [here, lineEnv.length] = outer.pop();
-      if (inside.skipped) return;
-      if (!inputs[i].length || !readsShellInput(invocation)) return;
+      if (!reads) return;
       const where = stateIn(inside, invocation.chdir);
-      if (where) for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, [...inEnv, ...own]));
+      if (where) for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, inEnv));
     });
   }
   let now = state;

@@ -64,8 +64,11 @@ function expansionDenial(command, cwd, env) {
     // taken as done; none when the line starts in no guarded main checkout.
     const walk = write.cds.length ? afterChanges(write.cds) : null;
     if (write.cds.length && !walk) continue;
+    // A wrapper's `env -C` or git's `-C` after the last change moves the target, as afterCdDenial reads it; with one that
+    // may expand, the target is judged at the shell's folders.
+    const through = (dir) => write.via.reduce((at, token) => path.resolve(at, token.text), dir);
     let dirs = write.dirs.length ? write.dirs : [cwd];
-    if (walk) dirs = walk.at;
+    if (walk) dirs = write.via.some((token) => token.dynamic) ? walk.at : walk.at.map(through);
     if (!/[$`]/u.test(text)) {
       const files = dirs.map((dir) => joinSpelled(dir, text));
       const denial = decide(files, cwd, false, 'this command writes') ?? (REMOVERS.has(write.program) ? holdsMainDenial(files, cwd, 'this command removes or moves') : null);

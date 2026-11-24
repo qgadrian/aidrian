@@ -1018,6 +1018,11 @@ test('a write through a variable is judged where it leads, and blocked from the 
   assert.equal(at(`S=/tmp/x; (S=${repo}); echo x > "$S/src/app.js"`), null, 'the outer S is the line\'s own');
   assert.match(at(`S=${repo}; (S=/tmp/x); echo x > "$S/src/app.js"`) ?? '', /a tracked file/u, 'a subshell\'s assignment ends with it');
   assert.match(at(`S=${repo}; x=$(S=/tmp/x); echo x > "$S/src/app.js"`) ?? '', /a tracked file/u, 'so does a substitution\'s');
+  // A shell the line starts sees what its invocation sets, and no earlier assignment, whose export is not followed.
+  assert.match(at(`S=/tmp/x; S=${repo} bash -c 'echo x > "$S/src/app.js"'`) ?? '', /a tracked file/u, 'the invocation\'s own value');
+  assert.match(at(`S=/tmp/x; bash -c 'echo x > "$S/a"'`) ?? '', /a path built from a variable/u, 'the parent\'s value is not the child\'s');
+  // A relative resolved removal after a cd, and after a wrapper's folder change, is read where the command runs.
+  assert.match(at(`cd ${path.join(repo, 'wt/task')} && R=..; env -C ${repo}/src rm -rf "$R"`) ?? '', /which holds the main checkout/u);
   for (const command of ['S=/tmp/x; echo x > "$S/a"', 'echo x > "$TMPDIR/a"', 'echo x > "/tmp/$name.txt"', `cd ${path.join(repo, 'wt/task')} && echo x > "$f"`]) {
     assert.equal(at(command, { ...ENV, TMPDIR: tmpdir() }), null, command);
   }

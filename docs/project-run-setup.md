@@ -322,7 +322,8 @@ and with no pull request yet a `note` says the first one proves it.
 An issue's session gets the forge token the start read ([Forge token in the keychain](#forge-token-in-the-keychain)).
 The preflight reads these rules with that token, and so does every start, before it launches the session, so a rule
 removed after the preflight, or a token of another account, starts nothing: a rule or secret that does not hold, or
-that the forge cannot say, halts the run, and a read that fails retries the start (exit 75). A read with a
+that the forge cannot say, halts the run, whatever else failed to read, and only when nothing is known to fail does a
+read that failed retry the start (exit 75). A read with a
 fine-grained token needs the read permissions [Forge token permissions](#forge-token-permissions) names. On a host
 that hands its sessions no token, both read as the forge CLI's own login, which those sessions keep. The forge must
 hold what a script the session runs could do with the token:

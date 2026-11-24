@@ -10,6 +10,7 @@ import { VERSION } from '../plugins/aidrian/lib/config-schema.mjs';
 import { decideDisposition, fixSmallGapsAt, isManifestPath, loadTable, manifestDrift, splitFlagWords, statusDrift, vocabulary } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
 import { isCommentLine, quietDelta } from '../plugins/aidrian/lib/review/diff.mjs';
+import { hookCall } from './hook-call.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-write.mjs');
@@ -326,6 +327,35 @@ test('the file-write hook refuses a Write or Edit that sets a disposition the ax
 
   const elsewhere = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: 'Write', cwd: dir, tool_input: { file_path: path.join(dir, 'pr-9.json'), content: text([finding({ disposition: 'fix_now' })]) } }), encoding: 'utf8' });
   assert.equal(elsewhere.status, 0, 'a file outside a reviews folder is no manifest');
+});
+
+// Each host's file tools name the manifest in their own field: the hook finds it through fileEditOf, in every target.
+test('the file-write hook judges a manifest that OpenCode\'s write or edit names, and lets a patch through', async (t) => {
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, 'reviews'));
+  const file = path.join(dir, 'reviews', 'pr-9.json');
+  const text = (findings) => `${JSON.stringify({ pr: 9, findings }, null, 2)}\n`;
+  const hook = (tool, toolInput) => hookCall(HOOK, { input: JSON.stringify({ tool_name: tool, opencode: { version: '2.4.0' }, cwd: dir, tool_input: toolInput }), cwd: dir });
+
+  const refused = await hook('write', { path: file, content: text([finding({ disposition: 'fix_now' })]) });
+  assert.equal(refused.status, 2, 'an OpenCode write names its target in `path`');
+  assert.match(refused.stderr, /pr-9\.json F1: "fix_now", where its axes give accepted_residual/);
+  assert.equal((await hook('write', { path: file, content: text([finding()]) })).status, 0, 'the tool\'s value passes');
+  writeFileSync(file, text([finding()]));
+  assert.equal((await hook('edit', { path: 'reviews/pr-9.json', oldString: '"disposition": "accepted_residual"', newString: '"disposition": "fix_now"' })).status, 2, 'an edit is judged on the file after it, from the call\'s folder');
+  const reviews = path.join(dir, 'reviews');
+  const inReviews = (toolInput) => hookCall(HOOK, { input: JSON.stringify({ tool_name: 'edit', opencode: { version: '2.4.0' }, cwd: reviews, tool_input: toolInput }), cwd: reviews });
+  assert.equal((await inReviews({ path: 'pr-9.json', oldString: '"disposition": "accepted_residual"', newString: '"disposition": "fix_now"' })).status, 2, 'a call from inside the reviews folder may name the manifest by its name alone');
+  assert.equal((await hook('edit', { path: file, oldString: '"status": "open"', newString: '"status": "in_progress"' })).status, 0, 'a status edit runs');
+  // The first match is a finding with no disposition yet, which is not judged; only the second drifts.
+  writeFileSync(file, text([finding({ disposition: undefined }), finding({ id: 'F2' })]));
+  assert.equal((await hook('edit', { path: file, oldString: '"likelihood": "contrived"', newString: '"likelihood": "routine"' })).status, 0, 'one replacement changes only the finding not yet judged');
+  assert.equal((await hook('edit', { path: file, oldString: '"likelihood": "contrived"', newString: '"likelihood": "routine"', replaceAll: true })).status, 2, 'replaceAll is judged on every match');
+
+  // A patch shows only the lines it adds, never the file after it, so its manifest is let through, on either host.
+  const patch = `*** Begin Patch\n*** Update File: ${file}\n@@\n-    "disposition": "accepted_residual",\n+    "disposition": "fix_now",\n*** End Patch`;
+  assert.equal((await hookCall(HOOK, { input: JSON.stringify({ tool_name: 'apply_patch', cwd: dir, tool_input: { command: patch } }), cwd: dir })).status, 0, 'a Codex apply_patch');
+  assert.equal((await hook('patch', { patchText: patch })).status, 0, 'an OpenCode patch');
 });
 
 // A project whose config.json sets `review` to `review`, in a fresh folder.

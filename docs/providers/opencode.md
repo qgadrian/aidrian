@@ -165,6 +165,43 @@ The bridge finds the call's folder in its input's `workdir` when that is an abso
 calling session's folder, and in the plugin's own when that read fails. A `workdir` that is not absolute, a relative
 path or another machine's `name:path`, records nothing, since the folder it names is not known here.
 
+### Payload fields
+
+Each field a script of `hooks.json` reads from its payload, itself or through the rules it calls, and where the bridge
+takes it from on OpenCode. By the types of `@opencode/plugin@2.4.1`, a tool event carries `tool`, `sessionID`, `agent`,
+`messageID`, `id`, and `codemode`, `info` when OpenCode has the tool's, and the tool's `input`; after a call, also
+`status`, and `result` when the call completed. The idle hook, `experimental.idle`, carries `sessionID` and
+`background` alone. Today the bridge sends only the shell route's fields; a source marked later is built by a later
+pull request. None means no OpenCode hook or session read gives the field, and the checks that need it are in
+[Limits](#limits).
+
+| Field | Read by | OpenCode source |
+| --- | --- | --- |
+| `hook_event_name` | OpenCode's adapter's `detect`, which tells a hook's payload from a shell's environment | The bridge, from the route's standard event |
+| `turn_id` | Codex's adapter, as its payload mark | None |
+| `effort` | `hook-session-start.mjs`, for a subagent's effort line, through Claude Code's adapter (`subagentEffort`, which reads `effort.level`) | None: the OpenCode adapter reads no effort |
+| `session_id` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-bash-post.mjs`, `hook-write.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-post.mjs`, `hook-session-start.mjs`, `hook-prompt.mjs`, `hook-stop.mjs`, `hook-subagent-stop.mjs`, `hook-session-end.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `sessionID`, followed up its parents to the root session ([Session ids](#session-ids)) |
+| `agent_id` | `hook-agent-gates.mjs` and the guards it calls, `hook-bash.mjs` and its rules, `hook-bash-post.mjs`, `hook-agent-pre.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, `hook-session-start.mjs`, `hook-prompt.mjs`, `hook-subagent-stop.mjs`, `hook-session-end.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `sessionID`, when it is a child session's |
+| `agent_type` | `hook-agent-gates.mjs`, `hook-tracker-pre.mjs`, `hook-subagent-stop.mjs` (its delivery check and stop row), `hook-agent-post.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | None: a tool event's `agent` names the agent a session runs, OpenCode's own `build` or `plan` among them, and no agent of this plugin is installed there. A child session's call carries `agent_id` alone |
+| `cwd` | Every script but `hook-compact.mjs` | A tool event: an absolute `workdir` in the shell's input, else the session's folder from a session read. Any other hook: the root session's folder, from its session read (later) |
+| `tool_name`, `raw_tool_name` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-pre.mjs`, `hook-agent-post.mjs`, `hook-ask.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `tool`, mapped by the adapter's `hookInput`: `shell` as `Bash` today; the file tools, and an MCP tool's name from `info`, later |
+| `permission_tool_name` | `hook-agent-gates.mjs` | None: the adapter sets none, as no OpenCode tool is known to run under another tool's permission rules |
+| `sandbox_escape` | `hook-agent-gates.mjs`, through its sandbox escape guard (`lib/confine-guard.mjs`) | None: OpenCode's shell tool input asks for no sandbox escape, and the adapter maps none |
+| `tool_input.command` | `hook-bash.mjs`, `hook-bash-post.mjs`, `hook-agent-gates.mjs` and the guards it calls | The shell tool's input, which names it `command` too, so it needs no mapping. Its `workdir` is read by the bridge alone, as `cwd` |
+| A file edit's path and text | `hook-write.mjs`, `hook-markdown-wrap.mjs`, `hook-agent-gates.mjs`, each through `fileEditOf` alone | The adapter's `fileEdit`, from the `edit`, `write`, and `patch` tools' input, once a later pull request routes them |
+| An MCP tool's input | `hook-mcp-github.mjs`, `hook-tracker-pre.mjs` | The event's `input`, as the server takes it, once a later pull request routes MCP tools |
+| The input of `Agent`, `AskUserQuestion`, and `EnterWorktree` | `hook-agent-pre.mjs`, `hook-agent-post.mjs`, `hook-ask.mjs`, `hook-enter-worktree.mjs` | None: Claude Code's own tools, which OpenCode does not have |
+| `tool_response` | `hook-bash-post.mjs` (`shellOutput`), `hook-tracker-post.mjs` (`toolResponse`), `hook-agent-post.mjs` | A completed call's `result`, read through the adapter; for an agent dispatch, none |
+| `transcript_path` | `hook-agent-gates.mjs` (the Human's typed prompts, which lift a session's unattended mark), `hook-subagent-stop.mjs` (the requests a subagent's transcript copies from its parent's), `hook-prompt.mjs`, `hook-stop.mjs`, `hook-session-end.mjs`, `hook-plan-exit.mjs`, and the rules of `hook-bash.mjs` and `hook-mcp-github.mjs` that read the Human's answers or a commit's author | None: OpenCode keeps a session in its own store, which no transcript reader of this plugin reads (`transcripts: false`) |
+| `agent_transcript_path` | `hook-subagent-stop.mjs` | None, for the same reason |
+| `stop_hook_active` | `hook-stop.mjs`, `hook-subagent-stop.mjs` | The bridge's own state for each session of whether its idle route has sent the turn back (later). With no value, neither hook sends a stop back |
+| `last_assistant_message` | `hook-stop.mjs` (the announce, merge hand-back, and hand-back checks), `hook-subagent-stop.mjs` (the delivery check and the final report) | One capped session read at idle; which session call gives it is not settled yet (later) |
+| `background_tasks` | `hook-stop.mjs` (the announce, review-loop, and merge hand-back checks), `hook-subagent-stop.mjs` (the running-children check) | The idle hook's `background`, mapped in the adapter (later). Its entries name a `kind` and no standard `id`, `type`, or `status`: a `shell` entry's id is its `shellID`, a `subagent` entry's its `childSessionID`, a `codemode` entry's its `jobID`, and an `image` or `video` entry has none. The stop checks count only an entry with a string `id`, so the mapping builds one for each kind |
+| `prompt` | `hook-prompt.mjs`, for its handoff lines alone | The prompt hook's `prompt`, read only on a host with a continue route, and OpenCode declares none |
+| `source` | `hook-session-start.mjs`, for a clear alone | None: OpenCode's `session.created` event names no source such as a clear, and the value is read only on a host with a continue route |
+| `reason` | `hook-session-end.mjs`, for a clear and for the session row | None: the `session.deleted` event gives no reason, so no clear is seen there, and the session row records none |
+| `custom_instructions` | `hook-compact.mjs` | None: the compaction hook takes no instructions of the Human's, and the hook prints its checklist when the field is missing |
+
 ## Session ids
 
 - By the 2.4.0 source, every command OpenCode's shell tool runs has `OPENCODE=1` and `OPENCODE_SESSION_ID`, the
@@ -400,6 +437,18 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
   [above](#rules-for-the-other-hosts-sessions) names, and hold no session that runs on OpenCode.
 - No start lines, compaction checklist, line-length feedback, or stop checks: each must reach the model, and the
   bridge gives no hook a way to.
+- Checks that need a field no OpenCode hook gives ([Payload fields](#payload-fields)), which stay off even once the
+  prompt and stop hooks run there: the names reminder, which is all `hook-prompt.mjs` prints while OpenCode declares
+  no continue route, and reads the last reply from the transcript; the review-loop check and the merge hand-back check,
+  which read the turn from the transcript; the session-length reminder, which reads the session's cost from the
+  transcript; the subagent stop's running-children check, which tells the subagent's own tasks from the others by its
+  transcript; and the delivery check's handoff file, whose brief it reads from the subagent's transcript.
+  The announce, hand-back, and delivery checks read the last message from one session read at idle, which a later pull
+  request settles; if no such read exists, they join this list.
+- Once the Bash rules run there, a rule that needs an answer the Human gave through the question tool, such as the
+  review sign-off rule, finds none in a transcript and refuses.
+- Once the agent gates run there, they never lift a session's unattended mark when the Human types, since they read
+  the Human's prompt from the transcript.
 - No check-run record: the adapter declares no `shellRun`, and the one reader of that record, the subagent stop's
   evidence check, does not run here.
 - No transcripts and no handoff route: no transcript reader exists for OpenCode, so no cost rows or reminders that read

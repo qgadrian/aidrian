@@ -480,6 +480,54 @@ test('the plugin folder`s package.json is private, aidrian`s version, and export
   assert.equal(typeof loaded.setup, 'function');
 });
 
+// OpenCode installs the plugin folder's tracked files by Git specifier, and an ignore file there narrows what a Git or
+// npm install takes: an `.npmignore` anywhere, or a `.gitignore` outside `evals/`, where each of the two tracked eval
+// fixtures narrows its own fixture folder only, and a third there needs this list changed. A walk of the folder on disk, so
+// an ignore file not yet tracked fails too.
+const IGNORE_FIXTURES = ['evals/harness-setup-rerun/fixture/.gitignore', 'evals/product-quorum-auto-start-off/fixture/.gitignore'];
+// Skipped: the folders the repository's .gitignore names, `node_modules` anywhere and `results` below `evals/`, which no
+// install takes. The walk checks a folder before it descends, so it never reads inside one; `read` lists one folder.
+const ignored = (each) => each.split('/').includes('node_modules') || (each.startsWith('evals/') && each.split('/').includes('results'));
+function ignoreFiles(root, rel = '', read = readdirSync) {
+  const found = [];
+  for (const entry of read(path.join(root, rel), { withFileTypes: true })) {
+    const each = rel ? `${rel}/${entry.name}` : entry.name;
+    if (ignored(each)) continue;
+    if (entry.isDirectory()) found.push(...ignoreFiles(root, each, read));
+    else if (['.npmignore', '.gitignore'].includes(entry.name)) found.push(each);
+  }
+  return rel ? found : found.sort();
+}
+const narrowing = (files) => files.filter((each) => path.posix.basename(each) === '.npmignore' || !each.startsWith('evals/'));
+
+test('the plugin folder holds no .npmignore, and no .gitignore but the two eval fixtures, so a Git install takes every tracked file', () => {
+  const files = ignoreFiles(PLUGIN);
+  assert.deepEqual(narrowing(files), []);
+  assert.deepEqual(files.filter((each) => each.startsWith('evals/')), IGNORE_FIXTURES, 'a new ignore file below evals/ is added here on purpose');
+  assert.deepEqual(narrowing(['lib/.npmignore', 'evals/x/.npmignore', 'scripts/.gitignore', '.gitignore', ...IGNORE_FIXTURES]),
+    ['lib/.npmignore', 'evals/x/.npmignore', 'scripts/.gitignore', '.gitignore']);
+});
+
+// A folder the walk skips is never listed: the walk's `read` records each folder it is given.
+test('the ignore-file walk never lists a node_modules or evals results folder, or one inside them', () => {
+  const root = mkdtempSync(path.join(ROOT, 'ignore-walk-'));
+  for (const dir of ['node_modules/x', 'evals/a/results/y']) {
+    mkdirSync(path.join(root, dir), { recursive: true });
+    writeFileSync(path.join(root, dir, '.gitignore'), '');
+  }
+  mkdirSync(path.join(root, 'lib'));
+  writeFileSync(path.join(root, 'lib', '.npmignore'), '');
+  const listed = [];
+  const read = (dir, options) => {
+    listed.push(dir);
+    return readdirSync(dir, options);
+  };
+  assert.deepEqual(ignoreFiles(root, '', read), ['lib/.npmignore']);
+  const skipped = [path.join(root, 'node_modules'), path.join(root, 'evals', 'a', 'results')];
+  assert.deepEqual(listed.filter((dir) => skipped.some((each) => dir === each || dir.startsWith(`${each}${path.sep}`))), []);
+  assert.ok(listed.includes(path.join(root, 'lib')), listed.join('\n'));
+});
+
 // The OpenCode page (docs/providers/opencode.md) says which hooks run there: its Hooks table has one row for each
 // script hooks.json runs, and its yes rows are the scripts ROUTES names, so a route or a hook added without the page
 // fails here. The README's entry and the page's Limits say no guard holds an OpenCode session.
@@ -489,9 +537,13 @@ const hooksJsonScripts = () => {
   const commands = Object.values(hooks).flat().flatMap((entry) => entry.hooks.map((hook) => hook.command));
   return new Set(commands.map((command) => /scripts\/(hook-[\w-]+\.mjs)/u.exec(command)?.[1]).filter(Boolean));
 };
-// The rows of the Hooks section's table, { script, runs, verified }, by its header's column names.
+// The rows of the Hooks section's first table, { script, runs, verified }, by its header's column names. The section's
+// later tables, such as its payload fields, are not this one.
 function hookRows(page) {
-  const lines = sectionLines(page, 'Hooks').filter((line) => line.startsWith('|'));
+  const section = sectionLines(page, 'Hooks');
+  const start = section.findIndex((line) => line.startsWith('|'));
+  const end = section.findIndex((line, at) => at > start && !line.startsWith('|'));
+  const lines = section.slice(start, end === -1 ? undefined : end);
   const cells = (line) => line.slice(1, -1).split('|').map((cell) => cell.trim());
   const header = cells(lines[0]);
   assert.deepEqual(header, ['Script', 'Runs on OpenCode', 'Verified', 'Why not']);

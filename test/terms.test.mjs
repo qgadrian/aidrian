@@ -2,7 +2,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -152,6 +152,22 @@ test('addedLines reads each write tool', (t) => {
   assert.deepEqual(edit({ edits: [{ old_string: 'one', new_string: 'uno' }, { old_string: 'two', new_string: 'dos' }] }), [{ number: 1, text: 'uno' }, { number: 2, text: 'dos a' }]);
   const patch = '*** Begin Patch\n*** Add File: n.md\n+one\n*** Delete File: gone.md\n*** Update File: u.md\n*** Move to: moved.md\n@@\n+two\n*** End Patch';
   assert.deepEqual(addedLines({ tool_name: 'apply_patch', tool_input: { command: patch } }, '/').map(({ file, lines }) => [file, lines.map((l) => l.text)]), [['n.md', ['one']], ['moved.md', ['two']]]);
+});
+
+// Each host's file tools name their target in their own field, so addedLines reads it through fileEditOf: OpenCode's
+// write and edit name `path`, its patch `patchText`, and a Claude Code path starting `~/` is the home folder's.
+test('addedLines reads the target and text of every host\'s file tools', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-terms-hosts-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'f.txt'), 'one\ntwo a\n');
+  const opencode = (tool, toolInput) => addedLines({ tool_name: tool, opencode: { version: '2.4.0' }, tool_input: toolInput }, dir);
+  assert.deepEqual(opencode('write', { path: 'f.txt', content: 'one\nthree\n' }), [{ file: 'f.txt', lines: [{ number: 2, text: 'three' }], text: 'one\nthree\n', before: 'one\ntwo a\n', reliable: true }], 'a write is its content without the lines the file has');
+  assert.deepEqual(opencode('edit', { path: 'f.txt', oldString: 'two a', newString: 'two b' }).map(({ file, lines, text }) => ({ file, lines, text })), [{ file: 'f.txt', lines: [{ number: 2, text: 'two b' }], text: 'one\ntwo b\n' }], 'an edit is judged on the file after it');
+  writeFileSync(path.join(dir, 'g.txt'), 'a 1\na 2\n');
+  assert.deepEqual(opencode('edit', { path: 'g.txt', oldString: 'a', newString: 'b', replaceAll: true })[0].lines, [{ number: 1, text: 'b 1' }, { number: 2, text: 'b 2' }], 'replaceAll replaces every match');
+  const patch = '*** Begin Patch\n*** Add File: n.md\n+one\n*** End Patch';
+  assert.deepEqual(opencode('patch', { patchText: patch }).map(({ file, lines }) => [file, lines.map((l) => l.text)]), [['n.md', ['one']]]);
+  assert.deepEqual(addedLines({ tool_name: 'Write', tool_input: { file_path: '~/aidrian-terms-none/a.md', content: 'x' } }, dir).map(({ file }) => file), [path.join(homedir(), 'aidrian-terms-none/a.md')], 'a Claude Code `~/` path is the file the host writes');
 });
 
 const errorsOf = (t, rules, extra = {}) => {

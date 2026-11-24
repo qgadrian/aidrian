@@ -102,7 +102,7 @@ test('its file tools say the shape of each edit, as the schemas in the 2.4.0 bin
   assert.deepEqual(opencode.fileEditTools, ['edit', 'write', 'patch']);
   assert.deepEqual(opencode.fileEdit('write', { path: 'a.md', content: 'x' }), { shape: 'write', file: 'a.md', content: 'x', targets: ['a.md'] });
   assert.deepEqual(opencode.fileEdit('edit', { path: 'a.md', oldString: 'y', newString: 'x', replaceAll: true }), {
-    shape: 'edit', file: 'a.md', edits: [{ old_string: 'y', new_string: 'x' }], newText: 'x', replaceAll: true, targets: ['a.md'],
+    shape: 'edit', file: 'a.md', edits: [{ old_string: 'y', new_string: 'x', replace_all: true }], newText: 'x', replaceAll: true, targets: ['a.md'],
   });
   assert.equal(opencode.fileEdit('edit', { path: 'a.md', oldString: 'y', newString: 'x', replaceAll: 'yes' }).replaceAll, false, 'only true replaces all');
   assert.deepEqual(opencode.fileEdit('patch', { patchText: PATCH }), {

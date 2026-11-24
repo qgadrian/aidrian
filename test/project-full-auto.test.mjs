@@ -15,7 +15,9 @@ import { countRecordedDecisions, recordDecision } from '../plugins/aidrian/lib/p
 import { fullAutoLines } from '../plugins/aidrian/lib/project-full-auto.mjs';
 import { teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
-import { resumeWords } from '../plugins/aidrian/lib/project-run-guard.mjs';
+import { projectRunActive, resumeWords } from '../plugins/aidrian/lib/project-run-guard.mjs';
+import { runWriter } from '../plugins/aidrian/lib/project-report.mjs';
+import { drivesRun } from '../plugins/aidrian/lib/run-driver.mjs';
 import { projectId } from '../plugins/aidrian/lib/project.mjs';
 import { markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { hookCall } from './hook-call.mjs';
@@ -153,7 +155,7 @@ test('a resume rechecks under the ledger lock: a continuation the host records m
   assert.equal(fx.rows().some((row) => row.event === 'resume' || row.event === 'driver'), false, 'no halt lifted, no custody moved');
 });
 
-test('a custody move whose ledger row is never written leaves the session held, with no custody', (t) => {
+test('a custody move whose ledger row is never written leaves the session held as a driver until the run ends, with no custody', async (t) => {
   const fx = continued(t);
   const ledger = path.join(fx.state, 'runs', 'launch', 'ledger.jsonl');
   chmodSync(ledger, 0o400);
@@ -166,9 +168,16 @@ test('a custody move whose ledger row is never written leaves the session held, 
   assert.equal(readUnattendedMark(NEXT, { env: fx.env, home: fx.home })?.root, fx.dir, 'held as no Human attends it');
   assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Export format', '--record'], { session: NEXT }).err.join('\n'), /background handoff route started this session/u);
   assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0'], { session: NEXT }).err[0], /this session is not the driver of the run launch/u, 'its driver mark grants nothing');
-  // With the ledger writable, the same call moves custody.
-  assert.equal(fx.cmd(['resume', 'launch', '--custody'], { session: NEXT }).exitCode, 0);
-  assert.equal(fx.custodyRows().length, 1);
+  // The residual: held as a driver of the run until it ends, which only restricts.
+  assert.equal(drivesRun(NEXT, { env: fx.env, home: fx.home }), true, 'the driver hold stands');
+  assert.equal(runWriter({ session: NEXT, env: fx.env, home: fx.home })?.role, 'held');
+  // The real driver ends the run: the driver hold goes, and the transcript guard reads the ledger, not NEXT's mark.
+  assert.equal(fx.cmd(['end', 'launch']).exitCode, 0);
+  assert.equal(drivesRun(NEXT, { env: fx.env, home: fx.home }), false);
+  assert.equal(projectRunActive(fx.project, fx.config, { home: fx.home }), true, 'the mark still counts for the main checkout guard');
+  assert.equal(projectRunActive(fx.project, fx.config, { home: fx.home, untilEnd: true }), false, 'the ledgers alone');
+  const transcript = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'), `${DRIVER}.jsonl`);
+  assert.equal((await fx.hook(OTHER, `printf x >> ${transcript}`)).status, 0, 'transcript writes pass after the end');
 });
 
 test('a resume rechecks the session under the ledger lock: a mark filed meanwhile refuses it', (t) => {

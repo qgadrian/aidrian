@@ -488,7 +488,13 @@ test('a write through a link or a hard link to a body file is a write to it', (t
   assert.match(run(`cat > a.md <<'EOF'\n${GOOD}EOF\ncat > A.md <<'EOF'\nno sections\nEOF\ngh pr create -t x -F a.md`) ?? '', unread, 'the second write may be the first file');
   assert.equal(run(`cat > a.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F a.md`), null, 'one spelling is read as written');
   assert.equal(run(`cat > a.md <<'EOF'\n${GOOD}EOF\nmkdir -p r && echo x > r/a.md\ngh pr create -t x -F a.md`), null, 'a name in another folder is another file');
-  assert.equal(run(`cat > r\uff0fa.md <<'EOF'\n${GOOD}EOF\necho x > b/r/a.md\ngh pr create -t x -F r\uff0fa.md`), null, 'a fullwidth slash in a name is no folder');
+  mkdirSync(path.join(dir, 'r'));
+  assert.equal(run(`cat > r\uff0fa.md <<'EOF'\n${GOOD}EOF\necho x > r/a.md\ngh pr create -t x -F r\uff0fa.md`), null, 'a fullwidth slash in a name is no folder');
+  // A folder that exists is one folder however it is spelled, and two folders that exist are never one.
+  mkdirSync(path.join(dir, 'caf\u00e9'));
+  assert.equal(run(`cat > caf\u00e9/n.md <<'EOF'\n${GOOD}EOF\necho x > r/n.md\ngh pr create -t x -F caf\u00e9/n.md`), null, 'n.md in two existing folders');
+  symlinkSync('r', path.join(dir, 'also-r'));
+  assert.match(run(`cat > r/m.md <<'EOF'\n${GOOD}EOF\necho x > also-r/M.md\ngh pr create -t x -F r/m.md`) ?? '', unread, 'the same folder by a link, the name in another case');
   // So is a name with any character past ASCII against another in its folder, as a disk may fold Unicode spellings,
   // and drop ignorable characters, in ways the rule never tries to match: é composed and decomposed, ß against SS,
   // the capital ẞ against ss, a zero-width joiner.

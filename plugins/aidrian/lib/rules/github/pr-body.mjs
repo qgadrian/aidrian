@@ -314,11 +314,11 @@ export const stdinBody = ({ segment = [], heredocs = [] }) => (segment.some((eac
 const joinedIn = (folder, file) => (path.isAbsolute(file) ? file : folder === null ? null : `${folder}/${file}`);
 
 // The identity of the file the absolute path `file` names, for telling two names of one file apart, or null when it
-// cannot be told: an existing file's device and inode, so a second hard link is the same file; else the real path of
-// the part of the path that exists, as the system resolves it, each link before a `..` after it (realpathSync.native,
-// never Node's own, which drops a `..` first), a link at the end of that part, even one whose target is not there yet,
-// followed in turn, with the rest joined on, in the case it was spelled. A read that fails, or more links than
-// LINK_HOPS, gives null. Whether a disk folds case is not told from here, so two spellings of a name are neither one
+// cannot be told: an existing file's device and inode, so a second hard link is the same file; else the device and
+// inode of the deepest folder of the path that exists, as the system resolves it, each link before a `..` after it
+// (realpathSync.native, never Node's own, which drops a `..` first), a link at the end of that part, even one whose
+// target is not there yet, followed in turn, with the names below it joined on, in the case they were spelled. A read
+// that fails, or more links than LINK_HOPS, gives null. Whether a disk folds case is not told from here, so two spellings of a name are neither one
 // file nor two: a write to either makes the other unknown, and a read of one never takes the other's text (writtenText).
 export function fileIdentity(file) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
@@ -327,12 +327,10 @@ export function fileIdentity(file) {
   const rest = [];
   for (let hops = 0; hops <= LINK_HOPS; hops += 1) {
     try {
-      const real = realpathSync.native(head);
-      if (rest.length === 0) {
-        const stat = statSync(real);
-        if (!stat.isDirectory()) return `inode:${stat.dev}:${stat.ino}`;
-      }
-      return path.join(real, ...rest);
+      const stat = statSync(realpathSync.native(head));
+      if (rest.length === 0 && !stat.isDirectory()) return `inode:${stat.dev}:${stat.ino}`;
+      // The deepest folder that exists, by its own identity, so two spellings of it are one, and the names below it.
+      return [`folder:${stat.dev}:${stat.ino}`, ...rest].join('/');
     } catch (error) {
       if (!gone(error)) return null;
     }
@@ -347,7 +345,7 @@ export function fileIdentity(file) {
       continue;
     }
     const parent = path.dirname(head);
-    if (parent === head) return path.join(head, ...rest);
+    if (parent === head) return null;
     rest.unshift(path.basename(head));
     head = parent;
   }
@@ -355,11 +353,11 @@ export function fileIdentity(file) {
 }
 const LINK_HOPS = 40;
 
-// Whether two identities (fileIdentity) may be one file: the same, or, for names that are no file yet or below a
-// folder, the same part by part, each pair of parts equal, equal but for ASCII letter case, or either one not plain
-// ASCII. A disk may fold case, Unicode spellings, and ignorable characters in ways this rule never tries to match, so a
-// name with any character past ASCII may be any other in its folder; folding more than a disk does only makes a write
-// unknown, never a body read as another's.
+// Whether two identities (fileIdentity) may be one file: the same, or, for names that are no file yet, below the very
+// same existing folder, the names below it the same part by part, each pair equal, equal but for ASCII letter case, or
+// either one not plain ASCII. A disk may fold case, Unicode spellings, and ignorable characters in ways this rule never
+// tries to match, so a name with any character past ASCII may be any other at its place; folding more than a disk
+// does only makes a write unknown, never a body read as another's.
 const PLAIN_PART = /^[\x20-\x7e]*$/u;
 const partsAlias = (x, y) => x === y || !PLAIN_PART.test(x) || !PLAIN_PART.test(y) || x.toLowerCase() === y.toLowerCase();
 function mayAlias(a, b) {
@@ -367,7 +365,7 @@ function mayAlias(a, b) {
   if (a === b) return true;
   if (a.startsWith('inode:') || b.startsWith('inode:')) return false;
   const [left, right] = [a.split('/'), b.split('/')];
-  return left.length === right.length && left.every((part, i) => partsAlias(part, right[i]));
+  return left[0] === right[0] && left.length === right.length && left.every((part, i) => partsAlias(part, right[i]));
 }
 
 // What the line wrote to the file of identity `key`, from `written` (lineWrites files): { text } when it holds that

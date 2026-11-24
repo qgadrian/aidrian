@@ -271,8 +271,9 @@ What each rule matches:
   and the shell's folder known only as a `cd` joined by `&&` alone moves it, so after `cd x && true;` a relative
   redirect is one the rule cannot place, two names of one file, through a link, a `..` after one, or a second hard
   link, counting as one file, and two names not there yet as maybe one, so a write to either makes the other unknown,
-  when they differ only in ASCII letter case or either has a character past ASCII, which a disk may fold in ways the
-  rule never tries to match; a name whose file cannot be told counts as any; any
+  when they lie below the same existing folder, whatever its spelling, and each pair of the names below it is equal,
+  equal but for ASCII letter case, or holds a character past ASCII, which a disk may fold in ways the rule never tries
+  to match; two existing folders are never one, and a name whose file cannot be told counts as any; any
   command between the write and gh that is not a known reader (such as `sed -i`, a script, or a program fed code on
   stdin); and a variable a nested shell or substitution assigns, or one used inside it. Such a body is one the rule
   cannot read: gh then runs as its own command after it.

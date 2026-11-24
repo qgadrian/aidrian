@@ -11,6 +11,7 @@ import { checkDeadline, remainingMs } from './deadline.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { GUARDED_PATHS, isPolicyPath } from './project.mjs';
+import { namedFiles } from './project-trust.mjs';
 
 // The refs a push's commits are compared with, the first that git resolves: origin's default branch, as config-committed.mjs
 // originDefaultTip names it, origin/HEAD, then the plugin's default branch name.
@@ -49,42 +50,53 @@ function ownCloneProblem(folder, root, pushUrl, fold) {
 // file (isPolicyPath, with `policyFiles`, the ones the gate resolved at the start), from `overlay`, the branch head its
 // attempt started from on the base branch's copies of them (lib/project-start.mjs prepareAttempt), or null, as for an
 // attempt with none. The one change it lets through is a merge of the base (mergedProblem): each such file as git's
-// clean merge of `overlay` and the base gives it. A git call that fails refuses the push.
+// clean merge of `overlay` and the base gives it, and none that conflicted in that merge, whatever bytes HEAD holds.
+// A git call that fails refuses the push.
 function overlayProblem(folder, overlay, policyFiles) {
   if (!overlay) return null;
   const guarded = (file) => file !== '' && (GUARDED_PATHS.test(file) || isPolicyPath(file, policyFiles));
   const diff = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', overlay, 'HEAD', '--'], folder);
   if (diff.status !== 0) return `it pushes, and ${SLOW} which files its commits change from ${overlay.slice(0, 7)}, the head its attempt started from on the base branch's copies of the host config and instruction files`;
   const count = diff.stdout.split('\0').filter(guarded).length;
-  if (!count) return null;
-  const merged = mergedProblem(folder, overlay, guarded);
+  const merged = mergedProblem(folder, overlay, guarded, count > 0);
   if (merged === null) return null;
-  return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none but as git merges the base into the branch (${merged}); take those changes out of the commits, or record the result parked naming the file when the issue needs them`;
+  const why = merged.conflict ? `${namedFiles([merged.conflict])} conflicts in that merge, which a session never resolves by hand`
+    : merged.edited ? `${namedFiles([merged.edited])} differs from git's merge of the base` : merged.reason;
+  if (!count) return `it pushes a merge of the base into the branch in which ${why}, and this attempt runs on the base branch's copies of the host config and instruction files; record the result parked naming the file`;
+  return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none but as git merges the base into the branch (${why}); take those changes out of the commits, or record the result parked naming the file when the issue needs them`;
 }
 
 // Why HEAD in `folder` holds a file `guarded` names other than as git's clean merge of `overlay` with the base it holds,
 // or null when it holds every one as that merge gives it: what a session that merged origin's default branch in, and
 // edited none of them, pushes. The base is HEAD's merge base with the first of BASE_REFS git resolves, the commit such a
-// merge brought in; a file that merge cannot make cleanly, a conflict, is never git's merge. A short reason, never null,
-// when git cannot say.
+// merge brought in. When that base is past `overlay`'s own, HEAD holds a merge of a newer base, and a file that conflicted
+// in it is { conflict } whatever HEAD holds, since only a hand resolved it. A file HEAD holds otherwise is { edited },
+// read only when `changed`, some such file differs from `overlay`. { reason } when git cannot say.
 // SHORTCUT: origin's remote-tracking ref is the session's own copy, as committedProblem's is; the pull request's diff
 // against the forge's own base, which the merge gate holds for a review of these files, stands behind it.
-function mergedProblem(folder, overlay, guarded) {
+function mergedProblem(folder, overlay, guarded, changed) {
   for (const ref of BASE_REFS) {
-    const base = budgeted(['merge-base', 'HEAD', ref], folder);
-    if (base.status === null) return SLOW;
-    if (base.status !== 0) continue;
-    const merge = budgeted(['merge-tree', '--write-tree', '--no-messages', '--name-only', '-z', overlay, base.stdout.trim()], folder);
-    if (merge.status !== 0 && merge.status !== 1) return `${SLOW} how the base merges`;
+    const found = budgeted(['merge-base', 'HEAD', ref], folder);
+    if (found.status === null) return { reason: SLOW };
+    if (found.status !== 0) continue;
+    const base = found.stdout.trim();
+    // Exit 0: the base is the recorded head's own or older, so no newer base was merged in; 1: it is newer.
+    const older = budgeted(['merge-base', '--is-ancestor', base, overlay], folder);
+    if (older.status !== 0 && older.status !== 1) return { reason: `${SLOW} whether the head merged a newer base` };
+    if (older.status === 0 && !changed) return null;
+    const merge = budgeted(['merge-tree', '--write-tree', '--no-messages', '--name-only', '-z', overlay, base], folder);
+    if (merge.status !== 0 && merge.status !== 1) return { reason: `${SLOW} how the base merges` };
     const [tree, ...conflicted] = merge.stdout.split('\0').filter((each) => each !== '');
     const conflict = conflicted.find(guarded);
-    if (conflict) return `${conflict.slice(0, 120)} conflicts in that merge, which a session never resolves by hand`;
+    if (conflict) return { conflict };
+    if (!changed) return null;
     const differ = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', tree, 'HEAD', '--'], folder);
-    if (differ.status !== 0) return `${SLOW} how the head differs from the merge`;
+    if (differ.status !== 0) return { reason: `${SLOW} how the head differs from the merge` };
     const edited = differ.stdout.split('\0').find(guarded);
-    return edited ? `${edited.slice(0, 120)} differs from git's merge of the base` : null;
+    return edited ? { edited } : null;
   }
-  return 'git names no merge base with origin\'s default branch';
+  // No base to read: committedProblem refuses the push with the advice that brings one back.
+  return changed ? { reason: 'git names no merge base with origin\'s default branch' } : null;
 }
 
 // The forge's workflow folders and every folder that holds one, as `:(top,literal)` pathspecs: a holding folder, as

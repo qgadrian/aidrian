@@ -1956,7 +1956,7 @@ one action. The `why` is cleaned and capped as a result's `stop` is, and a forge
 | Merged on the forge | `done`: record the result `merged` | |
 | Closed; a base other than the default branch; a reason `team`, `local`, `checks`, `paths`, `author`, `outsider`, or `closes`; a `review` that is changes requested; a reason it does not know; a draft | `park`: record the result `pr_open` with the line as its stop | |
 | `trust` with `signoff` | `park`: record the result `parked`, with one decision for the Human's sign-off, whose first and recommended option is to leave the pull request unmerged; of class `security` when any unsigned flow is a security one (an id that holds the word `security`, or a `require` that names `agent:security-engineer`), and `product` otherwise | |
-| A conflict with the base | `merge_base`: the session fetches the base and its branch, merges the base on top of its branch as the forge has it, resolves it, and pushes with a full refspec, never with force | 2 base updates per issue, with the next row |
+| A conflict with the base | `merge_base`: the session fetches the base and its branch; when `git merge-tree --write-tree --name-only` names a host config or instruction file that would conflict, it parks naming the file and merges nothing; else it merges the base on top of its branch as the forge has it with a merge commit, resolves it, and pushes with a full refspec, never with force | 2 base updates per issue, with the next row |
 | Behind the base | `update_branch`: the forge merges the base in, or rebases under the `rebase` strategy where the branch's rules allow a push that is no fast-forward | the same 2 |
 | GitHub still computing it, a head that moved while read, or pending checks | `wait` | 3 per head |
 | The bot asked already for this head and not passed yet | `wait`: `aidrian pr await-review <n>`, with no second request | the same 3 per head |
@@ -1975,7 +1975,12 @@ facade. Each capped action is recorded in `stops.jsonl` in the drop folder of th
 driver's `wait` removes an ended attempt's folder, it keeps that file's rows in the run's `stops/<issue>.jsonl`, with
 a row that marks the attempt archived, so a new attempt resets no cap. It keeps only the action, head, pull request number, and attempt of each row. Every history file is opened without following
 a link or waiting on a FIFO, and must be a regular file of this user with one link. A history that is not, or holds a
-row the command did not write, parks. `stop-action` exits 1 when it refuses, such as for another session or a pull
+row the command did not write, parks.
+With `--catch-up`, which the first message of a later or resumed attempt asks for before any other work, it reads only the pull request:
+`done` when it merged, and `park` when it closed or targets another branch than the default.
+On a conflict it gives `merge_base`, and `wait` while the forge works it out, under the caps above; otherwise `none`.
+It reads no auto-merge answer, so a draft that conflicts gets `merge_base`, whose line then says to go on with the checks and the review on the new head.
+`stop-action` exits 1 when it refuses, such as for another session or a pull
 request that is not the issue's own: the session then records `pr_open` with that line as its stop.
 
 At the end of its loop the driver runs `aidrian project end RUN`, which writes an `end` row: an end row counts only when
@@ -2016,10 +2021,9 @@ The start row records that head as `overlay`, and `<attempt>/base-copies.txt` li
 data from the branch.
 The branch's own changes stay in its commits for the pull request's review.
 The one change to those files a push may carry is a merge of a moved base, which a later or resumed attempt makes when its pull request conflicts with it.
-The session runs `git merge origin/<base>` with a merge commit, never a rebase or a force push.
-It resolves conflicts outside the host files as ordinary work.
+The session asks `aidrian project stop-action RUN ISSUE --catch-up` first, whose `merge_base` line names the one route (below).
 The push guard lets each host file through only as git's clean merge of `overlay` and that base gives it ([agent gates](hooks.md#agent-gates)).
-Before the merge, `git merge-tree --write-tree --name-only` names the files that would conflict, and one of the host files parks the issue, naming it.
+It refuses a host file that conflicted in a merge of a newer base, whatever bytes the session kept for it.
 The start keeps each base copy out of the clone's sparse-checkout definition, with `sparse.expectFilesOutsideOfPatterns` set.
 So the merge writes git's merge of each to the index alone, the base copy stays on disk, and none needs a refresh.
 Without that, git refuses any merge that changes a base copy, as a local change it would overwrite.

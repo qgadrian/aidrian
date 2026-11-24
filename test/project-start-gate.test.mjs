@@ -1459,8 +1459,7 @@ test('a parked issue whose branch changed an instruction file goes on on that br
   assert.ok(prompt.includes('This clone holds the base branch\'s copies of them instead'), prompt);
   // The one way it catches up with a base its pull request conflicts with, through the push guard's merge exception.
   assert.ok(prompt.includes('A push that changes one of them is refused, but for each as git itself merges the base into the branch.'), prompt);
-  assert.ok(prompt.includes('catch up first: `git fetch origin`, then `git merge origin/<base>` with a merge commit, never a rebase or a force push.'), prompt);
-  assert.ok(prompt.includes('lists the files that would conflict: when one is a host config or instruction file, record the result parked, naming the file, and merge nothing.'), prompt);
+  assert.ok(prompt.includes('When this issue has a pull request, run `aidrian project stop-action launch ENG-1 --catch-up` before any other work, and do what its one line says'), prompt);
   assert.doesNotMatch(prompt, /close pull request|superseded/u);
 });
 
@@ -1594,7 +1593,7 @@ test('a resumed issue whose branch the forge no longer has is cut fresh from the
   assert.equal(started.exitCode, 0, started.err.join('\n'));
   assert.equal(started.out.find((line) => line.startsWith('branch: ')), 'branch: feat/eng-1-export');
   assert.equal(fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim(), fx.git('rev-parse', 'refs/remotes/origin/main').trim(), 'cut from the base tip');
-  assert.doesNotMatch(fx.claude.starts()[0].args.at(-1), /An earlier run of this project|open no second one|catch up first/u);
+  assert.doesNotMatch(fx.claude.starts()[0].args.at(-1), /An earlier run of this project|open no second one|--catch-up/u);
 });
 
 test('a resumed issue whose earlier run recorded no head starts as a first attempt does: a branch on the forge parks it unreconciled', (t) => {

@@ -1837,7 +1837,7 @@ test('project is a command with its forms, and init refuses a session the host n
   assert.ok(lines.includes('  aidrian project report RUN [--json] [--project DIR]'));
   assert.ok(lines.includes('  aidrian project recorded RUN ISSUE [--project DIR]'));
   assert.ok(lines.includes('  aidrian project preflight [RUN] [--project DIR]'));
-  assert.ok(lines.includes('  aidrian project stop-action RUN ISSUE [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project stop-action RUN ISSUE [--catch-up] [--project DIR]'));
   assert.ok(lines.includes('  aidrian project confine RUN ISSUE'));
   assert.ok(lines.includes('  aidrian project decision ISSUE --heading TEXT [--record] [--project DIR]'));
   assert.ok(lines.includes('  aidrian project decision ISSUE --forget [--project DIR]'));

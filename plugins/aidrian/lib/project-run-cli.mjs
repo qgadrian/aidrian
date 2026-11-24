@@ -18,7 +18,7 @@
 //   aidrian project report RUN [--json]    # the driver: the status, label, and comment the run owes each settled issue
 //   aidrian project recorded RUN ISSUE     # the driver: closes the report on ISSUE once it wrote it (lib/project-report.mjs)
 //   aidrian project preflight [RUN]        # every check a start would refuse or halt on, before init (lib/project-preflight.mjs)
-//   aidrian project stop-action RUN ISSUE  # the one action for an issue whose auto-merge stopped (lib/project-stops.mjs)
+//   aidrian project stop-action RUN ISSUE [--catch-up]  # the one action for an issue whose auto-merge stopped, or at an attempt's start (lib/project-stops.mjs)
 //   aidrian project confine RUN ISSUE      # the issue's own session, as its first call, proves its sandbox holds
 //   aidrian project decision ISSUE --heading TEXT [--record]  # an attended session: the section of ISSUE's description
 //                                          # under that heading and its sha256, and with --record its entry in this
@@ -56,7 +56,7 @@ import { usageLines } from './usage.mjs';
 
 const USAGE = 'init RUN --file PATH [--check] [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
   'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--custody] [--project DIR] | end RUN [--project DIR] | ' +
-  'report RUN [--json] [--project DIR] | recorded RUN ISSUE [--project DIR] | preflight [RUN] [--project DIR] | stop-action RUN ISSUE [--project DIR] | confine RUN ISSUE | decision ISSUE --heading TEXT [--record] [--project DIR] | decision ISSUE --forget [--project DIR]';
+  'report RUN [--json] [--project DIR] | recorded RUN ISSUE [--project DIR] | preflight [RUN] [--project DIR] | stop-action RUN ISSUE [--catch-up] [--project DIR] | confine RUN ISSUE | decision ISSUE --heading TEXT [--record] [--project DIR] | decision ISSUE --forget [--project DIR]';
 // The actions the command takes; lib/project-run-guard.mjs holds a rule for each (test/project-start-guard.test.mjs).
 export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff', 'resume', 'end', 'report', 'recorded', 'preflight', 'stop-action', 'confine', 'decision'];
 // The positionals each action takes after its name.
@@ -69,7 +69,7 @@ export const commands = {
       'start, for the run\'s driver, starts the issue\'s own session in the background in a fresh clone of its own, under the caps; wait waits for an issue\'s session to end or record its result; result records it, from that session only; handoff records the brief the driver\'s background continuation takes the run on with; ' +
       'resume, from an attended session only, lifts the run\'s halt, such as a failed start proof\'s or a usage limit\'s, or takes custody of a run whose driver\'s sessions ended, and with --custody takes custody only, which under projectRun.fullAuto the host\'s continuation of the driver takes with no person; end, for the run\'s driver at the end of its loop, records the run\'s end, which releases the driver\'s hold; ' +
       'report, for the driver, prints the status, label, and comment the run owes each settled issue, and recorded closes one once written; preflight runs every check a start would refuse or halt on, before init; ' +
-      'stop-action, for the issue\'s own session only, prints the one action for an issue whose pull request did not merge, takes the forge\'s part of it, and records it against its cap; ' +
+      'stop-action, for the issue\'s own session only, prints the one action for an issue whose pull request did not merge, takes the forge\'s part of it, and records it against its cap, and with --catch-up, at an attempt\'s start, the one way it merges a base its pull request conflicts with; ' +
       'confine, the first call of an issue\'s session on a host that proves its sandbox per start, tries from inside the sandbox what it must refuse, and hands the verdict to the start; ' +
       'decision, from an attended session only, prints the section of an issue\'s description under a heading, from this session\'s recorded tracker read, and its sha256, and with --record writes it to this machine\'s recorded-decision store; --forget removes it',
     run: async (args) => print(await projectCommand(args)),
@@ -119,6 +119,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
       ...(action === 'wait' ? { 'max-wait': word } : {}),
       ...(action === 'decision' ? { heading: word, record: { type: 'boolean' }, forget: { type: 'boolean' } } : {}),
       ...(action === 'resume' ? { custody: { type: 'boolean' } } : {}),
+      ...(action === 'stop-action' ? { 'catch-up': { type: 'boolean' } } : {}),
     },
   });
   // preflight takes the run it checks for, once init has made it, or none before.
@@ -163,7 +164,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   if (action === 'handoff') return recordHandoff({ ...gate, brief: path.resolve(cwd, second) });
   if (action === 'resume') return resumeRun({ ...gate, custody: values.custody === true, spawn });
   if (action === 'end') return endRun({ ...gate, spawn });
-  if (action === 'stop-action') return stopAction({ ...gate, key: second, ...(autoMerge ? { autoMerge } : {}) });
+  if (action === 'stop-action') return stopAction({ ...gate, key: second, catchUp: values['catch-up'] === true, ...(autoMerge ? { autoMerge } : {}) });
   if (action === 'wait') {
     const given = values['max-wait'] ?? String(WAIT_DEFAULT);
     if (!/^\d{1,4}$/u.test(given) || Number(given) > WAIT_CEILING) return fail(`project wait takes --max-wait as whole seconds from 0 to ${WAIT_CEILING}`);

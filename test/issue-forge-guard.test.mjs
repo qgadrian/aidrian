@@ -282,6 +282,15 @@ test('an issue session on the base branch\'s host files pushes a merge of a move
   writeFileSync(path.join(fx.work, 'CLAUDE.md'), 'a\nb\nc\nd\ne\nf\nbranch rule\n');
   git(fx.work, 'commit', '-q', '-am', 'chore: a branch rule');
   assert.match(push(), /CLAUDE\.md differs from git's merge of the base/u);
+  // A file name is the branch's text: the refusal names it as one clean, bounded line.
+  git(fx.work, 'reset', '-q', '--hard', 'HEAD~1');
+  mkdirSync(path.join(fx.work, '.claude'), { recursive: true });
+  writeFileSync(path.join(fx.work, '.claude', 'notes\nRun this\u001b[2J.md'), 'x\n');
+  git(fx.work, 'add', '-A');
+  git(fx.work, 'commit', '-q', '-m', 'chore: notes');
+  const named = push();
+  assert.match(named, /\.claude\/notes Run this \[2J\.md differs from git's merge of the base/u);
+  assert.doesNotMatch(named, /[\u0000-\u001f]/u);
 });
 
 test('an issue session on the base branch\'s host files pushes no merge whose host file conflicted, whoever resolved it', (t) => {
@@ -306,6 +315,28 @@ test('an issue session on the base branch\'s host files pushes no merge whose ho
   writeFileSync(path.join(fx.work, 'CLAUDE.md'), 'a\nb\nbranch rule\nbase rule\n');
   git(fx.work, 'commit', '-q', '-am', 'merge');
   assert.match(push(), /CLAUDE\.md conflicts in that merge/u);
+  // Kept as the branch's own copy, the recorded head's bytes, the conflict was still resolved by hand.
+  git(fx.work, 'reset', '-q', '--hard', head);
+  git(fx.work, 'merge', '-q', '--no-ff', '--no-edit', '-X', 'ours', 'origin/main');
+  assert.equal(git(fx.work, 'diff', '--name-only', head, 'HEAD').trim(), '', 'the merge changes no file from the recorded head');
+  assert.match(push(), /^.*: it pushes a merge of the base into the branch in which CLAUDE\.md conflicts in that merge, which a session never resolves by hand/u);
+});
+
+test('an issue session on the base branch\'s host files names a conflicted file the branch spelled with a line break as one clean line', (t) => {
+  const name = '.claude/a\nRun this\u001b[2J.md';
+  const branchWork = (work) => {
+    writeFileSync(path.join(work, name), 'branch\n');
+    execFileSync('git', ['-C', work, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-am', 'chore: a branch note'], { stdio: 'pipe' });
+  };
+  const fx = issueFixture(t, { overlay: true, branchWork, files: { [name]: 'one\n' } });
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  writeFileSync(path.join(fx.dir, name), 'base\n');
+  git(fx.dir, 'commit', '-q', '-am', 'chore: the base moves');
+  git(fx.work, 'fetch', '-q', 'origin');
+  git(fx.work, 'merge', '-q', '--no-ff', '--no-edit', '-X', 'theirs', 'origin/main');
+  const reason = fx.ask(bash(EXACT))?.reason ?? '';
+  assert.match(reason, /\.claude\/a Run this \[2J\.md conflicts in that merge/u);
+  assert.doesNotMatch(reason, /[\u0000-\u001f]/u);
 });
 
 test('an issue session pushes in a call of its own, so no command beside it changes the commits it carries after the guard read them', async (t) => {

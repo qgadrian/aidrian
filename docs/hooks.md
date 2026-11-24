@@ -1470,7 +1470,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - each task worktree `aidrian worktree new` made in the session, so an orchestrator that started in one worktree
     dispatches an editing subagent to another it made: the command records the worktree's real path for the session its
     caller's host names (verified on Claude Code, whose `CLAUDE_CODE_SESSION_ID` a subagent's shell shares with its main
-    session; on Codex it is `CODEX_THREAD_ID`, and a grant holds only where that is the hook payload's session id), as
+    session; on Codex it is `CODEX_SESSION_ID`, the root session's id that a subagent's shell shares and the hook
+    payload carries, read from Codex's source and not live), as
     `worktree-<session id>.<hash>.json` in the continuation store the hook opens for the session: the store of the
     project at its unattended mark's root, under that project's config, so neither a worktree whose own config moves
     `state.dir` nor another project of the same repository, as in a monorepo, changes where it goes; a session with no

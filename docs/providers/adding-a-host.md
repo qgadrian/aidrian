@@ -157,12 +157,16 @@ the command's `status: "created"` result where the host's response holds the cal
 the payload's session id; a host added without that fixture fails it. The hook reads that output only through the
 host's `shellOutput`: a host whose adapter gives none records no worktree.
 
-Why the hook and not `aidrian worktree new` itself: the command would file its row under the session id its shell's
-environment names, and on Codex that id is not the hook's. Codex gives a shell call `CODEX_THREAD_ID`, the thread's own
-id, and its hooks `session_id`, the identity the root thread shares with every thread it starts, which equals the
-root thread's id ([Codex](codex.md#session-ids)): in a subagent's shell the two differ, so its row would land where no
-snapshot of the session reads. The hook files the row where the pull request ledger files its own, on Claude Code,
-Codex, and OpenCode alike.
+Two records, two writers. The PostToolUse hook writes the snapshot link in `links.jsonl`, the row this section
+describes. `aidrian worktree new` itself writes a different record, the continuation-store record that worktree grants
+read, under the session id its shell's environment names. The hook files the link under the payload's `session_id`
+whatever the shell names, where the pull request ledger files its own, on Claude Code, Codex, and OpenCode alike, so
+the link never depends on the shell's id. The grant record does: a host's adapter must make the shell's id the hook
+payload's `session_id` in a subagent's shell too, or the record lands under an id the worktree grant hook never looks
+up, and the subagent's worktree gets no grant. Codex gives a shell call `CODEX_THREAD_ID`, the thread's own id, which
+differs in a subagent's thread, and `CODEX_SESSION_ID`, the root session's id its hooks carry as `session_id`
+([Codex](codex.md#session-ids)): its adapter reads the second. A host whose shell names only a thread's own id would
+file a subagent's grant record under that thread, where the grant hook does not read.
 
 ### What else a new host has to check by hand
 

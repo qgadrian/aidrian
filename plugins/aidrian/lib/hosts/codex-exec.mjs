@@ -63,7 +63,7 @@ const PROCESS_ID = /^pid-([1-9][0-9]{0,9})-([0-9a-f]{16})$/u;
 // to-do list, a web search, a message, or reasoning is none.
 const TOOLS = new Set(['command_execution', 'file_change', 'mcp_tool_call']);
 // The variables a Codex session sets for what it runs; the new session gets its own, never the driver's.
-const OWN_VARS = ['CODEX_THREAD_ID'];
+const OWN_VARS = ['CODEX_SESSION_ID', 'CODEX_THREAD_ID'];
 const NO_CODEX = '`codex` is not on PATH, in an absolute folder';
 // The process table read the same in every environment: its start time in English, in UTC.
 const PS_ENV = () => ({ ...process.env, LC_ALL: 'C', TZ: 'UTC' });

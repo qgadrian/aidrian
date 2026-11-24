@@ -80,6 +80,10 @@ Documentation rules:
 - Keep knowledge docs normative and concise.
 - Prefer linking to a deeper source rather than duplicating large amounts of detail in multiple places.
 - Do not document speculative future behavior as current truth.
+- Describe the present, not the past: when the change removed or replaced a thing, delete its text or rewrite the
+  passage to what holds now, rather than keeping a "retired" or "formerly" section about it, since a reader takes every
+  section as current and git and the ADRs keep the history. Keep a past fact only when a reader acts on it now, such as
+  a migration step. ADRs, changelogs, and release notes record history by design: leave theirs.
 - Do not create faux-authoritative architecture maps or AST-derived docs.
 
 Workflow:

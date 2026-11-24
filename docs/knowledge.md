@@ -117,8 +117,11 @@ the project's agent wins when it fits the task or has the same name as the plugi
 ## Commands
 
 `aidrian-knowledge` shows what an agent would read, and drafts indexes.
-In Claude Code it is on the PATH while the plugin is enabled. Elsewhere, run it by its path; the start hook prints that path.
-Where each host installed it: [Claude Code](providers/claude-code.md#running-aidrian), [Codex](providers/codex.md#running-aidrian).
+In Claude Code it is on the PATH while the plugin is enabled, and the OpenCode bridge puts it on the PATH of a local
+shell, by the 2.4.0 source ([Limits](providers/opencode.md#limits)).
+Elsewhere, run it by its path; the start hook prints that path.
+Where each host installed it: [Claude Code](providers/claude-code.md#running-aidrian), [Codex](providers/codex.md#running-aidrian),
+[OpenCode](providers/opencode.md#running-aidrian).
 The examples below match the docs of [`examples/consumer`](../examples/consumer).
 
 ```sh

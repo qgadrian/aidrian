@@ -39,7 +39,7 @@ Order of the rows, so the first row is the first thing to fix:
 4. Likelihood: routine, plausible, contrived.
 5. Otherwise the agent's own order.
 
-A `drop_unless_cited` finding whose summary cites no project rule is counted in the line under the table instead of listed.
+A `drop_unless_cited` finding is counted in the line under the table instead of listed: one that cites a project rule is `fix_now`.
 Leave that line out when the count is 0.
 Without an agent id, the Follow-up section says: "No agent id: run the skill again to ask more."
 

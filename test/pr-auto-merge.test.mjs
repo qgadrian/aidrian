@@ -479,12 +479,13 @@ test('review: a listed file that is a dot path, a host instruction file, a guard
     assert.match(line ?? '', OFF, file);
     assert.match(line, new RegExp(`it changes ${named(file)}, ${pattern}`, 'u'), file);
   };
-  for (const file of ['.github/prompts/a.prompt.md', '.kiro/steering/a.md', '.changeset/a.md', '.opencode/a.md', 'docs/.md']) {
+  for (const file of ['.github/prompts/a.prompt.md', '.kiro/steering/a.md', '.changeset/a.md', '.vscode/a.md', 'docs/.md']) {
     refused(file, 'whose path has a folder or file name that starts with "\\.", which tools and AI hosts read as settings');
   }
   // Every host's instruction file is on GUARDED_PATHS (issue #256): the paths check refuses it first, and with
   // includeGuardedPaths on, this route still does.
-  for (const file of ['GEMINI.md', 'docs/GEMINI.md', 'AGENTS.override.md', 'sub/AGENTS.override.md', 'CLAUDE.local.md', 'AGENT.md', 'QWEN.md', 'WARP.md', 'CRUSH.md', 'CONVENTIONS.md', 'sub/conventions.md', '.github/copilot-instructions.md', 'packages/x/.cursor/rules/a.md', '.cursorrules']) {
+  for (const file of ['GEMINI.md', 'docs/GEMINI.md', 'AGENTS.override.md', 'sub/AGENTS.override.md', 'CLAUDE.local.md', 'AGENT.md', 'QWEN.md', 'WARP.md', 'CRUSH.md', 'CONVENTIONS.md', 'sub/conventions.md', '.github/copilot-instructions.md', 'packages/x/.cursor/rules/a.md', '.cursorrules',
+    '.opencode/a.md', 'packages/x/.opencode/plugins/a.js', 'opencode.jsonc', 'packages/x/opencode.json']) {
     assert.deepEqual(reasonOf(t, r, { files: everything(), view: changing('README.md', file) }), [1, 'paths'], file);
     refused(file, 'which instructs AI sessions', everything({ includeGuardedPaths: true }));
   }

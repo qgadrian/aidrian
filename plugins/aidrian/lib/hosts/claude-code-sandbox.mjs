@@ -191,9 +191,11 @@ const browserProfiles = (home) => BROWSER_PROFILES.map((each) => path.join(home,
 // its hooks, and its MCP servers, so they reach the sandboxed commands alone, through the SessionStart hook
 // (writeEnvFile). `localBinding`, the base branch's projectRun.localBinding, lets sandboxed commands bind local ports:
 // on macOS on every interface, with inbound connections, and reach every service on the machine's loopback; on Linux
-// the host keeps them in a network namespace of their own, so it changes nothing there. Scalars passed with --settings win over the user's settings; lists merge
+// the host keeps them in a network namespace of their own, so it changes nothing there. `hostFiles`, { paths, globs },
+// are the other hosts' files from the clone's root, at the root and as `**` globs, whose writes are denied beside
+// Claude Code's own, which are always there: a caller that passes none loses nothing. Scalars passed with --settings win over the user's settings; lists merge
 // with them, which accessProblem checks.
-export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [], guarded = [], stores = [], localBinding = false }) {
+export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [], guarded = [], stores = [], localBinding = false, hostFiles = { paths: [], globs: [] } }) {
   const credentials = [...new Set([...credentialStores(home, config), ...stores, ...browserProfiles(home)])];
   const unread = main ? [...credentials, main] : credentials;
   const reopen = main && mainGit && within(main, mainGit) ? { allowRead: [mainGit] } : {};
@@ -211,7 +213,8 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
         allowWrite: [...new Set([...grants, ...temp])],
         denyWrite: [
           path.join(work, '.git'), path.join(git, 'config'), path.join(git, 'hooks'), path.join(git, 'commondir'), path.join(git, 'config.worktree'),
-          ...PROTECTED_PATHS.map((each) => path.join(work, each)), ...nestedGlobs(work), ...guarded,
+          ...[...new Set([...PROTECTED_PATHS, ...hostFiles.paths])].map((each) => path.join(work, each)), ...nestedGlobs(work),
+          ...hostFiles.globs.map((glob) => `${work}/${glob}`), ...guarded,
           ...KEPT_FOLDERS.map((name) => path.join(path.dirname(git), name, ATTEMPT_KEEP)),
         ],
         denyRead: unread,
@@ -234,9 +237,11 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
 
 // The credential stores the sandbox denies reading for the user whose home is `home`, under `env`, which the per-start
 // sandbox proof tries to read from inside the session (lib/project-confine.mjs): the proof reads the ones there.
-export const confineReads = ({ env, home }) => {
+// `stores` are the other hosts' logins and service state the gate hides too (lib/hosts/index.mjs credentialStores),
+// read before the browser profiles, as sandboxSettings lists them.
+export const confineReads = ({ env, home, stores = [] }) => {
   const user = home ?? homedir();
-  return [...new Set([...credentialStores(user, configFolder(env, user)), ...npmGlobalConfigs(env), ...browserProfiles(user)])];
+  return [...new Set([...credentialStores(user, configFolder(env, user)), ...npmGlobalConfigs(env), ...stores, ...browserProfiles(user)])];
 };
 
 // The npm config files a sandboxed command could read a registry token from beside ~/.npmrc: the user and global config

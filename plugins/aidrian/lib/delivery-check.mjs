@@ -48,7 +48,10 @@ export function checkDelivery(input, project, places = {}) {
   const { owed: unwritten, refused, rejected } = briefHandoffs(input, project, places);
   // A handoff the session may not write (issueOwner) is no file the agent owes, nor one it delivered: a claim of it
   // neither sends the agent back nor reads as a delivered file on the stop row.
-  const claims = claimedPaths(input.last_assistant_message);
+  // Nor is a path the brief's rejected marker names: the hook told the agent to write nothing there and to name the
+  // path in its report, so a report that does is never sent back, filed, or logged as a delivered file for it.
+  const markedPaths = new Set(rejected.filter(({ value }) => value).map(({ value }) => resolveClaim(cwd, value)));
+  const claims = claimedPaths(input.last_assistant_message).filter((claim) => !markedPaths.has(resolveClaim(cwd, claim)));
   const since = handoffSince(input);
   if (!claims.length) return { claims, missing: [], unwritten, rejected, since };
   // A claim that exists nowhere but resolves, from the hook's folder or a root a claim is read from (deliveryRoots), to

@@ -55,7 +55,8 @@ const defaultRead = () => undefined;
 // lib/knowledge-cli.mjs), `aidrian pr` (lib/pr.mjs), the gate, the review that writes its record, every hook that
 // hooks.json runs, and every module and data file those load (test/auto-merge-guard.test.mjs walks them and fails on a
 // load it cannot follow); the agents that review, as generated and as sources; the skills with every reference and step
-// file they tell a session to read; the Codex install; and the plugin manifests. The modules behind the other `aidrian`
+// file they tell a session to read; the Codex install; the OpenCode bridge (opencode/) and the package manifest that
+// names it (package.json, at the plugin folder's top only); and the plugin manifests. The modules behind the other `aidrian`
 // subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded, except project-run.mjs,
 // project-run-cli.mjs, project-run-gate.mjs, project-run-guard.mjs, project-recheck.mjs, and project-stops.mjs: they decide
 // which session may start a project run, which issue it starts, which session records its result, when a halt lifts,
@@ -69,25 +70,26 @@ const GUARDED_LIB = [
   'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git',
   'git-push', 'glob-links', 'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io', 'issue-forge-guard', 'issue-push-checkout',
   'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose', 'markdown-sections', 'markdown-wrap',
-  'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-diff', 'pr-product-feedback',
-  'pr-resolve', 'project', 'project-confine', 'project-decision', 'project-decision-store', 'project-full-auto', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-recheck', 'project-registries', 'project-report',
+  'model-prices', 'names', 'package-runner', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-diff', 'pr-product-feedback',
+  'pr-ready-wait', 'pr-resolve', 'project', 'project-confine', 'project-decision', 'project-decision-store', 'project-full-auto', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-recheck', 'project-registries', 'project-report',
   'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-token', 'project-trust', 'push-preflight',
   'remotes', 'resume-tokens', 'review-gate', 'run-driver', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins',
   'session-prs', 'session-rows', 'session-start-gate', 'shell-init', 'shell-lex', 'solo', 'stop-announce', 'stop-handback', 'stop-history', 'stop-review-loop',
   'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'transcript-guard', 'unattended-mark', 'unattended-shell',
   'unattended-write', 'usage', 'worktree',
 ].join('|');
-const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
+const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|opencode/|package\.json$|(?:\.claude-plugin/)?plugin\.json$`;
 // The instruction files AI hosts read by name, at any depth and in any case: AGENTS.md, CLAUDE.md, and GEMINI.md, with
 // any infix, such as AGENTS.override.md, which Codex reads first, or CLAUDE.local.md; and AGENT.md, QWEN.md, WARP.md,
 // CRUSH.md, and CONVENTIONS.md.
 const HOST_NAMES = String.raw`(?:AGENTS?|CLAUDE|GEMINI|QWEN|WARP|CRUSH|CONVENTIONS)(?:\.[^/]+)?\.md`;
-// The instruction files and folders AI hosts read by path: Cursor's, Cline's, and Windsurf's at any depth, since they
-// read nested ones; GitHub Copilot's at the repository root or the project root.
-const HOST_PATHS = String.raw`(?:^|/)(?:\.cursor|\.windsurf|\.clinerules)(?:/|$)|(?:^|/)(?:\.cursorrules|\.windsurfrules)$` +
+// The instruction files and folders AI hosts read by path: Cursor's, Cline's, Windsurf's, and OpenCode's, its `.agents`
+// skills folder included, at any depth, since they read nested ones or may; GitHub Copilot's at the repository root or
+// the project root.
+const HOST_PATHS = String.raw`(?:^|/)(?:\.cursor|\.windsurf|\.clinerules|\.opencode|\.agents)(?:/|$)|(?:^|/)(?:\.cursorrules|\.windsurfrules)$` +
   String.raw`|^\.github/copilot-instructions\.md$|^\.github/instructions(?:/|$)`;
 export const GUARDED_PATHS = new RegExp(
-  String.raw`(?:^|/)(?:${HOST_NAMES}|SKILL\.md|CODEOWNERS|\.aidrian\.json|\.aidrian\.local\.json|\.banned-terms\.local)$` +
+  String.raw`(?:^|/)(?:${HOST_NAMES}|SKILL\.md|CODEOWNERS|opencode\.jsonc?|\.aidrian\.json|\.aidrian\.local\.json|\.banned-terms\.local)$` +
     `|${HOST_PATHS}` +
     // A `.claude` folder at any depth, which Claude Code reads in a nested project too; the others at the root.
     String.raw`|(?:^|/)\.claude(?:/|$)|^(?:\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +

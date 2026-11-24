@@ -59,7 +59,11 @@ export function recordPass(project, args) {
 }
 
 function writePass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, findingsText = null, remote = null, reading = undefined }) {
-  const itemized = findingsText === null ? null : parseFindings(findingsText);
+  const state = current(project, pr, repo, remote, reading);
+  // The record's round count, as the step reads an exec reviewer's findings (stages.mjs): a quiet push keeps it. A head
+  // whose round no step opened yet reads the round before, and the step that opens it reads the pass again
+  // (findings.mjs rereadAt).
+  const itemized = findingsText === null ? null : parseFindings(findingsText, [], { round: state.rounds?.length || undefined });
   if (itemized) ({ findings, fixed, accepted } = itemized);
   if (fixed + accepted > findings) throw new Error('--fixed and --accepted together cannot exceed --findings');
   const verdicts = verdictsText === null ? [] : parseVerdicts(verdictsText);
@@ -70,11 +74,10 @@ function writePass(project, { pr, repo, pass, head, reviewer, findings, fixed, a
     const strings = (list) => (Array.isArray(list) ? list.filter((each) => typeof each === 'string').slice(0, 50) : []);
     if (raw && !Array.isArray(raw)) report = { contracts: strings(raw.contracts), cross_notes: strings(raw.cross_notes) };
   } catch {}
-  const state = current(project, pr, repo, remote, reading);
   const before = state.passes[pass];
   const note = isObject(state.dispatched?.[pass]) ? state.dispatched[pass] : null;
   const files = note?.files ?? null;
-  const result = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null), ...(before?.ruled ? { ruled: before.ruled } : {}), ...(before?.carried ? { carried: before.carried } : {}) };
+  const result = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null), ...(itemized ? { itemized: true } : {}), ...(before?.ruled ? { ruled: before.ruled } : {}), ...(before?.carried ? { carried: before.carried } : {}) };
   // Ids come from the one function that writes them (findings.mjs recordFindings). Attest mints one only into a record a
   // step has floored, for a pass that step dispatched: elsewhere a finding keeps the id of its match in the pass's prior
   // list, and the rest wait for the next step. A returned id counts only among the ids the dispatch note says the pass's

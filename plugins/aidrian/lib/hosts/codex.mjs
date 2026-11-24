@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { attachLine, findProcesses, localBindingRisk, logLimit, processEnded, sessionNote, startProject, stopLine, stopProcess } from './codex-exec.mjs';
+import { patchEdit } from './patch.mjs';
 import { responseObjects } from './response.mjs';
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -51,22 +52,6 @@ const githubTools = {
   // catalog a Codex 0.167.0 install cached on 2026-11-06; the connector's own update_pull_request takes no draft.
   mcp__codex_apps_github__mark_pull_request_ready_for_review: { as: 'mcp__github__update_pull_request_draft_state', repo: 'repository_full_name', fields: { pullNumber: 'pr_number' }, fixed: { draft: false } },
 };
-
-// A `*** ... File:` line opens a section of the patch, and `*** Move to:` renames the one above.
-const PATCH_TARGET = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gmu;
-
-function patchFiles(text) {
-  const files = [];
-  for (const line of text.split(/\r?\n/u)) {
-    const header = /^\*\*\* (?:Add|Update) File: (.+)$/u.exec(line);
-    const move = /^\*\*\* Move to: (.+)$/u.exec(line);
-    if (header) files.push({ file: header[1].trim(), added: [] });
-    else if (move && files.at(-1)?.file) files.at(-1).file = move[1].trim();
-    else if (/^\*\*\* /u.test(line)) files.push({ file: null, added: [] });
-    else if (line.startsWith('+') && files.at(-1)?.file) files.at(-1).added.push(line.slice(1));
-  }
-  return files.filter(({ file }) => file);
-}
 
 // Its command line that starts or resumes a session, which lib/handoff-guard.mjs hostSessionStartDenial refuses a
 // subagent and a session the background handoff route started. `codex` with no subcommand, `exec`, `resume`, `cloud`,
@@ -274,6 +259,9 @@ export default {
   detect: ({ env, input }) => typeof input?.turn_id === 'string'
     || (Boolean(env.PLUGIN_ROOT) && env.PLUGIN_ROOT === env.CLAUDE_PLUGIN_ROOT)
     || (Boolean(env.CODEX_THREAD_ID) && env.CLAUDECODE !== '1'),
+  // The payload's own mark, which detectHost asks every host for before any environment is read: `turn_id`, which no
+  // other host's hook payload holds.
+  payloadMark: (input) => typeof input?.turn_id === 'string',
   sessionId: (env) => env.CODEX_THREAD_ID || null,
   agentName: () => null,
   effort: () => null,
@@ -294,7 +282,7 @@ export default {
   },
   // What a tool reaches a hook's matcher as, before any mapping.
   rawToolName(standard) {
-    if (RAW_TOOLS[standard]) return RAW_TOOLS[standard];
+    if (Object.hasOwn(RAW_TOOLS, standard)) return RAW_TOOLS[standard];
     const match = STANDARD_APP_TOOL.exec(standard);
     return match ? `mcp__codex_apps__${match[1]}__${match[2]}` : standard;
   },
@@ -327,12 +315,18 @@ export default {
   },
   fileEditTools: ['apply_patch'],
   fileEdit(_tool, given) {
-    const text = String(given.command ?? given.input ?? '');
-    return { shape: 'patch', text, files: patchFiles(text), targets: [...text.matchAll(PATCH_TARGET)].map((match) => match[1].trim()) };
+    return patchEdit(String(given.command ?? given.input ?? ''));
   },
   projectFolders: {},
   // No host file of a checkout is protected beyond what every host's are: its config is the user's, in CODEX_HOME.
   protectedPaths: [],
+  // Its login, auth.json in CODEX_HOME and in the default ~/.codex, which a confined session of another host never
+  // reads (lib/hosts/index.mjs credentialStores).
+  credentialStores: ({ env = {}, home }) => {
+    const user = typeof home === 'string' && path.isAbsolute(home) ? home : homedir();
+    const named = typeof env.CODEX_HOME === 'string' && path.isAbsolute(env.CODEX_HOME) ? [env.CODEX_HOME] : [];
+    return [...new Set([...named, path.join(user, '.codex')].map((each) => path.join(each, 'auth.json')))];
+  },
   // The instruction files and folder it loads from the folders between the project root and the folder a session
   // starts in, its own user folder, CODEX_HOME, and `globalNames`, the files there it loads as the user's own guidance
   // for every session: AGENTS.override.md, else AGENTS.md (developers.openai.com/codex/guides/agents-md). A project run

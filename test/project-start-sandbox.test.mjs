@@ -20,10 +20,11 @@ import { forgeDomains, forgeTokenVars } from '../plugins/aidrian/lib/forges/inde
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { BEACON_WAIT, IDENTIFY_CAP, startBackground, startProject } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { accessProblem, BROWSER_PROFILES, cloneProblem, configFolder, confineReads, CREDENTIAL_PATHS, limitContinueProblem, mcpConfig, nestedProtected, npmGlobalConfigs, PLACEHOLDERS, PROTECTED_PATHS, sandboxSettings, secretVars, userSettingsProblem, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
-import { nestedProtected as anyHostNested, protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { nestedProtected as anyHostNested, credentialStores, nestedGlobs, protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { ATTEMPT_ENV, cacheVars, ENV_NAME, isRegistries, REGISTRIES, REGISTRY_NAMES, registryHosts } from '../plugins/aidrian/lib/project-registries.mjs';
+import { CONFINE_PLAN } from '../plugins/aidrian/lib/project-confine.mjs';
 import { placeHolders, SHELL_VARS } from '../plugins/aidrian/lib/project-start.mjs';
 import { PENDING_AGE } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, OWN_PLUGIN, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
@@ -54,6 +55,10 @@ const sshFetch = (fx) => {
   return { ...fx.env, GIT_SSH_COMMAND: script };
 };
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+// OpenCode's host files at a clone's root, and the denyWrite entries of every other host's files under the clone `work`.
+const OPENCODE_FILES = ['.opencode', 'opencode.json', 'opencode.jsonc', '.agents'];
+const OTHER_GLOBS = ['**/.opencode', '**/.opencode/**', '**/opencode.json', '**/opencode.jsonc', '**/.agents', '**/.agents/**'];
+const otherDenied = (work) => [...OPENCODE_FILES, ...OTHER_GLOBS].map((each) => `${work}/${each}`);
 
 // Folders for the adapter's start outside the gate: a clone, its git folder, and a granted folder, by their real paths,
 // laid out as a run's attempt is, `<root>/runs/launch/attempts/ENG-1.1/`.
@@ -75,7 +80,7 @@ test('Claude Code declares an unverified, confined project start, and the host f
   assert.equal(cap.placeholders, PLACEHOLDERS);
   assert.match(cap.sessionNote({ work: '/w', branch: 'feat/x' }), /Claude Code's sandbox, in \/w.*work only in that folder.*git push origin HEAD:refs\/heads\/feat\/x.*--head feat\/x.*starts no other session/su);
   assert.deepEqual(PROTECTED_PATHS, ['.claude/settings.json', '.claude/settings.local.json', '.claude/skills', '.claude/agents', '.claude/commands', '.claude/hooks', '.claude/workflows', '.claude/scheduled_tasks.json', '.mcp.json']);
-  assert.deepEqual(protectedPaths(), PROTECTED_PATHS, 'the union of every host\'s; Codex protects none of its own');
+  assert.deepEqual(protectedPaths(), [...PROTECTED_PATHS, ...OPENCODE_FILES], 'the union of every host\'s: Claude Code\'s, then OpenCode\'s; Codex protects none of its own');
   for (const each of ['pkg/.claude/skills/x/SKILL.md', 'a/b/.claude/agents/x.md', 'a/.CLAUDE/Commands/x.md', 'a/.claude/settings.local.json', 'a/.claude/settings.json',
     'a/.claude/hooks/x.sh', 'a/.claude/workflows/x', 'docs/skill.md', 'a/.claude', '.claude/skills']) {
     assert.equal(nestedProtected(each.split('/')), true, each);
@@ -130,6 +135,37 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     worktree: { bgIsolation: 'none' },
     autoContinueAtUsageLimit: true,
   });
+  // The other hosts' files: their root entries after Claude Code's, their globs after Claude Code's own, in that order,
+  // and nothing else moved.
+  const united = sandboxSettings({
+    work: '/s/w', git: '/s/g', grants: ['/s/g', '/s/d', '/st/plans'], domains: ['github.com', 'api.github.com'], temp: ['/private/tmp', '/s/d'], home,
+    config: '/cfg', platform: 'linux', main: '/m', mainGit: '/m/.git', secrets: ['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY'], stores: ['/usr/local/etc/npmrc'],
+    hostFiles: { paths: [...PROTECTED_PATHS, ...OPENCODE_FILES], globs: nestedGlobs() },
+  });
+  assert.deepEqual(united.sandbox.filesystem.denyWrite, [
+    '/s/w/.git', '/s/g/config', '/s/g/hooks', '/s/g/commondir', '/s/g/config.worktree', ...PROTECTED_PATHS.map((each) => `/s/w/${each}`), ...OPENCODE_FILES.map((each) => `/s/w/${each}`),
+    ...nested, '/s/w/**/.claude/settings*.json', '/s/w/**/SKILL.md', ...OTHER_GLOBS.map((glob) => `/s/w/${glob}`), '/s/drop/.keep-attempt', '/s/cache/.keep-attempt',
+  ]);
+  const without = (value) => ({ ...value, sandbox: { ...value.sandbox, filesystem: { ...value.sandbox.filesystem, denyWrite: null } } });
+  assert.deepEqual(without(united), without(settings), 'nothing but denyWrite moves');
+  // The other hosts' logins and service state ride on `stores`: after npm's global config, before the browser
+  // profiles, in denyRead and in the Read denies, and nothing else moves.
+  const hostStores = credentialStores({ env: {}, home });
+  const hidden = sandboxSettings({
+    work: '/s/w', git: '/s/g', grants: ['/s/g', '/s/d', '/st/plans'], domains: ['github.com', 'api.github.com'], temp: ['/private/tmp', '/s/d'], home,
+    config: '/cfg', platform: 'linux', main: '/m', mainGit: '/m/.git', secrets: ['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY'], stores: ['/usr/local/etc/npmrc', ...hostStores],
+  });
+  const npm = stores.indexOf('/usr/local/etc/npmrc');
+  const hiddenUnread = [...stores.slice(0, npm + 1), ...hostStores, ...stores.slice(npm + 1), '/m'];
+  assert.deepEqual(hidden.sandbox.filesystem.denyRead, hiddenUnread);
+  assert.deepEqual(hidden.permissions.deny, hiddenUnread.flatMap((each) => [`Read(/${each})`, `Read(/${each}/**)`]));
+  const unreadAside = (value) => ({ ...value, permissions: null, sandbox: { ...value.sandbox, filesystem: { ...value.sandbox.filesystem, denyRead: null } } });
+  assert.deepEqual(unreadAside(hidden), unreadAside(settings), 'nothing but the unread stores moves');
+  for (const each of [path.join(home, '.codex', 'auth.json'), path.join(home, '.local', 'share', 'opencode'), path.join(home, '.config', 'opencode')]) assert.ok(hostStores.includes(each), each);
+  // The proof reads them as the sandbox lists them: before the browser profiles, so none is pushed out by one.
+  const proofReads = confineReads({ env: { PATH: '' }, home, stores: hostStores });
+  const firstBrowser = proofReads.indexOf(path.join(home, BROWSER_PROFILES[0]));
+  for (const each of hostStores) assert.ok(proofReads.indexOf(each) >= 0 && proofReads.indexOf(each) < firstBrowser, each);
   assert.equal(settings.sandbox.excludedCommands, undefined);
   assert.equal(settings.sandbox.network.allowUnixSockets, undefined);
   assert.ok(!settings.sandbox.filesystem.allowWrite.some((each) => each.endsWith('dispatch-log.jsonl')));
@@ -269,6 +305,14 @@ test('a start whose beacon never comes stops the session and names the proof; on
     [{ git, grants: [git], domains: [] }, /are not host names/u],
     [{ git, grants: [git], domains: ['github.com'], main: 'relative' }, /the main checkout the gate names is not an absolute path/u],
     [{ git, grants: [git], domains: ['github.com'], main: path.join(root, 'gone') }, /the main checkout the gate names cannot be resolved/u],
+    ...[
+      { paths: '.opencode', globs: [] }, { paths: [], globs: null }, { paths: [] }, { paths: [''], globs: [] }, { paths: ['/etc/opencode.json'], globs: [] },
+      { paths: [], globs: ['../**/.opencode'] }, { paths: ['a/../../x'], globs: [] }, { paths: ['a\\..\\x'], globs: [] }, { paths: ['.opencode\n'], globs: [] },
+      { paths: [], globs: ['**/x\u0007'] }, { paths: [7], globs: [] }, 'files',
+    ].map((hostFiles) => [{ git, grants: [git], domains: ['github.com'], hostFiles }, /a host file the gate denies the session is not a relative path of plain text inside its clone/u]),
+    ...['/x/auth.json', ['relative/auth.json'], [''], ['/x/../etc/passwd'], ['/x/a\n'], [7], {}].map((hostStores) => [
+      { git, grants: [git], domains: ['github.com'], hostStores }, /a host's login or service state the gate hides from the session is not an absolute path of plain text/u,
+    ]),
     [undefined, /named no sandbox/u],
   ]) {
     const fresh = fakeClaude({ dir: fx.dir });
@@ -336,6 +380,13 @@ test('a start on Claude Code works in a fresh clone with a drop and its placehol
   for (const file of ['.claude/settings.json', '.claude/settings.local.json', '.mcp.json']) assert.equal(readFileSync(path.join(work(fx), file), 'utf8'), '{}\n', file);
   for (const folder of ['skills', 'agents', 'commands', 'hooks', 'workflows']) assert.ok(lstatSync(path.join(work(fx), '.claude', folder)).isDirectory(), folder);
   assert.throws(() => lstatSync(path.join(work(fx), '.claude/scheduled_tasks.json')), /ENOENT/u, 'no scheduled tasks file');
+  // The other hosts' root files too, each file excluded beside Claude Code's, so none shows as a change.
+  assert.deepEqual(readdirSync(path.join(work(fx), '.opencode')), [], 'an empty .opencode folder');
+  assert.deepEqual(readdirSync(path.join(work(fx), '.agents')), [], 'an empty .agents folder');
+  for (const file of ['opencode.json', 'opencode.jsonc']) assert.equal(readFileSync(path.join(work(fx), file), 'utf8'), '{}\n', file);
+  const excluded = readFileSync(path.join(git, 'info', 'exclude'), 'utf8').split('\n');
+  for (const line of ['/.claude/settings.json', '/.mcp.json', '/opencode.json', '/opencode.jsonc']) assert.ok(excluded.includes(line), line);
+  assert.ok(!excluded.some((line) => /\.agents/u.test(line)), 'an empty folder git never shows needs no exclude line');
   // A commondir that names the git folder itself, which git reads as no other folder, so the denial holds it by path.
   assert.equal(readFileSync(path.join(git, 'commondir'), 'utf8'), GIT_PLACEHOLDERS.commondir);
   assert.equal(GIT_PLACEHOLDERS.commondir, '.\n');
@@ -346,6 +397,46 @@ test('a start on Claude Code works in a fresh clone with a drop and its placehol
   const tracked = runFixture(t, { files: { '.claude/settings.json': '{"permissions":{}}' } });
   assert.equal(tracked.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   assert.equal(readFileSync(path.join(work(tracked), '.claude/settings.json'), 'utf8'), '{"permissions":{}}');
+  // So is a tracked opencode.json, with no exclude line of its own.
+  const own = runFixture(t, { files: { 'opencode.json': '{"plugin":[]}\n' } });
+  assert.equal(own.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  assert.equal(readFileSync(path.join(work(own), 'opencode.json'), 'utf8'), '{"plugin":[]}\n');
+  const ownExcluded = readFileSync(path.join(path.dirname(work(own)), 'git', 'info', 'exclude'), 'utf8').split('\n');
+  assert.ok(!ownExcluded.includes('/opencode.json') && ownExcluded.includes('/opencode.jsonc'), 'only the file the clone lacked');
+  assert.equal(own.git('-C', work(own), 'status', '--porcelain', '--untracked-files=all'), '');
+  // And a tracked .agents folder's file, as a Codex marketplace is.
+  const market = runFixture(t, { files: { '.agents/plugins/marketplace.json': '{"plugins":[]}\n' } });
+  assert.equal(market.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  assert.equal(readFileSync(path.join(work(market), '.agents/plugins/marketplace.json'), 'utf8'), '{"plugins":[]}\n');
+  assert.equal(market.git('-C', work(market), 'status', '--porcelain', '--untracked-files=all'), '');
+});
+
+test('a clone that tracks another host\'s root file as a link is refused at start, and nothing is written through the link', (t) => {
+  // The folder links to a folder, the config file to a file: the placeholder would write {} through either.
+  for (const [name, target] of [['.opencode', 'shared'], ['opencode.jsonc', 'shared/keep.md'], ['.agents', 'shared']]) {
+    const fx = runFixture(t, { files: { 'shared/keep.md': 'x\n' }, links: { [name]: target } });
+    const result = fx.cmd(['start', 'launch', 'ENG-1']);
+    assert.equal(result.exitCode, 1, name);
+    assert.match([...result.out, ...result.err].join('\n'), new RegExp(`holds ${escaped(name)}, a link, where its placeholder ${escaped(name)} goes.*replace the link with the folder`, 'u'), name);
+    assert.deepEqual(fx.claude.starts(), [], `${name}: no claude --bg`);
+    assert.deepEqual(readdirSync(path.join(work(fx), 'shared')), ['keep.md'], `${name}: the link's target folder is untouched`);
+    assert.equal(readFileSync(path.join(work(fx), 'shared', 'keep.md'), 'utf8'), 'x\n', `${name}: the link's target file is untouched`);
+  }
+});
+
+test('a clone whose index holds a link at another host\'s file below its root is refused at start, and nothing is written through the link', (t) => {
+  for (const [name, target] of [['pkg/.opencode', '../shared'], ['pkg/opencode.json', '../shared/keep.md'], ['a/b/.OpenCode', '../../shared']]) {
+    const fx = runFixture(t, { files: { 'shared/keep.md': 'x\n' }, links: { [name]: target } });
+    const result = fx.cmd(['start', 'launch', 'ENG-1']);
+    assert.equal(result.exitCode, 1, name);
+    assert.match([...result.out, ...result.err].join('\n'), new RegExp(`holds ${escaped(name)}, a link, where a host loads its files from any depth.*replace the link with the folder`, 'u'), name);
+    assert.deepEqual(fx.claude.starts(), [], `${name}: no claude --bg`);
+    assert.deepEqual(readdirSync(path.join(work(fx), 'shared')), ['keep.md'], `${name}: the link's target folder is untouched`);
+    assert.equal(readFileSync(path.join(work(fx), 'shared', 'keep.md'), 'utf8'), 'x\n', `${name}: the link's target file is untouched`);
+  }
+  // A plain folder of that name, and a link elsewhere, start as before.
+  const plain = runFixture(t, { files: { 'pkg/.opencode/keep.md': 'x\n', 'shared/keep.md': 'x\n' }, links: { 'pkg/docs': '../shared' } });
+  assert.equal(plain.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
 });
 
 test('projectRun.registries is a closed list of ecosystems, each to the fixed hosts its official clients install from', (t) => {
@@ -418,10 +509,27 @@ test('a start on Claude Code reaches the registries both reads of the default br
   const forge = forgeDomains({ host: 'github.com' });
   const listed = { allow: true, unverifiedHosts: true, registries: ['npm', 'pypi'] };
   const fx = runFixture(t, { projectRun: listed });
+  // Another host's login, which the per-start proof must find unreadable from inside the session.
+  const login = path.join(fx.home, '.codex', 'auth.json');
+  mkdirSync(path.dirname(login), { recursive: true });
+  writeFileSync(login, '{}');
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   const attempt = path.dirname(work(fx));
+  const proved = JSON.parse(readFileSync(path.join(attempt, CONFINE_PLAN), 'utf8'));
+  assert.ok(proved.reads.some((each) => each.path === login), 'the proof tries to read the other host\'s login');
   const cache = path.join(attempt, 'cache');
   const { text, value: settings } = settingsOf(fx);
+  // Every host's files under the clone are denied too: the gate passes their union.
+  for (const each of otherDenied(realpathSync(work(fx)))) assert.ok(settings.sandbox.filesystem.denyWrite.includes(each), each);
+  // And every host's logins and service state go unread, by a sandboxed command and by Read.
+  const stores = credentialStores({ env: fx.env, home: fx.home });
+  for (const each of [path.join(fx.home, '.codex', 'auth.json'), path.join(fx.home, '.local', 'share', 'opencode'), path.join(fx.home, '.local', 'state', 'opencode'), path.join(fx.home, '.config', 'opencode')]) {
+    assert.ok(stores.includes(each), each);
+  }
+  for (const each of stores) {
+    assert.ok(settings.sandbox.filesystem.denyRead.includes(each), each);
+    assert.ok(settings.permissions.deny.includes(`Read(/${each})`), each);
+  }
   assert.deepEqual(settings.sandbox.network.allowedDomains, [...forge, ...REGISTRIES.npm, ...REGISTRIES.pypi]);
   assert.equal(settings.sandbox.network.strictAllowlist, true);
   assert.deepEqual(Object.keys(settings.env ?? {}), ['AIDRIAN_START_CLAIM'], 'no settings env but the start\'s claim, since the host\'s hooks and MCP servers get it');

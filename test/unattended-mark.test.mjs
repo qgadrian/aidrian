@@ -145,7 +145,11 @@ test('a marked session is held from a folder outside its project, and in another
     cwd, encoding: 'utf8',
   });
   const refused = [
-    ['claude -p "go on"', /starts or resumes a Claude Code session outside the handoff gate/u],
+    ['claude -p "go on"', /starts or resumes a session of Claude Code outside the handoff gate/u],
+    // A word that names a property every object has, before the start, reads as any other program.
+    ['constructor x; claude -p hi', /starts or resumes a session of Claude Code outside the handoff gate/u],
+    ['npx constructor; claude -p hi', /starts or resumes a session of Claude Code outside the handoff gate/u],
+    ['toString; npx __proto__ x; codex exec hi', /starts or resumes a session of Codex outside the handoff gate/u],
     ['XDG_STATE_HOME=/tmp/elsewhere aidrian handoff continue b.md', /with XDG_STATE_HOME set or unset by the command itself/u],
     ['env -u XDG_STATE_HOME aidrian handoff continue b.md', /with XDG_STATE_HOME set or unset by the command itself/u],
     [`echo '{"handoff":{"background":"on"}}' > ${dir}/.aidrian.local.json`, /sets handoff\.background in \.aidrian\.local\.json/u],
@@ -156,8 +160,14 @@ test('a marked session is held from a folder outside its project, and in another
     [`mv ${marks} ${outside}/kept`, /the unattended marks/u],
     [`touch -t 200001010000 ${marks}/cafe0002.json`, /the unattended marks/u],
     ['cd "$X" && rm -rf unattended', /may change the unattended marks/u],
+    // OpenCode's background service, which starts a session no guard holds.
+    ['curl -u opencode:pw http://127.0.0.1:49374/api/session', /local service starts a session no guard holds/u],
+    // A variable that names a property every object has expands to nothing the guard reads, so it neither hides the
+    // service's store nor stops a later guard of the chain from refusing.
+    ['echo $constructor; cat ~/.local/state/opencode/service.json', /local service starts a session no guard holds/u],
+    [`echo \${toString}; rm ${marks}/${full}.json`, /the unattended marks/u],
   ];
-  const allowed = ['ls', 'claude agents --json', `rm -f ${outside}/x`, 'echo hi > note.txt', 'aidrian handoff continue b.md'];
+  const allowed = ['ls', 'claude agents --json', `rm -f ${outside}/x`, 'echo hi > note.txt', 'aidrian handoff continue b.md', 'curl -s http://localhost:3000'];
   for (const session of [full, short]) {
     for (const [command, reason] of refused) {
       const result = await run(session, command);
@@ -170,6 +180,7 @@ test('a marked session is held from a folder outside its project, and in another
     assert.equal((await run(session, `rm ${store}/from-${full}.json`, { cwd: other })).status, 2, `${session}: the marked project's store from another project`);
     assert.equal((await run(session, `echo '{"handoff":{"background":"on"}}' > ${dir}/.aidrian.local.json`, { cwd: other })).status, 2, `${session}: a switch from another project`);
     assert.equal((await run(session, 'claude -p x', { cwd: other })).status, 2, `${session}: a start from another project`);
+    assert.equal((await run(session, 'cat ~/.local/state/opencode/service.json', { cwd: other })).status, 2, `${session}: OpenCode's service password, in a project`);
     assert.equal((await run(session, `rm -f ${other}/src/app.js`, { cwd: other })).status, 0, session);
   }
   assert.equal((await run(gone, 'claude -p x')).status, 2, 'a mark whose project is gone');
@@ -197,7 +208,7 @@ test('while the gate starts a session, every session the host had not listed and
   });
   const refused = [
     [`echo '{"handoff":{"background":"on"}}' > ${dir}/.aidrian.local.json`, /sets handoff\.background in \.aidrian\.local\.json/u],
-    ['claude --bg "go on"', /starts or resumes a Claude Code session outside the handoff gate/u],
+    ['claude --bg "go on"', /starts or resumes a session of Claude Code outside the handoff gate/u],
     [`rm ${pending}`, /the unattended marks/u],
   ];
   for (const [command, reason] of refused) {

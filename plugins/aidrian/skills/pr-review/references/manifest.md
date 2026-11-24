@@ -23,6 +23,7 @@ The `pr-review` skill writes the rounds and the findings; the `pr-review-fix` sk
       "line": 42,
       "summary": "A failed save is reported to the user as a success.",
       "next_step": "Return the error to the caller, and test the failure path.",
+      "cites": null,
       "disposition": "fix_now",
       "status": "open",
       "raised_in": 1,
@@ -44,6 +45,7 @@ The `pr-review` skill writes the rounds and the findings; the `pr-review-fix` sk
 | `severity`, `likelihood`, `affects`, `cost` | The agent's axes, as it gave them. A missing `cost` means `bounded`. |
 | `file`, `line` | Where it is; `line` is the first line, `null` for a whole file. |
 | `summary`, `next_step` | The agent's words. |
+| `cites` | The written project rule or documented anti-pattern the finding cites, as `<doc>#<section>`, or `null`. It is the `--cites` of `aidrian pr disposition`, and turns a `drop_unless_cited` into `fix_now`. |
 | `disposition` | The output of `aidrian pr disposition` for the axes. Never set by hand: the file-write hook refuses a write that sets another, and `aidrian pr disposition --manifest <file>` checks the file. |
 | `raised_in` | The round that raised it. |
 | `commit`, `attempts`, `note` | Fix progress: the commit that fixed it, the fix passes so far, and why a fix is blocked. |
@@ -54,7 +56,7 @@ The `pr-review` skill writes the rounds and the findings; the `pr-review-fix` sk
 | --- | --- | --- |
 | `open` | `pr-review` | Raised and not fixed. |
 | `disputed` | `pr-review` | Two agents disagree; waits for the user. |
-| `pre_existing` | `pr-review` | Real, but the pull request did not introduce it. Reported, not fixed here. |
+| `pre_existing` | `pr-review` | Real, but the pull request did not introduce it. Reported, not fixed here. Under config.json `review.fixSmallGaps`, one whose cost is `trivial` stays `open`. |
 | `in_progress` | `pr-review-fix` | A fix was dispatched. |
 | `fixed` | `pr-review-fix` | The fix is committed and waits for the next round. |
 | `blocked` | `pr-review-fix` | Two passes did not fix it, or the fix needs a decision; `note` says which. |

@@ -362,14 +362,18 @@ test('a copy, move, or link into a folder names the file it makes there: by the 
   assert.deepEqual(at('rsync -a -e ./sh a rsync://x/module/d/'), [], 'nor is a daemon URL');
   assert.deepEqual(at('rsync -a -e ./sh a [::1]:/repo/d/'), ['d', 'd/a'], 'a bracketed IPv6 host');
   assert.deepEqual(at('rsync -a -e ./sh a user@[::1]:/repo/d/'), ['d', 'd/a'], 'and a user at one');
-  // ssh and rsh, by their basename and first word, reach another machine; any other program may be a shim.
+  // A bare ssh or rsh, or one in a system program folder, reaches another machine; any other program may be a shim,
+  // one named ssh by a path included.
   for (const command of ['rsync -a -e ssh a x:/repo/d/', 'rsync -a -e "ssh -p 2222" a x:/repo/d/', 'rsync -a -e /usr/bin/ssh a x:/repo/d/',
+    'rsync -a -e /opt/homebrew/bin/ssh a x:/repo/d/',
     'rsync -a --rsh=rsh a x:/repo/d/', 'rsync -a --rsh "ssh -i key" a x:/repo/d/', 'RSYNC_RSH=ssh rsync -a a x:/repo/d/', 'env RSYNC_RSH="ssh -q" rsync -a a x:/repo/d/',
     'RSYNC_RSH=./sh rsync -a -e ssh a x:/repo/d/']) {
     assert.deepEqual(at(command), [], command);
   }
   for (const command of ['rsync -a -e ./bin/ssh-shim a x:/repo/d/', 'rsync -a -e "sh -c" a x:/repo/d/', 'rsync -a -essh2 a x:/repo/d/', 'RSYNC_RSH=ssh rsync -a -e ./sh a x:/repo/d/',
-    'rsync -a -e "$RSH" a x:/repo/d/']) {
+    'rsync -a -e "$RSH" a x:/repo/d/', 'rsync -a -e ./ssh a x:/repo/d/', 'rsync -a -e bin/ssh a x:/repo/d/', 'rsync -a -e /tmp/w/ssh a x:/repo/d/',
+    'rsync -a -e ../ssh a x:/repo/d/', 'rsync -a -e ~/ssh a x:/repo/d/', 'rsync -a --rsh=./rsh a x:/repo/d/', 'RSYNC_RSH=./ssh rsync -a a x:/repo/d/',
+    'env RSYNC_RSH=./ssh rsync -a a x:/repo/d/', 'rsync -a -e "./ssh -p 22" a x:/repo/d/']) {
     assert.deepEqual(at(command), ['d', 'd/a'], command);
   }
   // As today: no folder by the text, and none on the disk.

@@ -353,7 +353,8 @@ The residuals, each with its reason:
   that names its sources by a glob, is judged by its destination alone, in a temporary folder and at a worktree's root,
   with the reach of a program's own write.
 - An rsync destination spelled `host:path` is judged by its path part only when the remote shell the call names, by
-  `-e`, `--rsh`, or an `RSYNC_RSH=` it sets itself, is a program other than plain `ssh` or `rsh`, such as `./sh`;
+  `-e`, `--rsh`, or an `RSYNC_RSH=` it sets itself, may run here: anything but a bare `ssh` or `rsh`, or one by its
+  absolute path in a system program folder such as `/usr/bin`, so `./sh` and `./ssh` are judged;
   one exported in an earlier step or inherited, a shim on `PATH` named `ssh`, or an `ssh` or `rsh` that reaches this
   machine, as `-e ssh localhost:<path>`, writes there unjudged, with the reach of a program's own write. So does the
   program `scp -S` or `sftp -S` runs in place of `ssh`, since neither is read as a writer.

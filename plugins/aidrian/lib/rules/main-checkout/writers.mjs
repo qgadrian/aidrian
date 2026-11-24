@@ -72,17 +72,21 @@ const REMOTE = /^[^/]*:/u;
 // A single-colon remote operand, `host:path`, `user@host:path`, or a bracketed IPv6 host, `[::1]:path`: a remote shell
 // starts the other side, never a daemon, as for `host::module` and `rsync://host/module`.
 const SHELL_REMOTE = /^(?!rsync:\/\/)(?:[^/:]*|(?:[^/:@[]*@)?\[[^\]/]*\]):(?!:)/u;
-// The remote shells that reach another machine. Any other program the call names, such as `./sh`, may be a shim that
-// runs the other side here, so a single-colon destination's path part is then a local one. Accepted residual: ssh or
-// rsh to this machine, as `-e ssh localhost:<path>`, writes here unseen.
+// The remote shells that reach another machine: a bare ssh or rsh, or one by its absolute path in a system program
+// folder. Any other program the call names, such as `./sh`, or a shim named ssh by any other path, as `./ssh`,
+// `bin/ssh`, or `~/ssh`, may run the other side here, so a single-colon destination's path part is then a local one.
+// Accepted residuals: a shim on PATH named ssh, and ssh or rsh to this machine, as `-e ssh localhost:<path>`, write
+// here unseen.
 const REMOTE_SHELLS = new Set(['ssh', 'rsh']);
+const SYSTEM_PROGRAMS = new Set(['/usr/bin', '/bin', '/usr/local/bin', '/opt/homebrew/bin']);
+const isRemoteShell = (word) => REMOTE_SHELLS.has(word) || (path.isAbsolute(word) && SYSTEM_PROGRAMS.has(path.dirname(word)) && REMOTE_SHELLS.has(path.basename(word)));
 // Whether the remote shell the call names may run the other side here: its program word, the first word of the last
 // `-e`, `--rsh`, or `--rsh=` value, or else of an RSYNC_RSH the call itself sets (assignsVariable), as a prefix
-// assignment or `env` does, is not plain ssh or rsh by its basename. One built at run time may be anything.
+// assignment or `env` does, is not a remote shell (isRemoteShell). One built at run time may be anything.
 function shellMayBeLocal(rsh, invocation) {
   const value = rsh ?? (assignsVariable(invocation, 'RSYNC_RSH') ? invocation.environment.findLast((change) => change.name === 'RSYNC_RSH')?.value : null);
   if (!value) return false;
-  return value.dynamic === true || !REMOTE_SHELLS.has(path.basename(value.text.trim().split(/\s+/u)[0]));
+  return value.dynamic === true || !isRemoteShell(value.text.trim().split(/\s+/u)[0]);
 }
 // The path part of a remote operand, `.` when it names none, as `host:` lands in the folder the other side starts in.
 const remotePart = (token) => ({ ...token, text: token.text.slice(SHELL_REMOTE.exec(token.text)[0].length) || '.' });
@@ -191,7 +195,8 @@ function copyJoined(program, operands, directory, parents) {
 // `rsync -a pkg/dir new` makes new/dir whether or not new is there. The price is a rare extra refusal of a file synced
 // to a new name, as `rsync -a pkg/x.md new.md` also names new.md/x.md. A source spelled remote lands by its path part,
 // `host:/x/y` as `<into>/y`, since an `-e` shim can make it local; a remote destination makes no local name, unless
-// the call names a remote shell, when written() hands it here by its path part.
+// the remote shell the call names may run here (anything but ssh or rsh, bare or in a system program folder), when
+// written() hands it here by its path part.
 // Without -R a source with a closing slash copies its contents, the stated residual below; with -R it makes its kept
 // path, which GNU rsync starts after a `/./` marker and openrsync does not, so a marked source names both.
 function syncJoined(operands, relative) {

@@ -466,10 +466,12 @@ What each rule matches:
   `rsync` does so for each source with no closing slash, or every source under `-R`, since one with it copies its
   contents, a source spelled `host:path` by its path part, since an `-e` shim can make it local, a single-colon
   destination (`host:path`, `user@host:path`, or `[::1]:path`) likewise when the remote shell the call names
-  (`-e`, `--rsh`, or an `RSYNC_RSH=` it sets itself, as a prefix or through `env`) is a program other than plain `ssh`
-  or `rsh`, by the basename of its first word, such as `./sh`, with the names it makes there; under `ssh` or `rsh`,
+  (`-e`, `--rsh`, or an `RSYNC_RSH=` it sets itself, as a prefix or through `env`) may run here: its first word is
+  anything but a bare `ssh` or `rsh`, or one by its absolute path in `/usr/bin`, `/bin`, `/usr/local/bin`, or
+  `/opt/homebrew/bin`, such as `./sh` or `./ssh`, with the names it makes there; under such an `ssh` or `rsh`,
   with none named, or as `host::module` or `rsync://host/module`, a remote destination writes nothing here, and an
-  `RSYNC_RSH` exported earlier or inherited, or an `ssh` or `rsh` that reaches this machine, is not read
+  `RSYNC_RSH` exported earlier or inherited, a shim on `PATH` named `ssh`, or an `ssh` or `rsh` that reaches this
+  machine, is not read
   ([OpenCode residuals](providers/opencode.md#rules-for-the-other-hosts-sessions)); and a `/./` marker by
   the path with and without the part before it, as GNU rsync and openrsync differ, whatever the destination is, since
   rsync never renames a folder source (so `rsync pkg/x.md new.md` also names `new.md/x.md`);

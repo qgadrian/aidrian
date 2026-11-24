@@ -884,8 +884,9 @@ test('a copy, move, or link into a folder is judged by the name it makes there, 
     // rsync -R and cp --parents make the source's relative path there; a remote-spelled source lands by its last part.
     [`rsync -aR .claude/settings.json ${wt}/`, later], [`cp --parents .claude/settings.json ${wt}/`, later],
     ['rsync -aR p/.opencode/plugins/x.js $TMPDIR/w/', temp], [`rsync -a -e ./sh x:/abs/.opencode ${path.join(fx.temp, 'w')}/`, temp],
-    // Under a remote shell the call names, a single-colon destination is local by its path part.
-    [`rsync -a -e ./sh notes.md x:${wt}/.claude/settings.json`, later], [`rsync -aR -e ./sh .claude/settings.json x:${wt}/`, later],
+    // When the remote shell the call names may run here (anything but ssh or rsh, bare or in a system program folder),
+    // a single-colon destination is local by its path part, a shim named ssh by a path included.
+    [`rsync -a -e ./sh notes.md x:${wt}/.claude/settings.json`, later], [`rsync -a -e ./ssh notes.md x:${wt}/.claude/settings.json`, later], [`rsync -aR -e ./sh .claude/settings.json x:${wt}/`, later],
     [`RSYNC_RSH=./sh rsync -a pkg/opencode.json x:${x}/`, temp], [`rsync -a --rsh=./sh pkg/.opencode x:$TMPDIR/x/`, temp],
   ];
   for (const [command, reason] of refused) assert.match(ask(bash(command))?.reason ?? '', reason, command);

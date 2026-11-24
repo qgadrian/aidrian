@@ -105,6 +105,10 @@ A host is set up here when the check runs under it, when its `hookTrust` answers
 or when its optional `capabilities.setUp({ env, root })` answers true; `root` is the project's root.
 That probe reads only the host's config files, found through the variables that locate them, and no host-detection
 variable, so its answer does not depend on which host's shell runs the check; the check also counts that host as set up.
+OpenCode's probe reads its global config folder, the file `OPENCODE_CONFIG` names by an absolute path, and
+`opencode.json` and `opencode.jsonc`, in each folder and its `.opencode` folder, from the project's root up to and
+including the home folder, or up to `/` when the root is not under home, as OpenCode reads every folder above a
+session's start folder ([OpenCode](opencode.md#limits)).
 OpenCode's probe (`lib/hosts/opencode-setup.mjs`) reads `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME`, and `HOME` alone.
 It answers true when its global config, in `OPENCODE_CONFIG_DIR` or else in `opencode` under `XDG_CONFIG_HOME` or
 `~/.config`, or the project's `opencode.json(c)` at the root or in `.opencode/`, lists this plugin: the package

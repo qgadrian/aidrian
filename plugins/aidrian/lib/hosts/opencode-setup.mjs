@@ -1,9 +1,11 @@
 // Whether OpenCode is set up to run this plugin for a project, from OpenCode's config files alone. It reads only the
-// variables that locate those files (OPENCODE_CONFIG_DIR, XDG_CONFIG_HOME, HOME) and no host-detection variable, so its
-// answer does not depend on which host's shell runs `aidrian check`; the check also counts that host as set up
-// (lib/tracker-check.mjs). OpenCode 2.4.0
-// reads its global config from OPENCODE_CONFIG_DIR, else from opencode under the user's config folder, and a project's
-// from opencode.json or opencode.jsonc at its root or in its .opencode folder (the embedded source of its binary). A
+// variables that locate those files (OPENCODE_CONFIG, OPENCODE_CONFIG_DIR, XDG_CONFIG_HOME, HOME) and no host-detection
+// variable, so its answer does not depend on which host's shell runs `aidrian check`; the check also counts that host as
+// set up (lib/tracker-check.mjs). OpenCode 2.4.0 reads its global config from OPENCODE_CONFIG_DIR, else from opencode
+// under the user's config folder, the file OPENCODE_CONFIG names, and opencode.json or opencode.jsonc, in a folder and
+// in its .opencode folder, in the folder a session starts in and every folder above it up to `/` (the embedded source of
+// its binary, ConfigDiscovery.discover). The probe reads the project's root and the folders above it up to and including
+// the home folder, or up to `/` when the root is not under home, at most ANCESTORS_MAX of them. A
 // plugin is an entry of the `plugins` list, a string or `{ package, options }` (opencode.ai/docs/plugins); `plugin`, the
 // key's singular form, is read too, since a name read where it does not count only adds a warning.
 
@@ -14,6 +16,8 @@ import path from 'node:path';
 const NAMES = ['opencode.json', 'opencode.jsonc'];
 // A config larger than this is no config a person wrote, and is not read.
 const MAX_BYTES = 1024 * 1024;
+// The most folders the walk up from a project's root reads, the root among them.
+const ANCESTORS_MAX = 64;
 
 const absolute = (value) => typeof value === 'string' && path.isAbsolute(value);
 
@@ -107,18 +111,38 @@ function listsThisPlugin(file) {
   }
 }
 
+const homeOf = (env) => (absolute(env.HOME) ? env.HOME : homedir());
+
 // The folder OpenCode reads its global config from.
 function globalFolder(env) {
   if (absolute(env.OPENCODE_CONFIG_DIR)) return env.OPENCODE_CONFIG_DIR;
-  const home = absolute(env.HOME) ? env.HOME : homedir();
-  return path.join(absolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(home, '.config'), 'opencode');
+  return path.join(absolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(homeOf(env), '.config'), 'opencode');
 }
 
-// Whether OpenCode's global config, or the config of the project at `root` when given, lists this plugin. Never throws.
+// `root` and each folder above it, up to and including `home` when `root` lies under it, else up to `/`.
+function ancestors(root, home) {
+  const top = path.resolve(home);
+  const under = path.relative(top, root);
+  const stop = under === '' || (!under.startsWith('..') && !path.isAbsolute(under)) ? top : path.parse(root).root;
+  const folders = [];
+  for (let folder = path.resolve(root); folders.length < ANCESTORS_MAX; folder = path.dirname(folder)) {
+    folders.push(folder);
+    if (folder === stop || path.dirname(folder) === folder) break;
+  }
+  return folders;
+}
+
+// Whether OpenCode's global config, the file OPENCODE_CONFIG names, or the config of the project at `root`, or of a
+// folder above it, when `root` is given, lists this plugin. Never throws.
 export function setUp({ env = process.env, root } = {}) {
   try {
-    const folders = [globalFolder(env ?? {}), ...(absolute(root) ? [root, path.join(root, '.opencode')] : [])];
-    return folders.some((folder) => NAMES.some((name) => listsThisPlugin(path.join(folder, name))));
+    const vars = env ?? {};
+    const folders = absolute(root) ? ancestors(root, homeOf(vars)).flatMap((folder) => [folder, path.join(folder, '.opencode')]) : [];
+    const files = [
+      ...(absolute(vars.OPENCODE_CONFIG) ? [vars.OPENCODE_CONFIG] : []),
+      ...[globalFolder(vars), ...folders].flatMap((folder) => NAMES.map((name) => path.join(folder, name))),
+    ];
+    return files.some(listsThisPlugin);
   } catch {
     return false;
   }

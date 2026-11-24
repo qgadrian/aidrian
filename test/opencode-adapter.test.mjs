@@ -300,6 +300,36 @@ test('the global folder is OPENCODE_CONFIG_DIR, else opencode under XDG_CONFIG_H
   assert.equal(setUp({ env: { HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_CONFIG_DIR: path.join(root, 'none') } }), false, 'OPENCODE_CONFIG_DIR wins');
 });
 
+test('it reads each folder above the project root up to and including home, or up to the top when the root is not under home', (t) => {
+  const { root } = places(t);
+  const home = path.join(root, 'home');
+  const project = path.join(home, 'code', 'team', 'app');
+  mkdirSync(project, { recursive: true });
+  const env = { HOME: home, OPENCODE_CONFIG_DIR: path.join(root, 'none') };
+  const named = JSON.stringify({ plugins: [GIT] });
+  for (const file of [path.join(home, 'code', 'opencode.json'), path.join(home, 'code', 'team', '.opencode', 'opencode.jsonc'), path.join(home, 'opencode.json'), path.join(home, '.opencode', 'opencode.json')]) {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, named);
+    assert.equal(setUp({ env, root: project }), true, file);
+    rmSync(file);
+  }
+  writeFileSync(path.join(root, 'opencode.json'), named);
+  assert.equal(setUp({ env, root: project }), false, 'a folder above home is not read for a project under it');
+  assert.equal(setUp({ env: { ...env, HOME: path.join(root, 'elsewhere') }, root: project }), true, 'a root not under home is read up to the top');
+  assert.equal(setUp({ env: { ...env, HOME: home }, root: home }), false, 'home itself as the root reads no folder above it');
+});
+
+test('it reads the config file OPENCODE_CONFIG names, by an absolute path only', (t) => {
+  const { root, project, env } = places(t);
+  const file = path.join(root, 'shared.jsonc');
+  assert.equal(setUp({ env: { ...env, OPENCODE_CONFIG: file }, root: project }), false, 'a file that is not there');
+  writeFileSync(file, `{ "plugin": ["${GIT}"], }`);
+  assert.equal(setUp({ env: { ...env, OPENCODE_CONFIG: file }, root: project }), true);
+  assert.equal(setUp({ env: { ...env, OPENCODE_CONFIG: file } }), true, 'with no project root too');
+  assert.equal(setUp({ env: { ...env, OPENCODE_CONFIG: 'shared.jsonc' }, root: project }), false, 'a relative path');
+  assert.equal(setUp({ env, root: project }), false, 'unset');
+});
+
 test('a config it cannot read or parse counts as no setup, and the probe never throws or waits', (t) => {
   const { config, project, env } = places(t);
   const file = path.join(project, 'opencode.json');

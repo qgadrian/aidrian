@@ -264,6 +264,35 @@ test('check warns that no guard holds an OpenCode session once OpenCode is set u
   assert.equal(stderr.match(new RegExp(UNGUARDED.source, 'gmu'))?.length, 1, 'once');
 });
 
+// OpenCode reads the config of every folder above the one a session starts in, so a project nested below a folder
+// whose config names this plugin is set up too.
+test('check finds OpenCode set up by the config of a folder above the project', async (t) => {
+  const outer = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-check-outer-')));
+  t.after(() => rmSync(outer, { recursive: true, force: true }));
+  const dir = path.join(outer, 'work', 'app');
+  mkdirSync(dir, { recursive: true });
+  execFileSync('git', ['init', '-q', dir]);
+  for (const entry of ['.aidrian', 'docs', '.gitignore']) cpSync(path.join(EXAMPLE, entry), path.join(dir, entry), { recursive: true });
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  assert.doesNotMatch((await run(['check'], dir)).stderr, UNGUARDED, 'no OpenCode config');
+  mkdirSync(path.join(outer, '.opencode'));
+  writeFileSync(path.join(outer, '.opencode/opencode.json'), JSON.stringify({ plugins: ['github:acme/aidrian#main::path:plugins/aidrian'] }));
+  assert.match((await run(['check'], dir)).stderr, UNGUARDED, 'the .opencode folder two folders above');
+});
+
+test('check finds OpenCode set up by the config file OPENCODE_CONFIG names', async (t) => {
+  const dir = exampleRepo(t);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const elsewhere = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-check-config-')));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  const file = path.join(elsewhere, 'team.jsonc');
+  writeFileSync(file, '{ "plugins": ["aidrian"], }');
+  const checked = (env) => cliCall(['check'], { cwd: dir, env: { ...process.env, XDG_STATE_HOME: XDG, ...env } });
+  assert.doesNotMatch((await checked({})).stderr, UNGUARDED, 'with no OPENCODE_CONFIG');
+  assert.match((await checked({ OPENCODE_CONFIG: file })).stderr, UNGUARDED, 'the file OPENCODE_CONFIG names');
+  assert.doesNotMatch((await checked({ OPENCODE_CONFIG: 'team.jsonc' })).stderr, UNGUARDED, 'a relative OPENCODE_CONFIG names no file');
+});
+
 test('state prints the state folder, with or without a project folder', async (t) => {
   const dir = exampleRepo(t);
   // As a process, so the state command stays tested through bin/aidrian's own entry.

@@ -97,7 +97,7 @@ Fix every finding a review identified; never leave one silently open. Do not go 
   instead of staying prose: a `fix_now` goes to its owner by the `orchestration` skill § 4.
 - A finding blocks the pull request only when it breaks a path real sessions take: the skill's own steps, a direct
   command, or a checkout the project uses. One that needs a contrived race or a hypothetical setup gets the table's
-  disposition: a small fix is usually `fix_now`, and a larger one `accepted_residual`, or `drop_unless_cited` when low.
+  disposition, as every finding does.
 - Each round's findings get one fix pass. Add no hardening, check, or config that no review found.
 - When the fixes since round 1 pass half of what the pull request first added, or a finding comes back at a spot already
   fixed, stop before the next pass and ask the Human whether the rest is worth its cost.

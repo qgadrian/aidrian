@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
 import { gitPaths } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -46,6 +47,17 @@ test('parseFindings: a low finding that cites a written project rule, as cites o
   assert.deepEqual(result.list.map((each) => each.disposition), ['drop_unless_cited', 'fix_now', 'fix_now', 'drop_unless_cited', 'drop_unless_cited']);
   assert.deepEqual(result.list.map((each) => each.cites ?? null), [null, 'docs/rules.md#errors', 'docs/rules.md#errors', null, null], 'the record keeps the citation');
   assert.deepEqual(result.list.map(blocks), [false, true, true, false, false], 'a cited finding cannot be accepted');
+});
+
+test('parseFindings: from the late round on, an agent\'s low finding is a residual, cited or trivial, as the review loop reads it', () => {
+  const low = { title: 'Copy names no next step', file: 'src/a.ts', severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', state: 'accepted' };
+  const raw = JSON.stringify([low, { ...low, cost: 'structural', likelihood: 'contrived', affects: 'internal', cites: 'docs/rules.md' }, { ...low, severity: 'medium', cost: 'bounded' }]);
+  const N = loadTable().lateRoundFrom;
+  assert.deepEqual(parseFindings(raw, [], { round: N - 1 }).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now']);
+  const late = parseFindings(raw, [], { round: N });
+  assert.deepEqual(late.list.map((each) => each.disposition), ['accepted_residual', 'accepted_residual', 'fix_now'], 'only low turns late');
+  assert.equal(late.open, 1);
+  assert.deepEqual(parseFindings(raw).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now'], 'no round: early');
 });
 
 test('parseFindings: a malformed file is refused, never read as zero findings', () => {

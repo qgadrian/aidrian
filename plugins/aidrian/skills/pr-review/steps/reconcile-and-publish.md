@@ -28,9 +28,7 @@ aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>
 
 Pass each flag as its own word. Pass the agent's `violated_rule` as `--cites`, and store it in the finding's `cites`,
 only when it names a written project rule or documented anti-pattern that the code breaks.
-Store its `disposition`, never a value of your own. The table behind it does the weighing: a critical finding is always fixed,
-a contrived one becomes an accepted residual unless its fix is trivial, and a low one is fixed when its fix is small or it cites
-a project rule, until the late rounds make a low bot finding a residual.
+Store its `disposition`, never a value of your own: the table behind it does the weighing, and `--vocab` defines each word.
 
 ## 3. Order
 

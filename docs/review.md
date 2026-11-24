@@ -1012,8 +1012,9 @@ A row is one per title and file, and `pass` is the first pass holding it. A carr
 carried ruling cannot see a real fix, so a session skips a row whose defect is fixed or that already has its body line.
 A low finding recorded with
 `--findings-file` keeps its own state: the session classifies it with `aidrian pr disposition`, writes the residual
-into the body, and attests it `accepted`. Attestation decides from the finding's axes with no round, so a late medium
-the command calls a residual still reads `fix_now` there and blocks until it is fixed. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
+into the body, and attests it `accepted`. Attestation reads the record's round only for that late low rule: it decides
+the rest from the finding's axes, so a late medium the command calls a residual still reads `fix_now` there and blocks
+until it is fixed. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
 
 ### Small gaps
 

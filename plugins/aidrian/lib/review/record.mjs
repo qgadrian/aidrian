@@ -59,7 +59,8 @@ export function recordPass(project, args) {
 }
 
 function writePass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, findingsText = null, remote = null, reading = undefined }) {
-  const itemized = findingsText === null ? null : parseFindings(findingsText);
+  const state = current(project, pr, repo, remote, reading);
+  const itemized = findingsText === null ? null : parseFindings(findingsText, [], { round: state.rounds?.length });
   if (itemized) ({ findings, fixed, accepted } = itemized);
   if (fixed + accepted > findings) throw new Error('--fixed and --accepted together cannot exceed --findings');
   const verdicts = verdictsText === null ? [] : parseVerdicts(verdictsText);
@@ -70,7 +71,6 @@ function writePass(project, { pr, repo, pass, head, reviewer, findings, fixed, a
     const strings = (list) => (Array.isArray(list) ? list.filter((each) => typeof each === 'string').slice(0, 50) : []);
     if (raw && !Array.isArray(raw)) report = { contracts: strings(raw.contracts), cross_notes: strings(raw.cross_notes) };
   } catch {}
-  const state = current(project, pr, repo, remote, reading);
   const before = state.passes[pass];
   const note = isObject(state.dispatched?.[pass]) ? state.dispatched[pass] : null;
   const files = note?.files ?? null;

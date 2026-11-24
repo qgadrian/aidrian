@@ -8,7 +8,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { isObject } from '../fs.mjs';
-import { decideDisposition, loadTable } from '../finding-disposition.mjs';
+import { decideDisposition, lateRoundResidual, loadTable } from '../finding-disposition.mjs';
 
 export const FINDING_STATES = Object.freeze(['open', 'fixed', 'accepted']);
 // The dispositions an accepted finding may close with. fix_now never closes until it is fixed, and a finding with
@@ -95,7 +95,9 @@ const text = (value, max) => (typeof value === 'string' && value.trim() !== '' ?
 // SHORTCUT: `aidrian pr attest` (lib/review/record.mjs recordPass) passes no `settled` list yet, so on that path every
 // `already_ruled` is left out and the finding read as it stands: safe, since nothing is waived, and enough while only
 // exec reviewers return repeats. Wiring recordSettled and residualTexts into recordPass would replace it.
-export function parseFindings(raw, settled = []) {
+// `round` is the review round the pass was dispatched in, when the caller knows it: an agent's finding is no person's,
+// so from `lateRoundFrom` a low one takes the late-round residual, as the review loop's `--source bot --round` reads it.
+export function parseFindings(raw, settled = [], { round } = {}) {
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -118,6 +120,8 @@ export function parseFindings(raw, settled = []) {
     // a drop_unless_cited into fix_now; an empty or non-string value is no citation.
     const cites = [finding.cites, finding.violated_rule].map((value) => text(value, 300)).find(Boolean);
     const decided = decideDisposition({ ...Object.fromEntries(Object.entries(axes).filter(([, value]) => value !== undefined)), ...(cites ? { cites } : {}) });
+    const late = decided.disposition === 'invalid' ? null : lateRoundResidual({ severity: finding.severity, source: 'bot', round });
+    if (late) Object.assign(decided, late);
     if (decided.disposition === 'invalid') throw new Error(`${at}: ${decided.reason} (\`aidrian pr disposition --vocab\` lists the words)`);
     const { entry: ruled, note } = ruling({ file: text(finding.file, 300), severity: finding.severity, already_ruled: finding.already_ruled }, decided.disposition, settled);
     if (note) notes.push(`${at}.already_ruled ${note}: read as it stands`);
@@ -268,7 +272,7 @@ const FULL_SHA = /^[0-9a-f]{40}$/u;
 export const CLOSED_STATES = Object.freeze(['fixed', 'not_reported']);
 export const isClosed = (entry) => CLOSED_STATES.includes(entry?.state);
 // What an index entry keeps of its finding: the title is its only text. `reviewer`, the recording pass's, stays local.
-const ENTRY_KEYS = ['title', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost', 'disposition', 'accepted_by'];
+const ENTRY_KEYS = ['title', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost', 'cites', 'disposition', 'accepted_by'];
 
 const indexOf = (state) => {
   if (!isObject(state.index)) state.index = {};

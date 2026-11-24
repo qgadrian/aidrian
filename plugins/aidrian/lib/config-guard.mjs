@@ -646,15 +646,19 @@ const PIECES = {
 PIECES.ruby = PIECES.perl;
 
 // Whether `code`, an interpreter's code in `lang`, names the file `name` only in prose, as a docs edit or a pull request
-// body written from Python does, so it is no write to that file: each place it names it is inside a quoted text or a
-// comment of more than one word, as a word of prose (the name alone, or wrapped in Markdown's code, emphasis, or brackets, and followed by
-// punctuation), in a text that interpolates nothing and that, read as a shell command, as `os.system` would run it,
-// writes no file of that name (bashWrites). Any other place names the file: `open('<name>', 'w')`, a path that ends in
-// it, or a `cp` or `tee` to it in a text. So does a path quoted inside a longer text, as a test fixture written from
-// Python holds: the guard cannot tell whose code that text is.
+// body written from Python does, so it is no write to that file. Each place it names it is either in a comment, as a
+// word of its own or wrapped, or in a quoted text, wrapped: glued on both sides to a Markdown backtick, an underscore,
+// or a bracket, as `` `<name>` `` or `(<name>)`, then any punctuation. Code turns no such text into the path unless it
+// strips the wrapper on purpose; a bare word between spaces, as in `'see <name>'.split()[1]`, it may, so that names the
+// file. The text also interpolates nothing, and, read as a shell command, as `os.system` would run it, writes no file of
+// that name (bashWrites). Any other place names the file: `open('<name>', 'w')`, a path that ends in it, or a `cp` or
+// `tee` to it in a text. So does a path quoted inside a longer text, as a test fixture written from Python holds: the
+// guard cannot tell whose code that text is.
 function mentionsOnly(code, lang, name, cwd) {
   const lower = name.toLowerCase();
-  const word = new RegExp(String.raw`^[\x60*_([]*${lower.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}[\x60*_)\].,;:!?]*$`, 'iu');
+  const spelled = lower.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const wrapped = new RegExp(String.raw`^[\x60_([]+${spelled}[\x60_)\]]+[.,;:!?]*$`, 'iu');
+  const alone = new RegExp(String.raw`^[\x60_([]*${spelled}[\x60_)\].,;:!?]*$`, 'iu');
   const pieces = PIECES[lang];
   if (!pieces) return false;
   let at = 0;
@@ -665,11 +669,10 @@ function mentionsOnly(code, lang, name, cwd) {
     if (!match[0].toLowerCase().includes(lower)) continue;
     const [whole, prefix = '', quote] = match;
     // A line end, tab, or return escape parts words as the white space it stands for does.
-    const text = (quote ? whole.slice(prefix.length + quote.length, whole.endsWith(quote) ? -quote.length : undefined) : whole.replace(/^(?:#|\/\/|\/\*)/u, '')).replace(/\\[ntr]/gu, ' ');
-    const interpolates = lang === 'python' ? /f/iu.test(prefix) && text.includes('{') : quote !== "'" && /[$#]\{|[$@][\w(]/u.test(text);
-    const words = text.split(/\s+/u).filter(Boolean);
-    // A text that is the name alone, as `open('<name>', 'w')` gives it, is a path, not prose.
-    if (interpolates || words.length < 2 || words.some((each) => each.toLowerCase().includes(lower) && !word.test(each))) return false;
+    const text = (quote ? whole.slice(prefix.length + quote.length, whole.endsWith(quote) ? -quote.length : undefined) : whole.replace(/^(?:#|\/\/|\/\*)/u, '').replace(/\*\/$/u, '')).replace(/\\[ntr]/gu, ' ');
+    const interpolates = quote && (lang === 'python' ? /f/iu.test(prefix) && text.includes('{') : quote !== "'" && /[$#]\{|[$@][\w(]/u.test(text));
+    const word = quote ? wrapped : alone;
+    if (interpolates || text.split(/\s+/u).some((each) => each.toLowerCase().includes(lower) && !word.test(each))) return false;
     try {
       const writes = bashWrites(text, cwd, { followCd: true, shells: true, restores: true, globs: true });
       if (writes.some((each) => [each.text, ...each.files].some((file) => path.basename(file).toLowerCase() === lower))) return false;

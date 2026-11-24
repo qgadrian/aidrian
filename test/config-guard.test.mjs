@@ -447,7 +447,7 @@ test('a subagent may not set the auto-merge switch, with or without gates; other
   }
 });
 
-test('interpreter code that names the local file only in prose sets no switch; one that writes it by any route is refused', (t) => {
+test('interpreter code that names the local file only in a comment or wrapped in a text sets no switch; one that writes it by any route is refused', (t) => {
   const { dir } = project(t, { version: 1 });
   const found = findProject(dir);
   const judge = (command) => machineSwitchWriteDenial(subagent(dir, 'Bash', { command }), found, { names: { human: 'the owner' } })?.match ?? null;
@@ -455,15 +455,23 @@ test('interpreter code that names the local file only in prose sets no switch; o
   const py = (code) => `python3 - <<'PY'\n${code}\nPY`;
   const js = (code) => `node - <<'JS'\n${code}\nJS`;
   for (const command of [
-    // A docs edit whose new text names the file and a key, as the issue's subagent ran.
-    py(`import pathlib\np = pathlib.Path('docs/config.md')\nt = p.read_text()\nt = t.replace('x', 'Set github.autoMerge in ${L} to "on".')\np.write_text(t)`),
+    // A docs edit whose new text names the file, in Markdown's backticks, and a key, as the issue's subagent ran.
+    py(`import pathlib\np = pathlib.Path('docs/config.md')\nt = p.read_text()\nt = t.replace('x', 'Set \`github.autoMerge\` in \`${L}\` to "on".')\np.write_text(t)`),
     py(`import pathlib\np = pathlib.Path('docs/hooks.md')\np.write_text(p.read_text() + "\\n- A subagent may not set \`github.autoMerge\` in \`${L}\`.\\n")`),
-    py(`# a note on ${L} and github.autoMerge\nopen('docs/x.md', 'a').write("""Notes on **${L}**, and its keys.\n""")`),
-    // No key named: the rule that any write to the file erases a switch reads the same prose.
-    py(`open('docs/x.md', 'a').write('the ${L} file')`),
-    js(`// docs: ${L}\nrequire('fs').appendFileSync('docs/x.md', 'Set github.autoMerge in ${L}.')`),
+    py(`# a note on ${L} and github.autoMerge\nopen('docs/x.md', 'a').write("""Notes on (${L}), and its keys.\n""")`),
+    // No key named: the rule that any write to the file erases a switch reads the same text.
+    py(`open('docs/x.md', 'a').write('the \`${L}\` file')`),
+    js(`// docs: ${L}\nrequire('fs').appendFileSync('docs/x.md', 'Set github.autoMerge in \`${L}\`.')`),
+    // A block comment loses both its marks, so a name glued to the closing one is still a word of its own.
+    js(`/* writes docs, not ${L}*/\nrequire('fs').appendFileSync('docs/x.md', 'github.autoMerge')`),
   ]) assert.equal(judge(command), null, command);
   for (const [command, match] of [
+    // A bare word of a text is one code can split, replace, or slice out as the path, with no wrapper to strip.
+    [py(`open('see ${L} here'.split()[1], 'w').write('autoMerge')`), /sets github\.autoMerge/u],
+    [py(`open('the ${L} file'.replace('the ', '').replace(' file', ''), 'w').write('autoMerge')`), /sets github\.autoMerge/u],
+    [py(`p = 'x ${L}'[2:]\nopen(p, 'w').write('{}')`), /changes \.aidrian\.local\.json/u],
+    [js(`const p = 'see ${L} here'.split(' ')[1]\nrequire('fs').writeFileSync(p, 'autoMerge')`), /sets github\.autoMerge/u],
+    [py(`open('docs/x.md', 'a').write('Notes on **${L}**, and its keys.')  # autoMerge`), /sets github\.autoMerge/u],
     [py(`open('${L}', 'w').write('{"github": {"autoMerge": "on"}}')`), /sets github\.autoMerge/u],
     [py(`import json\np = '${L}'\nd = json.load(open(p))\nd['github'] = {'autoMerge': 'on'}\njson.dump(d, open(p, 'w'))`), /sets github\.autoMerge/u],
     [py(`import shutil\nshutil.copy('prepared.json', '${L}')`), /changes \.aidrian\.local\.json/u],

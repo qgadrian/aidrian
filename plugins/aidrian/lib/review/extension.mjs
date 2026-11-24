@@ -395,6 +395,21 @@ const compactSignals = (sig) => ({ converging: sig.converging, looping: sig.loop
 // opened yet. Each is bound to the head its signals were read on.
 const PENDING = new Set(['judging', 'asking', 'granted']);
 
+// The checks a catch-up at the cap retires (retireChecks): one waiting for its judge or for the Human.
+const RETIRED_BY_CATCH_UP = new Set(['judging', 'asking']);
+
+// A head that only caught up with the base branch at the cap (run.mjs capReached) takes the cap as it stood, as a
+// `round_limit`: every check of `source` still waiting for its judge or the Human is retired in the same write,
+// `stopped` by `catch_up` and `superseded_by` that head, so a verdict recorded for that head (runLanding) finds no check
+// of a step it no longer answers waiting. A later step at the cap that is no catch-up opens it again (atCap).
+export function retireChecks(state, { source, head, log = () => {}, now = () => new Date().toISOString() }) {
+  for (const entry of state?.extensions ?? []) {
+    if (entry?.source !== source || !RETIRED_BY_CATCH_UP.has(entry.status)) continue;
+    Object.assign(entry, { status: 'stopped', by: 'catch_up', superseded_by: head, reasons: [`superseded by ${String(head).slice(0, 7)}, which only caught up with the base branch`], decided_at: now() });
+    log(rowOf(entry));
+  }
+}
+
 // A pending decision whose head is not `head` any more is re-read on the new head: a push after the judge's verdict
 // can grow the fixes past the bloat limit, and the verdict and any approval were for the head before. A new red flag
 // sends it back to the judge, a grant or a check waiting for the Human included. With no new red flag, a grant stands,
@@ -455,9 +470,11 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     state.extensions.push(entry);
     if (granted >= policy.max) decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]);
   }
-  // A stop an older version made on a red flag, with no way on: it goes to the judge as a red flag now does.
-  // It goes the way a fresh check does: the ceiling first, and the judge without any verdict made on the old head.
-  if (entry.status === 'stopped' && entry.by === 'mechanical') {
+  // A stop an older version made on a red flag, with no way on, and a check a catch-up retired (retireChecks): it goes
+  // to the judge as a red flag now does. It goes the way a fresh check does: the ceiling first, and the judge without
+  // any verdict made on the old head.
+  if (entry.status === 'stopped' && (entry.by === 'mechanical' || entry.by === 'catch_up')) {
+    delete entry.superseded_by;
     if (entry.judge) entry.stale_judge = entry.judge;
     delete entry.judge;
     delete entry.human;

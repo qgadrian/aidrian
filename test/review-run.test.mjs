@@ -1,6 +1,6 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,8 @@ import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { capProblem } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
+import { offerLand, runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { repo, clean, OPEN, unnamed, unverifiedNext, finding, scripted, found, holdsAll, holdComment, APPROVED_FLOWS } from './review-run-fixture.mjs';
 
 test('a docs-only change needs no review and posts nothing', async (t) => {
@@ -472,6 +474,57 @@ test('a merge at the cap that moves the pull request\'s edit to another occurren
   const step = await r.step({ exec: clean });
   assert.equal(step.carried_from, undefined, 'the lines around each edit tell the two occurrences apart');
   assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
+});
+
+test('a merge at the cap that swaps bytes that are not UTF-8 for others gets no carry', async (t) => {
+  // Latin-1 bytes, no NUL: git prints the patch as text, and each byte reads back as U+FFFD.
+  const latin = (char) => Buffer.from(`export const name = 'caf${char}';\n`, 'latin1');
+  const { r, capped } = await atCapRepo(t, 'off', { baseFiles: { 'src/booking/name.js': latin('\xe9') }, change: (write) => write('src/booking/name.js', latin('\xe8')) });
+  await mergeResolving(r, 'src/booking/name.js', latin('\xea'));
+  const step = await r.step({ exec: clean });
+  assert.equal(step.carried_from, undefined, 'the two byte changes decode the same; their blob ids tell them apart');
+  assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
+});
+
+test('a base rename of the declaration above the pull request\'s edit, outside its context, still carries the cap', async (t) => {
+  const body = (name, last) => `export function ${name}() {\n  const a = 1;\n  const b = 2;\n  const c = 3;\n  const d = 4;\n  const e = ${last};\n  return a + e;\n}\n`;
+  const { r, capped } = await atCapRepo(t, 'off', { baseFiles: { 'src/booking/sum.js': body('alpha', 5) }, change: (write) => write('src/booking/sum.js', body('alpha', 6)) });
+  // The base renames the function, four lines above the edit: git's hunk header names it, the context does not.
+  r.git('switch', '-q', 'main');
+  r.write('src/booking/sum.js', body('beta', 5));
+  r.commit('rename alpha');
+  r.git('switch', '-q', 'feat');
+  r.git('merge', '-q', '--no-edit', 'main');
+  const step = await r.step({ exec: clean });
+  assert.deepEqual([step.status, step.carried_from], ['round_limit', capped.head], 'a hunk header\'s label is no part of the comparison');
+});
+
+test('a catch-up at a check waiting for its judge retires the check, and the verdict the step offers for the new head records', async (t) => {
+  const { r, capped } = await atCapRepo(t, 'ask');
+  assert.equal(readLocalState(r.project, 7).extensions[0].status, 'judging');
+  r.git('merge', '-q', '--no-edit', 'main');
+  const merged = r.git('rev-parse', 'HEAD');
+  const step = await r.step({ exec: clean });
+  assert.deepEqual([step.status, step.head, step.carried_from], ['round_limit', merged, capped.head]);
+  const check = readLocalState(r.project, 7).extensions[0];
+  assert.deepEqual([check.status, check.by, check.superseded_by], ['stopped', 'catch_up', merged], 'retired in the same write');
+  // The judge the step offers when the waiver gate says one may rule: its record line, for the new head.
+  const [judge] = offerLand({ ...step, pr: 7 }, { may: true, why: null }).dispatch;
+  assert.equal(judge.record, `aidrian pr extend 7 --verdict land|stop --reason "<evidence>" --head ${merged} --judge <agent id>`);
+  // That judge, dispatched in its session, records `stop` as the line says.
+  const session = 'sess-judge';
+  const project = projectAt(r.dir);
+  const config = loadConfig(project).config;
+  const log = logPath(project, config);
+  mkdirSync(path.dirname(log), { recursive: true });
+  writeFileSync(log, `${JSON.stringify({ event: 'dispatch', ts: new Date().toISOString(), session_id: session, dispatcher: 'main', agent_id: 'judge-1', agent_type: 'aidrian:code-reviewer' })}\n`);
+  const printed = [];
+  t.mock.method(console, 'log', (line) => printed.push(line));
+  const code = await runExtend(['7', '--verdict', 'stop', '--reason', 'R1-1 is open', '--head', merged, '--judge', 'judge-1'], project, config, { forge: r.forge, repo: 'o/r', env: { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: session } });
+  t.mock.restoreAll();
+  assert.equal(code, 0);
+  const out = JSON.parse(printed.at(-1));
+  assert.deepEqual([out.status, out.extension, out.waiver.head, out.waiver.verdict], ['recorded', null, merged, 'refuse'], 'no check of the old step waits to refuse it');
 });
 
 test('a cap record whose round kept no cause, from an older plugin, gets it from the round\'s results by the same code', async (t) => {

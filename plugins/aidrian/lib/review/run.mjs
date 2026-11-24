@@ -47,7 +47,7 @@ import { loadTable } from '../finding-disposition.mjs';
 import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
 import { where } from './settled.mjs';
-import { atCap, grantedRounds, raiseAsk } from './extension.mjs';
+import { atCap, grantedRounds, raiseAsk, retireChecks } from './extension.mjs';
 import { settleCaptures } from './dispatch.mjs';
 import { answerPending, CAPPED, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, sameCommit, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
@@ -230,8 +230,10 @@ function capReached(s, extra) {
   noteFindings(s, extra);
   const cause = capCause(s, extra);
   // A head that only caught up with the base since the last round (step.mjs `catchUp`): the cap carries to it as it
-  // stood, with the last round's cause, and no extra-round check runs. The Human may still raise the cap.
+  // stood, with the last round's cause, and no extra-round check runs: one still waiting for its judge or the Human is
+  // retired in the same write (extension.mjs retireChecks). The Human may still raise the cap.
   if (s.catchUp && !sameCommit(state.rounds.at(-1)?.head, head)) {
+    retireChecks(state, { source: 'plan', head, log: extensionLog });
     const { raise } = raiseAsk({ pr: n, repo, source: 'plan', round: state.rounds.length, granted: grantedRounds(state, 'plan', policy), withBot: Boolean(opts?.withBot) });
     return finish(s, 'round_limit', { ...extra, carried_from: s.catchUp.from, carried_base: s.catchUp.base, ...(raise ? { raise } : {}), cap: cause });
   }

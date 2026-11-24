@@ -273,13 +273,15 @@ const BINARY_ENTRY = /^(?:Binary files .* differ|GIT binary patch)$/mu;
 
 // The pull request's own diff at `tip`: from its merge base with `base`, the base branch tip, to `tip`, with git's
 // three lines of context, so an edit reads with the lines around it. What only says where the change sits on a moved
-// base is left out: a text file's blob ids, and the line numbers of each hunk header. A binary file keeps its blob ids.
+// base is left out: a text file's blob ids, and each hunk header whole, its line numbers and the function or section
+// label git takes from a line that may sit well outside the context. An entry whose blob ids are all that tell two
+// patches apart keeps them: a binary one, and one whose bytes are not UTF-8, which reads back with U+FFFD in place of
+// the bytes, so two different byte changes could read the same.
 function ownDiff(root, tip, base) {
   const text = git(root, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', mergeBase(root, base, tip), tip]);
   return text.split(/^(?=diff --git )/mu).map((entry) => {
-    const binary = BINARY_ENTRY.test(entry);
-    return entry.split('\n').filter((line) => binary || !line.startsWith('index '))
-      .map((line) => line.replace(/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/u, '@@')).join('\n');
+    const opaque = BINARY_ENTRY.test(entry) || entry.includes('\uFFFD');
+    return entry.split('\n').filter((line) => opaque || !line.startsWith('index ')).map((line) => (line.startsWith('@@') ? '@@' : line)).join('\n');
   }).join('');
 }
 

@@ -448,7 +448,7 @@ test('the stop hook writes only the handoff file its own run was briefed with, n
 // marker the hook cannot fill, such as one with `<state>` left unexpanded, sends the agent back once, with the reason, and
 // its second stop ends; a marker whose relative path the agent wrote is no mistake.
 test('the stop hook fills every briefed handoff file of an orchestrator\'s briefs, and reports a marker it cannot fill', async (t) => {
-  const { base, dir, state, hook } = project(t);
+  const { base, dir, state, log, hook } = project(t);
   const dispatch = path.join(state(), 'dispatch');
   const stop = (id, brief, active = false) => {
     const transcript = path.join(base, `agent-${id}.jsonl`);
@@ -479,6 +479,10 @@ test('the stop hook fills every briefed handoff file of an orchestrator\'s brief
   const claims = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'claims', agent_type: 'aidrian:backend-developer', agent_transcript_path: transcriptOut, last_assistant_message: `Handoff written to ${outside}.`, stop_hook_active: false });
   assert.equal(claims.status, 2);
   assert.doesNotMatch(claims.stderr, /If you meant to write it, write it now/u, claims.stderr);
+  // Nor is it an undelivered file on the stop row, which files the delivery-check lesson: the hook told the agent to
+  // name the rejected path in its report, as one it did not write.
+  const claimsRow = log().filter((row) => row.event === 'stop' && row.agent_id === 'claims').at(-1);
+  assert.deepEqual([claimsRow.delivered, claimsRow.paths], ['chat', []], JSON.stringify(claimsRow));
   // Nor when the report spells the same path another way.
   const spelled = path.join(base, 'agent-spelled.jsonl');
   writeFileSync(spelled, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: 'Implement slice S3.\nHandoff file: ./reports/S3-backend-developer.json' } }));

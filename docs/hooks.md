@@ -890,8 +890,21 @@ hook. It reads the ready calls the ready hold reads, and decides in this order:
    an edit time ahead of it by more than that runs. A check that started after the change lifts the hold, and so does the
    end of the 30 seconds, for a project with no check that runs on an edit; the deny says when.
 
-Every deny names the route: wait with `gh pr checks <n> --watch` until every check reports, then mark it ready with
-`gh pr ready <n>` in a separate call. A check that finished and failed does not hold the draft; the review reads it.
+Every deny names the route: wait until every check reports, then mark it ready with `gh pr ready <n>` in a separate call.
+For a pending check the wait is `gh pr checks <n> --watch`. For a change no check has started since, and for an edit and a
+ready in one call, it is `aidrian pr ready-wait <n>`: right after the change, `gh pr checks --watch` reads the run from
+before and returns at once, and sessions sent `gh pr ready` again after it, refused each time.
+A check that finished and failed does not hold the draft; the review reads it.
+
+`aidrian pr ready-wait <PR> [-R [HOST/]OWNER/REPO] [--timeout-sec N] [--interval-sec N]` reads the view this rule reads every
+5 seconds, by default, until the rule would hold nothing: no check pending, and a check started since the last change or
+the 30 seconds past. It marks nothing ready. It exits 0 when the draft may be marked ready, or is not a draft; 2 when it is
+still held at the timeout, 840 seconds by default, naming the hold, so the session runs it again; and 3 on a usage error or a
+view gh cannot read. A failed edit-time read lets it end, as it lets the rule's command run. Each gh call stops at the
+time left of the one deadline, and the last sleep is cut short so the last poll reads with 2 seconds left: a run ends by
+its timeout, and a check that clears before it is seen.
+A call that names another repository, by `-R` or a pull request URL, gets the pull request's URL, as gh gives it, in each
+command its output and every deny of this rule name, so a follow-up from another checkout or an Enterprise host reaches it.
 
 Its gh calls share one deadline, as the ready hold's do: 3.5 seconds from its first call, and never later than 4 seconds
 after the hook started, so a ready hold that spent the time leaves this one none, and the command runs.
@@ -1723,7 +1736,8 @@ path, cannot be filled by the hook. Unless this run wrote a regular file there, 
 is sent back once, on the first stop of its turn, with the marker and the reason, and with no "write it now" for that
 path even when its report claims it: it writes nothing at that path, which may lie outside the
 dispatch folder, and hands back its report as its last message, saying that the brief's path was rejected, so its
-dispatcher corrects its briefs.
+dispatcher corrects its briefs. A report that names that path, as it is told to, never presents it as a file: the stop
+row does not list it, and it files no delivery-check lesson, on that stop or a later one.
 Only the files these markers name are owed, and a brief with no marker owes none: the agent still writes its own file,
 and the hook no longer searches the brief's prose for one, since a file named to read there could be taken for the output.
 Another file of the agent's role the brief names, such as the gate run's `<branch>-gate-product-manager.json` to read,
@@ -2206,6 +2220,13 @@ A key past 300 characters keeps its first 300 and a digest of the whole, so a ru
 A configured command is still matched as a prefix of the whole command, so a long `testing.changedCommand` with files after it is a run.
 A call stopped, started in the background, or moved there at its timeout records nothing: no hook sees it end.
 A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
+The row goes to the session folder of the project the call's folder is in. When that folder holds none, as when another
+session removed the worktree a session started in and the host sends the home folder as its cwd, each run goes to the
+project of the folder it runs in, such as the worktree of `cd <worktree> && node --test` or `env -C <worktree> npm test`,
+and is read with that project's `testing` config: another project's command on the line takes no run, and one project's
+test command is no run in another. The line's one count goes to a run only when it is the line's one run: every run any
+config of the line, the defaults included, reads on it counts once, by its command and folder, so a run in no project,
+or one only another project's config reads, withholds the count.
 
 Claude Code runs the hook only for a call that exited 0, so there a run passed unless its counts show a failure, when
 the line's status is the run's: no separator but `&&` before or after it. After `;` or `||` the run may not have run,
@@ -2325,6 +2346,19 @@ file in a test folder, such as a fixture or a `.jsx` file named like a test, cou
 its file name, so the tests that name it run instead of the fixture itself. A configured command gets every changed file
 in a test folder as it is, with no search for the tests that name it, unless it is no longer a file on disk, staged or not, or is in a nested package.
 A project with `.ts` tests sets `testing.changedCommand`.
+When the command ends in jest or `node --test`, by the program its last command runs, as the shell lexer reads it with
+wrappers such as `npx` peeled, or the package.json script it runs, followed through `npm test`, `npm run <name>`, and
+their pnpm, yarn, and bun forms, with the words after the script's name passed on to its command as the package
+manager passes them, each file goes with its pattern characters escaped:
+jest reads a file as a regular expression, so `[`, `]`, `(`, `)`, `{`, `}`, `*`, `?`, `+`, `|`, `^`, `$`, and `\` get a
+backslash, and node reads it as a glob, so `[`, `]`, `{`, `}`, `*`, and `?` each go inside a class, as `[[]`.
+A Next.js segment such as `[org]` or `(group)` found no test before, and the run exited 1. Any other runner gets the
+paths as they are, and so does jest given `--runTestsByPath` among its own words before a `--` of them, which reads exact
+paths: a `--` that node or a package manager reads before jest's entry point does not count.
+Node's options and a package runner's are read from a fixed list of those that take the next word as their value, and a
+node script's own arguments name no runner; an option outside that list ends the scan there, and words forwarded to a
+package script reach its command as written, though an npm it runs with no `--` of its own takes their options for its
+own: accepted limits.
 A project whose CI cannot run the suite leaves `testing.pushFirstMinutes` at 0, and runs the suite once before marking ready.
 
 ## Overrides

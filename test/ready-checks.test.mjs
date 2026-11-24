@@ -13,6 +13,7 @@ import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
+import { runReadyWait } from '../plugins/aidrian/lib/pr-ready-wait.mjs';
 import { check, checkMcp, EDIT_WINDOW_MS, SAME_COMMAND_REASON } from '../plugins/aidrian/lib/rules/github/ready-checks.mjs';
 import { OVERRIDE } from '../plugins/aidrian/lib/rules/github/ready-hold.mjs';
 import { answer, URL7 } from './fixtures/ready-checks/gh.mjs';
@@ -81,8 +82,10 @@ test('a check on the head that has not finished holds the draft, and the deny na
       const { reason, calls } = judge(dir, { view: draft([...GREEN, ...rows]) }, command);
       assert.match(reason ?? '', /^Blocked: pull request #7 has checks that have not finished/u, `${command}: ${JSON.stringify(rows)}`);
       assert.ok(reason.includes(rows[0].name ?? rows[0].context), reason);
-      assert.match(reason, /`gh pr checks 7 --watch`/u);
-      assert.match(reason, /`gh pr ready 7` in a separate call/u);
+      // A call that names the repository, by `-R` or a URL, gets the pull request's URL in the commands the deny names.
+      const ref = command.includes(URL7) || command.includes('-R') ? URL7 : '7';
+      assert.ok(reason.includes(`\`gh pr checks ${ref} --watch\``), `${command}: ${reason}`);
+      assert.ok(reason.includes(`\`gh pr ready ${ref}\` in a separate call`), `${command}: ${reason}`);
       assert.equal(calls.length, 1, 'one view of the pull request, and no edit read while a check is pending');
     }
   }
@@ -97,7 +100,9 @@ test('a draft whose last edit no check has started since is held for the window,
   // The body was edited five seconds ago, and every check started before it: the re-queued title check has not shown.
   const edited = judge(dir, { view: draft(GREEN), edits: { lastEditedAt: at(-5_000) } });
   assert.match(edited.reason ?? '', /^Blocked: pull request #7 had its body edited at 2026-11-11T11:59:55Z, and no check has started since/u);
-  assert.match(edited.reason, /`gh pr checks 7 --watch`/u);
+  // The route is a wait that ends once the new run shows: `gh pr checks --watch` reads the old run and returns at once.
+  assert.match(edited.reason, /`gh pr checks 7 --watch` returns at once and a ready sent after it is refused again/u);
+  assert.match(edited.reason, /Wait with `aidrian pr ready-wait 7`/u);
   assert.match(edited.reason, /`gh pr ready 7` in a separate call/u);
   assert.ok(edited.reason.includes(at(-5_000 + EDIT_WINDOW_MS)), 'the deny says when the hold lifts with no check to wait for');
   assert.equal(edited.calls.length, 2);
@@ -172,6 +177,74 @@ test('the MCP form holds draft false while a check is pending, and refuses a bod
   const both = mcp({ ...given, draft: false, body: 'new body' }, {});
   assert.deepEqual([both.reason, both.calls.length], [SAME_COMMAND_REASON, 0]);
   assert.equal(mcp({ ...given, draft: false }, { view: draft(GREEN), edits: {} }).reason, null);
+});
+
+// `aidrian pr ready-wait`, the route the edit hold names: it polls the view the hold reads until the hold lifts.
+test('ready-wait waits until the run an edit re-queues has shown and finished, and times out while held', async (t) => {
+  const dir = repo(t);
+  // `viewMs`: how long each view read takes on the test's clock.
+  const wait = async (argv, steps, { start = NOW, viewMs = 0 } = {}) => {
+    let clock = start;
+    let step = 0;
+    const spec = { ...steps[0] };
+    const { calls, forge } = seam(spec);
+    const out = [];
+    const sleep = async (ms) => {
+      clock += ms;
+      step = Math.min(step + 1, steps.length - 1);
+      Object.assign(spec, steps[step]);
+    };
+    const budgets = [];
+    const forgeAt = (options) => {
+      const real = forge(dir, options);
+      return {
+        change: (...args) => {
+          budgets.push(['view', options.timeoutMs]);
+          clock += viewMs;
+          return real.change(...args);
+        },
+        changeEdits: (...args) => {
+          budgets.push(['edits', options.timeoutMs]);
+          return real.changeEdits(...args);
+        },
+      };
+    };
+    const code = await runReadyWait(argv, { forgeAt, now: () => clock, sleep, log: (line) => out.push(line), error: (line) => out.push(line) });
+    return { code, out, calls, budgets, polls: step + 1 };
+  };
+  const edits = { lastEditedAt: at(-2_000) };
+  // Edited two seconds ago with only the old run: held; the re-queued title check shows, runs, and passes.
+  const shown = await wait(['7'], [
+    { view: draft(GREEN), edits },
+    { view: draft(GREEN), edits },
+    { view: draft([...GREEN, run('Conventional Commit title', at(1_000), 'IN_PROGRESS')]), edits },
+    { view: draft([...GREEN, run('Conventional Commit title', at(1_000))]), edits },
+  ]);
+  assert.equal(shown.code, 0, shown.out.join('\n'));
+  assert.equal(shown.polls, 4);
+  assert.match(shown.out.at(-1), /^clear: .*`gh pr ready 7`/u);
+  // Still held when the timeout ends: exit 2, naming the hold. The last sleep is cut short, so the last poll reads with
+  // two seconds left, and a check that clears before the timeout is seen.
+  const held = await wait(['7', '--timeout-sec', '10'], [{ view: draft([run('CI', at(-1_000), 'IN_PROGRESS')]), edits }]);
+  assert.equal(held.code, 2);
+  assert.match(held.out.at(-1), /^held at the 10 s timeout: pull request #7 has checks that have not finished on its head: CI/u);
+  assert.deepEqual(held.budgets, [['view', 10_000], ['view', 5_000], ['view', 2_000]]);
+  const short = await wait(['7', '--timeout-sec', '4'], [{ view: draft([run('CI', at(-1_000), 'IN_PROGRESS')]), edits }, { view: draft(GREEN), edits: {} }]);
+  assert.deepEqual([short.code, short.budgets], [0, [['view', 4_000], ['view', 2_000], ['edits', 2_000]]]);
+  // The view and the edit-time read share one deadline: a slow view leaves the edit read only what is left.
+  const slow = await wait(['7', '--timeout-sec', '10'], [{ view: draft(GREEN), edits }], { viewMs: 4_000 });
+  assert.deepEqual(slow.budgets.slice(0, 2), [['view', 10_000], ['edits', 6_000]]);
+  // A call that names another repository, by `-R` or by a URL, an Enterprise one included, is named by the URL gh gave.
+  const other = await wait(['7', '-R', 'acme/notes'], [{ view: draft(GREEN), edits: {} }]);
+  assert.ok(other.out.at(-1).endsWith(`\`gh pr ready ${URL7}\``), other.out.at(-1));
+  const enterprise = 'https://github.example/acme/notes/pull/7';
+  const linked = await wait([enterprise, '--timeout-sec', '1'], [{ view: draft([run('CI', at(-1_000), 'IN_PROGRESS')], { url: enterprise }), edits }]);
+  assert.ok(linked.out.at(-1).includes(`\`gh pr checks ${enterprise} --watch\``) && linked.out.at(-1).includes(`\`aidrian pr ready-wait ${enterprise}\` again`), linked.out.at(-1));
+  assert.equal((await wait(['7', '-R', 'github.example/acme/notes'], [{ view: draft(GREEN), edits: {} }])).code, 0, 'a host in -R');
+  // Not a draft: clear at once. A view gh cannot read, or a bad argument: exit 3.
+  assert.equal((await wait(['7'], [{ view: { ...draft(GREEN), isDraft: false } }])).code, 0);
+  assert.equal((await wait(['7'], [{ view: null }])).code, 3);
+  for (const argv of [[], ['seven'], ['7', '--timeout-sec', '0'], ['7', '-R', '--json']]) assert.equal((await wait(argv, [{}])).code, 3, argv.join(' '));
 });
 
 // One hook run with the fake gh first on PATH, its calls logged.

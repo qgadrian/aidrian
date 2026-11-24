@@ -21,7 +21,8 @@ import { detectHost, HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { check as prBody } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { check as pushFirst, unpushed } from '../plugins/aidrian/lib/rules/push-first.mjs';
 import { lexPipeline, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
-import { changeBase, needlesOf, testCommand, touchedTests } from '../plugins/aidrian/lib/test-changed.mjs';
+import { changeBase, literalPattern, needlesOf, testCommand, testRunner, touchedTests } from '../plugins/aidrian/lib/test-changed.mjs';
+import { hookCall } from './hook-call.mjs';
 
 const ROOT_DIR = path.resolve(import.meta.dirname, '..');
 const SCRIPTS = path.join(ROOT_DIR, 'plugins/aidrian/scripts');
@@ -456,6 +457,48 @@ test('the PostToolUse hook records a finished run, and nothing for one stopped o
   assert.deepEqual(recorded('rec-2'), [], 'a run in the background or stopped records nothing');
 });
 
+// Another session removed this session's starting worktree: the host sends the home folder as its cwd, and the session
+// runs its tests after a `cd` into a worktree that still exists. The run is recorded in that worktree's project.
+test('a run after a cd is recorded when the call\'s own folder holds no project', async () => {
+  const { dir } = repo();
+  const home = path.join(ROOT, `home-${made}`);
+  mkdirSync(home);
+  const call = (command, session) => hookCall(path.join(SCRIPTS, 'hook-bash-post.mjs'), { input: JSON.stringify(postPayload(command, { cwd: home, session, stdout: 'ℹ pass 277\nℹ fail 0\n' })), env: ENV });
+  assert.equal((await call(`cd ${dir} && npm run check`, 'moved-1')).status, 0);
+  assert.deepEqual(recorded('moved-1').map(({ command, status, pass }) => [command, status, pass]), [['npm run check', 'passed', 277]]);
+  // With no `cd` to a project, nothing is recorded.
+  await call('npm run check', 'moved-2');
+  assert.deepEqual(recorded('moved-2'), []);
+  // An earlier command of the line in another project does not take the run: it goes where the run ran.
+  const { dir: other } = repo();
+  await call(`git -C ${other} status && env -C ${dir} npm run check`, 'moved-3');
+  // The projects whose session folder holds a record for `session`.
+  const holders = (session) => readdirSync(path.join(STATE, 'aidrian/projects')).filter((id) => {
+    try {
+      return readdirSync(path.join(STATE, 'aidrian/projects', id, 'sessions', session)).includes('checks.jsonl');
+    } catch {
+      return false;
+    }
+  });
+  const [first] = holders('moved-1');
+  assert.deepEqual(holders('moved-3'), [first], 'the run went to the project of the folder it ran in');
+  // Each run is read with the config of the project it runs in: one project's test command is no run in another.
+  const { dir: smoke } = repo({ config: { version: 1, testing: { fullSuite: ['make smoke'] } } });
+  await call(`git -C ${smoke} status && env -C ${other} make smoke && env -C ${dir} npm run check`, 'moved-4');
+  assert.deepEqual(holders('moved-4'), [first]);
+  assert.deepEqual(recorded('moved-4').map(({ command }) => command), ['npm run check']);
+  // Two runs on the line, each its own project's: the line's one summary is neither's count.
+  await call(`env -C ${smoke} make smoke && env -C ${dir} npm run check`, 'moved-5');
+  assert.deepEqual(recorded('moved-5').map(({ command, pass }) => [command, pass]).sort(), [['make smoke', null], ['npm run check', null]]);
+  // A run in no project still counts among the line's runs: its summary is not the project's run's count.
+  await call(`node --test && env -C ${smoke} make smoke`, 'moved-6');
+  assert.deepEqual(recorded('moved-6').map(({ command, pass }) => [command, pass]), [['make smoke', null]]);
+  // Nor does a run only another project's config reads, in a folder of none: each config sees one run, the line holds two.
+  const { dir: integration } = repo({ config: { version: 1, testing: { fullSuite: ['make integration'] } } });
+  await call(`make integration && env -C ${smoke} make smoke && env -C ${integration} true`, 'moved-7');
+  assert.deepEqual(recorded('moved-7').map(({ command, pass }) => [command, pass]), [['make smoke', null]]);
+});
+
 test('a call whose output Claude Code kept in a file is counted from that file\'s tail', () => {
   const { dir, git } = repo();
   const tree = git('rev-parse', 'HEAD^{tree}');
@@ -768,6 +811,48 @@ test('aidrian test changed on a branch whose remote copy is at HEAD lists the br
   assert.equal(changeBase(dir), git('rev-parse', 'refs/remotes/origin/main'));
   const listed = spawnSync(process.execPath, [CLI, 'test', 'changed', '--list'], { cwd: dir, env: ENV, encoding: 'utf8' });
   assert.deepEqual([listed.status, listed.stdout], [0, 'test/a.test.mjs\n'], listed.stderr);
+});
+
+// jest reads a file argument as a regular expression and node as a glob: a Next.js segment such as `[org]` or
+// `(group)` found no test, and the run exited 1 with nothing to credit.
+test('aidrian test changed runs a test file whose path holds pattern characters, and its run is credited', () => {
+  const file = 'app/[org]/(group)/[...slug]/page.test.mjs';
+  const { dir, git } = repo({ files: { 'package.json': JSON.stringify({ scripts: { test: 'npm run test:unit', 'test:unit': 'node --test' } }) } });
+  git('push', '-q', 'origin', 'feat/x');
+  mkdirSync(path.join(dir, path.dirname(file)), { recursive: true });
+  writeFileSync(path.join(dir, file), "import test from 'node:test';\ntest('runs', () => {});\n");
+  const ran = spawnSync(process.execPath, [CLI, 'test', 'changed'], { cwd: dir, env: ENV, encoding: 'utf8' });
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  assert.ok(ran.stdout.includes("'app/[[]org[]]/(group)/[[]...slug[]]/page.test.mjs'"), ran.stdout);
+  assert.match(ran.stdout, /[ℹ#] tests 1\n[ℹ#] suites 0\n[ℹ#] pass 1\n/u, 'node 22 prints TAP off a terminal, later ones the spec summary');
+  const [row] = checkRows({ command: 'aidrian test changed', cwd: dir, output: ran.stdout, exitZero: true, tree: () => ({ tree: 't', trackedTree: 't' }) });
+  assert.deepEqual([row.command, row.status, row.pass], ['aidrian test changed', 'passed', 1]);
+  // jest, by its name or at the end of a script chain, takes a backslash before each pattern character.
+  const scripts = path.join(ROOT, `scripts-${made}`);
+  mkdirSync(scripts);
+  writeFileSync(path.join(scripts, 'package.json'), JSON.stringify({ scripts: { test: 'npm run test:unit', 'test:unit': 'node --no-sparkplug node_modules/jest/bin/jest.js', vt: 'vitest run' } }));
+  assert.deepEqual(['npm test --', 'npx jest', 'pnpm run vt', 'yarn test', 'bun test', 'npm run missing'].map((command) => testRunner(scripts, command)),
+    ['jest', 'jest', null, 'jest', null, null]);
+  // The runner is the program the shell runs, not a word among its arguments, and `--runTestsByPath` reads exact paths.
+  // A flag the package manager forwards reaches the script's own command.
+  writeFileSync(path.join(scripts, 'package.json'), JSON.stringify({ scripts: { test: 'jest', unit: 'npm run inner --', inner: 'jest' } }));
+  assert.deepEqual(['npm test -- --runTestsByPath', 'npm test', 'yarn test --runTestsByPath', 'npm run unit -- --runTestsByPath', 'npm test -- -- --runTestsByPath']
+    .map((command) => testRunner(scripts, command)), [null, 'jest', null, null, 'jest']);
+  writeFileSync(path.join(scripts, 'package.json'), JSON.stringify({ scripts: { test: 'jest --runTestsByPath' } }));
+  assert.deepEqual(['vitest --project jest', "node --test --test-name-pattern='a;b'", 'jest --runTestsByPath', 'npm test --', 'npm test -- --runTestsByPath', 'FOO=1 rtk jest']
+    .map((command) => testRunner(scripts, command)), [null, 'node', null, null, null, 'jest']);
+  // Words are the shell's: an option inside a quoted value, or a node script's own arguments, name no runner mode.
+  assert.deepEqual([
+    "jest --testNamePattern='use --runTestsByPath here'", 'jest --runTestsByPath=true', 'jest --runTestsByPath=false', `jest ${'--verbose '.repeat(40)}--runTestsByPath`,
+    'npx --yes jest', 'pnpm exec jest', 'node --import tsx node_modules/jest/bin/jest.js', 'node --inspect-port 9230 --test', 'node --test-reporter spec --test',
+    'node scripts/run.mjs --test', 'node scripts/run.mjs node_modules/jest/bin/jest.js', 'jest -- --runTestsByPath', 'npx --cache /tmp/npm jest',
+    'node -- ./node_modules/jest/bin/jest.js --runTestsByPath', 'node -- ./node_modules/jest/bin/jest.js', 'node node_modules/.bin/jest -- --runTestsByPath',
+    'node --title ./fixtures/jest/bin/jest.js -- ./node_modules/jest/bin/jest.js --runTestsByPath',
+  ].map((command) => testRunner(path.join(ROOT, 'none'), command)), ['jest', null, 'jest', null, 'jest', 'jest', 'jest', 'node', 'node', null, null, 'jest', 'jest', null, 'jest', 'jest', null]);
+  const pattern = literalPattern(file, 'jest');
+  assert.equal(pattern, 'app/\\[org\\]/\\(group\\)/\\[...slug\\]/page.test.mjs');
+  assert.ok(new RegExp(pattern).test(file) && !new RegExp(file).test(file), 'the escaped path matches itself, as the raw one does not');
+  assert.equal(literalPattern(file, null), file, 'another runner gets the path as it is');
 });
 
 test('aidrian test changed with nothing to run says no test passed, and its row supports no claim', () => {

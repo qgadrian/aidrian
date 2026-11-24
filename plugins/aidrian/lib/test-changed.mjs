@@ -9,7 +9,9 @@
 // every changed file in a test folder that is a file on disk, outside a nested package, as it is, with no search for its users. With nothing to run it prints the
 // node runner's zero summary, so its row shows no test passed, and supports no claim.
 // The command is config.json `testing.changedCommand`, else `npm test --` when package.json has a test script, with the
-// files after it; its exit status is the command's.
+// files after it; its exit status is the command's. When that command ends in jest or `node --test` (testRunner), which
+// read a file as a pattern, each file goes with its pattern characters escaped as that runner reads them (literalPattern), so a path such as
+// `app/[org]/page.test.ts` runs its tests.
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -22,6 +24,7 @@ import { isFile } from './fs.mjs';
 import { currentRoot, runGit } from './git.mjs';
 import { findProject } from './project.mjs';
 import { remoteCopy } from './rules/push-first.mjs';
+import { lexPipeline, readInvocation } from './shell-lex.mjs';
 
 export { TEST_FILE };
 
@@ -104,6 +107,115 @@ export function testCommand(root, testing = {}) {
   }
 }
 
+// The runner a test command ends in, `jest` or `node` (`node --test`), or null for any other: the program its last
+// command runs, read by the shell lexer, after `npx`, `bunx`, `pnpx` and their options, or `pnpm exec` and `yarn exec`;
+// else the package.json script that command runs (`npm test`, `npm run <name>`, and their pnpm, yarn, and bun forms),
+// followed at most 5 deep. Both read a file argument as a pattern: jest as a regular expression, node as a glob.
+// Jest given `--runTestsByPath`, as its own word on the way and not `=false`, reads exact paths, so it is none.
+export function testRunner(root, command, depth = 0, scripts = null) {
+  const words = lastCommandWords(command);
+  const [program, ...rest] = words;
+  if (program === 'jest') return jestMode(rest);
+  if (program === 'node') {
+    const { runner, at } = nodeRunner(rest);
+    // Jest reads only the words after its entry point, the script node's scan found; node's own `--` comes before it.
+    return runner === 'jest' ? jestMode(rest.slice(at + 1)) : runner;
+  }
+  const script = scriptName(words);
+  if (script === null || depth >= 5) return null;
+  if (scripts === null) {
+    try {
+      scripts = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))?.scripts ?? {};
+    } catch {
+      return null;
+    }
+  }
+  // The words after the script's name, past one `--`, go to the script's own command, as the package manager passes them.
+  const forwarded = words.slice(script.at);
+  if (forwarded[0] === '--') forwarded.shift();
+  const body = scripts[script.name];
+  return typeof body === 'string' ? testRunner(root, [body, ...forwarded.map(quote)].join(' '), depth + 1, scripts) : null;
+}
+
+// Jest's path mode for the words it is given: exact paths with `--runTestsByPath`, not `=false`, before any `--`, after
+// which jest reads every word as a pattern; else patterns.
+function jestMode(words) {
+  const options = words.includes('--') ? words.slice(0, words.indexOf('--')) : words;
+  return options.some((word) => /^--runTestsByPath(?:=(?!false$).*)?$/u.test(word)) ? null : 'jest';
+}
+
+// Node's options that take the next word as their value.
+const NODE_VALUE_OPTIONS = new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '--conditions', '-C', '--env-file',
+  '--inspect-port', '--input-type', '--title', '--watch-path', '--test-reporter', '--test-reporter-destination', '--test-name-pattern',
+  '--test-skip-pattern', '--test-concurrency', '--test-shard', '--test-timeout']);
+
+// What `node <words>` runs, as { runner, at }: jest when its script, at `at`, is jest's entry point, the node runner when
+// `--test` comes before the script, else none: a script's own arguments name no runner.
+// SHORTCUT: an option that takes its value as the next word and is not in NODE_VALUE_OPTIONS ends the scan there, as
+// does a package runner option of that kind outside dropOptions's list; and words forwarded to a package script reach
+// its command as written, though an npm it runs with no `--` of its own takes their options for npm's. Each review
+// round found one more such case, and a full argument reader per runner and package manager would replace these rules.
+function nodeRunner(words) {
+  // The script at `at`: jest when it is jest's entry point.
+  const script = (at) => ({ runner: JEST_ENTRY.test(words[at] ?? '') ? 'jest' : null, at });
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i];
+    if (word === '--test') return { runner: 'node', at: i };
+    // After node's own `--`, the next word is the script.
+    if (word === '--') return script(i + 1);
+    if (!word.startsWith('-')) return script(i);
+    if (NODE_VALUE_OPTIONS.has(word)) i += 1;
+  }
+  return { runner: null, at: words.length };
+}
+
+// Jest's entry point as a node script.
+const JEST_ENTRY = /(?:^|\/)(?:jest\/bin\/jest\.js|\.bin\/jest)$/u;
+
+// The words of the last command of `text`, its program's base name first, after a package runner's own words; none for
+// one the shell fills in.
+function lastCommandWords(text) {
+  const last = lexPipeline(String(text)).segments.filter((segment) => segment.length > 0).at(-1);
+  if (!last) return [];
+  const invocation = readInvocation(last);
+  if (invocation.dynamic || typeof invocation.program !== 'string') return [];
+  let words = [invocation.program, ...invocation.args.map((token) => token.text)].filter((word) => typeof word === 'string');
+  for (let peeled = 0; peeled < 3; peeled += 1) {
+    const head = path.basename(words[0] ?? '');
+    if (['npx', 'bunx', 'pnpx'].includes(head)) words = dropOptions(words.slice(1));
+    else if (['pnpm', 'yarn'].includes(head) && words[1] === 'exec') words = dropOptions(words.slice(2));
+    else break;
+  }
+  return words.length ? [path.basename(words[0]), ...words.slice(1)] : [];
+}
+
+// `words` from its first word that is not an option, as a package runner reads its own options; `-p` and `--package` take a value.
+function dropOptions(words) {
+  let i = 0;
+  while (i < words.length && words[i].startsWith('-')) i += ['-p', '--package', '-c', '--call', '--cache', '--userconfig', '--registry'].includes(words[i]) ? 2 : 1;
+  return words.slice(i);
+}
+
+// The package.json script a command's words run, as { name, at }, `at` the index of the first word after its name, or
+// null: `npm test`, `npm run <name>`, `pnpm|yarn [run] <name>`, `bun run <name>`.
+function scriptName([manager, verb, next]) {
+  if (!['npm', 'pnpm', 'yarn', 'bun'].includes(manager) || verb === undefined || verb.startsWith('-')) return null;
+  if (['run', 'run-script'].includes(verb)) return next && !next.startsWith('-') ? { name: next, at: 3 } : null;
+  if (manager === 'bun') return null;
+  if (['test', 't', 'tst'].includes(verb)) return { name: 'test', at: 2 };
+  return manager === 'npm' ? null : { name: verb, at: 2 };
+}
+
+// A file as the runner `runner` (testRunner) reads it as itself: a Next.js segment such as `[id]` or `(group)` is
+// otherwise a character class or a group, and the runner finds no test in it. Jest's regular expression takes a
+// backslash before each such character. Node's glob takes none, so each glob character goes inside a class, as `[[]`;
+// a parenthesis is no glob character there.
+export function literalPattern(file, runner) {
+  if (runner === 'jest') return file.replace(/[[\](){}*?+|^$\\]/gu, '\\$&');
+  if (runner === 'node') return file.replace(/[[\]{}*?]/gu, '[$&]');
+  return file;
+}
+
 const quote = (word) => (/^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`);
 
 export const commands = {
@@ -143,7 +255,8 @@ export const commands = {
         console.error(`aidrian test changed: no command runs test files here; set config.json testing.changedCommand. The files:\n${tests.join('\n')}`);
         return 2;
       }
-      const line = `${command} ${tests.map(quote).join(' ')}`;
+      const runner = testRunner(root, command);
+      const line = `${command} ${tests.map((file) => quote(literalPattern(file, runner))).join(' ')}`;
       console.log(`aidrian test changed: ${tests.length} test file(s) against ${base}: ${line}`);
       const ran = spawnSync(line, { cwd: root, shell: true, stdio: 'inherit' });
       return ran.status ?? 1;

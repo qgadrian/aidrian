@@ -9,6 +9,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
+import { harnessSignoff } from '../plugins/aidrian/lib/review/step.mjs';
 import { EXIT, recordAccept, recordOverrule, recordPass, recordSignoff, remoteState, reviewInForce } from '../plugins/aidrian/lib/review/run.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -374,6 +375,24 @@ test('a base that commits github.autoMerge.includePolicyFiles with includeGuarde
   }
   assert.equal((await r.step({ exec: clean })).status, 'received', 'no sign-off of the Human');
   assert.deepEqual(readLocalState(r.project, 7, 'o/r').signoffable.flows, [], 'nothing for the Human to sign off');
+});
+
+test('harnessSignoff asks merge trust\'s floor who signs the harness-config flow: the reviewer only where the floor asks the Human nothing', () => {
+  const lifted = { autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } };
+  const config = '.aidrian/config.json';
+  const ask = (committed, changes = [{ file: config, status: 'M' }]) => harnessSignoff({ changes, committed, config });
+  const flows = { booking: { files: ['src/booking/**'], invariants: 'docs/flows/booking.md' } };
+  assert.equal(ask({ github: lifted, review: { flows } }), 'reviewer', 'lifted on the base');
+  assert.equal(ask({ github: { autoMerge: { includeGuardedPaths: true } }, review: { flows } }), 'human', 'not lifted');
+  assert.equal(ask({ github: { autoMerge: { includePolicyFiles: true } }, review: { flows } }), 'human', 'without includeGuardedPaths');
+  // The config cited by a flow's invariants, and a review command the project configures, keep the Human, as the floor does.
+  const cited = { booking: { files: ['src/booking/**'], invariants: [{ id: 'c1', text: 'rounds stay', cite: `${config}#review` }] } };
+  assert.equal(ask({ github: lifted, review: { flows: cited } }), 'human', 'a cited config');
+  assert.equal(ask({ github: lifted, review: { flows, planCommand: 'node plan.mjs' } }), 'human', 'a plan command');
+  assert.equal(ask({ github: lifted, review: { flows, reviewers: { lint: { command: ['node', 'lint.mjs'] } } } }), 'human', 'an exec reviewer');
+  assert.equal(ask({ github: lifted, review: { flows, visual: { login: 'node login.mjs' } } }), 'human', 'a visual login');
+  assert.equal(ask({ github: lifted, review: { flows } }, [{ file: config, status: 'M' }, { file: 'docs/flows/booking.md', status: 'M' }]), 'human', 'a flow\'s invariants doc');
+  assert.equal(ask({ github: lifted, review: { flows } }, [{ file: config, status: 'X' }]), 'human', 'a change type the floor cannot read');
 });
 
 test('reviewInForce: rules add up, flows and ignore lists come from the base, and every change is named', () => {

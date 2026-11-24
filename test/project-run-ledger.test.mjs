@@ -134,6 +134,20 @@ test('one run per project is active: a second run waits until the first is done,
   assert.equal(init('second', input(SNAPSHOT)).exitCode, 0, 'nothing runs or may start in the first run, so it is done');
 });
 
+test('a landed row that names no branch carries on for the branch its run\'s snapshot named', (t) => {
+  const { state, input, init } = setup(t);
+  assert.equal(init('first', input({ issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }] }, 'first.json')).exitCode, 0);
+  const at = new Date().toISOString();
+  appendToRun(state, 'first', () => ({ rows: [
+    { event: 'landed', key: 'ENG-1', run: 'zero', attempt: 1, pr: 12, at },
+    { event: 'issue', key: 'ENG-1', state: 'done', at },
+  ] }));
+  const same = init('second', input({ issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }] }, 'second.json'));
+  assert.equal(same.exitCode, 0, same.err.join('\n'));
+  assert.ok(same.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), same.out.join('\n'));
+  assert.equal(readRun(state, 'second').rows.find((row) => row.event === 'landed').branch, 'feat/eng-1-export');
+});
+
 test('init starts a started issue an earlier run parked on the same branch, and keeps every other started issue blocked', (t) => {
   const { state, input, init } = setup(t);
   const first = { issues: [

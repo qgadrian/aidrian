@@ -638,9 +638,11 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
         : null;
       // A run that took the issue in as landed and ended before its report was recorded: the next run carries it on.
       const landedRow = held.state === 'done' ? found.rows.findLast((row) => row.event === 'landed' && row.key === issue.key) : null;
-      // Only on the branch the take-in checked the merge for: a snapshot that names another branch is other work.
-      const carried = landedRow && !reported && landedRow.branch === issue.branch && Number.isInteger(landedRow.pr) && Number.isInteger(landedRow.attempt) && typeof landedRow.run === 'string' && RUN_ID.test(landedRow.run)
-        ? { run: landedRow.run, attempt: landedRow.attempt, pr: landedRow.pr, branch: landedRow.branch, ...(typeof landedRow.label === 'string' ? { label: landedRow.label } : {}) }
+      // Only on the branch the take-in checked the merge for: a snapshot that names another branch is other work. A row
+      // that names none took the merge in on that run's own snapshot branch.
+      const landedBranch = typeof landedRow?.branch === 'string' ? landedRow.branch : found.snapshot.issues.find((each) => each.key === issue.key)?.branch;
+      const carried = landedRow && !reported && landedBranch === issue.branch && Number.isInteger(landedRow.pr) && Number.isInteger(landedRow.attempt) && typeof landedRow.run === 'string' && RUN_ID.test(landedRow.run)
+        ? { run: landedRow.run, attempt: landedRow.attempt, pr: landedRow.pr, branch: landedBranch, ...(typeof landedRow.label === 'string' ? { label: landedRow.label } : {}) }
         : null;
       latest.set(issue.key, {
         at,

@@ -500,12 +500,17 @@ function guardedProject(t, files) {
 // One run of the Bash hook: `cpuMs` the processor time its own process spent (test/fixtures/cpu-used.mjs), null when it
 // wrote none, as when the 15 s limit killed it.
 const hookRun = (dir, env, command) => {
-  const cpuLog = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-publictext-cpu-')), 'cpu.json');
-  const result = spawnSync(process.execPath, ['--import', path.join(ROOT, 'test/fixtures/cpu-used.mjs'), path.join(ROOT, 'plugins/aidrian/scripts/hook-bash.mjs')], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: dir, session_id: 'public-text-later' }), encoding: 'utf8', env: { ...env, CPU_USED_LOG: cpuLog }, timeout: 15000,
-  });
-  const cpu = existsSync(cpuLog) ? JSON.parse(readFileSync(cpuLog, 'utf8')) : null;
-  return { ...result, cpuMs: cpu && (cpu.user + cpu.system) / 1000 };
+  const logs = mkdtempSync(path.join(tmpdir(), 'aidrian-publictext-cpu-'));
+  const cpuLog = path.join(logs, 'cpu.json');
+  try {
+    const result = spawnSync(process.execPath, ['--import', path.join(ROOT, 'test/fixtures/cpu-used.mjs'), path.join(ROOT, 'plugins/aidrian/scripts/hook-bash.mjs')], {
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: dir, session_id: 'public-text-later' }), encoding: 'utf8', env: { ...env, CPU_USED_LOG: cpuLog }, timeout: 15000,
+    });
+    const cpu = existsSync(cpuLog) ? JSON.parse(readFileSync(cpuLog, 'utf8')) : null;
+    return { ...result, cpuMs: cpu && (cpu.user + cpu.system) / 1000 };
+  } finally {
+    rmSync(logs, { recursive: true, force: true });
+  }
 };
 
 test('with a pipe for the private file and a slow pattern, the last rule still refuses, inside the hook time', (t) => {
@@ -514,7 +519,9 @@ test('with a pipe for the private file and a slow pattern, the last rule still r
   assert.equal(hook.status, 2, hook.stderr);
   assert.match(hook.stderr, /^Blocked: this command writes 'app\.js', a tracked file in the main checkout/);
   // Processor time, not wall time: the slow pattern's searches are cut at the public-text budget, so the hook's own work
-  // stays inside the host's 5 s however slowly a loaded machine runs it. A pipe it waited on spends no processor time, but ends in the 15 s kill, which the status above fails.
+  // stays inside the host's 5 s however slowly a loaded machine runs it; a 5 s wall bound here is what failed under load
+  // (#419). The read this test makes blocking, the private file as a pipe with no writer, never ends, so a hook that
+  // waited on it ends in the 15 s kill, which the status above fails. Git's reads stop at their own limits, tested apart.
   assert.ok(hook.cpuMs !== null && hook.cpuMs < 5000, `took ${hook.cpuMs} ms of processor time`);
 });
 

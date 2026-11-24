@@ -79,6 +79,11 @@ function run(input, env = late(0)) {
 
 // "In time" is the hook's processor time, the work its guards did before they finished or their deadline cut them, which
 // a busy machine does not stretch as it stretches the wall clock: a guard that never stops spends it past WELL_INSIDE.
+// On the real clock the run is still killed at the host's own timeout from hooks.json, so a hook that blocks past it
+// fails on its signal; only the margin inside that timeout is processor time, as a 4 s wall margin is what a loaded
+// machine broke. That the guards' blocking reads stop at what is left of the deadline is tested on a git that stalls
+// (test/config-guard.test.mjs, "the session-folder guard`s checkout read stops at what is left of the guards` budget").
+// A frozen clock tests no deadline, so its runs make no timing claim but the processor time.
 // The processor time `body()` took in this process, in milliseconds.
 function cpuMs(body) {
   const before = process.cpuUsage();

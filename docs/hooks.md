@@ -13,7 +13,8 @@ It also refuses a command that marks more than one pull request ready, since one
 A git call a hook makes is stopped after 2 seconds and counts as git not answering; the hook's later git calls then do not wait.
 A blocking hook exits 2 and tells the agent why on stderr.
 [`lib/hook-result.mjs`](../plugins/aidrian/lib/hook-result.mjs) holds what Claude Code makes of each event's exit and output,
-so a bridge host reads a script's answer the same way, and how it merges several hooks that match one call:
+so a bridge host reads a script's answer the same way, nested output only when labeled with the event it ran on,
+and how it merges several hooks that match one call:
 any block wins, and two different rewrites refuse the call.
 The Bash rules, the main-checkout rule, the review-disposition rule, the terms rule, the GitHub MCP hook, the agent gates, the config guard,
 the tracker write guard, and the question names check also record each block: see [Recorded blocks](#recorded-blocks).

@@ -5,9 +5,10 @@
 //           PostToolUse: no block, since the call already ran; stderr is context for the model.
 //           Any other event: nothing, since the host shows that stderr to the user only.
 //   exit 0  stdout a JSON object: hookSpecificOutput.additionalContext as context, hookSpecificOutput.updatedInput
-//           on PreToolUse only, and the top-level systemMessage. Plain text: context on SessionStart, UserPromptSubmit,
-//           and PreCompact, where it is the instructions for the compaction summary, and nothing elsewhere;
-//           SubagentStart takes its context from additionalContext only.
+//           on PreToolUse only, and the top-level systemMessage. hookSpecificOutput counts only when its hookEventName
+//           is the event the script ran on; with none or another, only systemMessage does. Plain text: context on
+//           SessionStart, UserPromptSubmit, and PreCompact, where it is the instructions for the compaction summary,
+//           and nothing elsewhere; SubagentStart takes its context from additionalContext only.
 //
 // Any other exit, a signal, or input it cannot read is the empty verdict, so a hook that crashed or hung lets the action
 // run (docs/working-agreement.md). Output past the bridge's byte bound carries no text and never turns an exit 2 into an
@@ -50,7 +51,8 @@ function parseObject(text) {
 }
 
 function fromJson(event, output) {
-  const specific = isPlainObject(output.hookSpecificOutput) ? output.hookSpecificOutput : {};
+  const nested = output.hookSpecificOutput;
+  const specific = isPlainObject(nested) && nested.hookEventName === event ? nested : {};
   return verdict({
     context: nonBlank(specific.additionalContext),
     systemMessage: nonBlank(output.systemMessage),

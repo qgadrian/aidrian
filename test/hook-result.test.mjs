@@ -66,6 +66,20 @@ test('the JSON a hook prints here: the banner and start context together, the co
   assert.deepEqual(readHookResult({ event: 'SessionStart', exit: 0, stdout: JSON.stringify({ systemMessage: '  ' }), stderr: '' }), EMPTY);
 });
 
+test('nested output with no event label, or another event\'s, adds no context and no rewrite; systemMessage still counts', () => {
+  const nested = { additionalContext: 'more', updatedInput: { run_in_background: false } };
+  const unlabeled = JSON.stringify({ systemMessage: 'banner', hookSpecificOutput: nested });
+  assert.deepEqual(readHookResult({ event: 'PreToolUse', exit: 0, stdout: unlabeled, stderr: '' }), result({ systemMessage: 'banner' }));
+  assert.deepEqual(readHookResult({ event: 'PreToolUse', exit: 0, stdout: json('PostToolUse', nested), stderr: '' }), EMPTY);
+  assert.deepEqual(readHookResult({ event: 'SubagentStart', exit: 0, stdout: json('SessionStart', nested), stderr: '' }), EMPTY);
+  assert.deepEqual(readHookResult({ event: 'PostToolUse', exit: 0, stdout: json('PreToolUse', nested), stderr: '' }), EMPTY);
+  assert.deepEqual(readHookResult({ event: 'PreToolUse', exit: 0, stdout: json('preToolUse', nested), stderr: '' }), EMPTY, 'case counts');
+  assert.deepEqual(
+    readHookResult({ event: 'PreToolUse', exit: 0, stdout: json('PreToolUse', nested), stderr: '' }),
+    result({ context: 'more', updatedInput: { run_in_background: false } }),
+  );
+});
+
 test('a crash, a kill, a signal, output past the bound, or input it cannot read is the empty result', () => {
   const cases = [
     { event: 'PreToolUse', exit: 1, stdout: '', stderr: 'boom' },

@@ -26,9 +26,10 @@ const HOST_PROGRAMS = new Set(hostPrograms());
 const own = (table, word) => (Object.hasOwn(table, word) ? table[word] : undefined);
 // A package's spelling without its trailing `@version`, as `@changesets/cli@2` is `@changesets/cli`.
 const spelling = (word) => word.replace(/(?<=.)@[^@/]*$/u, '');
-// Whether a word names a host's program: a package of one, or a program of one by its name.
+// Whether a word names a host's program: a package of one, or a program of one by its name. A package of another
+// program, as `@changesets/cli`, is none, so `npx --package @changesets/cli npm publish` reads as npm.
 const hostWord = (word) => typeof word === 'string' && !word.startsWith('-')
-  && (own(PACKAGE_PROGRAMS, spelling(word)) !== undefined || HOST_PROGRAMS.has(path.basename(spelling(word)).replace(/\.(?:exe|cmd)$/iu, '').toLowerCase()));
+  && HOST_PROGRAMS.has(path.basename(own(PACKAGE_PROGRAMS, spelling(word)) ?? spelling(word)).replace(/\.(?:exe|cmd)$/iu, '').toLowerCase());
 
 // The program a call to `program` with the arguments `args` runs and the arguments it gets, through a package runner:
 // { program, args }, or the call as it is when `program` is no runner, or the program it runs is not plain text. `word`

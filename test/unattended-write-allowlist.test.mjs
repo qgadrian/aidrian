@@ -505,6 +505,7 @@ test('a session no Human attends never publishes, withdraws, or changes a packag
     // Release tools, through a runner and npm's and pnpm's exec forms, and Ruby's release task.
     'lerna publish', 'npx lerna publish', 'pnpm dlx lerna publish', 'npx changeset publish', 'npx @changesets/cli publish', 'pnpm dlx @changesets/cli@2 publish',
     'npm exec -- lerna publish', 'npm exec lerna publish', 'npm x changeset publish', 'pnpm exec changeset publish', 'npm exec -- npm publish',
+    'npx --package @changesets/cli npm publish', 'npm exec --package @changesets/cli -- npm publish',
     'bundle exec rake release', 'rake release',
     // Options before the subcommand, in any order and form.
     'pnpm --filter web publish', 'pnpm -F web publish', 'pnpm --filter=web publish', 'yarn workspace web publish', 'yarn workspace web npm publish',

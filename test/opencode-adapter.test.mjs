@@ -176,6 +176,9 @@ test('its packages run as its program, Claude Code\'s too, and a package runner 
     ['npx', ['@opencode/cli', 'run', 'x'], ['opencode', ['run', 'x']]], ['npx', ['-y', '@opencode/cli@2.4.0', 'auth', 'login'], ['opencode', ['auth', 'login']]],
     ['pnpm', ['dlx', 'opencode-ai', 'plugin', 'add', 'x'], ['opencode', ['plugin', 'add', 'x']]], ['bunx', ['@anthropic-ai/claude-code', '-p', 'x'], ['claude', ['-p', 'x']]],
     ['npx', ['@changesets/cli', 'publish'], ['changeset', ['publish']]], ['npx', ['prettier', '.'], ['prettier', ['.']]], ['opencode', ['run'], ['opencode', ['run']]],
+    // A package of a program no host owns, given as an option's value, is not the program.
+    ['npx', ['--package', '@changesets/cli', 'npm', 'publish'], ['npm', ['publish']]],
+    ['npm', ['exec', '--package', '@changesets/cli', '--', 'npm', 'publish'], ['npm', ['publish']]],
   ]) {
     const read = unwrapped(program, words);
     assert.deepEqual([read.program, read.args], expected, `${program} ${words.join(' ')}`);

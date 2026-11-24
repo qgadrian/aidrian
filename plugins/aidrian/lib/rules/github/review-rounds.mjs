@@ -13,11 +13,6 @@
 // repository its remotes name. When this session's transcript holds either of the Human's words:
 //   - an answer to an AskUserQuestion naming `<repo>#<PR>` and `--max-rounds <M>`, whose chosen option starts with
 //     "Approve" (checked first);
-//   - at a review this machine's record holds stopped at its round limit with no check at the cap waiting, as after a
-//     judge's stop, the Human's latest answer to the merge guard's round-limit question, at or after that outcome, being
-//     "Grant more review rounds", where the question or the chosen option names `#<PR>` and the capped head's first seven
-//     characters (merge-review.mjs answerNames): it approves the raise the guard names (merge-review.mjs grantRoute), the
-//     record's own command with `--max-rounds` up to one more round (review-extend.mjs nextCap), so one answer is enough;
 //   - a prompt the Human typed (review-extend.mjs transcriptTyped: a prompt sent as sdk, as by a script or the desktop
 //     app, an accepted suggestion, a slash command, a paste the host tagged, and every agent, peer, or tool text do not
 //     count) that is, whole, `grant up to <N> review rounds on <repo>#<PR>`, in any letter case, for every `<M>` up to
@@ -48,9 +43,8 @@ import { detectHost } from '../../hosts/index.mjs';
 import { ROUNDS_OVERRIDE, TYPED_GRANT_FORM } from '../../pr-await-review.mjs';
 import { findProject } from '../../project.mjs';
 import { aidrianArgs, assignsVariable, commandLines, lexCommand, readInvocation } from '../../shell-lex.mjs';
-import { CAPPED, readLocalState } from '../../review/state.mjs';
-import { nextCap, transcriptAnswers, transcriptTyped, waitingRoute } from '../review-extend.mjs';
-import { answerNames, GRANT as GRANT_OPTION, SHIP } from './merge-review.mjs';
+import { readLocalState } from '../../review/state.mjs';
+import { transcriptAnswers, transcriptTyped, waitingRoute } from '../review-extend.mjs';
 import { approvalTarget, callRepo, namesChange, NOTIFY, severalRemotes } from '../review-signoff.mjs';
 import { repoName } from '../../remotes.mjs';
 import { readRequests } from './review-request.mjs';
@@ -119,8 +113,7 @@ const shellOf = (command) => `hand the Human \`${ROUNDS_OVERRIDE}=1 ${command}\`
 // Why the override on `invocation` is not a raise the Human approved, or null when it is. `said` is sessionSaid's
 // { answers, typed, unread }, and `target` review-signoff.mjs approvalTarget for the command. The checkout comes first,
 // then the command's form, then the transcript, so the first deny names the one thing to change.
-// `cap` is capOf's, the record's review stopped at its round limit with no check waiting, or null.
-export function raiseMiss(invocation, said, target, cap = null) {
+export function raiseMiss(invocation, said, target) {
   const words = aidrianArgs(invocation);
   const texts = words && !words.some((word) => word.dynamic) ? words.map((word) => word.text) : [];
   const [verb, sub, pr] = texts;
@@ -145,8 +138,6 @@ export function raiseMiss(invocation, said, target, cap = null) {
   if (said.unread) return `${UNREAD[said.unread]}, so no answer or typed grant counts here: ${shellOf(`${handoverOf(words)} --max-rounds ${max}`)}`;
   const named = `${target.repo}#${pr}`;
   const grant = latestGrant(said.typed, named);
-  const granted = capGrant(said.answers, cap, pr, sub, max);
-  if (granted) return boundMiss(grant, granted, named, max);
   const asked = answerRoute(said.answers, target.repo, pr, max);
   if (asked.approved) return boundMiss(grant, asked.approved, named, max);
   const typed = typedMiss(said, grant, named, max);
@@ -166,18 +157,6 @@ function answerRoute(answers, repo, pr, max) {
   if (approves(last.answer)) return { approved: last };
   const replaced = onMax.slice(0, -1).some((each) => approves(each.answer)) ? ' That later answer replaced an earlier approval of the same question.' : '';
   return { miss: `The Human picked "${last.answer}", not the option that starts with "Approve".${replaced}` };
-}
-
-// The Human's latest answer to the merge guard's round-limit question on `pr` at the capped head, given at or after the
-// outcome (merge-review.mjs answerNames: the question or the chosen option names `#<PR>` and the short head), when it is
-// "Grant more review rounds" and the raise is the guard's (merge-review.mjs grantRoute): the record's source's command
-// with `--max-rounds` up to `cap.next`, one more round. Else null. So the one answer to the guard's question runs the raise.
-function capGrant(answers, cap, pr, sub, max) {
-  if (!cap || cap.next === null || (sub === 'await-review') !== cap.bot || Number(max) > cap.next) return null;
-  const since = Date.parse(cap.at ?? '');
-  const decides = new RegExp(`^\\s*(?:${SHIP}|${GRANT_OPTION}|merge anyway)\\b`, 'iu');
-  const latest = answers.filter((each) => each.at !== null && Date.parse(each.at) >= since && answerNames(each, pr, cap.head) && decides.test(each.answer)).at(-1);
-  return latest && new RegExp(`^\\s*${GRANT_OPTION}\\b`, 'iu').test(latest.answer) ? latest : null;
 }
 
 // Whether timestamp `a` is readably earlier than `b`. A missing or unparseable one is never earlier.
@@ -264,38 +243,17 @@ function sessionSaid(env, input) {
 // repository the raise acts on (review-signoff.mjs callRepo), or null. Where that repository cannot be named, a raise with
 // no `--repo` in a checkout whose remotes name several, or one no remote names, no record is read: another repository's
 // check of the same number names no route here.
-function pendingRoute(project, invocation, record = recordOf(project, invocation)) {
-  if (!record) return null;
-  try {
-    const repoArg = record.repo && severalRemotes(project) ? ` --repo ${record.repo}` : '';
-    return waitingRoute(record.pr, record.state?.extensions?.at(-1), repoArg);
-  } catch {
-    return null;
-  }
-}
-
-// This machine's review record of the raise's pull request, in the repository the raise acts on, as pendingRoute reads
-// it: { pr, repo, state }, or null.
-function recordOf(project, invocation) {
+function pendingRoute(project, invocation) {
   const pr = raisedPr(invocation);
   if (!pr) return null;
   try {
     const target = callRepo(project, aidrianArgs(invocation));
     if (target.miss === 'remotes' || target.miss === 'repo') return null;
-    return { pr, repo: target.repo, state: readLocalState(project, Number(pr), target.repo ?? undefined) };
+    const repoArg = target.repo && severalRemotes(project) ? ` --repo ${target.repo}` : '';
+    return waitingRoute(pr, readLocalState(project, Number(pr), target.repo ?? undefined)?.extensions?.at(-1), repoArg);
   } catch {
     return null;
   }
-}
-
-// The review stopped at its round limit in `record`, with no check at the cap waiting for the judge or the Human:
-// { head, at, next, bot } (review-extend.mjs nextCap), for capGrant; else null.
-export function capOf(record) {
-  const outcome = record?.state?.outcome;
-  if (!outcome || !CAPPED.has(outcome.status) || typeof outcome.head !== 'string') return null;
-  const { last, next, bot } = nextCap(record.state);
-  if (['judging', 'asking'].includes(last?.status)) return null;
-  return { head: outcome.head, at: outcome.at ?? null, next, bot };
 }
 
 // The deny reason for `command`, or null.
@@ -312,11 +270,10 @@ export function check(command, { cwd = process.cwd(), env = process.env, input =
       if (setsOverride(invocation)) {
         said ??= sessionSaid(env, input);
         const target = approvalTarget(project, command, cwd, `${ROUNDS_OVERRIDE}=1\\s+`);
-        const record = recordOf(project, invocation);
-        const miss = raiseMiss(invocation, said, target, capOf(record));
+        const miss = raiseMiss(invocation, said, target);
         const asks = said.unread === null && target.miss !== 'origin';
         const ask = askRoute({ typed: said.typedRead, several: severalRemotes(project) });
-        const route = pendingRoute(project, invocation, record) ?? (asks ? ask : null);
+        const route = pendingRoute(project, invocation) ?? (asks ? ask : null);
         if (miss) return [OVERRIDE_REASON, route, miss].filter(Boolean).join(' ');
       }
       if (readRequests(invocation, config.github.reviewer, read, env).length > 0) return REQUEST_REASON;

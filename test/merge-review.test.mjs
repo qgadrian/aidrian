@@ -14,7 +14,7 @@ import { isAncestor } from '../plugins/aidrian/lib/review/diff.mjs';
 import { recordPass, recordSignoff, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { answerOwed, markRequestsSent, recordPending, runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
 import { answerPending, emptyState, noteOutcome, readLocalState, readRecord, recordFile, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { check, checkMcp, CURL_REASON, grantRoute, mergeApproved, mergeRepoArg, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { check, checkMcp, CURL_REASON, mergeApproved, mergeRepoArg, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { waitingRoute } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
 
@@ -221,11 +221,6 @@ test('a review stopped at its round limit asks the Human to ship or to grant rou
     assert.equal(mcp, reason.replace(handOver(5), handOver(5, { flags: ' --repo acme/notes' })), `${status}: the MCP tool gets the same deny`);
   }
   assert.match(r.run('gh pr merge 5') ?? '', /its refusal names the route to one more round/u, 'round_limit: the refusal names the route');
-  // #645: after a judge's stop nothing waits for the Human, so `aidrian pr extend --human approve` can only fail there.
-  r.record(5, stopped('round_limit', { extensions: [{ ...JUDGING, status: 'stopped', by: 'judge' }] }));
-  const afterStop = r.run('gh pr merge 5') ?? '';
-  assert.match(afterStop, /When the Human picks "Grant more review rounds", do not merge\. No extension waits for the Human, so that answer itself approves one more round: run exactly `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 5 --max-rounds 2 --repo acme\/notes`/u);
-  assert.doesNotMatch(afterStop, /pr extend 5 --human approve/u);
   const reasoned = repo(t);
   reasoned.record(5, (state) => (stopped('round_limit')(state), (state.outcome.reason = 'the judge stopped')));
   assert.match(reasoned.run('gh pr merge 5') ?? '', /is `round_limit` \(the judge stopped\): stopped at its round limit, with 2 findings open, and not running\./u);
@@ -307,34 +302,45 @@ test('the Human`s "Merge with the findings filed" lets a capped review merge, an
 // ignored, since only the question was read for the pull request and the head.
 test('a round-cap answer counts in the Human`s words when the question or the chosen option names the pull request and head', () => {
   const at = '2026-11-03T14:10:00.000Z';
-  const on = { pr: 638, head: HEAD, since: '2026-11-03T14:00:00.000Z', capped: true };
+  const on = { pr: 638, head: HEAD, repo: 'acme/notes', since: '2026-11-03T14:00:00.000Z', capped: true };
   const approves = (question, answer) => mergeApproved([{ question, answer, at }], on);
   const plain = 'The review hit its round limit with 2 findings open. Ship it and file them, or keep reviewing?';
-  assert.equal(approves(plain, 'Merge with the findings filed (#638 at abcdef1)'), true, 'the option carries both');
-  assert.equal(approves(`${plain} (#638)`, 'Merge with the findings filed, abcdef1'), true, 'one in each');
-  assert.equal(approves(`#638 at abcdef1: ${plain}`, 'Merge with the findings filed'), true, 'the question carries both, as before');
-  assert.equal(approves(plain, 'Merge anyway (#638 at abcdef1)'), true);
+  for (const [why, question, answer] of [
+    ['the option carries both', plain, 'Merge with the findings filed (#638 at abcdef1)'],
+    ['one in each', `${plain} (#638)`, 'Merge with the findings filed, abcdef1'],
+    ['the question carries both, as before', `#638 at abcdef1: ${plain}`, 'Merge with the findings filed'],
+    ['a longer head', plain, 'Merge anyway (#638 at abcdef1234)'],
+    ['the record`s repository', plain, 'Merge anyway (Acme/Notes#638 at abcdef1)'],
+    ['the option`s head decides over the question`s other one', `#638 at 1234567: ${plain}`, 'Merge anyway (abcdef1)'],
+  ]) assert.equal(approves(question, answer), true, why);
   for (const [why, question, answer] of [
     ['no identifiers', plain, 'Merge with the findings filed'],
     ['no head', plain, 'Merge with the findings filed (#638)'],
     ['another head', plain, 'Merge with the findings filed (#638 at 1234567)'],
     ['another pull request', plain, 'Merge with the findings filed (#6380 at abcdef1)'],
     ['an option naming another pull request decides alone', `#638 and #639 at abcdef1: ${plain}`, 'Merge with the findings filed (#639)'],
+    ['an option naming another head decides alone', `#638 at abcdef1 or at 1234567: ${plain}`, 'Merge anyway (1234567)'],
+    ['another repository in the option', plain, 'Merge anyway (fork/notes#638 at abcdef1)'],
+    ['another repository in the question', `fork/notes#638 at abcdef1: ${plain}`, 'Merge anyway'],
     ['the grant', plain, 'Grant more review rounds (#638 at abcdef1)'],
   ]) assert.equal(approves(question, answer), false, why);
   assert.equal(mergeApproved([{ question: plain, answer: 'Merge with the findings filed (#638 at abcdef1)', at: '2026-11-03T13:00:00.000Z' }], on), false, 'before the outcome');
+  assert.equal(approves(`fork/notes#638 at abcdef1: ${plain}`, 'Merge anyway (#638)'), true, 'the option`s plain number decides over the question`s repository');
 });
 
-test('after a judge`s stop, the grant route is the raise of one more round, never `aidrian pr extend --human approve`', () => {
-  const rounds = [{ head: HEAD }, { head: HEAD }, { head: HEAD }];
-  const judged = (source, round) => ({ ...emptyState(638, 'acme/notes'), rounds, extensions: [{ source, round, head: HEAD, status: 'stopped', by: 'judge' }] });
-  assert.equal(grantRoute(638, judged('plan', 3)), 'No extension waits for the Human, so that answer itself approves one more round: run exactly ' +
-    '`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 638 --max-rounds 4 --repo acme/notes` (with `--with-bot` before `--max-rounds` when the step runs the bot), ' +
-    'as one plain command from the pull request\'s checkout, and ask nothing more.');
-  assert.match(grantRoute(638, judged('bot', 5)), /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 638 --request --max-rounds 6 --repo acme\/notes`, as one/u);
-  assert.match(grantRoute(638, { ...judged('plan', 3), repo: 'a b' }), /--max-rounds 4`/u, 'a repository name of other characters is left out');
-  assert.equal(grantRoute(638, { ...judged('plan', 3), extensions: [{ ...JUDGING, round: 3 }] }), waitingRoute(638, { ...JUDGING, round: 3 }), 'a waiting check keeps its own route');
-  assert.match(grantRoute(638, emptyState(638, 'acme/notes')), /^Run `aidrian pr extend 638 --human approve`/u, 'no check at all keeps the extend route');
+test('the latest round-cap answer about the pull request and head decides, in either order', () => {
+  const on = { pr: 638, head: HEAD, repo: 'acme/notes', since: '2026-11-03T14:00:00.000Z', capped: true };
+  const question = 'Review of pull request #638 at abcdef1 stopped at its round limit, with 2 findings open. Ship, and file them as an issue?';
+  const ship = { question, answer: 'Merge with the findings filed', at: '2026-11-03T14:10:00.000Z' };
+  const grant = { question, answer: 'Grant more review rounds', at: '2026-11-03T14:20:00.000Z' };
+  assert.equal(mergeApproved([ship, grant], on), false, 'a later grant withdraws the ship answer');
+  assert.equal(mergeApproved([{ ...grant, at: ship.at }, { ...ship, at: grant.at }], on), true, 'a later ship answer takes it again');
+  assert.equal(mergeApproved([ship, { ...grant, question: question.replace('abcdef1', '1234567') }], on), true, 'a grant about another head leaves it');
+  assert.equal(mergeApproved([ship, { ...grant, answer: 'Why so many rounds?' }], on), true, 'an answer that picks no option leaves it');
+  const waiting = { ...on, capped: false };
+  const merge = { question: 'Merge pull request #638 at abcdef1 before its review is finished?', answer: 'Merge anyway', at: ship.at };
+  assert.equal(mergeApproved([merge, { ...merge, answer: 'Wait for the review', at: grant.at }], waiting), false, 'a later wait withdraws a merge');
+  assert.equal(mergeApproved([{ ...merge, answer: 'Wait for the review' }, { ...merge, at: grant.at }], waiting), true);
 });
 
 // A capped review whose last round itemizes its open findings: `severities` one finding each.

@@ -693,8 +693,8 @@ test('record takes the audit_key pending prints, so a walk and the run it replac
   const items = JSON.parse((await run('pending', NEW, '--json')).stdout).groups.flatMap((g) => g.items);
   const older = items.find((i) => i.kind === 'not_rechecked' && i.id === 'F2');
   assert.equal(older.audit_key, `${OLD}#F2`);
-  assert.equal(older.record, `aidrian audits record ${NEW} '${OLD}#F2'`);
-  assert.equal(items.find((i) => i.kind === 'finding' && i.id === 'F2').record, `aidrian audits record ${NEW} '${NEW}#F2'`);
+  assert.equal(older.record, `aidrian audits record '${NEW}' '${OLD}#F2'`);
+  assert.equal(items.find((i) => i.kind === 'finding' && i.id === 'F2').record, `aidrian audits record '${NEW}' '${NEW}#F2'`);
 
   // Both reports hold an F2: the key through the walk lands on the replaced run's, a bare id on the walk's own.
   let result = await run('record', NEW, `${OLD}#F2`, 'defer');
@@ -737,6 +737,21 @@ test('record takes the audit_key pending prints, so a walk and the run it replac
   assert.match((await run('record', NEW, 'F7', 'documented', '--doc', 'Known Gaps')).stderr, /documented needs --doc <path#section>: a file of the project, then # and its section/u);
 });
 
+
+test('the record command pending prints keeps a report name with a space, a quote, and $(...) as one shell argument', async (t) => {
+  const { audits, run } = project(t);
+  const odd = "it's a $(touch x) walk-2026-05-02.md";
+  copyFileSync(path.join(audits, OLD), path.join(audits, odd));
+  rmSync(path.join(audits, OLD));
+  rmSync(path.join(audits, NEW));
+  const imported = await run('import', odd, '--write');
+  assert.equal(imported.status, 0, imported.stderr + imported.stdout);
+  const [item] = JSON.parse((await run('pending', odd, '--json')).stdout).groups.flatMap((g) => g.items);
+  assert.equal(item.audit_key, `${odd}#${item.id}`);
+  // POSIX single quotes, each embedded quote closed, escaped, and reopened: no word splits, and nothing expands.
+  const quoted = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+  assert.equal(item.record, `aidrian audits record ${quoted(odd)} ${quoted(item.audit_key)}`);
+});
 test('pending marks a line of an older report that names a task by its number, and leaves the stored line as it is', async (t) => {
   const { audits, run } = project(t);
   const report = 'front-desk-2026-06-02.md';

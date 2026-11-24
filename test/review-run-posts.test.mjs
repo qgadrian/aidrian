@@ -549,12 +549,13 @@ test('the record command passes the findings file as one shell argument, from a 
   const [pass] = one.dispatch;
   const file = findingsFile(r.project, 7, pass.pass, 'o/r');
   assert.ok(file.includes("st ate's"), file);
-  // A POSIX shell reads the command back into its words; the verdicts placeholder is left out, since `<` redirects.
-  const words = spawnSync('sh', ['-c', `set -- ${pass.record.replace(' --verdicts <file.json>', '')}; for word in "$@"; do printf '%s\\n' "$word"; done`], { encoding: 'utf8' });
+  // A POSIX shell reads the command back into its words, the verdicts read from stdin among them.
+  const words = spawnSync('sh', ['-c', `set -- ${pass.record}; for word in "$@"; do printf '%s\\n' "$word"; done`], { encoding: 'utf8' });
   assert.equal(words.status, 0, words.stderr);
   const argv = words.stdout.trimEnd().split('\n');
   assert.equal(argv[argv.indexOf('--findings-file') + 1], file, 'the path arrives whole');
   assert.deepEqual(argv.slice(0, 4), ['aidrian', 'pr', 'attest', '7']);
+  assert.deepEqual(argv.slice(-2), ['--verdicts', '-'], 'the pass pipes its final JSON, with no verdicts file to write');
   assert.equal(shellQuote("it's a b"), "'it'\\''s a b'");
 });
 

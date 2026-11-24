@@ -18,6 +18,7 @@ import { commandConfig } from './config.mjs';
 import { isObject } from './fs.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { projectAt, stateDir } from './project.mjs';
+import { shellQuote } from './review/dispatch.mjs';
 import { usageLines } from './usage.mjs';
 
 const OPTIONS = {
@@ -217,8 +218,9 @@ function pending({ values, rest: [name], dir, triage }) {
     const what = item.kind === 'not_reached' ? 'not reached' : item.kind === 'doc_gap' ? 'persona doc gap' : 'finding';
     item.source = `Source: ${item.report_title ?? reportTitle(item.report)}, ${what} ${itemWords(item)} (${path.join(dir, item.report)})`;
     item.audit_key = `${item.report}#${item.id}`;
-    // The exact command that records this item, through the report under triage, with the decision still to add.
-    item.record = `aidrian audits record ${report} '${item.audit_key}'`;
+    // The exact command that records this item, through the report under triage, with the decision still to add;
+    // each value is one shell argument, whatever its file name holds.
+    item.record = `aidrian audits record ${shellQuote(report)} ${shellQuote(item.audit_key)}`;
     // A line of an older report that names a task by its number: the session says which task in words.
     const numbered = taskNumbers(item.title ?? item.text ?? '');
     if (numbered.length) item.numbered_task = numbered;

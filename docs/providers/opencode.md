@@ -371,7 +371,9 @@ keeps auto-merge off, as do the plugin's own `opencode/` and `package.json` ([Au
 session outside the [handoff gate](../handoff.md#the-gate); the refusal says the command "starts or resumes a session
 of OpenCode". Every `opencode` command line counts as a start but `-h`, `--help`, `-v`, `--version`, and
 `--completions` first, and these nine: `debug paths`, `mcp add`, `plugin add`, `plugin remove`, `service status`,
-`service stop`, `service get`, `service set`, and `service unset`. The lists were read from the help of OpenCode 2.4.0
+`service stop`, `service get`, `service set`, and `service unset`. A `-h` or `--help` anywhere before a `--` reads a
+command's help, as `opencode serve --help` does, and starts nothing, unless the line holds a word the shell expands,
+such as a variable. The lists were read from the help of OpenCode 2.4.0
 on 2026-11-23, failing closed: a command whose help takes `--server` talks to the background service, which OpenCode
 discovers or starts, and a started service serves sessions, so it counts as a start. So do `upgrade` and `update`,
 which may restart the service, `uninstall`, `auth export`, whose help was not read, and any word a later version adds.

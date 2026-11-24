@@ -1127,7 +1127,6 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   and after any option, is refused when it lies under a host's transcript folder, but in the `memory` folder of a
   project folder there, where a host keeps its memory, or is the transcript folder or any folder above it.
   A glob, an operand with `*`, `?`, or `[`, counts by its literal prefix, the parts before its first wildcard.
-  A folder a `mkdir` makes, with `-p` or not, never counts as one above it.
   The folders are the ones the host adapter names (`transcriptFolders`); on Claude Code, `projects/` under `~/.claude`
   of the account's home, and the folder the custody reader reads (`transcriptRoot`: under `CLAUDE_CONFIG_DIR`, else
   under the host's `HOME`).
@@ -1137,6 +1136,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   for cooperating agents; an operand built from a variable, or after a `cd` the hook cannot follow.
   During a run, a `cp`, `mv`, or `ln` into the home folder or any folder above the host's config folder is refused,
   failing closed, as is any glob from there, such as `rm -f ~/build-*.tmp`.
+  During a run, a `mkdir` of the home folder or any folder above the host's config folder is refused too, failing closed.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds

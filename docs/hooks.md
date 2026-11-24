@@ -1600,6 +1600,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     base branch's copies of them, so it may change none but as git merges the base into the branch", and a diff git cannot give refuses it too.
     The one exception is a merge of the base: each such file in HEAD equals git's clean merge of `<overlay>`
     and HEAD's merge base with origin's default branch (`git merge-tree --write-tree`).
+    Once HEAD holds a newer base, every such file is compared, one HEAD keeps as `<overlay>` holds it too.
     A file that conflicts in a merge of a newer base is refused whatever bytes HEAD keeps, even the recorded head's own.
     So is one HEAD holds otherwise; the refusal names the file as one clean, bounded line.
     Origin's remote-tracking ref is the session's own copy; the pull request's review of host files stands behind it. Its

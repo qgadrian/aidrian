@@ -452,7 +452,7 @@ test('a later attempt over host files no review passed holds the base\'s bytes, 
   assert.throws(() => fx.git('-C', clone, 'commit', '-q', '-am', 'rules'), 'no change staged');
   fx.git('-C', clone, 'add', '--sparse', '--', 'CLAUDE.md');
   fx.git('-C', clone, 'commit', '-q', '-m', 'rules');
-  assert.equal(push(), 'it pushes commits that change 1 host config or instruction file, and this attempt runs on the base branch\'s copies of them, so it may change none but as git merges the base into the branch (CLAUDE.md differs from git\'s merge of the base); take those changes out of the commits, or record the result parked naming the file when the issue needs them');
+  assert.equal(push(), 'it pushes commits that change 1 host config or instruction file, and this attempt runs on the base branch\'s copies of them, so it may change none but as git merges the base into the branch (CLAUDE.md differs from git\'s merge of the base); take those changes out of the commits, or record the result pr_open with that file in its stop when the issue needs them');
 });
 
 // The base moved on after the branch forked: both add a change entry, and the base changes AGENTS.md, which the branch

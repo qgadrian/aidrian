@@ -62,16 +62,17 @@ function overlayProblem(folder, overlay, policyFiles) {
   if (merged === null) return null;
   const why = merged.conflict ? `${namedFiles([merged.conflict])} conflicts in that merge, which a session never resolves by hand`
     : merged.edited ? `${namedFiles([merged.edited])} differs from git's merge of the base` : merged.reason;
-  if (!count) return `it pushes a merge of the base into the branch in which ${why}, and this attempt runs on the base branch's copies of the host config and instruction files; record the result parked naming the file`;
-  return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none but as git merges the base into the branch (${why}); take those changes out of the commits, or record the result parked naming the file when the issue needs them`;
+  if (!count) return `it pushes a merge of the base into the branch in which ${why}, and this attempt runs on the base branch's copies of the host config and instruction files; record the result pr_open with that file in its stop`;
+  return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none but as git merges the base into the branch (${why}); take those changes out of the commits, or record the result pr_open with that file in its stop when the issue needs them`;
 }
 
 // Why HEAD in `folder` holds a file `guarded` names other than as git's clean merge of `overlay` with the base it holds,
 // or null when it holds every one as that merge gives it: what a session that merged origin's default branch in, and
 // edited none of them, pushes. The base is HEAD's merge base with the first of BASE_REFS git resolves, the commit such a
-// merge brought in. When that base is past `overlay`'s own, HEAD holds a merge of a newer base, and a file that conflicted
-// in it is { conflict } whatever HEAD holds, since only a hand resolved it. A file HEAD holds otherwise is { edited },
-// read only when `changed`, some such file differs from `overlay`. { reason } when git cannot say.
+// merge brought in. When that base is past `overlay`'s own, HEAD holds a merge of a newer base: a file that conflicted
+// in it is { conflict } whatever HEAD holds, since only a hand resolved it, and every other one must be as the merge
+// gives it, one kept as `overlay` holds it too. Else only `changed`, some such file differs from `overlay`, reads them.
+// A file HEAD holds otherwise is { edited }. { reason } when git cannot say.
 // SHORTCUT: origin's remote-tracking ref is the session's own copy, as committedProblem's is; the pull request's diff
 // against the forge's own base, which the merge gate holds for a review of these files, stands behind it.
 function mergedProblem(folder, overlay, guarded, changed) {
@@ -89,7 +90,6 @@ function mergedProblem(folder, overlay, guarded, changed) {
     const [tree, ...conflicted] = merge.stdout.split('\0').filter((each) => each !== '');
     const conflict = conflicted.find(guarded);
     if (conflict) return { conflict };
-    if (!changed) return null;
     const differ = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', tree, 'HEAD', '--'], folder);
     if (differ.status !== 0) return { reason: `${SLOW} how the head differs from the merge` };
     const edited = differ.stdout.split('\0').find(guarded);

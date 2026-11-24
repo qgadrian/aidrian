@@ -34,7 +34,7 @@ import { forgeFor } from './forges/index.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { changesRequested, defaultBranch, ghError, runAutoMerge } from './pr-auto-merge.mjs';
 import { computeVerdict, currentRows } from './pr-checks.mjs';
-import { CAPS, cleanText } from './project-result.mjs';
+import { CAPS, cleanText, mergeProblem } from './project-result.mjs';
 import { issueBranch, readRun, runPlace, RUN_ID } from './project-run.mjs';
 import { latestStart, runStore, startsOf, stopActorProblem } from './project-run-guard.mjs';
 import { hostOf, repoName } from './remotes.mjs';
@@ -160,6 +160,7 @@ function nextStep(decision, { view, branch, method, catchUp = false }) {
     case 'park':
       if (decision.parkAs === 'signoff') return `record the result parked with one decision of class ${decision.decisionClass ?? 'product'}: the Human's sign-off of the flows of #${view.number} at head ${short(view.head)}, options "leave the pull request unmerged" and "sign off from an attended session", recommended the first`;
       if (decision.parkAs === 'merge_steps') return 'record the result pr_open with the merge steps\' own stop line as its stop';
+      if (decision.parkAs === 'merged_before') return `record the result parked with pr null and one decision of class scope: whether #${view.number}, merged before this attempt, finished the issue, options "take the issue as done by #${view.number}" and "start the issue over", recommended the first`;
       return 'record the result pr_open with this line as its stop';
     case 'wait': return decision.awaitBot
       ? `run \`aidrian pr await-review ${view.number}\`, which waits for the bot it asked, ${again}`
@@ -174,13 +175,13 @@ function nextStep(decision, { view, branch, method, catchUp = false }) {
   }
 }
 
-// The one way an issue's session merges the base `base` into its branch `branch`, whose clone may hold the base branch's
-// copies of host files: a conflict inside a host file parks before any merge, which would write the branch's lines over
-// the base copy, and the push guard lets the host files through only as git merged them (issue-push-checkout.mjs).
-const mergeBaseRoute = (base, branch) => `run \`git fetch origin ${base} ${branch}\` and \`git checkout -B ${branch} origin/${branch}\`; `
+// The one way an issue's session merges the base `base` into its branch `branch`, on which its clone already is, its
+// own commits kept: a conflict inside a host file stops before any merge, which would write the branch's lines over the
+// base copy, and the push guard lets the host files through only as git merged them (issue-push-checkout.mjs).
+const mergeBaseRoute = (base, branch) => `run \`git fetch origin ${base}\`; `
   + `then \`git merge-tree --write-tree --name-only HEAD origin/${base}\` lists the files that would conflict: when one is a host config or instruction file, `
-  + 'record the result parked, naming that file, and merge nothing; '
-  + `else run \`git merge --no-ff --no-edit origin/${base}\`, a merge commit, never a rebase, resolve the conflicts without editing a host config or instruction file by hand, `
+  + 'record the result pr_open with that file\'s path in its stop, and merge nothing; '
+  + `else run \`git merge --no-ff --no-edit origin/${base}\`, a merge commit, never a rebase, resolve the conflicts without editing a host config or instruction file by hand (a merge git refuses over one is recorded the same way), `
   + `run the tests, commit, and push with \`git push origin HEAD:refs/heads/${branch}\` in a call of its own, never with force`;
 
 // The line of a decision. `why` is cleaned and capped as a result's `stop` is (project-result.mjs cleanText).
@@ -317,7 +318,13 @@ export function stopAction({ project, config, run, key, env = process.env, home,
     return answer(transientWait(rows, start.attempt, error.message), view);
   }
   if (view.state === 'OPEN' && view.base !== main) return answer({ action: 'park', why: `it targets ${view.base}, not the default branch ${main}, which a project run's issue merges into` }, view);
-  if (catchUp) return answer(catchUpStop({ view, history: rows }), view);
+  if (catchUp) {
+    // `done` only for a merge the result command takes as this attempt's work (project-result.mjs mergeProblem).
+    const landed = view.state === 'MERGED' ? mergeProblem({ forge, repository, pr: view.number, branch, since: Date.parse(start.at) }) : null;
+    if (landed?.retry) return answer(transientWait(rows, start.attempt, landed.why), view);
+    if (landed) return answer({ action: 'park', parkAs: 'merged_before', why: `the forge shows it merged, but not as this attempt's work: ${landed}` }, view);
+    return answer(catchUpStop({ view, history: rows }), view);
+  }
   const merged = view.state === 'OPEN' ? (autoMerge ?? ((url) => autoMergeOf(project, url, { forge, session, home })))(view.url) : null;
   const checks = merged?.result?.effective === true && merged.result.head === view.head ? readChecks(forge, repository, view, config.github) : null;
   if (checks?.error) return answer(transientWait(rows, start.attempt, checks.error), view);

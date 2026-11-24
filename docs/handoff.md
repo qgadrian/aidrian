@@ -662,7 +662,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   The branch's own changes stay in its commits for the pull request's review.
   A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
   It parks a pull request into another branch than the default.
-  On a conflict its line names the one route: park on a host file `git merge-tree` names as conflicting, else `git merge origin/<base>`, never a rebase.
+  On a conflict its line names the one route, on the branch the clone is on, its commits kept: a host file `git merge-tree` names as conflicting
+  records `pr_open` with that path in its stop; else `git merge origin/<base>`, never a rebase.
   It never edits a host file: git merges the base copies in the index alone and leaves them on disk.
   The push guard lets that merge's host files through only as git merges them ([agent gates](hooks.md#agent-gates)).
   A branch the run's ledger cannot account for, or base copies that cannot be made safely, park the issue as

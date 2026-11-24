@@ -213,8 +213,8 @@ export async function runStages(s) {
         const outcomes = execs.some((pass) => !map[pass.reviewer].builtIn) ? await inBaseWorktree(root, baseTip, run) : await run(root);
         for (const [pass, outcome, seconds] of outcomes) {
           if (outcome.status !== 'done') continue;
-          // A finding about the review bot's own receipt or status card, not the change, is dropped with a note
-          // (bot-echo.mjs): the reviewer read the pull request's conversation for itself.
+          // A finding about the review bot's stock footer, not the change, is dropped with a note (bot-echo.mjs): the
+          // reviewer read the pull request's conversation for itself.
           const echoes = dropBotEchoes(outcome.findings, { comments: s.comments, reviewer: config.github.reviewer, changes: s.changes });
           const dropped = echoes.notes.length ? [...(outcome.dropped ?? []), ...echoes.notes] : outcome.dropped;
           // From review round N, the disposition table makes a low finding a residual: it is recorded accepted, blocks

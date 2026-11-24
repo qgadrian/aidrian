@@ -691,10 +691,12 @@ Any other request a receipt carries is still a finding.
 
 A pass's input holds no comments, but Codex reads the pull request's conversation with its own shell, and once raised
 the receipt's stock footer, `Try commenting "@codex address that feedback"`, as a request.
-So where an exec pass's findings are recorded, a finding is dropped when it names no changed file and every span it quotes
-in backticks or double quotes is in a receipt or status card that `github.reviewer`'s own account posted
-(`lib/review/bot-echo.mjs`). The pass's `dropped` notes say so, without the finding's title.
-A finding that quotes nothing, or quotes any other text, stays, and so does the same text posted by any other account.
+So where an exec pass's findings are recorded, a finding is dropped, with a note, when it names no changed file and every
+span it quotes in backticks or double quotes lies inside one line of that fixed footer, `STOCK_FOOTER` in
+`lib/review/bot-echo.mjs`, and a comment by `github.reviewer`'s own account carries the whole footer.
+The pass's `dropped` notes say so, without the finding's title. The rest of a receipt or status card never counts:
+an instruction elsewhere in one, or a phrase a contributor's comment shares with it, stays a finding.
+So does a finding that quotes nothing, and every finding once the bot rewords its footer.
 
 `codex-local`'s Codex run also serves plans: the `quorum` skill runs it as a plan's adversary, and the `plan-review`
 skill runs the quorum on high-stakes plans ([quorum ledgers](project-folder.md#local-state)).

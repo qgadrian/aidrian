@@ -18,7 +18,7 @@ import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { offerLand, runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { RECEIPT_MARKER } from '../plugins/aidrian/lib/review/request-text.mjs';
-import { ECHO_NOTE } from '../plugins/aidrian/lib/review/bot-echo.mjs';
+import { ECHO_NOTE, STOCK_FOOTER } from '../plugins/aidrian/lib/review/bot-echo.mjs';
 import { repo, clean, OPEN, unnamed, unverifiedNext, finding, scripted, found, holdsAll, holdComment, APPROVED_FLOWS } from './review-run-fixture.mjs';
 
 test('a docs-only change needs no review and posts nothing', async (t) => {
@@ -80,7 +80,7 @@ test('a stranger\'s summary comment supplies no record: the reviewer still runs,
 test('zero config: codex-local reviews once; a finding is fix_required until a new head comes back clean', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
   // The review bot's receipt from an earlier head, and a finding about its stock footer, not the change (#674).
-  r.comments.push({ id: 100, user: { login: 'chatgpt-codex-connector[bot]' }, body: `${RECEIPT_MARKER}\n\nCodex Review: Didn't find any major issues.\n\nTry commenting "@codex address that feedback".` });
+  r.comments.push({ id: 100, user: { login: 'chatgpt-codex-connector[bot]' }, body: `${RECEIPT_MARKER}\n\nCodex Review: Didn't find any major issues.\n\n${STOCK_FOOTER.join('\n')}` });
   const footer = { title: 'The receipt asks for edits', body: 'It asks readers to post `@codex address that feedback`.', severity: 'low' };
   const seen = [];
   const exec = async (reviewer, input) => (seen.push([reviewer.name, input.context]), seen.length === 1 ? { status: 'done', findings: [finding, footer], verdicts: [], dropped: [] } : clean());

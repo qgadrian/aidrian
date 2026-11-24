@@ -601,14 +601,16 @@ is one the shell builds, is refused as a merge it cannot read.
 Two kinds of call are refused outright inside a project, for every session, with a denial that says to merge with
 `gh pr merge <PR> --match-head-commit <sha>`, which the guard checks:
 
-- A GraphQL call that may merge: `gh api` naming `mergePullRequest`, `enablePullRequestAutoMerge`, or
-  `enqueuePullRequest`, or either `gh api` or `curl` sending to GraphQL a query that names one, from a file it names, or
-  one the shell builds or reads from stdin. It names its pull request by a node id no review record is keyed by, so the
-  guard cannot check the review it owes. A JSON body's `query` field is read decoded, so an escape such as `\u0050`
-  hides none, and a variable's value counts for nothing.
-- A `curl` call that names a REST merge URL and may write, by any transfer: a method other than `GET` or `HEAD`, one the
-  shell builds, or a body, form, or upload. The options are read as curl reads them, a group such as `-sXPUT` included.
-  curl is no merge tool, so the guard reads no head or record for it.
+- A GraphQL call that may merge: a `gh api` call whose `query` field names `mergePullRequest`,
+  `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or a `gh api` or `curl` call to GraphQL whose
+  query names one, from a file it names, or whose query the shell builds or reads from stdin; and a `curl` call to a URL
+  the shell builds whose body names one as written. It names its pull request by a node id no review record is keyed
+  by, so the guard cannot check the review it owes. Only the query counts: a JSON body's `query` field is read decoded,
+  so an escape such as `\u0050` hides none, and a variable or a `--jq` filter naming a mutation counts for nothing.
+- A `curl` transfer that names a REST merge URL and may write: a method other than `GET` or `HEAD`, one the shell
+  builds, an upload or a form, or a body, unless `-G` sends it as a GET. Each transfer, split at `--next` (`-:`), is read
+  alone, with its options read as curl reads them, a group such as `-sXPUT` included. curl is no merge tool, so the
+  guard reads no head or record for it.
 
 A call that only reads, such as a GraphQL query or a `curl` GET of whether a pull request merged, runs as before.
 
@@ -773,8 +775,8 @@ alone: a confined session can write the review records. The guard holds it to th
 start folder, else its main checkout, wherever its call runs, so a git folder of its own makes no hole; a mark that
 names no project the guard can read refuses, and so does a main checkout that does not resolve to a project, whatever
 the start folder; the start folder gives only the project's folder in the repository and its record folders. A project
-run's driver is held the same way, from its driver mark. Its `gh pr merge --auto`, and any `gh api` call naming
-`mergePullRequest`, `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or a GraphQL call
+run's driver is held the same way, from its driver mark. Its `gh pr merge --auto`, and any `gh api` call whose `query`
+field names `mergePullRequest`, `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or a GraphQL call
 (`graphql`, `/graphql`, `graphql/`, `graphql?x=1`, or an absolute URL whose path is GraphQL's, or an endpoint the
 shell builds) whose query is in a file it names or the shell builds, and fed text naming one, are refused: each leaves
 the merge to GitHub. Before any record is parsed, its pull request's record files are checked: more than 8, more than

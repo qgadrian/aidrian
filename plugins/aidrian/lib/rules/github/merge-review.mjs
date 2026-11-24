@@ -84,7 +84,7 @@ import { readHumanSignoffs, sameBot, trustProblem } from '../../review/merge-tru
 import { CAPPED, emptyState, FINISHED, openCount, owed, owedElsewhere, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { budgetedForge, guardWaiver, READ_TIMEOUT_MS, runOf, trailKey, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
-import { walkCommands } from '../../shell-lex.mjs';
+import { readShortOptions, walkCommands } from '../../shell-lex.mjs';
 import { driverHold } from '../../run-driver.mjs';
 import { readUnattendedMark } from '../../unattended-mark.mjs';
 import { transcriptAnswers, waitingRoute } from '../review-extend.mjs';
@@ -134,9 +134,10 @@ function readGh(args, environment, env, cwd) {
   const literal = (token) => (token && !token.dynamic ? token.text : null);
   if (command[0] === 'api') {
     const { words, flags } = readWords(args, new Set(API_VALUES));
-    // A merge mutation named anywhere in a `gh api` call is one, whatever endpoint it is sent to; and an endpoint that is
-    // GraphQL's, however spelled, or one the shell builds, meets the query rules.
-    if (args.some((token) => MUTATION_TEXT.test(token.text))) return { graphql: true, pr: null, head: null, target: null, repo: null, unreadable: false };
+    // A `query` field that names a merge mutation is one, whatever endpoint it is sent to; and an endpoint that is
+    // GraphQL's, however spelled, or one the shell builds, meets the query rules. Another field, such as a variable, or
+    // `--jq`, names no mutation GitHub runs.
+    if (queryNamesMutation(flags)) return { graphql: true, pr: null, head: null, target: null, repo: null, unreadable: false };
     if (words[1]?.dynamic || endpointOf(words[1]?.text) === 'graphql') {
       const graphql = graphqlMerge(args, flags, cwd);
       if (graphql || !words[1]?.dynamic) return graphql;
@@ -251,28 +252,59 @@ const CURL_MERGE = /\/repos\/[^?#]+\/pulls\/[^/?#]+\/merge\/?(?:[?#]|$)/iu;
 const CURL_GRAPHQL = /(?:^|\/)graphql\/?(?:[?#].*)?$/iu;
 
 // The merge one curl invocation may make, as { outright: true, graphql, unreadable }, or null. curl is no merge tool, so
-// the rule reads no head or body of it: it refuses outright, as a GraphQL merge, a call that names a REST merge URL and
-// may write, by any transfer (a method other than GET or HEAD, one the shell builds, or a body or upload), and a call to
-// a GraphQL URL, or one the shell builds, whose body names a merge mutation (namesMutation), or comes from stdin, a
-// file it cannot read, or the shell. A call that only reads, such as a GET of whether a pull request merged, runs.
-// The options are read as curl reads them, a short-option group such as `-sXPUT` included.
+// the rule reads no head or body of it: it refuses outright, as a GraphQL merge, a transfer that names a REST merge URL
+// and may write (curlWrites), and a GraphQL call whose body names a merge mutation (namesMutation): to a GraphQL URL,
+// also a body from stdin, a file it cannot read, or the shell; to a URL the shell builds, only one that names it as
+// written. A transfer that only reads, such as a GET of whether a pull request merged, runs. Each transfer, split at
+// `--next` (`-:`), is read alone, with its options read as curl reads them, a short-option group such as `-sXPUT` included.
 function readCurl(args, cwd) {
-  const { words, flags } = readWords(args, CURL_VALUES);
-  const urls = [...words, ...flags.filter((flag) => flag.name === '--url').map((flag) => flag.value)].filter(Boolean);
-  const sends = flags.filter((flag) => CURL_SENDS.includes(flag.name));
-  const methods = flags.filter((flag) => flag.name === '-X' || flag.name === '--request').map((flag) => flag.value);
-  const writes = sends.length > 0 || methods.some((value) => !value || value.dynamic || !['GET', 'HEAD'].includes(value.text.toUpperCase()));
-  if (writes && urls.some((url) => CURL_MERGE.test(url.text))) return { outright: true, graphql: false, unreadable: false };
-  if (!urls.some((url) => url.dynamic || CURL_GRAPHQL.test(url.text))) return null;
-  for (const { name, value } of sends) {
-    if (!value || value.dynamic) return { outright: true, graphql: true, unreadable: true };
-    const file = ['-T', '--upload-file'].includes(name) ? value.text : /^@(.+)$/u.exec(value.text)?.[1];
-    if (file === '-') return { outright: true, graphql: true, unreadable: true };
-    const text = file === undefined ? value.text : queryFile(file, cwd);
-    if (text === null || namesMutation(text)) return { outright: true, graphql: true, unreadable: text === null };
+  for (const transfer of curlTransfers(args)) {
+    const merge = readTransfer(transfer, cwd);
+    if (merge) return merge;
   }
   return null;
 }
+
+// The words of each curl transfer: `--next`, or `-:` alone or in a short-option group, ends one.
+function curlTransfers(args) {
+  const transfers = [[]];
+  for (const token of args) {
+    const short = /^-[^-]/u.test(token.text) && !token.dynamic ? readShortOptions(token.text, CURL_VALUES).options : [];
+    if (token.text === '--next' || short.includes('-:')) transfers.push([]);
+    else transfers.at(-1).push(token);
+  }
+  return transfers;
+}
+
+function readTransfer(args, cwd) {
+  const { words, flags } = readWords(args, CURL_VALUES);
+  const urls = [...words, ...flags.filter((flag) => flag.name === '--url').map((flag) => flag.value)].filter(Boolean);
+  const sends = flags.filter((flag) => CURL_SENDS.includes(flag.name));
+  if (curlWrites(flags, sends) && urls.some((url) => CURL_MERGE.test(url.text))) return { outright: true, graphql: false, unreadable: false };
+  const graphql = urls.some((url) => !url.dynamic && CURL_GRAPHQL.test(url.text));
+  if (!graphql && !urls.some((url) => url.dynamic)) return null;
+  for (const { name, value } of sends) {
+    const file = value && !value.dynamic ? (['-T', '--upload-file'].includes(name) ? value.text : /^@(.+)$/u.exec(value.text)?.[1]) : undefined;
+    const unread = !value || value.dynamic || file === '-';
+    const text = unread || file === '-' ? null : file === undefined ? value.text : queryFile(file, cwd);
+    if (text !== null && namesMutation(text)) return { outright: true, graphql: true, unreadable: false };
+    if (text === null && graphql) return { outright: true, graphql: true, unreadable: true };
+  }
+  return null;
+}
+
+// Whether one curl transfer may write: a method other than GET or HEAD, or one the shell builds; an upload or a form;
+// or a body, unless `-G` (`--get`) sends it in the URL's query string.
+function curlWrites(flags, sends) {
+  const methods = flags.filter((flag) => flag.name === '-X' || flag.name === '--request').map((flag) => flag.value);
+  if (methods.some((value) => !value || value.dynamic || !['GET', 'HEAD'].includes(value.text.toUpperCase()))) return true;
+  const get = flags.some((flag) => flag.name === '-G' || flag.name === '--get');
+  return sends.some((flag) => !(get && CURL_DATA.includes(flag.name)));
+}
+
+// Whether a `gh api` call's literal `query` field (`-f query=...`, `-F query=...`, not a file) names a merge mutation.
+const queryNamesMutation = (flags) => flags.some((flag) => ['-f', '--raw-field', '-F', '--field'].includes(flag.name) && flag.value && !flag.value.dynamic &&
+  /^query=(?!@)/u.test(flag.value.text) && MUTATION_TEXT.test(flag.value.text.slice('query='.length)));
 
 // Whether a GraphQL request's text names a merge mutation: for a JSON request body, its `query` field once decoded, so
 // an escape such as `\u0050` hides none and a variable's value counts for nothing; for any other text, as written.
@@ -387,13 +419,12 @@ export function endpointOf(text) {
 }
 
 // A `gh api graphql` call that may merge (MERGE_MUTATIONS), as { graphql: true, pr: null, head: null, unreadable }, or
-// null when it names none. It names one when a word of it does, or the query file a field (`-F query=@file`) or
+// null when it names none. It names one when its query field does (queryNamesMutation), or the query file a field (`-F query=@file`) or
 // `--input` names does; a query the shell builds, a field value from a file it cannot read, and `--input -` may be one,
 // and count as `unreadable`. The merge guard refuses such a call inside a project (graphqlReason), and to a session no
 // Human attends wherever it runs.
 function graphqlMerge(args, flags, cwd) {
   const found = (unreadable) => ({ graphql: true, pr: null, head: null, target: null, repo: null, unreadable });
-  if (args.some((token) => MUTATION_TEXT.test(token.text))) return found(false);
   for (const flag of flags) {
     const value = flag.value;
     if (flag.name === '--input') {

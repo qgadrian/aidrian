@@ -89,8 +89,10 @@ crosses them.
      holds is right. Post its ruling as a comment, and run `settle` with that comment's URL. A change that does alter
      what is rendered gets a capture or `aidrian pr ingest`, never a ruling. On a refusal, go to the next route.
   3. Ask the Human with AskUserQuestion, one question per decision, and run the printed long-form command on "Approve":
-     the question names `<owner>/<name>#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every unverified invariant of
-     the flow, `<flow>/signoff`, or `stage:<name>/signoff`. Write the command with no shell variables, one call per invariant.
+     the question names the flow and the invariant in plain words, with `<owner>/<name>#<PR>` and the short head, and the
+     recommended option's label starts with "Approve" and names the exact id: `<flow>/<invariant>`, `<flow>/*` for every
+     unverified invariant of the flow, `<flow>/signoff`, or `stage:<name>/signoff`, such as "Approve checkout/total-shown".
+     That first answer runs the command: never ask again for the id. Write the command with no shell variables, one call per invariant.
   4. Only on a host with no such question, hand the command over for the Human's own shell.
 - Offer the Human only a sign-off command the step printed: an entry of `next[].commands`, `overrule`, `command`, or
   `tests_removed[].accept`, each starting with `aidrian pr signoff`, with its placeholders filled. Hand it over only
@@ -157,7 +159,7 @@ Never cite an engine post, a finding's, the review summary, or the product feedb
 
 - `human_required`: a flow the Human signs off, or with `stage`, a stage the Human chose to review in place of a
   reviewer out of quota. Once `command` with `--check` added exits 0, ask with AskUserQuestion as the sign-off route
-  under `fix_required` says, naming `<flow>/signoff` or `stage:<name>/signoff`, and run `command` on "Approve". The
+  under `fix_required` says, with `<flow>/signoff` or `stage:<name>/signoff` in the option's label, and run `command` on "Approve". The
   `review-signoff` rule blocks it with no such answer. A flow's sign-off holds across later pushes that
   touch nothing of the flow; a stage's holds for its head only.
 - `unsatisfied`: the plan needs a reviewer this machine cannot run, such as `independent-model` with no Codex login.

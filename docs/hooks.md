@@ -348,8 +348,8 @@ What each rule matches:
   one. A background session that rewrote its brief through a Python heredoc was refused three times in one run, told
   only to stop, then split the command's words to get past the rule. Text piped into a shell keeps the refusal alone. A subagent and a session no Human attends are refused these shapes outside a project too.
   When the session holds answers and none approves the call, the deny names the nearest miss: a word the shell builds,
-  no question naming `<owner>/<name>#<PR>`, the head, or the `<flow>/<invariant>` written as one word, an answer that
-  is not "Approve", or a checkout whose remotes need `--repo`. A subagent is told to return `status: needs_input` with
+  no question naming `<owner>/<name>#<PR>` or the head, no question or chosen option naming the `<flow>/<invariant>`
+  written as one word, a chosen option naming another invariant, an answer that is not "Approve", or a checkout whose remotes need `--repo`. A subagent is told to return `status: needs_input` with
   the sign-off question and the command for its dispatcher, which has the answer route. The rule's message stops the session; at `human_required` naming one flow,
   once `--last --check` exits 0, it hands the Human the short form, `aidrian pr signoff <PR> --last`, short enough to
   type from a phone, which refuses any other stop. A long form runs on the Human's AskUserQuestion answer naming

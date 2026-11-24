@@ -1418,7 +1418,9 @@ test('the auto-merge gate judges only the waivers the body still accepts: one th
   const { ended: _ended, ...standing } = ended;
   // The finding index names the pass that raised each finding: the release reads the ended copy on that pass only.
   const index = { 'R1-1': { id: 'R1-1', title: 'Preserve citations', file: 'src/a.js', severity: 'medium', state: 'accepted', pass: 'engine:codex-local' } };
-  const record = (passes, more = {}) => ({ ...emptyState(7, 'o/r'), index: { ...index, ...more }, passes, outcome: { status: 'received', head: HEAD, at: '2026-11-24T11:31:20.832Z' } });
+  // A round entry keeps each raised finding, which a residual line names by the review pass's own rules (raisedOf).
+  const raised = (...findings) => [{ head: OLDER, findings: [{ title: 'Preserve citations', file: 'src/a.js', line: 3, severity: 'medium' }, ...findings] }];
+  const record = (passes, more = {}, rounds = raised()) => ({ ...emptyState(7, 'o/r'), index: { ...index, ...more }, rounds, passes, outcome: { status: 'received', head: HEAD, at: '2026-11-24T11:31:20.832Z' } });
   const bodyWith = (lines) => `## Summary\n\nx\n\n## Accepted residuals\n\n${lines.map((line) => `- ${line}`).join('\n')}\n`;
   const dropped = { accepts: bodyAccepts(bodyWith(['Another: reason']), undefined) };
   const gate = (state, reads = dropped) => reviewProblem(state, HEAD, {}, reads);
@@ -1457,16 +1459,17 @@ test('the auto-merge gate judges only the waivers the body still accepts: one th
   assert.ok(gate(crossOnly), 'a cross pass on the head carries it, and the slice that raised it was reused from an earlier head');
   const { ruled_id: _ruled, ...unnamed } = ended;
   assert.ok(gate(record({ 'engine:codex-local': { head: HEAD, list: [], carried: [unnamed] } }, { 'R5-11': { ...index['R1-1'], id: 'R5-11' } })), 'no ruling id: no raiser');
-  // A line that opens with the title still lists it, whatever follows: a longer title another finding has never takes it.
-  const longer = { 'R1-8': { id: 'R1-8', title: 'Preserve citations: ordering', file: 'src/a.js', severity: 'low', state: 'accepted', pass: 'engine:codex-local' } };
-  assert.ok(gate(record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, longer), { accepts: bodyAccepts(bodyWith(['Preserve citations: ordering needs follow-up']), undefined) }));
-  assert.ok(gate(onHead, { accepts: bodyAccepts(bodyWith(['Preserve citations:']), undefined) }), 'the title and a colon alone');
-  // A title raised in two files: a line that holds only the other file's path names the other file alone.
-  const twin = { 'R1-9': { id: 'R1-9', title: 'Preserve citations', file: 'src/z.js', severity: 'medium', state: 'accepted', pass: 'engine:codex-local' } };
-  const twinRecord = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, twin);
+  // A line names a finding as the review pass reads it (namedBy over raisedOf): the longest title wins, a title needs a
+  // reason, and a title raised in two files is named only where the line holds the path.
+  const longer = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, {}, raised({ title: 'Preserve citations: ordering', file: 'src/a.js', line: 9, severity: 'low' }));
+  assert.equal(gate(longer, { accepts: bodyAccepts(bodyWith(['Preserve citations: ordering: needs follow-up']), undefined) }), null, 'the longer title takes the line');
+  assert.ok(gate(longer, { accepts: bodyAccepts(bodyWith(['Preserve citations: still waived, for a reason']), undefined) }));
+  assert.equal(gate(onHead, { accepts: bodyAccepts(bodyWith(['Preserve citations:']), undefined) }), null, 'the title and a colon alone name nothing');
+  const twinRecord = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, {}, raised({ title: 'Preserve citations', file: 'src/z.js', line: 1, severity: 'medium' }));
   assert.equal(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: src/z.js keeps it, for a reason']), undefined) }), null, 'a line for the other file keeps this one dropped');
   assert.ok(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: src/a.js keeps it, for a reason']), undefined) }), 'a line holding this file\'s path still lists it');
-  assert.ok(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: kept, for a reason']), undefined) }), 'a line with no path names both');
+  assert.equal(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: kept, for a reason']), undefined) }), null, 'a line with no path names neither, as the review pass reads it');
+  assert.ok(gate(twinRecord, { accepts: bodyAccepts(bodyWith([RESIDUAL_TEXT]), undefined) }), 'the residual\'s own text still lists it');
   let reads = 0;
   assert.equal(reviewProblem(stillOffered, HEAD, {}, { accepts: () => { reads += 1; return false; } }) !== null, true);
   assert.equal(reads, 0, 'the body is read only for a waiver the head\'s pass ended');

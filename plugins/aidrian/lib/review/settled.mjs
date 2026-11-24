@@ -206,30 +206,20 @@ export function heldWaiver(state, { head = null, accepts = null } = {}) {
   const reweighed = head === null || typeof accepts !== 'function' ? []
     : Object.entries(state?.passes ?? {}).filter(([, result]) => isObject(result) && result.head === head)
       .flatMap(([id, result]) => onRecord(result).filter((each) => each?.ended && waiverAboveLow(each) && raisedBy(each).includes(id) && covers(result, each)));
-  const raised = () => [...everyEntry(state).filter(waiverAboveLow).map((each) => ({ title: waiverTitle(each), file: trim(each.file) })),
-    ...Object.values(index).filter(isObject).map((entry) => ({ title: trim(entry.title), file: trim(entry.file) }))].filter((each) => each.title);
-  const dropped = (each) => reweighed.some((other) => sameWaiver(other, each, current)) && !accepts(each, raised());
+  const dropped = (each) => reweighed.some((other) => sameWaiver(other, each, current)) && !accepts(each, raisedOf(state));
   return everyEntry(state).find((each) => waiverAboveLow(each) && !(each.ended && listedFixed(fixed, each)) && !dropped(each)) ?? null;
 }
 
 // Whether the pull request body `body` still accepts the waiver `entry` under `section` (decisions.mjs residualItems),
 // every item read, past MAX_RESIDUALS too: an item whose text, cut as residualTexts cuts it, is the waiver's residual, or
-// one that opens with the finding's title and a colon, whatever follows, so a longer title another finding has never
-// takes the line from it. When `raised`, the record's findings ({ title, file }), has that title in more than one file,
-// a line that holds another of those files' paths and not this one's names the other file alone; a line with no path
-// names each of them. A body that is no string lists nothing.
+// one that names its finding, title and file, as the review pass reads a residual: namedBy over `raised`, the record's
+// raised findings as raisedOf gives them. A body that is no string lists nothing.
 export function bodyAccepts(body, section) {
   const items = (typeof body === 'string' ? residualItems(body, section ?? undefined) ?? [] : []).map((item) => trim(trim(item?.text).replace(LIST_ITEM, ''))).filter(Boolean);
   return (entry, raised = []) => {
     const residual = trim(entry?.residual);
-    const title = waiverTitle(entry);
-    const file = trim(entry?.file);
-    const others = [...new Set(raised.filter((each) => trim(each.title) === title).map((each) => trim(each.file)))].filter((each) => each && each !== file);
-    return items.some((text) => {
-      if (residual !== '' && text.slice(0, MAX_RESIDUAL_CHARS) === residual) return true;
-      if (title === '' || !text.startsWith(`${title}:`)) return false;
-      return holdsPath(text, file) || !others.some((other) => holdsPath(text, other));
-    });
+    const finding = where({ title: waiverTitle(entry), file: entry?.file });
+    return items.some((text) => (residual !== '' && text.slice(0, MAX_RESIDUAL_CHARS) === residual) || namedBy(text, raised).some((each) => where(each) === finding));
   };
 }
 
@@ -283,6 +273,22 @@ function endedContext(state, anchored) {
 function anchoredResiduals(state, listed, residuals) {
   const findings = listed.map(({ finding }) => finding);
   const ended = new Set(findings.filter((finding) => FINDING_STATES.includes(finding.state) && (finding.state === 'fixed' || blocks(finding))).map(where));
+  const raised = raisedOf(state, listed);
+  const anchors = (each) => noHigher(each.severity, PRIOR_CAP) && !ended.has(where(each));
+  return residuals.flatMap((text) => namedBy(text, raised).filter(anchors).map(({ title, file, line, severity }) => ({
+    title: trim(title), file: trim(file), ...(line ? { line } : {}), severity: severityOf(severity), state: 'accepted', already_ruled: trim(title), carried: true, residual: text,
+  })));
+}
+
+// Every finding the passes list now, with the pass that lists it: [{ id, finding }].
+const listedOf = (state) => Object.entries(state?.passes ?? {}).flatMap(([id, result]) => (Array.isArray(result?.list) ? result.list : [])
+  .filter(isObject).map((finding) => ({ id, finding })));
+
+// The raised findings a residual may name (namedBy), as anchoredResiduals reads them from `listed` (listedOf): what a pass
+// lists now; else, where no pass lists that title in that file, a ruling a pass record keeps, under the title it named,
+// an ended waiver aside; else a round entry neither shadows.
+export function raisedOf(state, listed = listedOf(state)) {
+  const findings = listed.map(({ finding }) => finding);
   const present = new Set(findings.map(where));
   const kept = Object.values(state?.passes ?? {}).flatMap(rulingsOf)
     .filter((each) => isObject(each) && (trim(each.residual) || each.from === 'prior'))
@@ -291,11 +297,7 @@ function anchoredResiduals(state, listed, residuals) {
   const shadowed = new Set([...present, ...kept.map(where)]);
   const rounds = (Array.isArray(state?.rounds) ? state.rounds : []).flatMap((round) => (Array.isArray(round?.findings) ? round.findings : []))
     .filter((each) => isObject(each) && !shadowed.has(where(each)));
-  const raised = [...findings, ...kept, ...rounds].filter((each) => trim(each.title) && trim(each.file));
-  const anchors = (each) => noHigher(each.severity, PRIOR_CAP) && !ended.has(where(each));
-  return residuals.flatMap((text) => namedBy(text, raised).filter(anchors).map(({ title, file, line, severity }) => ({
-    title: trim(title), file: trim(file), ...(line ? { line } : {}), severity: severityOf(severity), state: 'accepted', already_ruled: trim(title), carried: true, residual: text,
-  })));
+  return [...findings, ...kept, ...rounds].filter((each) => trim(each.title) && trim(each.file));
 }
 
 // The settled entries of the review record an exec pass reads among its priorFindings: each finding a pass recorded as
@@ -314,8 +316,7 @@ function anchoredResiduals(state, listed, residuals) {
 // residual apart (anchoredResiduals, after them): the cut takes only the accepted and carried entries, never an anchor.
 // After them, outside the cap, the waivers above low no longer offered, as context copies (endedContext), which settle nothing.
 export function recordSettled(state, prior, residuals = []) {
-  const listed = Object.entries(state?.passes ?? {}).flatMap(([id, result]) => (Array.isArray(result?.list) ? result.list : [])
-    .filter(isObject).map((finding) => ({ id, finding })));
+  const listed = listedOf(state);
   const present = new Set(listed.map(({ finding }) => where(finding)));
   const live = new Set(listed.filter(({ finding }) => finding.state !== 'accepted' || blocks(finding)).map(({ finding }) => where(finding)));
   const rulings = [prior, ...Object.values(state?.passes ?? {})].flatMap(rulingsOf)

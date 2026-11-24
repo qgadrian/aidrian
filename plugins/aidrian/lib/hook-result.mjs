@@ -9,8 +9,9 @@
 //           and PreCompact, where it is the instructions for the compaction summary, and nothing elsewhere;
 //           SubagentStart takes its context from additionalContext only.
 //
-// Any other exit, a signal, output past the bridge's byte bound, or input it cannot read is the empty verdict, so a
-// hook that crashed or hung lets the action run (docs/working-agreement.md). It reads no other field, such as a decision
+// Any other exit, a signal, or input it cannot read is the empty verdict, so a hook that crashed or hung lets the action
+// run (docs/working-agreement.md). Output past the bridge's byte bound carries no text and never turns an exit 2 into an
+// allow: on an event that blocks on exit 2 it blocks with OVERFLOW_REASON, and anywhere else it is the empty verdict. It reads no other field, such as a decision
 // or continue: no script here prints one. Out of scope, because no script here prints them: JSON on stdout with exit 2
 // or exit 1, text that starts like a JSON object but does not parse, and additionalContext or systemMessage on an event
 // whose host ignores them. combineHookResults merges the verdicts of the hooks that matched one call.
@@ -25,6 +26,8 @@ const PLAIN_TEXT_CONTEXT = new Set(['SessionStart', 'UserPromptSubmit', 'PreComp
 
 // The reason of an exit 2 block whose script wrote nothing on stderr.
 export const NO_REASON = 'A hook blocked this call and gave no reason.';
+// The reason of an exit 2 block whose output passed the bridge's byte bound: the refusal stands, its text is not shown.
+export const OVERFLOW_REASON = 'A hook refused this call, and its message was too long to show.';
 // The reason when two hooks that matched one call rewrote its input differently: neither rewrite can win, so it fails closed.
 export const REWRITE_CONFLICT = 'Two hooks rewrote this call differently, so it does not run.';
 
@@ -63,9 +66,13 @@ export function readHookResult(result) {
     const stdout = streamText(result.stdout);
     const stderr = streamText(result.stderr);
     if (typeof event !== 'string' || stdout === null || stderr === null) return EMPTY;
-    if (signal || overflow === true || (exit !== 0 && exit !== 2)) return EMPTY;
+    if (signal || (exit !== 0 && exit !== 2)) return EMPTY;
+    // A guard's refusal stands at any length, as the host blocks on exit 2 whatever it printed.
+    if (exit === 2 && BLOCKS_ON_EXIT_2.has(event)) {
+      return verdict({ block: true, reason: overflow === true ? OVERFLOW_REASON : stderr.trim() || NO_REASON });
+    }
+    if (overflow === true) return EMPTY;
     if (exit === 2) {
-      if (BLOCKS_ON_EXIT_2.has(event)) return verdict({ block: true, reason: stderr.trim() || NO_REASON });
       if (event === 'PostToolUse') return verdict({ context: nonBlank(stderr.trim()) });
       return EMPTY;
     }

@@ -4,7 +4,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { combineHookResults, NO_REASON, readHookResult, REWRITE_CONFLICT } from '../plugins/aidrian/lib/hook-result.mjs';
+import { combineHookResults, NO_REASON, OVERFLOW_REASON, readHookResult, REWRITE_CONFLICT } from '../plugins/aidrian/lib/hook-result.mjs';
 
 const EMPTY = { block: false, reason: null, context: null, systemMessage: null, updatedInput: null };
 const result = (fields) => ({ ...EMPTY, ...fields });
@@ -72,8 +72,9 @@ test('a crash, a kill, a signal, output past the bound, or input it cannot read 
     { event: 'PreToolUse', exit: 137, stdout: '', stderr: 'killed' },
     { event: 'PreToolUse', exit: null, signal: 'SIGKILL', stdout: '', stderr: 'x' },
     { event: 'PreToolUse', exit: 2, signal: 'SIGKILL', stdout: '', stderr: 'x' },
-    { event: 'PreToolUse', exit: 2, stdout: '', stderr: 'x', overflow: true },
+    { event: 'PostToolUse', exit: 2, stdout: '', stderr: 'x', overflow: true },
     { event: 'SessionStart', exit: 0, stdout: 'lines', stderr: '', overflow: true },
+    { event: 'PreToolUse', exit: 0, stdout: json('PreToolUse', { updatedInput: { a: 1 } }), stderr: '', overflow: true },
     { event: 'PreToolUse', exit: '2', stdout: '', stderr: 'x' },
     { event: 7, exit: 2, stdout: '', stderr: 'x' },
     { event: 7, exit: 0, stdout: json('SessionStart', { additionalContext: 'more' }), stderr: '' },
@@ -86,6 +87,13 @@ test('a crash, a kill, a signal, output past the bound, or input it cannot read 
   for (const input of cases) assert.deepEqual(readHookResult(input), EMPTY, JSON.stringify(input));
   assert.deepEqual(readHookResult(), EMPTY);
   assert.deepEqual(readHookResult({ get event() { throw new Error('x'); } }), EMPTY, 'an input that throws when read');
+});
+
+test('an exit 2 on an event that blocks still blocks when its output passed the bound, with no text of it', () => {
+  for (const event of ['PreToolUse', 'Stop']) {
+    const padded = { event, exit: 2, stdout: 'y'.repeat(10), stderr: `refused ${'x'.repeat(10)}`, overflow: true };
+    assert.deepEqual(readHookResult(padded), result({ block: true, reason: OVERFLOW_REASON }), event);
+  }
 });
 
 test('combine: any block wins and drops a rewrite, and reasons, contexts, and banners join in order', () => {

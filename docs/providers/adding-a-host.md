@@ -52,6 +52,7 @@ neither was run here, neither is supported, and their cases have no code yet.
 | `detect({ env, input })` | Whether this process runs under it. It is false on an empty environment and a plain payload |
 | `identityVars`, `detectVars` | The variables a reviewer and a test run without, and those a test run also drops |
 | `sessionId(env)`, `agentName(env)`, `effort(env)`, `runEnv(env)` | What its environment says, null where it says nothing |
+| `subagentEffort({ input, checkouts, models, env })` | The effort a subagent starts at, from its SubagentStart payload `input`, the environment `env`, the project's config.json `models`, or its definition in `checkouts` (its own checkout, then the main one for a linked worktree alone), one of the host's efforts, or null; the start hook's `Agent-Effort:` hint only, never what the commit check reads |
 | `pluginAgentPrefix`, `agentAliases(type)` | How it names this plugin's agents, and the short names a type answers to |
 | `toolName(name)` | A tool's name in the standard `mcp__<server>__<tool>`. A standard name stays as it is |
 | `rawToolName(standard)` | What a standard tool reaches a hook's matcher as, before any mapping |

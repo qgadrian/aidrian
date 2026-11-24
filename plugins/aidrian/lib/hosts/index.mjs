@@ -19,6 +19,7 @@ export const UNKNOWN_HOST = Object.freeze({
   sessionId: () => null,
   agentName: () => null,
   effort: () => null,
+  subagentEffort: () => null,
   runEnv: () => null,
   toolName: (name) => HOSTS.reduce((each, host) => host.toolName(each), name),
   serverSpelling: (server) => server,

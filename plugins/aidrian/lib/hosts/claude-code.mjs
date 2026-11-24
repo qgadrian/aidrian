@@ -7,6 +7,7 @@ import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
 import { attachLine, findLine, findSessions, nameMatcher, sessionEnded, sessionFinished, startBackground, startFolder, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { PROJECT_AGENTS, subagentEffort } from './claude-code-agents.mjs';
 import { configDir } from './claude-code-config.mjs';
 import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
@@ -20,6 +21,20 @@ import { responseObjects } from './response.mjs';
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
 const agentName = (env) => env.CLAUDE_CODE_AGENT || null;
 const effort = (env) => env.CLAUDE_EFFORT || null;
+// What a session in a linked worktree reads from the main checkout (the adapter's `mainCheckoutPaths`, below).
+const MAIN_CHECKOUT_PATHS = Object.freeze({
+  folders: ['.claude/skills', '.claude/agents', '.claude/commands'],
+  settings: [{ file: '.claude/settings.local.json' }],
+});
+// The folders a subagent's definition may be in, from `checkouts`, its own checkout and, for a linked worktree alone, the
+// main checkout (scripts/hook-session-start.mjs agentCheckouts): its own agents folder, then, as Claude Code reads it
+// from a linked worktree with none, the main checkout's (MAIN_CHECKOUT_PATHS).
+function agentFolders(checkouts) {
+  const roots = Array.isArray(checkouts) ? checkouts.filter((each) => typeof each === 'string') : [];
+  if (!roots.length) return [];
+  const inherited = MAIN_CHECKOUT_PATHS.folders.includes(PROJECT_AGENTS) && roots.length > 1 ? [roots.at(-1)] : [];
+  return [roots[0], ...inherited].map((root) => path.join(root, PROJECT_AGENTS));
+}
 
 // The file a Bash payload's `persistedOutputPath` names, or null unless it is a regular file, by lstat, so no symlink, in a
 // `tool-results` folder whose real path is under Claude Code's real projects folder (configDir, then `projects`), where
@@ -198,6 +213,12 @@ export default {
   sessionId: (env) => env.CLAUDE_CODE_SESSION_ID || null,
   agentName,
   effort,
+  // The effort a subagent runs at, from its SubagentStart payload, the environment, the project's `models`, and its
+  // definition (claude-code-agents.mjs), or null: a hint for its commit trailers, never what the commit check reads.
+  // CLAUDE_CODE_EFFORT_LEVEL in its environment sets every agent's effort, past the dispatch's and the definition's.
+  subagentEffort: ({ input, checkouts, models, env = {} }) => subagentEffort({
+    input, models, efforts: MODEL_CHOICES.effort, override: env.CLAUDE_CODE_EFFORT_LEVEL ?? null, folders: agentFolders(checkouts),
+  }),
   runEnv: (env) => (env.CLAUDE_CODE_REMOTE === 'true' ? 'cloud' : null),
   // `aidrian:<agent>` for this plugin's agents, and `<plugin>:<agent>` for another's.
   pluginAgentPrefix: 'aidrian:',
@@ -279,10 +300,7 @@ export default {
   // commands when the worktree has none (code.claude.com/docs/en/common-workflows, worktrees). The agent gate hook
   // refuses their writes to a session no Human attends (lib/handoff-guard.mjs mainCheckoutWriteDenial). A project run's
   // session works in a fresh clone, which loads none of them, so they refuse no start.
-  mainCheckoutPaths: {
-    folders: ['.claude/skills', '.claude/agents', '.claude/commands'],
-    settings: [{ file: '.claude/settings.local.json' }],
-  },
+  mainCheckoutPaths: MAIN_CHECKOUT_PATHS,
   capabilities: {
     // The session a session went on as, when the host continued it under a new id (hosts/claude-code-continuation.mjs),
     // as { id, at }, or null: a project run whose driver it continued is stranded (lib/project-run-gate.mjs strandedDriver).

@@ -1,7 +1,8 @@
 // SessionStart and SubagentStart hook: one line that tells the agent which knowledge docs to read now and how to find
 // the rest, one line with the names to call the human and the AI, one voice line (push back with a reason; ask the human
 // plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
-// ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), and, for
+// ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), for a
+// subagent while config.json `attribution.commit` lists effort, the `Agent-Effort:` trailer its commits carry (effortLine), and, for
 // the main session only, a format line for chat replies, a handoff line while config.json `session.handoff.mode` is
 // "auto" (handoffLine), at most one `Handoff terminal:` line while this machine runs the background handoff route
 // (lib/shell-init.mjs terminalLine): first, when a shell startup file holds a block of the shell function that lets the
@@ -34,6 +35,7 @@ import { auditNudge } from '../lib/audits.mjs';
 import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { ageDays, parseDecisions } from '../lib/decisions.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
+import { gitFolders } from '../lib/git.mjs';
 import { isMain, print, runHook } from '../lib/hook-io.mjs';
 import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
@@ -87,7 +89,8 @@ export async function handle(input) {
   const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}${tokenLine ? `\n${tokenLine}` : ''}`;
 
   if (subagent) {
-    print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
+    const effort = effortLine(input, project, config);
+    print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: effort ? `${lines}\n${effort}` : lines } }));
   } else {
     await mainSessionOutput(input, project, { lines, config, buckets });
   }
@@ -186,6 +189,38 @@ function auditLine(project, config) {
   } catch {
     return '';
   }
+}
+
+// A subagent, while config.json `attribution.commit` asks for its effort: the `Agent-Effort:` trailer its commits carry,
+// from the effort its host says it starts at (the adapter's subagentEffort), or no line when the host says none. A hint
+// only, so the first commit passes: the attribution rule reads the effort from the subagent's own transcript at commit
+// time (lib/attribution.mjs currentAuthor), stays the authority, and names the real value when a dispatch changed it.
+function effortLine(input, project, config) {
+  if (!config.attribution.commit.includes('effort')) return null;
+  const effort = detectHost({ input }).subagentEffort({ input, checkouts: agentCheckouts(project), models: config.models, env: process.env });
+  return effort ? `Attribution: this agent's commits carry the trailer \`Agent-Effort: ${effort}\`, the effort it starts at; the commit check reads the effort it runs at and names it when they differ.` : null;
+}
+
+// The checkouts a subagent's definition may be read from, each the project's folder there: the project's own, then the
+// same folder in its main checkout only when this one is a linked worktree of it, its own git folder apart from a git
+// common folder that is the main checkout's too, both by their real paths (lib/git.mjs gitFolders on each). A project
+// run's attempt clone, whose project names the driver's main checkout too (lib/project.mjs checkouts), is a clone with
+// its own git folder: a host loads nothing of that checkout's for it.
+export function agentCheckouts(project) {
+  const [own, ...rest] = project.checkouts;
+  const main = rest.at(-1);
+  if (!main) return [own];
+  const real = (file) => {
+    try {
+      return realpathSync(file);
+    } catch {
+      return null;
+    }
+  };
+  const mine = gitFolders(own);
+  const theirs = gitFolders(main);
+  const common = mine && mine.gitDir !== mine.common ? real(mine.common) : null;
+  return common !== null && theirs && common === real(theirs.common) ? [own, main] : [own];
 }
 
 // Every session and subagent: disagree out loud instead of going along, ask questions the human can answer without the

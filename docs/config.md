@@ -127,7 +127,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   },
   "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null },
-  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "workflowSecretsAccepted": false, "forgeProtectionAccepted": false, "outsideSandbox": [], "mcpServers": {}, "nonTrackerServers": [], "registries": [], "localBinding": false, "recordedDecisions": false }
+  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "workflowSecretsAccepted": false, "forgeProtectionAccepted": false, "outsideSandbox": [], "mcpServers": {}, "nonTrackerServers": [], "registries": [], "localBinding": false, "recordedDecisions": false, "fullAuto": false }
 }
 ```
 
@@ -1871,6 +1871,7 @@ the machine's local file, the forge, and the host; each `aidrian project preflig
 | `projectRun.registries` | `[]` | The package registries a confined session may reach to install the project's dependencies, by ecosystem name, each once: `npm` (`registry.npmjs.org`, and `registry.yarnpkg.com`, yarn's default), `pypi` (`pypi.org` and `files.pythonhosted.org`), `crates` (`index.crates.io` and `static.crates.io`), `go` (`proxy.golang.org` and `sum.golang.org`), and `rubygems` (`index.rubygems.org` and `rubygems.org`). The hosts are fixed in `lib/project-registries.mjs`: no name of a host, and no other domain, is ever accepted. A team opts in; a project with no code yet lists the ecosystems of the stack it will scaffold. Install scripts a package runs, such as npm's `postinstall`, run inside the session's sandbox, under its write and network limits, which is why letting a session install is acceptable. Every listed registry but `pypi` and `crates` gives a channel a sandboxed command can send data out on that an attacker can read, `go` the widest, since its proxy fetches from any host a module path names; each is accepted because the forge channel gives one already, and narrowing the forge token reopens that ruling ([Dependency installs](providers/claude-code.md#dependency-installs) names each one's path). With `npm` listed, corepack downloads pnpm and yarn from it too. Every session, whatever this lists, keeps its package managers' caches in its attempt's `cache` folder, and the home folder stays as it is. Codex holds a session to the same hosts through its network proxy, which no live run has checked yet ([Codex](providers/codex.md#project-start)). Only the names both the default branch on the forge and the local ref list count. |
 | `projectRun.localBinding` | `false` | Whether an issue's session may bind local ports, so the services its checks need, such as a database, an API server, a worker, or a browser, run on this machine. On Claude Code the session's sandbox then starts with `allowLocalBinding: true`, and an organization's managed `allowLocalBinding` passes at `true` or `false`. On macOS that lets a sandboxed command bind, and take inbound connections, on every interface of this machine, not only the loopback, so a server bound to `0.0.0.0` takes connections from other machines the firewall lets through, and lets it reach every service listening on this machine's loopback, outside the network allowlist; there the [sandbox proof](providers/claude-code.md#the-sandbox-proof) runs no localhost listener, so it does not check the loopback. On Linux the host gives a sandboxed command a network namespace of its own, so the key changes nothing there, and the proof keeps its listener. On Codex the start adds `-c features.network_proxy.allow_local_binding=true`, which in Codex 0.171.0 also turns off the proxy's refusal of private and link-local addresses, so an allowed host name that resolves to one is reached too; no live run has checked it ([Codex](providers/codex.md#project-start)). Bind each test server to `127.0.0.1`, never `0.0.0.0`. `aidrian project preflight` prints a `note local-binding` line naming the host's risk while it is on ([residual risks](providers/claude-code.md#project-start)). Read from the default branch on the forge and the local ref; both must set it, and no working copy or local file turns it on. Never set by a recipe. |
 | `projectRun.recordedDecisions` | `false` | Whether a run's starts read the decisions the Human recorded on issues in this machine's recorded-decision store, each pinning one section of the issue's description by its heading and sha256 ([Recorded decisions](#recorded-decisions)). A start hands a section that still hashes so to the issue's session as the Human's answer to the decision it names, and nothing more. Read from the default branch on the forge and the local ref; both must set it. It took an object of entries until it became a switch: a config that still sets one is refused, and its entries are recorded with `aidrian project decision ISSUE --heading TEXT --record`. Never set by a recipe. |
+| `projectRun.fullAuto` | `false` | Standing consent for custody of a driver session the host continued under a new id: that session takes the run with `aidrian project resume RUN --custody` and no person ([Full auto](#full-auto)). It takes no decision, merges nothing more, signs nothing off, and lifts no halt. Read from the default branch on the forge and the local ref; both must set it. Never set by a recipe. |
 | `projectRun.forgeTokenKeychain` in `.aidrian.local.json` | unset | This machine's keychain entry for the forge token of this project's issue sessions, `{ "service": "<name>", "account": "<name>" }`, such as a fine-grained token limited to the run's repository. The driver reads the token outside the sandbox, which hides the system keyring from the session, from the first of three sources that gives one: (1) this entry, on macOS; (2) the machine's default entry, service `aidrian-project-run` with any account, which every project on the machine shares, on macOS, and for a github.com run alone; (3) the forge CLI's own login, `gh auth token --hostname <host>`. Each keychain read is `security find-generic-password -s <service> [-a <account>] -w`, an argument list with no shell, with the `security` first on PATH. An entry that is not there passes to the next source; on another platform the key is a preflight `note` that it is unsupported. No source with a token blocks the preflight (`access`) and halts a start, and `note token:` names the source the preflight used, never the token. Read only from the main checkout's file, and only while git tracks no `.aidrian.local.json` there; any other shape is a config error and reads unset. The team's `config.json` cannot set it, and a subagent or a session no Human attends may not write it. How the token reaches the session: [Project start](providers/claude-code.md#project-start). |
 
 On a host whose start proves its sandbox ([Claude Code](providers/claude-code.md#the-sandbox-proof)), a start refuses
@@ -1890,7 +1891,9 @@ session that never named itself, whose hooks never ran, or whose sandbox proof f
 ([Claude Code](providers/claude-code.md#the-sandbox-proof)), gives its attempt back (a `void` start row, the issue open
 again) and writes a `halt` row: every later start refuses, however long ago it was written, until the Human's own shell,
 or another session a person attends that never drove the run, runs `aidrian project resume RUN`, which writes a `resume`
-row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody. `next` prints `halted <cause>` first, and `--json` adds `halt`.
+row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody; the
+session the host continued the driver as takes custody with it and lifts no halt ([Full auto](#full-auto)).
+`next` prints `halted <cause>` first, and `--json` adds `halt`.
 An issue's session that finds its own environment broken, such as a sandbox that refuses what the work needs, a forge
 sign-in or push that fails, or a host tool that fails, records the result `environment`, with the failing command and
 its error as its `stop`, which it must name. Every result's `stop` has anything shaped like a token, a URL's password,
@@ -2372,6 +2375,22 @@ It allows no real or personal data, no secret, and no new access, and it is no `
 sign-off of a pull request, so those park as before.
 A result that still carries a decision parks as on any other issue, and a flow's sign-off at merge stays the Human's.
 Forget the entry once the issue's pull request merges.
+
+### Full auto
+
+The team's `projectRun.fullAuto` switch lets a run go on when the host continues its driver under a new session id,
+as Claude Code does when it continues a session as a fork, with no person to take the run up.
+The session the host's own record names, and only that one, runs `aidrian project resume RUN --custody` and drives on:
+the [hook](hooks.md#agent-gates) lets that exact command through where the local base ref sets the switch, and the
+command checks the forge's copy too.
+It moves custody only, files a plain unattended mark beside the driver mark, and writes no `resume` row
+([A project run](handoff.md#a-project-run)).
+
+It changes nothing else.
+The decision settings stay the one lever for what a run settles alone: `decisions.mode`, `decisions.unattended`, and
+[recorded decisions](#recorded-decisions).
+It merges nothing the auto-merge gate would hold, gives no sign-off a flow asks the Human for, and lifts no halt.
+A run whose driver chain ended, with no session the host continued its driver as, still waits for the Human.
 
 ## Testing
 

@@ -46,6 +46,7 @@ Read [references/loop.md](references/loop.md) once turn 1 ends, and follow it: n
   reports and the summary, tell the Human the cause and the fix, and end, unless the loop's start of the halted issue
   prints `recheck lifted the halt:` first, which launches nothing: start that issue again at once. A halt kept by a re-check stays for the next driver start's re-check, and
   `aidrian project resume` is for a person who fixed the cause: never run it here, since only an attended session runs it.
+  The one exception, `--custody` after a refusal that names the host's continuation, is loop.md § Continued.
 - Exit 75 with a `retry:` line may pass: the loop tries again. Any other refusal stops the loop the same way, with the
   refusal as the cause. Never work around one.
 - When nothing runs and `next` says `done`, `aidrian project end <run>` records the run's end.

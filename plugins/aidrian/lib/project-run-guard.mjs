@@ -12,12 +12,13 @@
 
 import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
+import { parseArgs } from 'node:util';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { attemptOf, systemReal } from './attempt-clone.mjs';
 import { bashCall, opaqueTexts } from './config-guard.mjs';
 import { loadConfig } from './config.mjs';
-import { BACKGROUND_HOPS } from './handoff-continue.mjs';
+import { BACKGROUND_HOPS, baseBranchConfig } from './handoff-continue.mjs';
 import { PROJECT_SUB, PROJECT_SUBCOMMANDS, PROJECT_WORD, stateFolders } from './handoff-guard.mjs';
 import { openStore, readStarted, readStartedDated, SESSION_ID } from './handoff-markers.mjs';
 import { isWithin, resolvedPath } from './fs.mjs';
@@ -117,7 +118,7 @@ export function custody({ found, store, session, now = Date.now(), env }) {
   if (session === driver.session) return { role: 'driver', driver };
   const moved = env ? hostContinued(found, { env }) : null;
   const not = moved
-    ? `this session is not the driver of the run ${found.init.run}, ${driver.session}, which the host continued as ${moved.id}: custody moves only through \`aidrian project resume ${found.init.run}\`, from a session a person attends that never drove the run, such as ${moved.id}`
+    ? `this session is not the driver of the run ${found.init.run}, ${driver.session}, which the host continued as ${moved.id}: custody moves only through \`aidrian project resume ${found.init.run}\`, from a session a person attends that never drove the run, such as ${moved.id}, or, where the team set projectRun.fullAuto, \`aidrian project resume ${found.init.run} --custody\` from ${moved.id} itself`
     : `this session is not the driver of the run ${found.init.run}, ${driver.session}`;
   const dated = store.refused ? null : readStartedDated(store, driver.session, { now });
   const record = dated?.record;
@@ -128,17 +129,63 @@ export function custody({ found, store, session, now = Date.now(), env }) {
   return { role: 'successor', driver, sha256: record.sha256 };
 }
 
-// Why `session` may not lift a halt of the run `found`, or null: it drives the run, drove it once (the init row's
-// session, or one a `driver` row named), or is the continuation custody would move to. Only another attended session, or
-// the Human's own shell, lifts a halt.
-export function resumerProblem({ found, store, session, now = Date.now() }) {
+// Why `session` may not run `aidrian project resume` on the run `found`, or null: it drives the run, drove it once (the
+// init row's session, or one a `driver` row named), or is the continuation custody would move to. Only another attended
+// session, or the Human's own shell, lifts a halt. The session the host continued the driver as (hostContinued, read
+// with `env`) passes here, since its resume takes custody, but its resume never lifts a halt (project-run-gate.mjs
+// resumeRun): the halt waits for another attended session or the Human's shell.
+export function resumerProblem({ found, store, session, now = Date.now(), env }) {
   if (!isSession(session)) return null;
   const members = new Set([found.init.session, ...found.rows.filter((row) => row.event === 'driver').flatMap((row) => [row.session, row.from])]);
   if (members.has(session)) return `this session drives the run ${found.init.run}, or did, and a halt is lifted by another session a person attends, or by the Human's own shell`;
-  const held = custody({ found, store, session, now });
+  const held = custody({ found, store, session, now, ...(env ? { env } : {}) });
   if (held.role) return `this session is the run ${found.init.run}'s ${held.role}, and a halt is lifted by another session a person attends, or by the Human's own shell`;
   return null;
 }
+
+// The options `aidrian project resume` takes, which the command (project-run-cli.mjs) and the hook both read with
+// resumeWords, so the two never read its words apart.
+export const RESUME_OPTIONS = Object.freeze({ project: { type: 'string' }, custody: { type: 'boolean' } });
+
+// The words after `aidrian project resume`, as { run, custody, project }, or null when node's parser refuses them, as
+// for an unknown option or `--custody=false`, when an option comes twice, or when they name no single run.
+export function resumeWords(args) {
+  let parsed;
+  try {
+    parsed = parseArgs({ args, allowPositionals: true, strict: true, tokens: true, options: RESUME_OPTIONS });
+  } catch {
+    return null;
+  }
+  const named = parsed.tokens.filter((token) => token.kind === 'option').map((token) => token.name);
+  if (new Set(named).size !== named.length || parsed.positionals.length !== 1) return null;
+  return { run: parsed.positionals[0], custody: parsed.values.custody === true, project: parsed.values.project ?? null };
+}
+
+// Why `session` may not take custody of the run `found` with `aidrian project resume RUN --custody` under the team's
+// projectRun.fullAuto, which waives the attended check for it alone, or null. Only the session the host's own record
+// names as the driver's continuation (hostContinued) takes it this way, on a run that has not ended, while no pending
+// or issue mark holds it, and only when it never drove the run and is not the continuation custody would move to
+// (resumerProblem). The team's switch is the caller's to read: the hook reads the local base ref, the command both reads.
+export function custodyWaiverProblem({ found, store, session, env = process.env, home, now = Date.now() }) {
+  if (endedIn(found)) return `the run ${found.init.run} ended`;
+  const moved = hostContinued(found, { env, ...(home ? { home } : {}) });
+  if (moved?.id !== session) return `the host recorded no continuation of the run ${found.init.run}'s driver as this session`;
+  let mark;
+  try {
+    mark = readUnattendedMark(session, { env, now, ...(home ? { home } : {}) });
+  } catch {
+    mark = { root: null };
+  }
+  if (mark && (mark.pending || mark.root === null || mark.issue !== undefined)) return 'this session\'s unattended mark names an issue of a project run, is pending, or cannot be read, and only a run\'s driver takes its custody';
+  return resumerProblem({ found, store, session, now, env });
+}
+
+// Whether the base branch's config.json, as this checkout's git holds it, sets projectRun.fullAuto: the hook's half of
+// the team's switch, which only lets a call reach the command, which reads the forge too (project-run-gate.mjs teamPolicy).
+const localFullAuto = (project) => {
+  const base = baseBranchConfig(project, 'projectRun.fullAuto');
+  return !base.why && base.config.projectRun?.fullAuto === true;
+};
 
 // The real path of the attempt folder a confined session works in, for the session whose unattended mark `mark` names
 // the run and issue: the folder of the drop the issue's latest start row names, started or written ahead, in a state folder of `project`
@@ -306,12 +353,14 @@ export function stopActorProblem({ found, store, key, session, mark, now = Date.
 // The continuation store of the run's state folder `state`, as the gate opens it.
 export const runStore = (project, config, state) => openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
 
-// The plain words of an `aidrian project` command after its subcommand: { positionals, options, dynamic }, where
-// `dynamic` is true when a positional or an option's value is built from a variable or a substitution.
+// The plain words of an `aidrian project` command after its subcommand: { positionals, options, words, dynamic }, where
+// `words` are every word's text, in order, and `dynamic` is true when a positional or an option's value is built from a
+// variable or a substitution.
 const VALUED = new Set(['--project', '--file', '--max-wait']);
 function readRest(tokens) {
   const positionals = [];
   const options = {};
+  const words = tokens.map((token) => token.text);
   let dynamic = false;
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i];
@@ -324,7 +373,7 @@ function readRest(tokens) {
     } else if (token.dynamic) dynamic = true;
     else if (!token.text.startsWith('-')) positionals.push(token.text);
   }
-  return { positionals, options, dynamic };
+  return { positionals, options, words, dynamic };
 }
 
 // A subcommand word, and the word `project`, in a text no lexer reads, in any case: handoff-guard.mjs's.
@@ -424,12 +473,21 @@ const RULES = Object.freeze({
     const problem = attendedProblem({ input, session, project, config, state, ...(home ? { home } : {}) });
     return problem && `\`aidrian project init\` makes this session a project run's driver, and ${problem}`;
   },
-  // Lifts a halt: only an attended main session, by attendedProblem with the hook's own payload, as init.
-  resume: ({ input, session, project, config, state, home, run }) => {
+  // Lifts a halt: only an attended main session, by attendedProblem with the hook's own payload, as init. The exact words
+  // `aidrian project resume RUN --custody`, as resumeWords reads them, skip that check only for the session the host
+  // continued the driver as, where the local base ref sets projectRun.fullAuto (custodyWaiverProblem); the command reads
+  // the forge's half, and that form never lifts a halt.
+  resume: ({ input, session, project, config, state, home, run, words }) => {
+    const found = RUN_ID.test(run ?? '') ? readRun(state, run) : null;
+    const read = found && !found.problem ? found : null;
+    const store = read ? runStore(project, config, state) : null;
+    const form = resumeWords(words ?? []);
+    const waived = read && form?.custody === true && form.project === null && form.run === run && localFullAuto(project)
+      && custodyWaiverProblem({ found: read, store, session, ...(home ? { home } : {}) }) === null;
+    if (waived) return null;
     const problem = attendedProblem({ input, session, project, config, state, ...(home ? { home } : {}) });
     if (problem) return `\`aidrian project resume\` lifts a run's halt, which a person decides, and ${problem}`;
-    const found = RUN_ID.test(run ?? '') ? readRun(state, run) : null;
-    const member = found && !found.problem ? resumerProblem({ found, store: runStore(project, config, state), session }) : null;
+    const member = read ? resumerProblem({ found: read, store, session, env: process.env }) : null;
     return member && `\`aidrian project resume\` lifts a run's halt, which a person decides, and ${member}`;
   },
   start: driverOnly,
@@ -501,7 +559,7 @@ function authorize({ input, sub, rest, folder, home, rule }) {
   const place = runPlace(project, config, home ? { home } : {});
   if (place.problem) return null;
   const session = input.session_id;
-  if (sub === 'init' || sub === 'resume' || sub === 'decision') return rule({ input, session, project, config, state: place.state, home, run: rest.positionals[0] });
+  if (sub === 'init' || sub === 'resume' || sub === 'decision') return rule({ input, session, project, config, state: place.state, home, run: rest.positionals[0], words: rest.words });
   const [run, key] = rest.positionals;
   if (typeof run !== 'string' || !RUN_ID.test(run)) return null;
   const found = readRun(place.state, run);

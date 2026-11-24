@@ -1668,6 +1668,7 @@ test('a Write or an Edit through a link and a `..` that lands outside the places
     write(through), { tool_name: 'Edit', tool_input: { file_path: through, old_string: 'a', new_string: 'b' } }, write('a/out/../x.txt'),
     bash(`rm -f ${fx.worktree}/a/out/../*.txt`), bash(`rm -rf ${fx.worktree}/a/out/../gone`), bash(`chmod 600 ${fx.worktree}/a/out/../gone`),
     bash('d=a/out; echo x > "$d/../x.txt"'), bash(`ln -s ${fx.worktree}/a/out/../x link`), bash(`echo x > ~/lnk/../x.txt`), write(`${fx.worktree}/a/b/../y.txt`),
+    write(`${fx.worktree}/a/out /../x.txt`), bash(`echo x > '${fx.worktree}/a/it"s/../x.txt'`),
   ]) assert.match(ask(input)?.reason ?? '', /a path that climbs with `\.\.` from a folder it names.*name the path without `\.\.`/u, JSON.stringify(input));
   assert.equal(ask(write(path.join(fx.worktree, 'a', 'x.txt'))), null, 'the same file named without the link');
   // A path that climbs from the call's own folder, which the host names as the system resolves it, is placed as usual.

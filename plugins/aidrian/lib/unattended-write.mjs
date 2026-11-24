@@ -870,16 +870,16 @@ function pathDenial(spelled, found, say) {
   return null;
 }
 
-// A path in `text`, a target as a reader spells it, that climbs with `..` from a folder it names, as `a/link/../x`
-// or `$d/..`, the first one, or null: the system takes the `..` from where a link there leads, and the guard's readers
-// fold it as text, so a call that writes anything and names one is refused, whatever its readers make of it. A path
-// that starts with `..`, or `./..`, climbs from the call's own folder, which the host names as the system resolves it.
-const CLIMB = /([^\s'"`;&|<>()/]+)\/\.\.(?=\/|[\s'"`;&|<>()]|$)/gu;
+// A path in `text`, a target as a reader spells it, that climbs with `..` from a folder it names, as `a/link/../x` or
+// `$d/..`, as the text from the start to that `..`, or null: the system takes the `..` from where a link there leads,
+// and the guard's readers fold it as text, so a call that writes anything and names one is refused, whatever its readers
+// make of it. Its slash-separated parts are compared whole, a folder whose name holds a space or a quote included; in an
+// interpreter's code the same parts are read, so a word there that climbs counts too. A path that starts with `..`, or
+// `./..`, climbs from the call's own folder, which the host names as the system resolves it.
 function climbIn(text) {
-  for (const match of text.matchAll(CLIMB)) {
-    if (match[1] !== '.' && match[1] !== '..') return match[0];
-  }
-  return null;
+  const parts = text.split('/');
+  const at = parts.findIndex((part, i) => part === '..' && i > 0 && !['', '.', '..'].includes(parts[i - 1]));
+  return at === -1 ? null : parts.slice(0, at + 1).join('/');
 }
 
 // The shell's own writes (shellWrites): a target from a variable, a link, and a program's config.

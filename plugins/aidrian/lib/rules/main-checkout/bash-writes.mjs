@@ -90,8 +90,7 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
       // A shell it starts gets an environment this reader does not follow (exports, the hook's own): only what its
       // invocation sets literally is read there (`ownOnly`), an `env -i` or `env -u` leaves a name unset, and a target
       // built from any other variable fails closed.
-      const given = (invocation.environment ?? []).map(({ name, value }) => [name, typeof value?.text === 'string' ? { text: value.text, dynamic: value.dynamic === true } : { text: '', dynamic: true }]);
-      if (inner !== null) visit(inner, { ...own, vars: new Map(given), ownOnly: true }, depth + 1);
+      if (inner !== null) visit(inner, { ...own, vars: childVars(invocation.environment), ownOnly: true }, depth + 1);
       const directory = directoryChange(invocation);
       if (directory) {
         const change = cdChange(directory, place.dirs);
@@ -113,6 +112,22 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
       if (path.isAbsolute(text)) return { text, files: [text], unsure: false, cds, via, program };
       return { text, files: dirs.map((dir) => joinSpelled(dir, text)), unsure, cds, via, program };
     });
+}
+
+// The variables a shell the line starts gets from its invocation, its `environment` changes applied in order: a literal
+// value is read; an unset, a value that may expand, and a name an `env -i` keeps, whose value comes from outside the
+// line, are read as unknown; and `env -i` drops every earlier one.
+function childVars(environment = []) {
+  const vars = new Map();
+  const unknown = { text: '', dynamic: true };
+  for (const change of environment) {
+    if (change.clear) {
+      vars.clear();
+      for (const name of change.keep ?? []) vars.set(name, unknown);
+    } else if (typeof change.value?.text === 'string') vars.set(change.name, { text: change.value.text, dynamic: change.value.dynamic === true });
+    else vars.set(change.name, unknown);
+  }
+  return vars;
 }
 
 // Whether the destination token `into` of a joined name (writers.mjs joinedNames) is a folder on the disk, from the

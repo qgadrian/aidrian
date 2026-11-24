@@ -828,6 +828,34 @@ test('the review bot`s clean comment on a draft records no open finding, and the
   assert.deepEqual([bot.open, bot.findings, bot.bot.kind], [0, 0, 'comment']);
 });
 
+test('a failed review bot run records no finding: the next step asks the bot again in the same round, and a second failure is stuck', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  // The wait as pr-await-review.mjs ends it on the bot's failure notice: a timeout marked bot_failed, never received.
+  let calls = [];
+  const awaitBot = async ({ head, request, timeoutSec }) => {
+    calls.push({ request, timeoutSec });
+    const asked = request ? { requested: true, requested_head: head } : { requested: false };
+    if (timeoutSec === 0) return { status: 'timed_out', head_sha: head, signal: null, ...asked };
+    return { status: 'timed_out', bot_failed: true, retry_recommended: true, head_sha: head, signal: { kind: 'failed', review_id: null, line_comments: 0 }, ...asked };
+  };
+  const first = await r.step({ codex: off, awaitBot });
+  assert.deepEqual([first.status, first.retry_recommended, first.attempts], ['incomplete', true, 1], first.reason);
+  const state = () => readLocalState(r.project, 7);
+  const botPasses = () => Object.values(state().passes ?? {}).filter((pass) => pass.bot);
+  assert.deepEqual(botPasses(), [], 'a failed run is no answer and holds no finding');
+  assert.equal(state().rounds.at(-1).floor, undefined, 'the round history reads no open finding');
+  const rounds = state().rounds.length;
+  calls = [];
+  const second = await r.step({ codex: off, awaitBot });
+  assert.ok(calls.some((call) => call.request === true), `the step after a failure asks the bot again: ${JSON.stringify(calls)}`);
+  assert.deepEqual([second.status, second.retry_recommended, second.attempts], ['stuck', false, 2], second.reason);
+  assert.match(second.reason, /aidrian pr await-review 7 --request/);
+  assert.deepEqual(botPasses(), [], 'a second failure records the pass as failed, never as open findings');
+  assert.equal(state().rounds.length, rounds, 'the retry runs in the round it was asked in');
+  assert.equal(state().rounds.at(-1).floor, undefined);
+});
+
 test('the review bot`s clean receipt beside its status card of the head that still holds a finding is open work, never a pass', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
   const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });

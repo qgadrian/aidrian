@@ -20,6 +20,8 @@ import { captureAndAttach, closingRange, dispatchFor, listedFor, passInput, plan
 import { refusedAtHead } from './in-force.mjs';
 
 export const MAX_ATTEMPTS = 3;
+// The bot's runs on one head that may fail on its side: the first is asked about again, the second stops the step.
+export const BOT_ATTEMPTS = 2;
 
 // The check runs of one commit as `gh pr checks` rows: the evidence must be for the head under review.
 const checkRows = (runs) => runs.map((run) => ({ name: run.name, state: run.status === 'completed' ? String(run.conclusion ?? 'unknown').toUpperCase() : 'PENDING' }));
@@ -149,6 +151,20 @@ export async function runStages(s) {
     state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, ...(floor ? { floor: true } : {}), bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null, ...(holds ? { holds_finding: true } : {}) } };
     recorded = true;
   };
+  // A run the bot reported failed on its side (pr-await-review.mjs `bot_failed`) is no answer and records no finding,
+  // so no round history reads it as open work. It counts on the head's failures, as a local reviewer's does, in the
+  // round it was asked in: the first is `incomplete` and the next step asks the bot again, the second is `stuck`.
+  const botFailed = (pass, bot) => {
+    const key = `${head}:${pass.id}`;
+    state.failures[key] = (state.failures[key] ?? 0) + 1;
+    const attempts = state.failures[key];
+    if (!bot.requested) undoRound();
+    if (attempts < BOT_ATTEMPTS) {
+      delete state.botRequest;
+      return finish('incomplete', { reason: `the review bot's run failed on its side at ${head.slice(0, 7)}: the next step asks it again`, attempts, retry_recommended: true });
+    }
+    return finish('stuck', { reason: `the review bot's run failed on its side ${attempts} times at ${head.slice(0, 7)}: ask it again with \`aidrian pr await-review ${n} --request${repoArg}\`, or push a new head`, attempts, retry_recommended: false });
+  };
   // A request a wait posted, from either call, is on record for the head it asked about (`requested_head`), never
   // the last head the wait saw: the pull request may have moved past either since. Returns whether it asked about
   // this step's head.
@@ -268,6 +284,7 @@ export async function runStages(s) {
           undoRound();
           return finish('incomplete', { reason: bot.reason, retry_recommended: false });
         }
+        if (bot.bot_failed === true) return botFailed(remote, bot);
         if (bot.status === 'timed_out' || bot.status === 'blocked_quota' || bot.status === 'round_limit') {
           if (!bot.requested) undoRound();
           if (bot.status === 'blocked_quota') return quotaStop(remote, stage, bot.reason ?? 'the review bot posted a usage-limit notice', { bot });

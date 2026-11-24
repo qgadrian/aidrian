@@ -21,6 +21,7 @@ import {
   flooredInstant,
   awaitReview,
   isQuotaNotice,
+  isFailureNotice,
   isReviewSummaryCard,
   REVIEW_SUMMARY_CARD_MARKER,
   exitCodeFor,
@@ -773,6 +774,59 @@ test('awaitReview --request: a quota notice older than the head re-requests once
   assert.equal(forge.posts.length, 1, 'the stale notice predates the head, so the new head is asked once');
   assert.equal(r.status, 'received');
   assert.equal(r.signal.kind, 'review');
+});
+
+// Verbatim lead of the bot's notice that its run failed on its side; its help text quotes the trigger.
+const FAILURE_BODY =
+  'Codex Review: Something went wrong. Try again later by commenting \u201c@codex review\u201d.\n\n```\nUnknown error\n```\n\n' +
+  '<details> <summary>About Codex in GitHub</summary>\n\n- Comment "@codex review".\n</details>';
+const failedCard = (sha, at) => ({ id: 3, user: BOT, created_at: T(1), updated_at: at, body: `${REVIEW_SUMMARY_CARD_MARKER}\n<!-- codex-review-state:v1 {"code_review":{"commit_sha":"${sha}","has_any_findings":null,"has_unresolved_findings":null,"status":"failed"}} -->` });
+
+test('latestBotSignal: a failed bot run, by its notice or by a status card, is failed, never a comment, and never a trigger', () => {
+  assert.equal(isFailureNotice(FAILURE_BODY), true);
+  assert.equal(isFailureNotice(QUOTA_BODY), false, 'the usage-limit notice stays quota_exhausted');
+  assert.equal(isFailureNotice('A finding: the banner says "Codex Review: Something went wrong."'), false, 'a comment that quotes the phrase is no failure');
+  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: T(5) };
+  const notice = { id: 6863267738, user: BOT, created_at: T(6), body: FAILURE_BODY };
+  assert.equal(latestBotSignal({ ...base, issueComments: [notice] }).kind, 'failed');
+  assert.equal(latestBotSignal({ ...base, issueComments: [{ ...notice, body: QUOTA_BODY }] }).kind, 'quota_exhausted');
+  const trigger = { id: 1, user: { login: 'someone' }, created_at: T(5), body: requestCommentBody('bbb') };
+  assert.equal(latestTrigger({ issueComments: [trigger, notice] }), T(5), 'the notice quotes the trigger and is none');
+  const card = latestBotSignal({ ...base, issueComments: [failedCard(B40, T(7))] });
+  assert.deepEqual([card.kind, card.commit_id], ['failed', B40]);
+  assert.equal(isStale(card, C40), true, 'a failed card for another commit says nothing of this head');
+  assert.equal(latestBotSignal({ ...base, issueComments: [failedCard(B40, T(4))] }), null, 'a card that failed before the request is no signal');
+});
+
+test('awaitReview --request: a failed run after the request ends as a timeout marked bot_failed, never received', async () => {
+  const notice = { id: 2, user: BOT, created_at: T(11), body: FAILURE_BODY };
+  const forge = fakeForge([{}, { issueComments: [notice] }], { head: 'bbb' });
+  const c = clock();
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep });
+  assert.deepEqual([r.status, r.bot_failed, r.retry_recommended, r.signal.kind], ['timed_out', true, true, 'failed']);
+  assert.equal(r.waited_sec, 60, 'stops at the poll that saw the failure');
+  assert.equal(forge.posts.length, 1, 'one request per wait: the failure after it is reported, not asked about again');
+  assert.equal(exitCodeFor(r.status), 2);
+  // A status card updated to a failed code review of the head ends the wait the same way.
+  const cardForge = fakeForge([{}, { issueComments: [failedCard(B40, T(11))] }], { head: B40 });
+  const c2 = clock();
+  const byCard = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge: cardForge, now: c2.now, sleep: async (s) => { await c2.sleep(s); cardForge.advance(); } });
+  assert.deepEqual([byCard.status, byCard.bot_failed], ['timed_out', true]);
+});
+
+test('awaitReview: a failed run already answering the head is asked about once more with --request, and only reported without it', async () => {
+  const trigger = { id: 1, user: { login: 'someone' }, created_at: T(5), body: requestCommentBody('bbb'), reactions: { eyes: 1 } };
+  const notice = { id: 2, user: BOT, created_at: T(6), body: FAILURE_BODY };
+  const review = { id: 9, user: BOT, submitted_at: T(12), commit_id: 'bbb', state: 'COMMENTED' };
+  const forge = fakeForge([{ issueComments: [trigger, notice] }, { issueComments: [trigger, notice], reviews: [review] }], { head: 'bbb' });
+  const c = clock();
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep: async (s) => { await c.sleep(s); forge.advance(); } });
+  assert.equal(forge.posts.length, 1, 'the failed run is retried with one new request');
+  assert.equal(r.status, 'received');
+  const quiet = fakeForge([{ issueComments: [trigger, notice] }], { head: 'bbb' });
+  const waited = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 900, intervalSec: 60 }, { forge: quiet, ...clock() });
+  assert.deepEqual([waited.status, waited.bot_failed, waited.waited_sec, quiet.posts.length], ['timed_out', true, 0, 0]);
 });
 
 test('main exits by exitCodeFor, so a blocked_quota run is distinguishable from timed_out and success', () => {

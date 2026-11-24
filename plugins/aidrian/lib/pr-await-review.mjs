@@ -36,9 +36,14 @@
 //      (lib/review/extension.mjs) reads the bot's rounds and may end with `extension_check` (a judge to dispatch) or
 //      `extension_ask` (the Human to ask) instead of `round_limit`. Each round it grants raises the cap by one.
 //
+//   9. A run the bot reports failed on its side (`isFailureNotice`, or a status card whose code review is `failed`) is
+//      no answer and no finding: with --request, a failure for the head is asked about once more, as a stale answer is;
+//      a failure after this run's own request, or one found without --request, ends the wait as `timed_out` with
+//      `bot_failed: true`, so its one retry is a timeout's.
+//
 // stdout: one JSON object. Exit 0 received | already_present | no_reviewer, 2 timed_out (re-run once without --request
-// when `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 5 review_required, 10 extension_check,
-// 11 extension_ask, 1 error. Read-only except the
+// when `retry_recommended` is true, with --request when `bot_failed` is), 3 blocked_quota, 4 round_limit,
+// 5 review_required, 10 extension_check, 11 extension_ask, 1 error. Read-only except the
 // --request comment and,
 // at round_limit, a lesson in the local lesson inbox (lib/lesson-signals.mjs). With no review bot (config.json
 // `github.reviewer` null or "none", or `--reviewer none`) it ends at once as `no_reviewer`: it runs no gh, posts nothing,
@@ -96,6 +101,16 @@ export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds, revi
 // The bot's out-of-credits reply: an ordinary comment, by the same author, that names the condition.
 export const QUOTA_NOTICE_PATTERN = /codex usage limits?/i;
 export const isQuotaNotice = (body) => typeof body === 'string' && QUOTA_NOTICE_PATTERN.test(body);
+
+// The bot's notice that its run failed on its side: "Codex Review: Something went wrong. Try again later by commenting
+// “@codex review”.", with the error below it. Matched on its lead, after the receipt marker when it has one, so a
+// comment that quotes the phrase is no failure. Its help text quotes the trigger, and like the receipt it is never one.
+const FAILURE_LEAD = /^Codex Review: Something went wrong\b/u;
+export const isFailureNotice = (body) => {
+  if (typeof body !== 'string' || isQuotaNotice(body)) return false;
+  const text = body.trimStart();
+  return FAILURE_LEAD.test(text.startsWith(RECEIPT_MARKER) ? text.slice(RECEIPT_MARKER.length).trimStart() : text);
+};
 
 // The bot's review-summary status card and its machine state (review/bot-card.mjs).
 export { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER };
@@ -235,7 +250,7 @@ export const flooredInstant = (epochMs) => new Date(Math.floor(epochMs / 1000) *
 // A trigger: an "@codex review" comment, ours or a person's. The status card and the bot's receipt quote the phrase in
 // their help text, so neither is ever one. An automatic review, on opening a pull request or marking it ready, has
 // no trigger comment: the bot's automatic reviews are meant to be off (docs/config.md `github.reviewer`).
-const isTrigger = (body) => typeof body === 'string' && !isReviewSummaryCard(body) && !isReceipt(body) && body.toLowerCase().includes(REQUEST_COMMENT);
+const isTrigger = (body) => typeof body === 'string' && !isReviewSummaryCard(body) && !isReceipt(body) && !isFailureNotice(body) && body.toLowerCase().includes(REQUEST_COMMENT);
 
 // The latest trigger: the last trigger comment.
 const latestTriggerComment = ({ issueComments }) => {
@@ -257,7 +272,8 @@ export const reviewedCommit = (body) => (typeof body === 'string' ? body.match(R
 // vouches for it, or null. A 👍 is never a signal: it names no commit, the receipt it follows is the answer, and one
 // alone may belong to an earlier head's review whose receipt came before the trigger, or whose receipt this read
 // missed. The usage-limit notice is classified `quota_exhausted` here and the status card dropped, so no caller can
-// mistake either for feedback.
+// mistake either for feedback. A failed run, the bot's failure notice or a status card updated to a `failed` code review,
+// is `failed`: no answer, and never a finding.
 export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], reviewer, since }) => {
   const after = (iso) => Number.isFinite(ms(iso)) && (!since || ms(iso) >= ms(since));
   const review = reviews
@@ -274,17 +290,28 @@ export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], r
         (since || reviewedCommit(c.body) || isQuotaNotice(c.body)),
     )
     .sort((a, b) => ms(b.created_at) - ms(a.created_at))[0] ?? null;
+  // The status card is edited in place, so a `failed` code review on it dates from its last update. Its commit counts
+  // only as a full SHA, as for a card that vouches for a comment.
+  const statusCard = newestCard(issueComments, reviewer);
+  const cardReview = cardState(statusCard?.body)?.code_review;
+  const cardAt = statusCard?.updated_at ?? statusCard?.created_at;
+  const cardFailed = cardReview?.status === 'failed' && after(cardAt) ? { kind: 'card', at: cardAt } : null;
   const newest = [
     review && { kind: 'review', at: review.submitted_at },
     comment && { kind: 'comment', at: comment.created_at },
+    cardFailed,
   ].filter(Boolean).sort((a, b) => ms(b.at) - ms(a.at))[0] ?? null;
   if (!newest) return null;
+  if (newest.kind === 'card') {
+    const commit = typeof cardReview.commit_sha === 'string' && FULL_SHA.test(cardReview.commit_sha) ? cardReview.commit_sha : null;
+    return { kind: 'failed', at: cardAt, review_id: null, commit_id: commit, state: null, line_comments: 0, comment_id: null };
+  }
   if (newest.kind === 'review') {
     // Top-level inline comments only, as the bot history counts them (review/extension.mjs botRounds): a reply is no finding.
     const lineComments = reviewComments.filter((c) => c.pull_request_review_id === review.id && !c.in_reply_to_id).length;
     return { kind: 'review', at: review.submitted_at, review_id: review.id, commit_id: review.commit_id, state: review.state, line_comments: lineComments };
   }
-  const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';
+  const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : isFailureNotice(comment.body) ? 'failed' : 'comment';
   const commit = reviewedCommit(comment.body);
   // `clean`: the status card that vouches for the comment's commit says its review completed with both flags false, or,
   // with no such card, the comment is the clean receipt. `holds_finding`: that card still holds a finding of the bot's
@@ -347,7 +374,7 @@ const coversHeadCommit = (sha, at, headSha, headCommittedAt) => (sha && headSha 
 export const isStale = (signal, headSha, headCommittedAt = null, triggerHead = null) => {
   if (!signal) return false;
   if (signal.kind === 'review') return Boolean(signal.commit_id) && signal.commit_id !== headSha;
-  if (signal.kind === 'comment' || signal.kind === 'quota_exhausted') {
+  if (signal.kind === 'comment' || signal.kind === 'quota_exhausted' || signal.kind === 'failed') {
     return !coversHeadCommit(signal.commit_id ?? triggerHead, signal.at, headSha, headCommittedAt);
   }
   return false;
@@ -431,7 +458,8 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
     const ack = acknowledgement({ reactions: s.reactions, issueComments: s.issueComments, reviewer: opts.reviewer, since });
     // 👀 on a trigger for this head: the bot is mid-review, and a second request only costs another run.
     if (opts.request && !signal && acknowledgedForHead(ack, head, s.headCommittedAt, sinceHead)) return null;
-    if (opts.request && (!signal || stale) && requestedForHead !== head) {
+    // A failed run for this head is asked about again, once per wait, as a stale answer is.
+    if (opts.request && (!signal || stale || signal.kind === 'failed') && requestedForHead !== head) {
       // Accepted residual: a push while a request is in flight at limit - 1 posts one more, so a pull request can end
       // at limit + 1 reviews; the bot exposes no per-trigger completion to reserve against.
       if (opts.keepRecordedCap) maxRounds = Math.max(maxRounds, recordedMaxRounds(s.issueComments) ?? 0);
@@ -449,10 +477,11 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
       stale = false;
     }
     if (signal?.kind === 'quota_exhausted' && !stale) return 'blocked_quota';
+    if (signal?.kind === 'failed' && !stale) return 'failed';
     return answers() ? 'covered' : null;
   };
-  // Whether the signal answers the head: fresh, and no receipt whose status card is still running.
-  const answers = () => Boolean(signal) && !stale && signal.card_pending !== true;
+  // Whether the signal answers the head: fresh, no failed run, and no receipt whose status card is still running.
+  const answers = () => Boolean(signal) && !stale && signal.kind !== 'failed' && signal.card_pending !== true;
   const result = (status) => {
     const ack = acknowledgement({ reactions: s.reactions, issueComments: s.issueComments, reviewer: opts.reviewer, since });
     return {
@@ -481,7 +510,10 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
       waited_sec: Math.round((now() - started) / 1000),
     };
   };
+  // A failed run ends the wait as a timeout does, retried once (step 9), and is never an answer.
+  const failed = () => ({ ...result('timed_out'), bot_failed: true, retry_recommended: true, reason: 'the review bot reported its run failed on its side: ask it again with --request' });
   const first = evaluate();
+  if (first === 'failed') return failed();
   if (first === 'blocked_quota' || first === 'round_limit' || first === 'head_moved') return result(first);
   if (first) return result('already_present');
   // The last sleep is clamped to the remaining budget, so the wait never overruns the shell's cap.
@@ -491,6 +523,7 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
     await sleep(Math.min(opts.intervalSec, Math.ceil(remainingMs / 1000)));
     s = snapshot(forge, repo, n);
     const verdict = evaluate();
+    if (verdict === 'failed') return failed();
     if (verdict === 'blocked_quota' || verdict === 'round_limit' || verdict === 'head_moved') return result(verdict);
     if (verdict) return result('received');
   }

@@ -78,8 +78,9 @@ date, such as `billing-v2-20261118`), the file `<state>/tmp/<run>.snapshot.json`
 
 Then run `aidrian project init <run> --file <snapshot file> --check`. It checks the input as init will, writes no run,
 and prints `ok snapshot <n> issues, <m> with text`, a `resumed:` line naming each started issue an earlier run parked
-on its branch, which the run starts again, a `blocker snapshot:` line for each problem, cycle, or issue
-started outside the run, a `blocker texts:` line for each issue whose text no read recorded when
+on its branch, which the run starts again, a `landed:` line naming each one whose open pull request merged since, which
+the run records done and whose report moves it, a `blocker snapshot:` line for each problem, cycle, or issue
+started outside the run, a `blocker texts:` line for each issue that may still start whose text no read recorded when
 `projectRun.mcpServers` holds no tracker server its session could read it through, the `next` lines for turn 1, as
 many as `projectRun.maxParallel` starts at once, and a
 `note teams` line when the snapshot names no `teams`: read the team list again and add them before init.
@@ -97,5 +98,7 @@ One message, with every blocker of steps 2 and 3, each with its fix.
 - With blockers: ask the Human to fix them and say when. Then run steps 2 and 3 again, and start nothing until both
   are clean.
 - With none: run `aidrian project init <run> --file <snapshot file>`, then tell the Human the issue count, how many can
-  start now, and that nothing is needed until the report. Start the loop of [loop.md](loop.md) in this same turn:
+  start now, and that nothing is needed until the report. When init printed a `landed:` line, write the reports
+  `aidrian project report <run> --json` owes first, as [tracker-writes.md](tracker-writes.md) says.
+  Start the loop of [loop.md](loop.md) in this same turn:
   the Human may leave. A later preflight names the run, `aidrian project preflight <run>`, so the run it made is no blocker.

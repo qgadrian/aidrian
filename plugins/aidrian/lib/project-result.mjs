@@ -12,7 +12,7 @@ import path from 'node:path';
 import { cleanText, maskSecrets } from './clean-text.mjs';
 import { changeNotFound } from './forges/index.mjs';
 import { appendToRun, issueBranch, runFolder, SHA } from './project-run.mjs';
-import { ISSUE_ATTEMPTS, latestStart, spentAttempts } from './project-run-guard.mjs';
+import { ATTEMPT_CEILING, ISSUE_ATTEMPTS, latestStart, spentAttempts } from './project-run-guard.mjs';
 import { defaultBranch } from './pr-auto-merge.mjs';
 import { hostOf, repoName } from './remotes.mjs';
 import { isObject } from './fs.mjs';
@@ -38,10 +38,12 @@ const quote = (value) => {
 };
 const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
 
-// What an issue becomes after an attempt that ended without a result it may be merged on, with `spent` the attempts of it
-// that count (project-run-guard.mjs spentAttempts), that one included: open again while attempts remain, else parked on
-// the decision `attempts`.
-export const afterFailure = (key, spent) => (spent < ISSUE_ATTEMPTS ? { event: 'issue', key, state: 'open' } : { event: 'issue', key, state: 'parked', decision: 'attempts' });
+// What an issue becomes after its attempt number `attempt` ended without a result it may be merged on, with `spent` the
+// attempts of it that count (project-run-guard.mjs spentAttempts), that one included: open again while attempts remain
+// and the next attempt's number stays within ATTEMPT_CEILING, else parked on the decision `attempts`. Attempts a limit
+// ended take numbers that count toward no cap, so the numbers can run out first; parking then reports the issue, where
+// open would leave it waiting on a start the gate refuses.
+export const afterFailure = (key, spent, attempt) => (spent < ISSUE_ATTEMPTS && attempt < ATTEMPT_CEILING ? { event: 'issue', key, state: 'open' } : { event: 'issue', key, state: 'parked', decision: 'attempts' });
 
 // cleanText lives in lib/clean-text.mjs, which the tracker hook loads with no forge import; it is re-exported here.
 export { cleanText };
@@ -105,12 +107,32 @@ export function mergeProblem({ forge, repository, pr, branch, since }) {
   return null;
 }
 
+// Whether pull request `pr`, which an earlier run's attempt left open on the issue's `branch` (a `pr_open` result), has
+// merged since as that attempt's work, for init to take in (project-run.mjs resumedIssues): null while the forge shows it
+// open or closed, or has no such pull request, { merged: true } once it merged and passes mergeProblem, as `wait`
+// checks a pr_open result that merged (droppedPullProblem), against the attempt's start `since`; or { problem } when it
+// merged and fails that check, or the forge cannot answer now, since the issue may then be neither resumed on that
+// branch nor counted done.
+export function landedPull({ forge, repository, pr, branch, since }) {
+  const named = `${repository.owner}/${repository.name}`;
+  let view;
+  try {
+    view = forge.change(String(pr), 'state', { repo: `${repository.host}/${named}` });
+  } catch (error) {
+    return changeNotFound(error) ? null : { problem: `the forge could not say whether pull request #${pr} merged (${String(error.message).split('\n')[0]}); check again` };
+  }
+  if (view?.state !== 'MERGED') return null;
+  const problem = mergeProblem({ forge, repository, pr, branch, since });
+  if (problem === null) return { merged: true };
+  return { problem: typeof problem === 'string' ? problem : `${problem.why}; check again` };
+}
+
 // What the ledger records of issue `key` after attempt `attempt` ended with `status`: merged is done; parked, pr_open,
 // and blocked park it on a decision named for the status; failed opens it again while attempts remain, of the `spent`
 // that count (afterFailure); environment does the same, with the run halted by its result row (haltCause).
 export function afterResult(key, attempt, status, spent = attempt) {
   if (status === 'merged') return { event: 'issue', key, state: 'done' };
-  if (status === 'failed' || status === 'environment') return afterFailure(key, spent);
+  if (status === 'failed' || status === 'environment') return afterFailure(key, spent, attempt);
   return { event: 'issue', key, state: 'parked', decision: { parked: `decision-${attempt}`, pr_open: 'pr-open', blocked: 'blocked' }[status] };
 }
 
@@ -276,7 +298,7 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const read = readDrop(start.drop);
   if (read.missing) return null;
   const at = iso(now);
-  const bad = (why) => ({ rows: [{ event: 'ended', key, attempt: start.attempt, reason: 'bad_result', why: cleanText(why, CAPS.stop, { domains: false }), at }, { ...afterFailure(key, spent), at }], line: 'bad_result' });
+  const bad = (why) => ({ rows: [{ event: 'ended', key, attempt: start.attempt, reason: 'bad_result', why: cleanText(why, CAPS.stop, { domains: false }), at }, { ...afterFailure(key, spent, start.attempt), at }], line: 'bad_result' });
   if (read.problem) return bad(read.problem);
   const { value } = read;
   if (value?.run !== run || value?.key !== key || value?.attempt !== start.attempt) return bad('the drop\'s result names another run, issue, or attempt');

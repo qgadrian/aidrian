@@ -14,13 +14,14 @@
 // and the session's newest entry after the limit (recordedPauseRuns). A rate limit, a pause and its grace over with the
 // same record still the session's last, a limit past LIMIT_WAITS, a session that ended on the limit, and one of a host that
 // does not continue all end the attempt (`ended`, reason `limit`), which counts toward no cap of the issue
-// (project-run-guard.mjs spentAttempts), and opens the issue again; the next start of it, once the pause is over, is a
+// (project-run-guard.mjs spentAttempts), and opens the issue again, or parks it on `attempts` once its attempt numbers
+// ran out (project-result.mjs afterFailure); the next start of it, once the pause is over, is a
 // new attempt in a fresh clone on the issue's branch as the forge holds it. Time paused does not count toward
 // issueHours (pausedTime). The rows live in the run's ledger, so a continuation of the driver sees each pause. A limit
 // the driver session meets itself is not this file's: nothing here restarts a driver.
 
-import { cleanText, CAPS } from './project-result.mjs';
-import { LIMIT_WAITS } from './project-run-guard.mjs';
+import { afterFailure, cleanText, CAPS } from './project-result.mjs';
+import { LIMIT_WAITS, spentAttempts } from './project-run-guard.mjs';
 
 export { LIMIT_WAITS };
 const MINUTE = 60_000;
@@ -140,11 +141,12 @@ export function pauseRow({ found, key, attempt, limit, now }) {
 
 // The rows that end attempt `attempt` of issue `key` on the limit `limit`, at `now`, for the run `found`: `ended`, then
 // the pause's row unless this record has one already (pauseRow), then the issue open again, since a limited attempt
-// spends none of the issue's. { rows, until }, until null when the run halts, and the lasting pause's end otherwise.
+// spends none of the issue's, unless its attempt numbers ran out, which parks it on `attempts` (afterFailure).
+// { rows, until }, until null when the run halts, and the lasting pause's end otherwise.
 export function limitEndRows({ found, key, attempt, limit, now }) {
   const at = iso(now);
   const ended = { event: 'ended', key, attempt, reason: 'limit', kind: limit.kind, at };
-  const open = { event: 'issue', key, state: 'open', at };
+  const open = { ...afterFailure(key, spentAttempts(found, key), attempt), at };
   if (limitRecorded(found, key, attempt, limit)) {
     const lasting = pauseOf(found, now);
     return { rows: [ended, open], until: lasting ? Date.parse(lasting.until) : now };

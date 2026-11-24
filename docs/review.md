@@ -1310,7 +1310,8 @@ pass's id is dropped, and the plan says so. A command that raises the depth gets
 depth when it names no pass of its own, and at `split` always, for the slices: a raised depth always has a pass to run.
 A plan with no pass is `none_needed` only at depth `none`; above it, the step returns `unsatisfied`.
 The command's passes then merge with the built-in ones per agent, so an agent both plans ask for is dispatched once;
-a flow both plans name keeps the files and reasons of both. A plan that names a
+a flow both plans name keeps the files and reasons of both. A pass with no `files` covers every reviewed file, so any
+change to one runs it again on the next head. A plan that names a
 reviewer nobody can run is refused. A failed command shows the last lines of its stderr, with token-shaped strings
 masked. The command and its files are the base branch's, like the rest of the review config.
 

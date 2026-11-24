@@ -2064,7 +2064,10 @@ prints `paused <issue> usage until <time>` and goes on waiting on it. Every othe
 attempt ends `limit`: one that ended on the limit, one of a host that does not continue (Codex), a rate limit, a
 session whose record is unchanged once its pause and that grace are over, and a limit past the run's 24 pauses. `wait` prints
 `limit <issue> <kind> until <time> -> open`. A limited attempt counts toward no cap of the
-issue, so a limit never parks one. Once the pause is over, the same issue starts again as a new attempt: a fresh
+issue, though it takes an attempt number: an issue is started at most 27 times, its 3 attempts that count and one
+for each of the run's 24 pauses. An attempt that ends with no number left, on a limit or a failure, parks the issue
+`attempts` (`-> parked attempts`) instead of opening it, so the run reports it rather than leave it open with no start
+the gate allows, as limits after an attended resume of a halt can make it. Once the pause is over, the same issue starts again as a new attempt: a fresh
 clone of the issue's branch as the forge holds it, whose prompt says the attempt before stopped on a limit. Work the
 limited session had not pushed is lost, which the host's own continuation makes rarer. A run waits out 24 pauses at
 most: the next limit writes a `halt` row instead, which only `aidrian project resume` lifts.
@@ -2076,7 +2079,14 @@ reset, which `autoContinueAtUsageLimit` in the user's own settings asks of the h
 For the issue's own session, whose unattended mark names the run and the issue, its attempt clone takes the run's
 main checkout, named in the ledger's init row, as its own: the machine's switches and decisions come from that
 checkout's `.aidrian.local.json`, never the clone's. Any other reader, and a clone whose link cannot be read or whose
-state folder the project does not name, reads every switch off.
+state folder the project does not name, reads every switch off. A confined session's sandbox denies it the main
+checkout, so its own commands, such as `aidrian pr auto-merge` and `stop-action`, cannot read that link: for them the
+auto-merge switch is the one the start row records as `machine.autoMerge`, which the driver reads in the main checkout
+as `aidrian pr auto-merge` reads it there, `unset` only for a local file git does not track, which then follows a team
+default of `"on"`. It holds only while the main checkout is denied to the reading process and the session's own mark
+names the run, the issue, the main checkout, and the clone as the folder its start began in; every other switch still
+reads off there. The merge guard, a hook outside the sandbox, still reads the main checkout's own switch at the merge,
+so a switch turned off after the start stops the merge.
 
 `init` reads none of these keys and does not check `allow`; `next` and `init --check` read `maxParallel` from the default branch, as `start` and `wait` read them all.
 
@@ -2117,6 +2127,15 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   the `head` that result recorded, and that `branch`, prints a `resumed:` line, and `next`, `start`, and the gate read
   the same plan. The new run works on that branch from its first attempt: `next` names it, and the start's clone, its
   start row, the session's push, the merge guard, and `stop-action` all take it.
+  A parked issue whose latest result in that run is `pr_open`, whose pull request the forge shows merged now, as after
+  a person merged it once that run ended, is never resumed: `init` and its check give it the check `wait` gives a merged
+  `pr_open` result, into the default branch of the pinned repository after that attempt started. When it passes, the
+  issue counts as done for the plan, so its dependents may start, `init` prints `landed: <n> started issues whose pull
+  request an earlier run left open merged since, which this run records done: <issue> (#<n>)`, and writes a `landed` row
+  and the issue done after its init row. That owes the report a merge owes, the done status, which also takes the
+  decision label the earlier run's report set off (Linear `removeLabels`), so the driver's first `report` moves it,
+  within its tracker guard. When the check fails, or the forge cannot answer, the issue is a `blocker snapshot` line
+  naming why, and `init` refuses.
   A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none;
   a `pr_open` result records the head its pull request's check read, with no second read. A `pr_open` result whose
   pull request the forge shows merged by the time `wait` takes it in is checked as a `merged` one is, into the default
@@ -2222,8 +2241,8 @@ from any branch, and a `note triggers` line for other services that act on a pus
 preview deploys and ChatOps bots. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
 blocker. `init RUN --file PATH --check` checks the input as `init` would, prints its blockers
-(problems, cycles, issues started outside the run, a `resumed:` line for the started issues an earlier run parked, and, when `projectRun.mcpServers` holds no tracker server, each issue
-to start with no text) and the `next` lines, and writes no run. An issue's text never comes from a file a session
+(problems, cycles, issues started outside the run, a `resumed:` line for the started issues an earlier run parked, a `landed:` line for those whose open pull request merged since, and, when `projectRun.mcpServers` holds no tracker server, each issue
+that may still start with no text, never a canceled or skipped one) and the `next` lines, and writes no run. An issue's text never comes from a file a session
 writes: after each call of a tracker's issue read (Linear's `get_issue` and `list_issues`), whatever `tracker.enabled`
 says, in a project whose base branch's config.json sets `projectRun.allow`, the post-call tracker hook records each
 issue the tracker's answer holds, by its key, its title, description, and labels, under the unattended marks

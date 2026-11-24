@@ -328,7 +328,10 @@ test('a reset already past when wait reads it waits the 1-minute floor', (t) => 
   const clock = new Date(written + 4 * MINUTE).toISOString().slice(11, 16);
   fx.limit([apiError(`5-hour limit reached ∙ resets ${clock} (UTC)`, { timestamp: iso(written) })]);
   const read = written + 9 * MINUTE;
-  fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: read });
+  // A clock that moves on a millisecond at every read, as a slow runner's does between two of them (#515): the pause is
+  // still measured from the time the command was given.
+  let ticks = 0;
+  fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: read, clock: () => Date.now() + (ticks += 1) });
   const row = fx.rows().find((each) => each.event === 'limit');
   assert.equal(Date.parse(row.until) - read, PAUSE_FLOOR);
 });
@@ -456,6 +459,61 @@ test('a held session past 24 pauses writes one halt and ends its attempt; after 
   const next = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(next.exitCode, 0, next.err.join('\n'));
   assert.ok(next.out.includes('started ENG-1 attempt 2 session c0ffee02'), next.out.join('\n'));
+});
+
+// An issue whose attempts 1 to 25 ended on limits, the 25th halting the run past its 24 pauses, and whose attempts 26
+// and 27 failed after an attended resume, has used every attempt number a run gives it with one counted attempt left
+// (#503): attempt 27's end parks it on `attempts`, where an open issue would wait on a start the gate refuses.
+function outOfNumbers(t) {
+  const fx = started(t);
+  const first = fx.start;
+  const past = (k) => iso(Date.now() - 2 * HOUR + k * 1000);
+  const rows = [];
+  for (let attempt = 1; attempt <= 25; attempt += 1) {
+    if (attempt > 1) rows.push({ ...first, attempt, at: past(attempt) }, { event: 'issue', key: 'ENG-1', state: 'running', at: past(attempt) });
+    rows.push({ event: 'ended', key: 'ENG-1', attempt, reason: 'limit', kind: 'usage', at: past(attempt) });
+    rows.push(attempt <= LIMIT_WAITS
+      ? { event: 'limit', key: 'ENG-1', attempt, kind: 'usage', record: null, named: false, until: past(attempt), wait: attempt, at: past(attempt) }
+      : { event: 'halt', cause: `the run waited out ${LIMIT_WAITS} usage or rate limits, the most a run waits, and ENG-1 attempt 25 met another`, key: 'ENG-1', attempt, at: past(attempt) });
+    rows.push({ event: 'issue', key: 'ENG-1', state: 'open', at: past(attempt) });
+  }
+  appendToRun(fx.state, 'launch', () => ({ rows }));
+  const resumed = fx.cmd(['resume', 'launch'], { session: OTHER });
+  assert.equal(resumed.exitCode, 0, resumed.err.join('\n'));
+  appendToRun(fx.state, 'launch', () => ({ rows: [
+    { ...first, attempt: 26, at: iso(Date.now() - 2 * MINUTE) },
+    { event: 'issue', key: 'ENG-1', state: 'running', at: iso(Date.now() - 2 * MINUTE) },
+    { event: 'ended', key: 'ENG-1', attempt: 26, reason: 'no_result', at: iso(Date.now() - 2 * MINUTE) },
+    { event: 'issue', key: 'ENG-1', state: 'open', at: iso(Date.now() - 2 * MINUTE) },
+    { ...first, attempt: 27, at: iso(Date.now() - MINUTE) },
+    { event: 'issue', key: 'ENG-1', state: 'running', at: iso(Date.now() - MINUTE) },
+  ] }));
+  assert.equal(fx.run().states.get('ENG-1').state, 'running', 'attempt 27 runs');
+  return fx;
+}
+
+test('an issue that used its 27th attempt number after a limit halt and resume is parked on attempts, not left open', (t) => {
+  const failed = outOfNumbers(t);
+  failed.claude.states[CHILD] = 'done';
+  assert.deepEqual(failed.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> parked attempts', 'idle']);
+  assert.deepEqual([failed.run().states.get('ENG-1').state, failed.run().states.get('ENG-1').decision], ['parked', 'attempts']);
+
+  const limited = outOfNumbers(t);
+  limited.claude.states[CHILD] = 'done';
+  limited.limit([apiError('Claude AI usage limit reached|1763481600')]);
+  const out = limited.cmd(['wait', 'launch', '--max-wait', '0']).out;
+  assert.match(out[0], /^limit ENG-1 usage (?:until \S+|halt) -> parked attempts$/u, out.join('\n'));
+  assert.deepEqual([limited.run().states.get('ENG-1').state, limited.run().states.get('ENG-1').decision], ['parked', 'attempts']);
+});
+
+test('an attempt that ends with numbers left opens the issue again, on a limit or a failure', () => {
+  const start = (attempt) => ({ event: 'start', key: 'ENG-1', attempt, outcome: 'started', session: STARTED[0].session, id: STARTED[0].session, child: null, cwd: '/tmp/w', name: 'n', at: iso(NOW) });
+  const rows = Array.from({ length: 26 }, (_, i) => start(i + 1));
+  const ended = Array.from({ length: 26 }, (_, i) => ({ event: 'ended', key: 'ENG-1', attempt: i + 1, reason: 'limit', at: iso(NOW) }));
+  const rate = { kind: 'rate', until: null, at: NOW, after: null };
+  assert.equal(limitEndRows({ found: { rows: [...rows, ...ended.slice(0, 25)] }, key: 'ENG-1', attempt: 26, limit: rate, now: NOW }).rows.at(-1).state, 'open', 'attempt 26: number 27 is left');
+  const last = limitEndRows({ found: { rows: [...rows, start(27), ...ended] }, key: 'ENG-1', attempt: 27, limit: rate, now: NOW }).rows.at(-1);
+  assert.deepEqual([last.state, last.decision], ['parked', 'attempts'], 'attempt 27: no number is left');
 });
 
 test('an idle wait waits out the pause with the driver and returns once it is over', (t) => {

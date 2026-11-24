@@ -19,9 +19,15 @@
 // folder holds a `commondir` or a `config.worktree` other than the gate's placeholder (GIT_PLACEHOLDERS), through which
 // git would read another config; lib/git.mjs runGit asks it before every git call of the plugin in a clone
 // (cloneGitProblem), and so does every other git call of the plugin there (lib/config-committed.mjs).
+// A confined session's sandbox denies it the main checkout, so from inside it the link cannot be read and the clone reads
+// every switch off. Its auto-merge switch alone comes from the start row then: the switch the driver read in the main
+// checkout when it started the attempt, outside the sandbox (project-run-gate.mjs launchStart), which the clone carries
+// as `machine` (confinedMachine) only while this process is denied the main checkout and the session's own mark, which
+// the gate filed, names the run, the issue, that main checkout, and this very work folder as the one it started in. A
+// hook, which runs outside the sandbox, reads the link and the main checkout's own file as before.
 
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 // A path inside an attempt's folder: the state folder, the run, the issue, the attempt, and the part after it.
@@ -128,7 +134,44 @@ function linkOf(at) {
   const main = init?.event === 'init' && init.run === at.run && typeof init.main === 'string' && path.isAbsolute(init.main) ? real(init.main) : null;
   const linked = started && main !== null && main !== at.work && !(`${main}/`.startsWith(`${at.state}/`)) && real(path.join(main, '.git')) !== null
     && gitExtraProblem(at) === null && anchoredBy(at, main) && namedState(at, main);
-  return linked ? { ...at, main } : { ...at, unlinked: true };
+  if (linked) return { ...at, main };
+  const machine = confinedMachine(at, rows, init);
+  return { ...at, unlinked: true, ...(machine ? { machine } : {}) };
+}
+
+// The machine facts the start row of the attempt `at` recorded, { autoMerge }, for a session the sandbox denies the main
+// checkout the ledger's `init` row names, or null: the start row names this work folder, the main checkout is denied
+// to this process (a read refused, never one that is gone), the attempt's git folder sends git nowhere else
+// (gitExtraProblem), and the anchored session's mark, not pending, names the run, the issue, that main checkout as its
+// root, and this work folder as the folder the gate started it in. `autoMerge` is "on", "off", or "unset" for a local
+// file that sets none and that git tracks not, which may follow a team default of "on".
+function confinedMachine(at, rows, init) {
+  const main = init?.event === 'init' && init.run === at.run && typeof init.main === 'string' && path.isAbsolute(init.main) ? init.main : null;
+  if (main === null || !denied(main) || gitExtraProblem(at) !== null) return null;
+  const start = (rows ?? []).findLast((row) => row?.event === 'start' && row.key === at.key && row.attempt === at.attempt && typeof row.cwd === 'string' && real(row.cwd) === at.work);
+  const autoMerge = start?.machine?.autoMerge;
+  if (!['on', 'off', 'unset'].includes(autoMerge)) return null;
+  const { session, env, home } = anchorOf();
+  if (typeof session !== 'string' || typeof readers?.readMark !== 'function') return null;
+  let mark;
+  try {
+    mark = readers.readMark(session, { env: env ?? process.env, ...(home ? { home } : {}) });
+  } catch {
+    return null;
+  }
+  const own = mark && !mark.pending && mark.root === main && mark.project === at.run && mark.issue === at.key && typeof mark.cwd === 'string' && real(mark.cwd) === at.work;
+  return own ? { autoMerge } : null;
+}
+
+// Whether this process is refused a read of the folder `folder`, as a confined session's sandbox refuses the main
+// checkout; false when it reads it, or the folder is gone.
+function denied(folder) {
+  try {
+    readdirSync(folder);
+    return false;
+  } catch (error) {
+    return error?.code === 'EPERM' || error?.code === 'EACCES';
+  }
 }
 
 // Whether the anchored session's own mark names the clone's run and issue, and `main` as its root; or, before the gate

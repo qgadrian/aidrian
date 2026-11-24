@@ -48,8 +48,9 @@ const trackedAt = (root, commit) => [...(trackedSet(root, commit) ?? [])];
 // Whether a pass result holds a finding stored with no id, as attest stores one on a record no step had floored.
 const holdsIdless = (result) => isObject(result) && ['list', 'ruled', 'carried'].some((key) => Array.isArray(result[key]) && result[key].some((finding) => isObject(finding) && !isFindingId(finding.id)));
 
-// Whether the change from `from` to `to` touches `files` (null: any reviewed file).
-const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
+// Whether the change from `from` to `to` touches `files` (no list, as a plan command's pass with no `files` key: any
+// reviewed file).
+const touches = (changes, files) => (Array.isArray(files) ? changes.some((change) => files.includes(change.file)) : changes.length > 0);
 
 // The plan note a step writes for its head (G1, H6), merged into the record's note: every pass id an engine plan ever
 // named stays, with the stage, the reviewer, and whether the plan requires the security reviewer for it (true in the

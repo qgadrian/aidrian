@@ -43,7 +43,7 @@ import { sweepIssueReads } from './project-issue-text.mjs';
 import { lingeringStarts } from './project-linger.mjs';
 import { LOCKED } from './jsonl.mjs';
 import { preflightCommand, recheckLines, snapshotCheck } from './project-preflight.mjs';
-import { openPullHead } from './project-result.mjs';
+import { landedPull, openPullHead } from './project-result.mjs';
 import { recordedCommand, reportCommand } from './project-report.mjs';
 import { runConfine } from './project-confine.mjs';
 import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
@@ -79,7 +79,7 @@ export const commands = {
 // read in the home folder of the user this process runs as, which no variable of a command's environment moves, so only
 // an in-process caller can point it elsewhere. So are `forge`, the forge facade the team's policy and a merge are read
 // through, `spawn` and `wait`, the host adapter's stand-ins for its command and its pause, `pause`, wait's pause between
-// reads, `now`, and `platform`, the operating system a start's host sandbox runs on. Throws what parseArgs and
+// reads, `clock`, the clock that moves wait's later reads on from `now`, `now`, and `platform`, the operating system a start's host sandbox runs on. Throws what parseArgs and
 // commandConfig throw, which lib/cli.mjs reports. `autoMerge(url)` is stop-action's stand-in for the auto-merge answer,
 // and `exec` the keychain read's execFileSync for start and preflight (lib/project-token.mjs).
 // `confine` returns a promise of the answer (lib/project-confine.mjs runConfine), the others the answer itself.
@@ -100,7 +100,7 @@ export function projectCommand(args, options = {}) {
 // The exit of a refusal that may pass when tried again: project-run-gate.mjs's.
 export { RETRY_EXIT };
 
-function projectAction(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform, autoMerge, exec } = {}) {
+function projectAction(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, clock, now, platform, autoMerge, exec } = {}) {
   const [action, ...rest] = args;
   if (!ACTIONS.includes(action)) return fail(`project takes ${ACTIONS.slice(0, -1).join(', ')}, or ${ACTIONS.at(-1)}${action ? `, not "${action}"` : ''}`);
   const word = { type: 'string' };
@@ -132,7 +132,9 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     }
     // An old ledger's parked issue that recorded no head resumes from its open pull request's (project-run.mjs resumedIssues).
     const pullHead = ({ pr, branch, repository }) => openPullHead({ forge: forge ?? forgeFor(project.root), repository, pr, branch });
-    return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, pullHead });
+    // A pull request an earlier run left open that merged since takes its issue in as done (project-run.mjs resumedIssues).
+    const landed = ({ pr, branch, repository, since }) => landedPull({ forge: forge ?? forgeFor(project.root), repository, pr, branch, since });
+    return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, pullHead, landed });
   }
   if (action === 'decision') {
     // A write goes only to the project --project names itself: a folder that is gone, or no project's root, such as a
@@ -162,7 +164,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   if (action === 'wait') {
     const given = values['max-wait'] ?? String(WAIT_DEFAULT);
     if (!/^\d{1,4}$/u.test(given) || Number(given) > WAIT_CEILING) return fail(`project wait takes --max-wait as whole seconds from 0 to ${WAIT_CEILING}`);
-    return waitRun({ ...gate, maxWait: Number(given), spawn, ...(pause ? { pause } : {}) });
+    return waitRun({ ...gate, maxWait: Number(given), spawn, ...(pause ? { pause } : {}), ...(clock ? { clock } : {}) });
   }
   const place = runPlace(project, config, { env, home });
   if (place.problem) return refused(action, place.problem);

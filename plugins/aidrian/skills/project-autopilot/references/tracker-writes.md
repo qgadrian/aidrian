@@ -18,7 +18,7 @@ A failed attempt with attempts left owes nothing: the issue starts again.
 
 | Outcome | Status | Label | Comment |
 | --- | --- | --- | --- |
-| merged | the adapter's done status type (Linear `completed`): the tracker takes the team's first completed status | none | the pull request |
+| merged | the adapter's done status type (Linear `completed`): the tracker takes the team's first completed status | none; for an issue init took in as `landed`, the decision label taken off (Linear `removeLabels`) | the pull request |
 | parked, pr_open, failed out of attempts, ended | none | `projectRun.decisionLabel`, `needs-decision` by default | why it stopped, and each decision with its options and recommendation |
 | blocked | `projectRun.blockedStatus` when the base branch sets one | `projectRun.decisionLabel` | what is missing |
 

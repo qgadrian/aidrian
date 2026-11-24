@@ -1120,14 +1120,15 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   ended, while no pending or issue mark holds the session; the command reads the forge's copy of the switch too.
   Any other spelling, such as `-- --custody`, `--custody=false`, or `--custody` twice, meets the attended rules.
   Neither the command nor the rule lets that form, or a resume from the continuation the host names, lift a halt.
-- Until the project's run records its end, its issues all done included (`projectRunActive` with `untilEnd`), no
-  session or subagent, attended or not, may write under a host's transcript folder (`lib/transcript-guard.mjs`), but in
-  the `memory` folder of a project folder there, where a host keeps its memory.
+- Until the project's run records its end, its issues all done included, read from the ledgers alone and never from a
+  mark (`projectRunActive` with `untilEnd`), no session or subagent, attended or not, may write under a host's
+  transcript folder (`lib/transcript-guard.mjs`), but in the `memory` folder of a project folder there, where a host
+  keeps its memory, nor write the folder or a folder above it, as `rm -rf` or `mv` of the config or home folder does.
   The folders are the ones the host adapter names (`transcriptFolders`); on Claude Code, `projects/` under `~/.claude`
   of the account's home, and the folder the custody reader reads (`transcriptRoot`: under `CLAUDE_CONFIG_DIR`, else
   under the host's `HOME`).
-  A write counts by its path; a glob by its literal prefix, the parts before its first wildcard, at or above such a
-  folder, or under it; and, where the folder is unknown, a spelling `projects/<folder>/<file>.jsonl`.
+  A write counts by its path, and a glob by its literal prefix, the parts before its first wildcard, by the same rule;
+  where the folder is unknown, a spelling `projects/<folder>/<file>.jsonl` counts.
   A project run reads the driver's continuation there, so no row is forged.
   Accepted residuals: a script that writes the file; a link already on disk a write passes through, since the guard is
   for cooperating agents; and a glob whose prefix is a folder above the transcript folder, such as the home folder,

@@ -3,7 +3,9 @@
 // it names take the run's custody with no person (lib/project-run-gate.mjs resumeRun). No session needs to write a
 // transcript, so until the project's run records its end the agent gate hook refuses every session and subagent a write
 // under a host's transcript folder (scripts/hook-agent-gates.mjs), but in a project folder's `memory` folder, where a
-// host keeps its memory. One rule, failing closed: a glob counts by its literal prefix alone.
+// host keeps its memory, and a write to the folder or a folder above it, as a removal or a move of the host's config
+// folder or the home folder is. One rule, failing closed, for a literal path and a glob alike, which counts by its
+// literal prefix alone.
 // Accepted residuals: a script that writes the file, which the hooks never see, as for a forged typed turn; a link
 // already on disk that a write passes through, since the guard is for cooperating agents (docs/hooks.md); and a glob
 // that starts above the transcript folder, such as one beside a host's config folder, is refused though it may reach none.
@@ -30,9 +32,10 @@ function underTranscripts(folder, target) {
   return !(parts.length >= 2 && parts[1] === foldCase('memory'));
 }
 
-// Whether a glob write from a known folder, { prefix } (handoff-guard.mjs globPaths), may reach `folder`: its literal
-// prefix, the parts before the first wildcard, is at or above the folder, or under it as underTranscripts reads it.
-const globReaches = (folder, { prefix }) => isWithin(prefix, folder) || underTranscripts(folder, prefix);
+// Whether a write to the real path `target`, a literal one or a glob's literal prefix, the parts before its first
+// wildcard (handoff-guard.mjs globPaths), may change a transcript of `folder`: it lies under the folder as
+// underTranscripts reads it, or is the folder or a folder above it, which a removal or a move takes along.
+const reaches = (folder, target) => isWithin(target, folder) || underTranscripts(folder, target);
 
 // Why the call in `input` may not run because it writes a host's session transcript while `runSession()` says the
 // call's project has a project run whose ledger records no end (project-run-guard.mjs projectRunActive with
@@ -47,8 +50,8 @@ export function transcriptWriteDenial(input, { names: { human } }, { runSession 
   const placed = files.map(real);
   const hit = names.some((text) => SPELLED.test(text))
     || globs.some((glob) => (glob.unsure || glob.opaque) && SPELLED.test(glob.text))
-    || guarded.some((folder) => placed.some((target) => underTranscripts(folder, target))
-      || globs.filter((glob) => !glob.unsure).flatMap(globPaths).some((each) => globReaches(folder, each)));
+    || guarded.some((folder) => placed.some((target) => reaches(folder, target))
+      || globs.filter((glob) => !glob.unsure).flatMap(globPaths).some(({ prefix }) => reaches(folder, prefix)));
   if (!hit || !runSession()) return null;
   const why = 'it may change a host\'s session transcript, which a project run reads its driver\'s continuation from, and no session or subagent writes one while a project run is under way';
   return { match: 'may change a host\'s session transcript', reason: projectRuleReason(input, why, human) };

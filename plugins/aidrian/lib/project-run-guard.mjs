@@ -66,13 +66,13 @@ export const driverOf = (found) => driverAfter(found.init, found.rows);
 // `home`, a test's), a folder of runs that cannot be read, or a live unattended or pending mark that names one of its
 // checkouts (unattended-mark.mjs marksNaming). While one is, the agent gate hook holds every subagent to the main
 // checkout's host paths (handoff-guard.mjs mainCheckoutWriteDenial); a project with no run is not held. With
-// `untilEnd`, a run counts until its ledger records its end (activeRuns), as the transcript guard asks it
-// (lib/transcript-guard.mjs): custody may move until then.
+// `untilEnd`, it reads the ledgers alone, never a mark, and a run counts until its ledger records its end
+// (activeRuns), as the transcript guard asks it (lib/transcript-guard.mjs): custody may move until then.
 export function projectRunActive(project, config, { base, home, untilEnd = false } = {}) {
   for (const state of stateFolders(project, config, { lazy: true, ...(base ? { base } : {}), ...(home ? { home } : {}) })) {
     if (activeRuns(state, { untilEnd }).length > 0) return true;
   }
-  return marksNaming(project.checkouts ?? [], home ? { home } : {});
+  return !untilEnd && marksNaming(project.checkouts ?? [], home ? { home } : {});
 }
 
 // The hold predicates (run-driver.mjs): which run `session` is held as the driver of, from its driver mark alone.

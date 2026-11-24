@@ -81,10 +81,11 @@ test('a write counts under the transcript folder but in a project\'s memory fold
   const beside = path.join(root, 'beside');
   for (const folder of [path.join(own, 'memory'), beside]) mkdirSync(folder, { recursive: true });
   const ask = (command) => transcriptWriteDenial(bash(command, beside), SETTINGS, { runSession: () => true, folders: [projects] });
-  for (const command of [`printf x > ${own}/memory/note.md`, `rm -f ${own}/memory/*.md`, `rm -f ${beside}/build-*.tmp`, 'rm -f ./build-*.tmp']) {
-    assert.equal(ask(command), null, command);
-  }
-  for (const command of [`printf x > ${own}/notes.md`, `printf x > ${own}/a/b/c.jsonl`, `rm -rf ${projects}`, `rm -f ${own}/memory-*.md`, `rm -f ${projects}/*/memory/*.md`, `rm -rf ${root}/.cl*`, `rm -f ${root}/**/*.jsonl`]) {
+  const sibling = [`printf x > ${own}/memory/note.md`, `rm -f ${own}/memory/*.md`, `rm -f ${beside}/build-*.tmp`, 'rm -f ./build-*.tmp', `rm -rf ${beside}`, `mv ${beside} ${beside}-old`];
+  for (const command of sibling) assert.equal(ask(command), null, command);
+  // A folder above a transcript folder, removed or moved, takes its transcripts along.
+  const above = [`rm -rf ${root}`, `mv ${projects} ${beside}/x`, `mv ${path.dirname(projects)} ${beside}/y`];
+  for (const command of [...above, `printf x > ${own}/notes.md`, `printf x > ${own}/a/b/c.jsonl`, `rm -rf ${projects}`, `rm -f ${own}/memory-*.md`, `rm -f ${projects}/*/memory/*.md`, `rm -rf ${root}/.cl*`, `rm -f ${root}/**/*.jsonl`]) {
     assert.notEqual(ask(command), null, command);
   }
   assert.equal(transcriptWriteDenial(bash(`rm -f ${own}/*`, beside), SETTINGS, { runSession: () => false, folders: [projects] }), null, 'no run under way');

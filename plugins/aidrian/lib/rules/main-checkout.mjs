@@ -20,6 +20,7 @@
 import path from 'node:path';
 
 import { joinSpelled } from '../fs.mjs';
+import { withGitFacts } from '../git.mjs';
 import { fileEditOf, isFileEditTool } from '../hosts/index.mjs';
 import { bashTargets, bashWrites } from './main-checkout/bash-writes.mjs';
 import { canonical, cdLead, decide, existingFolder, failedCdLead, guardedMain, holdsMainDenial, OVERRIDE, reason } from './main-checkout/checkout.mjs';
@@ -33,10 +34,11 @@ export { bashTargets, bashWrites, canonical, OVERRIDE };
 
 // Bash: the deny reason for `command`, or null. git runs only for a write target or a git call in a guarded project,
 // and for each folder a `cd` names from a guarded main checkout.
+// One call reads each folder's checkout roots once (lib/git.mjs withGitFacts), however many of its readers ask.
 export function check(command, { cwd = process.cwd(), env = process.env } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  return decide(bashTargets(command, cwd), cwd, false, 'this command writes') ?? removalDenial(command, cwd) ?? afterCdDenial(command, cwd)
-    ?? expansionDenial(command, cwd, env) ?? gitStateDenial(command, cwd);
+  return withGitFacts(() => decide(bashTargets(command, cwd), cwd, false, 'this command writes') ?? removalDenial(command, cwd) ?? afterCdDenial(command, cwd)
+    ?? expansionDenial(command, cwd, env) ?? gitStateDenial(command, cwd));
 }
 
 // A variable's name in a target: `$NAME` or `${NAME}`.
@@ -140,7 +142,7 @@ export function checkTool(input, { env = process.env } = {}) {
     if (!main) return null;
     return reason(`Blocked: this writes with ${input.tool_name}, and the guard cannot read which files it writes from the main checkout (${main.roots.main}), so it writes nothing to be safe.`, main.project, main.config);
   }
-  return decide(targets, cwd, true, 'this writes');
+  return withGitFacts(() => decide(targets, cwd, true, 'this writes'));
 }
 
 // Every path an Edit, Write, NotebookEdit, or apply_patch payload writes, as the host's adapter names them (hosts/index.mjs

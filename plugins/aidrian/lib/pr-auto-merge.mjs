@@ -905,11 +905,17 @@ export function closingProblem(forge, pr, context, takeTrail) {
   } catch (error) {
     throw new Error(`could not read the commits of #${number} with gh (${ghError(error)})`);
   }
-  if (!Array.isArray(commits) || commits.length !== pull.commits) return `gh listed ${Array.isArray(commits) ? commits.length : 'none'} of its ${pull.commits} commits, and GitHub lists at most 250, so a closing word may hide in one it did not list`;
+  // A refusal of the commit list waits for the trail's head check below: a push between the reads changes the list, and
+  // is a moved head the stop retries on, never `closes` for the head before it.
+  let listed = null;
   const messages = [];
-  for (const commit of commits) {
+  if (!Array.isArray(commits) || commits.length !== pull.commits) listed = `gh listed ${Array.isArray(commits) ? commits.length : 'none'} of its ${pull.commits} commits, and GitHub lists at most 250, so a closing word may hide in one it did not list`;
+  for (const commit of listed ? [] : commits) {
     const message = commit?.commit?.message;
-    if (typeof message !== 'string') return `gh returned a commit of #${number} with no message`;
+    if (typeof message !== 'string') {
+      listed = `gh returned a commit of #${number} with no message`;
+      break;
+    }
     messages.push({ where: `commit ${String(commit.sha ?? '').slice(0, 7) || 'with no SHA'}`, text: message });
   }
   let trail;
@@ -921,6 +927,7 @@ export function closingProblem(forge, pr, context, takeTrail) {
   if (typeof trail?.head !== 'string' || trail.head.toLowerCase() !== head.toLowerCase()) {
     throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(trail?.head ?? 'none').slice(0, 7)} while the gate read its title, body, and the issues it closes`);
   }
+  if (listed) return listed;
   if (typeof trail.title !== 'string' || (trail.body !== null && typeof trail.body !== 'string')) return `the forge gave no title or body for #${number}`;
   const texts = [{ where: 'its title', text: trail.title, title: true }, { where: 'its body', text: trail.body ?? '' }, ...messages];
   return closingTextsProblem(texts, context, pr) ?? forgeClosingProblem(trail, context, pr);

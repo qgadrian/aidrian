@@ -1636,7 +1636,7 @@ function closing(t, { title = 'feat(export): add CSV export', body = 'Fixes ENG-
   const { forge, calls } = fakeForge();
   const listed = messages.map((message, i) => ({ sha: `${i}`.repeat(40), commit: { message } }));
   forge.pull = (repo, n, { host } = {}) => (calls.push(['pull', repo, n, host]), { head: { sha: pullHead }, title: pullTitle, body: pullBody, commits: commits ?? listed.length });
-  forge.changeCommits = (repo, n, { host } = {}) => (calls.push(['changeCommits', repo, n, host]), duringCommits(trail), listed);
+  forge.changeCommits = (repo, n, { host } = {}) => (calls.push(['changeCommits', repo, n, host]), duringCommits(trail, listed), listed);
   forge.reviewTrail = (...args) => {
     calls.push(['reviewTrail', ...args.slice(0, 2)]);
     if (trail === 'down') throw Object.assign(new Error('trail'), { stderr: 'HTTP 502\n' });
@@ -1747,6 +1747,24 @@ test('closes: the title and body are judged from the review trail, the same snap
   const cleaned = closing(t, { body: 'Fixes ENG-1', pullTitle: 'fix: export, closes ENG-9', pullBody: 'Fixes ENG-9' });
   passes(cleaned, 'the REST view\'s older text is not judged');
   assert.equal(cleaned.calls.filter((call) => call[0] === 'reviewTrail').length, 1, 'one trail serves the text, the links, and merge trust');
+});
+
+test('closes: a push while the commits are read, which changes their count, is a moved head the stop retries on, never closes (#448)', (t) => {
+  const pushed = closing(t, { duringCommits: (trail, listed) => {
+    listed.push({ sha: '9'.repeat(40), commit: { message: 'fix: later' } });
+    trail.head = OLD;
+  } });
+  assert.equal(pushed.code, 3, `an error, not a refusal: ${pushed.why}`);
+  assert.match(pushed.err.join('\n'), /the head of #7 moved from abcdef1 to 1234567 while the gate read its title, body, and the issues it closes/u);
+  // A commit with no message on a head that moved: the same retry.
+  const blank = closing(t, { duringCommits: (trail, listed) => {
+    listed[0].commit.message = null;
+    trail.head = OLD;
+  } });
+  assert.equal(blank.code, 3);
+  // The head unchanged, the list still short: closes, as before.
+  assert.match(closing(t, { commits: 300 }).why, /gh listed 1 of its 300 commits/u);
+  assert.match(closing(t, { duringCommits: (trail, listed) => (listed[0].commit.message = null) }).why, /gh returned a commit of #7 with no message/u);
 });
 
 test('closes: a sidebar link added while the commits are read is seen: the trail is taken after them (#448)', (t) => {

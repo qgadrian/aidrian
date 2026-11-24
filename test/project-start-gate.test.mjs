@@ -16,7 +16,7 @@ import { ownIssue, runDriver } from '../plugins/aidrian/lib/project-run-guard.mj
 
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
+import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { recordHumanSignoff } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
@@ -38,6 +38,36 @@ const work = (fx, key = 'ENG-1', attempt = 1) => path.join(runsFolder(fx.state),
 test('the caps in code', () => {
   assert.deepEqual([PROJECT_STARTS, PROJECT_STARTS_PER_DAY, ISSUE_ATTEMPTS, PROJECT_PARALLEL], [1000, 200, 3, 4]);
   assert.deepEqual(CEILINGS, { maxParallel: 4, maxStarts: 1000, issueHours: 24 });
+});
+
+// A finding the session cannot fix because its fix lies in a host file goes to the Human's merge as a stated residual,
+// in the prompt of an attempt on base copies and in the skill's rules for every attempt alike, never as a decision.
+test('a low or medium finding in a host file is a stated residual by its id alone, and pr_open once it is the last stop', () => {
+  // Beside severity: no security mark, and the engine's own id. The line publishes nothing, so no post or head condition applies.
+  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, and that has the review engine's own `R<round>-<n>` id, is a stated residual, never a decision: /u);
+  // The project's residual format: its section, the id as the item's lead, and every field it requires, each filled with the fixed text.
+  assert.equal(HOST_FILE_REASON, 'the run may not write a host file this finding needs');
+  assert.ok(HOST_FILE_RESIDUAL.includes('one item of the residual section the project\'s pull request rules name, config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon, '
+    + `then \`${HOST_FILE_REASON}\`, and states each field \`github.pullRequest.residuals.fields\` lists as \`<field>: ${HOST_FILE_REASON}\`, never naming its file, title, or reason.`), HOST_FILE_RESIDUAL);
+  assert.ok(HOST_FILE_RESIDUAL.includes(`record the result pr_open with \`<id>: ${HOST_FILE_REASON}\` as its stop and no decisions, and run no merge`), HOST_FILE_RESIDUAL);
+  assert.doesNotMatch(HOST_FILE_RESIDUAL, /<file>|<title>|path|post|comment|head/u, 'no file, title, or path wording, and no post condition');
+  // Where the Human reads a finding the pull request's copy lacks.
+  assert.ok(HOST_FILE_RESIDUAL.includes('whenever the pull request\'s copy of the record lacks the finding\'s details, the Human reads them in the review record on the machine that ran the review.'));
+  // One fail-closed rule: whatever the body rule refuses, the issue parks, as do a security finding and one with no id.
+  assert.ok(HOST_FILE_RESIDUAL.includes('When the pull request body rule refuses that item or its section for any reason, never work around it: the issue parks as before.'));
+  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file, and one with no such id, parks as before\.$/u);
+  // A mixed round: every other finding takes its own route first, and a decision it raises decides the result.
+  assert.match(HOST_FILE_RESIDUAL, /Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result\. Only when such residuals are the one stop left, record the result pr_open/u);
+  const given = { run: 'launch', key: 'ENG-1', attempt: 2, branch: 'feat/eng-1', clone: '/c' };
+  const copies = projectPrompt({ ...given, baseCopies: '/a/base-copies.txt' });
+  assert.ok(copies.includes(HOST_FILE_RESIDUAL), copies);
+  assert.doesNotMatch(copies, /needs a change to one, record the result parked/u, 'a host-file finding no longer parks');
+  assert.doesNotMatch(projectPrompt(given), /stated residual/u, 'only an attempt on base copies carries the line');
+  const task = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/autopilot/references/entry-task.md'), 'utf8').replace(/\s+/gu, ' ');
+  const bullet = task.slice(task.indexOf('**A finding in a host file.**'), task.indexOf('- **The issue.**'));
+  assert.ok(bullet.includes(HOST_FILE_RESIDUAL), 'the skill states the same route');
+  assert.match(bullet, /never writes a host file, whatever `github\.autoMerge\.includeGuardedPaths` says/u);
+  assert.match(bullet, /A finding outside host files keeps its route\./u);
 });
 
 test('the driver starts the issue next lists in a fresh clone cut from the base tip, under the host sandbox, held to a floor and a tagged mark, and the ledger records it', (t) => {
@@ -379,7 +409,7 @@ test('a later attempt goes on on the issue branch: as the forge has it, and over
   const prompt = fx.claude.starts()[2].args.at(-1);
   const copies = path.join(path.dirname(retry), 'base-copies.txt');
   assert.ok(prompt.includes(`This branch changes host config or instruction files that no independent review has passed yet, listed as data in ${copies}.`), prompt);
-  assert.ok(prompt.includes('When the remaining work needs a change to one, record the result parked with that as its stop, and leave the branch as it is.'), prompt);
+  assert.ok(prompt.includes(`When the remaining work needs a change to one, leave the branch as it is. ${HOST_FILE_RESIDUAL} Any other work that needs a change to one records the result parked with that as its stop.`), prompt);
   assert.doesNotMatch(prompt, /docs\.json/u, 'no file name of the branch reaches the task');
   assert.doesNotMatch(prompt, /close pull request|superseded|starts fresh/u, 'the task never closes a pull request');
   assert.doesNotMatch(third.err.join('\n'), /docs\.json| left /u, 'no file name of the branch reaches the driver');

@@ -254,7 +254,29 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
 const baseCopiesLine = (file) => `This branch changes host config or instruction files that no independent review has passed yet, listed as data in ${file}. `
   + 'This clone holds the base branch\'s copies of them instead, and git leaves them out of every commit; the branch\'s own versions are safe in its commits and its pull request. '
   + 'Never edit, stage, restore, or revert those files, and never treat their difference from the branch as something to fix: a local check that fails only because of it is not this issue\'s failure, so say so in the report. '
-  + 'A push that changes one of them is refused, but for each as git itself merges the base into the branch. When the remaining work needs a change to one, record the result parked with that as its stop, and leave the branch as it is.';
+  + 'A push that changes one of them is refused, but for each as git itself merges the base into the branch. When the remaining work needs a change to one, leave the branch as it is. '
+  + `${HOST_FILE_RESIDUAL} Any other work that needs a change to one records the result parked with that as its stop.`;
+
+// What an issue's session does with a review finding whose fix lies in a host file, which it never writes: the one
+// route, in projectPrompt and the autopilot skill's project-run rules alike. The pull request still waits for the
+// Human's merge, so the finding needs no decision: the line only tells the Human, who reads the finding's file and text
+// in the review record. It publishes nothing: a finding id (docs/review.md, Finding ids) and HOST_FILE_REASON name no
+// file, title, or reason, so no publication rule applies. The item takes the project's residual format, the section and
+// fields of github.pullRequest.residuals that the pull request body rule checks (lib/rules/github/pr-body.mjs), each
+// field filled with HOST_FILE_REASON. A security finding, a finding with no engine id, and an item the body rule refuses
+// for any reason, such as a closed heading list or an issue key that matches the id, park instead: one fail-closed rule.
+export const HOST_FILE_REASON = 'the run may not write a host file this finding needs';
+export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, '
+  + 'and that has the review engine\'s own `R<round>-<n>` id, is a stated residual, never a decision: one item of the residual section the project\'s pull request rules name, '
+  + 'config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon, '
+  + `then \`${HOST_FILE_REASON}\`, and states each field \`github.pullRequest.residuals.fields\` lists as \`<field>: ${HOST_FILE_REASON}\`, `
+  + 'never naming its file, title, or reason. '
+  + 'Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result. '
+  + `Only when such residuals are the one stop left, record the result pr_open with \`<id>: ${HOST_FILE_REASON}\` as its stop and no decisions, and run no merge: `
+  + 'the Human reads the finding in the review record and merges the pull request; whenever the pull request\'s copy of the record lacks the finding\'s details, '
+  + 'the Human reads them in the review record on the machine that ran the review. '
+  + 'When the pull request body rule refuses that item or its section for any reason, never work around it: the issue parks as before. '
+  + 'A security finding in a host file, and one with no such id, parks as before.';
 
 // The line of projectPrompt for an attempt on an existing branch: stop-action's catch-up, whose line names the one way
 // it merges a base its pull request conflicts with (project-stops.mjs catchUpStop), and parks one into another branch.

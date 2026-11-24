@@ -2028,6 +2028,12 @@ the review bot, github.reviewer on the default branch, passed exactly that head 
 the harness-config flow on that head, or the default branch sets `github.autoMerge.includeGuardedPaths` and no policy
 file changed; otherwise its clone holds the base branch's copies, git leaves them out of its commits, and a push that
 changes one is refused.
+A low or medium review finding whose fix lies in a host file, no security finding, is a stated residual named by its
+finding id alone, in the project's [residual format](#pull-request-contract), never a decision; once it is the one stop
+left, the result is `pr_open`. A security finding, a finding with no engine id, and an item the pull request body rule
+refuses for any reason park as before ([Host files no review saw](handoff.md#a-project-run)).
+Whenever the pull request's copy of the review record lacks the finding's details, the Human reads them in the review
+record on the machine that ran the review.
 The start pins the base tip, reads the team policy once with its local half at that commit, and decides everything
 from that read: the machine's switch and solo, projectRun.unverifiedHosts, the caps, maxStarts asked again under the
 ledger's lock with the write-ahead row, the access check with outsideSandbox and localBinding, the clone's checks, and

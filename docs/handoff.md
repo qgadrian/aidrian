@@ -666,6 +666,25 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   sign-off where [Project run](config.md#project-run) asks for one; otherwise its clone holds the base branch's copies,
   git leaves them out of its commits, and a push that changes one is refused.
   The branch's own changes stay in its commits for the pull request's review.
+  An issue's session never writes a host file, on any attempt and whatever `github.autoMerge.includeGuardedPaths` says.
+  A low or medium review finding whose fix lies in one, that the review step does not mark as a
+  [security finding](review.md#reviewers), and that has the engine's own [id](review.md#finding-ids), is a stated
+  residual, never a decision: one item of the residual section
+  `github.pullRequest.residuals` names, by default Accepted residuals, in its [format](config.md#pull-request-contract).
+  The item opens with the finding's [id](review.md#finding-ids) and a colon, then `the run may not write a host file this
+  finding needs`, and fills each field the format lists with that same text.
+  Neither that item nor the result's stop names the finding's file, title, or reason, so it publishes nothing.
+  Every other finding of the round takes its own route first and keeps any decision it raises.
+  Only when such residuals are the one stop left is the result `pr_open`, with `<id>: the run may not write a host file
+  this finding needs` as its stop, for the Human's merge.
+  The Human reads the finding's file and text in the review record.
+  Whenever the pull request's copy of the record lacks the finding's details, as under `review.record: "local"`, the
+  Human reads them in the review record on the machine that ran the review.
+  When the [pull request body rule](config.md#pull-request-contract) refuses that item or its section for any reason,
+  such as a closed list of sections without it or an issue key pattern that matches the id, the session never works
+  around it: the issue parks as before.
+  A security finding in a host file, and one with no engine id, parks as before.
+  A finding outside host files keeps its route.
   A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
   It parks a pull request into another branch than the default.
   On a conflict its line names the one route, on the branch the clone is on, its commits kept, once HEAD holds the forge's branch.

@@ -252,7 +252,10 @@ nested in it (the residuals below).
 **In the temporary folders.** In `TMPDIR`, `/tmp`, and every folder below them, any host file a host loads from any
 depth: the union of every host's nested list, here the `.opencode` and `.agents` folders and config files OpenCode's
 adapter lists and
-Claude Code's `.claude` folder's skills, agents, commands, hooks, workflows, and settings, and any `SKILL.md`. An
+Claude Code's `.claude` folder's skills, agents, commands, hooks, workflows, and settings, and any `SKILL.md`; and
+any instruction file a host loads from every folder above a session, `CLAUDE.md`, `CLAUDE.local.md`,
+`.claude/CLAUDE.md`, `AGENTS.md`, or `AGENTS.override.md` (each adapter's `instructionFiles`), since a review's exec
+reviewer, such as `claude -p`, starts in a base checkout under `TMPDIR`. An
 OpenCode session started anywhere below such a folder would load it with no sandbox. The refusal says it is "a host
 file a session started below that temporary folder loads". A copy, move, or link is judged by the path it names and by
 the name it makes inside a destination folder, the source's relative path under `rsync -R` and `cp --parents`, not by

@@ -826,17 +826,22 @@ test('a session no Human attends never writes a host file in a temporary folder,
   const reason = /a host file a session started below that temporary folder loads/u;
   // OpenCode's files and Claude Code's nested ones, from the one union of the hosts' lists.
   const refused = ['.opencode/plugins/x.js', 'opencode.json', 'a/opencode.json', 'A/OpenCode.JSONC',
-    'a/.claude/skills/x/SKILL.md', 'a/.claude/settings.json', 'docs/SKILL.md', 'a/.agents/skills/x/run.sh'];
+    'a/.claude/skills/x/SKILL.md', 'a/.claude/settings.json', 'docs/SKILL.md', 'a/.agents/skills/x/run.sh',
+    // The instruction files a host loads from every folder above a session, from the hosts' instructionNames.
+    'CLAUDE.md', 'AGENTS.md', 'a/CLAUDE.local.md', 'a/.claude/CLAUDE.md', 'a/agents.md', 'AGENTS.override.md'];
   for (const file of refused) {
     const target = path.join(fx.temp, file);
     for (const input of [write(target), bash(`echo x > ${target}`), bash(`mkdir -p ${path.dirname(target)} && touch ${target}`), bash(`cp /dev/null ${target}`)]) {
       assert.match(fx.ask(input)?.reason ?? '', reason, `${input.tool_input.command ?? 'Write'} ${file}`);
     }
   }
-  for (const file of ['a/notes.md', 'a/opencode.md', 'a/src/opencode.json.ts', 'scratch.txt', 'a/.claude/notes.md']) {
+  for (const file of ['a/notes.md', 'a/opencode.md', 'a/src/opencode.json.ts', 'scratch.txt', 'a/.claude/notes.md', 'a/CLAUDE.md.bak', 'a/MY-AGENTS.md']) {
     const target = path.join(fx.temp, file);
     for (const input of [write(target), bash(`echo x > ${target}`)]) assert.equal(fx.ask(input), null, `${input.tool_name} ${file}`);
   }
+  // By the variable, as a review's exec reviewer in a base checkout under TMPDIR would load it.
+  for (const name of ['CLAUDE.md', 'AGENTS.md']) assert.match(fx.ask(bash(`echo x > $TMPDIR/${name}`))?.reason ?? '', reason, `$TMPDIR/${name}`);
+  assert.equal(fx.ask(bash('echo x > $TMPDIR/notes.md')), null, '$TMPDIR/notes.md');
   assert.equal(fx.ask(bash(`rm -rf ${path.join(fx.temp, 'a')}`)), null, 'a removal of a folder there');
   // A tree prepared under another name, which passes, then moved or linked in.
   const stage = path.join(fx.temp, 'stage');

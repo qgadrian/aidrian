@@ -26,7 +26,7 @@ import { foldCase, isWithin } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
-import { fileEditOf, nestedGlobs, nestedPathspecs, nestedProtected, opaqueShellCommand, protectedFile, protectedPaths, transcriptFolders } from './hosts/index.mjs';
+import { fileEditOf, instructionNames, nestedGlobs, nestedPathspecs, nestedProtected, opaqueShellCommand, protectedFile, protectedPaths, transcriptFolders } from './hosts/index.mjs';
 import { issueForgeDenial } from './issue-forge-guard.mjs';
 import { worktreesDir } from './project.mjs';
 import { isDraftName } from './review/drafts.mjs';
@@ -602,7 +602,8 @@ function refusedHit(target, spelled, entries, { own, holds }) {
 // passes nothing inside a state folder (`states`), whose own places alone pass there, so a state folder under /tmp keeps
 // its handoff briefs, quorum ledgers, and other sessions' files from the session. Elsewhere in it, a host file some host
 // loads from any depth is refused (TEMP_HOST), judged as a confined clone is (nestedHit), with each temporary folder
-// that holds the target as a root.
+// that holds the target as a root, and so is an instruction file a host loads from every folder above a session
+// (instructionHit).
 function placeOf(target, spelled, places, { holds = true } = {}) {
   const own = [...places.specific, places.worktree, ...(places.made ?? []), ...places.temp].includes(target);
   const hit = refusedHit(target, spelled, places.refused, { own, holds }) ?? nestedHit(target, places.nested ?? [], spelled);
@@ -621,14 +622,27 @@ function placeOf(target, spelled, places, { holds = true } = {}) {
   const held = [...(places.states ?? []), ...(places.checkouts ?? [])].some((dir) => isWithin(dir, target));
   const temp = held ? [] : places.temp.filter((dir) => isWithin(dir, target));
   // `links: []`: a temporary folder has no git index whose links nestedLinkHit would list.
-  if (temp.length) return nestedHit(target, temp.map((root) => ({ root, links: [] })), spelled) ? { refused: TEMP_HOST } : passes();
+  if (temp.length) return nestedHit(target, temp.map((root) => ({ root, links: [] })), spelled) || instructionHit(target, spelled, temp) ? { refused: TEMP_HOST } : passes();
   return { outside: true };
 }
 
 // A host file some host loads from any depth (hosts/index.mjs nestedProtected), in a temporary folder: a host that reads
 // the folders above the one a session starts in loads it into every session started below that folder. No glob rule
 // holds it there: a glob reaches only a host folder already there, and `rm -rf /tmp/work/*` would refuse.
-const TEMP_HOST = { what: 'a host file a session started below that temporary folder loads, such as a .claude folder\'s skills or settings, or a SKILL.md' };
+const TEMP_HOST = { what: 'a host file a session started below that temporary folder loads, such as a .claude folder\'s skills or settings, a SKILL.md, or a CLAUDE.md or AGENTS.md' };
+
+// Whether the real, case-folded path `target`, spelled `spelled`, below one of the temporary folders `roots`, is an
+// instruction file a host loads from the folder a session starts in and from every folder above it (hosts/index.mjs
+// instructionNames), such as a CLAUDE.md or an AGENTS.md: its last parts, by the real path from the root or as spelled,
+// so a link by either name counts, name one in any case. A review's exec reviewer starts in a base checkout under the
+// temporary folder (review/base-worktree.mjs), so one planted above it loads into that reviewer.
+function instructionHit(target, spelled, roots) {
+  const names = instructionNames().files.map((name) => name.toLowerCase().split('/'));
+  const ends = (parts) => names.some((name) => name.length <= parts.length && name.every((part, at) => parts[parts.length - name.length + at] === part));
+  const spelledParts = typeof spelled === 'string' ? path.normalize(spelled).split(path.sep).filter(Boolean).map((part) => part.toLowerCase()) : [];
+  return roots.some((root) => target !== root && isWithin(root, target) && ends(path.relative(root, target).split(path.sep).map((part) => part.toLowerCase())))
+    || ends(spelledParts);
+}
 
 // A `.git` entry at any depth of the place `top` the real, case-folded path `target` lies in, the session's worktree,
 // an attempt folder, or a state folder it writes, below the entries gitRefused names: a checkout nested in it, as a task

@@ -1338,7 +1338,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     issue's: the refusal names a key-named body file, such as `tmp/eng-1-pr-body.md`, which `--body-file` takes;
   - the temporary folder, this process's `TMPDIR` and `/tmp`, but for a host file some host loads from any depth
     (`nestedProtected`, the union of every host's), at any depth there, such as a `.claude` folder's skills or settings,
-    a `SKILL.md`, an `.opencode` or `.agents` folder, or an `opencode.json`: a host that reads the folders above its
+    a `SKILL.md`, an `.opencode` or `.agents` folder, or an `opencode.json`, and for an instruction file a host loads
+    from every folder above a session (`instructionNames`, the union of every host's): `CLAUDE.md`, `CLAUDE.local.md`,
+    `.claude/CLAUDE.md`, `AGENTS.md`, and `AGENTS.override.md`, in any case, by its name or by a link's, since a review's
+    exec reviewer starts in a base checkout under `TMPDIR`: a host that reads the folders above its
     start folder, as OpenCode does, loads it into every session started below that folder, so it is refused by the
     write tool and the shell, as "a host file a session started below that temporary folder loads", a copy, move, or
     link by the path it names and by the name it makes inside a destination folder, never by what a copied or moved

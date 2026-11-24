@@ -458,9 +458,10 @@ async function mergeResolving(r, file, text) {
   r.commit('merge main');
 }
 
-test('a merge at the cap where the pull request changes a binary file gets no carry', async (t) => {
+test('a clean merge at the cap gets no carry when the pull request changes a binary file, even one the merge leaves alone', async (t) => {
   const { r, capped } = await atCapRepo(t, 'off', { baseFiles: { 'src/booking/logo.bin': '\0base\0' }, change: (write) => write('src/booking/logo.bin', '\0reviewed\0') });
-  await mergeResolving(r, 'src/booking/logo.bin', '\0swapped\0');
+  // The base changed only an unrelated file: the pull request's own diff is the very one the last round reviewed.
+  r.git('merge', '-q', '--no-edit', 'main');
   const step = await r.step({ exec: clean });
   assert.equal(step.carried_from, undefined, 'git prints no contents for a binary file, so its patch is no proof the change is the same');
   assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
@@ -476,11 +477,12 @@ test('a merge at the cap that moves the pull request\'s edit to another occurren
   assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);
 });
 
-test('a merge at the cap where the pull request changes bytes that are not UTF-8 gets no carry', async (t) => {
+test('a clean merge at the cap gets no carry when the pull request changes bytes that are not UTF-8, even ones the merge leaves alone', async (t) => {
   // Latin-1 bytes, no NUL: git prints the patch as text, and each byte reads back as U+FFFD.
   const latin = (char) => Buffer.from(`export const name = 'caf${char}';\n`, 'latin1');
   const { r, capped } = await atCapRepo(t, 'off', { baseFiles: { 'src/booking/name.js': latin('\xe9') }, change: (write) => write('src/booking/name.js', latin('\xe8')) });
-  await mergeResolving(r, 'src/booking/name.js', latin('\xea'));
+  // The base changed only an unrelated file: the pull request's own diff is the very one the last round reviewed.
+  r.git('merge', '-q', '--no-edit', 'main');
   const step = await r.step({ exec: clean });
   assert.equal(step.carried_from, undefined, 'each byte reads back as U+FFFD, so the patch is no proof the change is the same');
   assert.notEqual(readLocalState(r.project, 7).outcome.carried_from, capped.head);

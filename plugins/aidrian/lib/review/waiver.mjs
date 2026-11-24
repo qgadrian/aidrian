@@ -542,7 +542,7 @@ export async function runWaive(args, project, config, deps = {}) {
   const url = urlRef(args[0]);
   if (url !== null && !args.includes('--gate')) {
     // Fixed text: nothing the URL holds reaches the message.
-    console.error('aidrian pr waive: a verdict takes the pull request\'s number, not a URL; `aidrian pr waive <n>` reads the number in gh\'s default repository; for another repository, a dispatched judge\'s verdict is recorded with `aidrian pr extend <n> --verdict land|stop --judge <agent id> --repo OWNER/NAME`.');
+    console.error('aidrian pr waive: a verdict takes the pull request\'s number, not a URL; `aidrian pr waive <n>` reads the number in gh\'s default repository; for another repository, a dispatched judge\'s verdict is recorded with `aidrian pr extend <n> --verdict land|stop --reason "<evidence>" --head <sha> --judge <agent id> --repo OWNER/NAME`.');
     return USAGE;
   }
   const opts = parseWaive(args);

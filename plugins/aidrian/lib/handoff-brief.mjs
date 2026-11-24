@@ -21,6 +21,9 @@
 // message names, and prints one line that says so, then the bytes it hashed, from the same read, which that session
 // follows in place of the file; it exits 1 with the reason otherwise, and prints none of them (lib/handoff-markers.mjs
 // verifyKept). It writes nothing.
+// `owner ID` names the background session that owns the work of the background session `ID` now, following each later
+// handoff in the project's continuation store (lib/handoff-continue.mjs ownerLines), so a say line that a later handoff
+// made stale still leads to the live session. It writes nothing.
 
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -50,8 +53,8 @@ const flat = (text) => text.replace(/\s+/g, ' ');
 
 export const commands = {
   handoff: {
-    usage: '(check | snapshot) BRIEF [--prior BRIEF] | continue BRIEF [--route ROUTE] | route [--route ROUTE] | verify COPY SHA256',
-    about: 'snapshot the brief a refresh supersedes, check the new brief holds the sections a resume needs, carries its identifiers, and wraps its lines, then arm its continuation; route prints the continue route this host runs, and writes nothing; verify holds the copy a background continuation reads to the sha256 its first message names',
+    usage: '(check | snapshot) BRIEF [--prior BRIEF] | continue BRIEF [--route ROUTE] | route [--route ROUTE] | verify COPY SHA256 | owner ID',
+    about: 'snapshot the brief a refresh supersedes, check the new brief holds the sections a resume needs, carries its identifiers, and wraps its lines, then arm its continuation; route prints the continue route this host runs, and writes nothing; verify holds the copy a background continuation reads to the sha256 its first message names; owner names the background session that owns the work of a handoff chain now',
     async run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { prior: { type: 'string' }, route: { type: 'string' } } });
       const [action, brief, ...extra] = positionals;
@@ -68,6 +71,15 @@ export const commands = {
         process.stdout.write(`verified: ${kept.path} holds the bytes the handoff gate checked; the brief follows, as this check read it:\n`);
         process.stdout.write(kept.bytes);
         return 0;
+      }
+      if (action === 'owner') {
+        // positionals: owner ID, the background session a say line named.
+        if (!brief || extra.length || values.prior !== undefined || values.route !== undefined) return usage();
+        const project = projectAt(process.cwd());
+        const config = commandConfig(project, { exitCode: 2 });
+        const { detectHost } = await import('./hosts/index.mjs');
+        const { ownerLines } = await import('./handoff-continue.mjs');
+        return printed(ownerLines(projectStore(project, config), detectHost(), brief));
       }
       if (action === 'route') {
         if (brief !== undefined || values.prior !== undefined) return usage();

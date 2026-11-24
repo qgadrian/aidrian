@@ -500,7 +500,7 @@ test('summary.md holds each issue\'s status, the parked decisions, and the skipp
 });
 
 test('projectRun: its keys and defaults, as docs/config.md shows them', () => {
-  assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [], localBinding: false, recordedDecisions: {} });
+  assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [], localBinding: false, recordedDecisions: false });
   assert.deepEqual(Object.keys(SCHEMA.projectRun), Object.keys(DEFAULTS.projectRun));
   const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
   const example = JSON.parse(doc.match(/## Keys[\s\S]*?```json\n([\s\S]*?)```/u)[1]);
@@ -524,16 +524,19 @@ test('projectRun: a project sets any key within its bounds, and a value past one
   assert.equal(under.errors.length, 3);
 });
 
-test('projectRun.recordedDecisions takes issue keys, each to a one-line heading and a lowercase sha256, and refuses anything else', (t) => {
+test('projectRun.recordedDecisions is a switch: an object of entries is refused with where they go now, and the default stands', (t) => {
   const project = (recordedDecisions) => setup(t, { config: { version: 1, projectRun: { recordedDecisions } } }).project;
-  const entry = { heading: 'Export format', sha256: 'a'.repeat(64) };
-  const good = loadConfig(project({ 'ENG-1': entry, 12: entry }));
-  assert.deepEqual([good.errors, good.config.projectRun.recordedDecisions], [[], { 'ENG-1': entry, 12: entry }]);
-  for (const bad of [{ 'eng-1': entry }, { 'ENG-0': entry }, { 'ENG-1': { ...entry, sha256: 'A'.repeat(64) } }, { 'ENG-1': { ...entry, sha256: 'a'.repeat(63) } },
-    { 'ENG-1': { ...entry, heading: 'two\nlines' } }, { 'ENG-1': { ...entry, heading: 'x'.repeat(201) } }, { 'ENG-1': { ...entry, heading: ' ' } }, { 'ENG-1': { ...entry, option: 2 } }, { 'ENG-1': { heading: 'Export format' } }, []]) {
-    const read = loadConfig(project(bad));
-    assert.match(read.errors.join('\n'), /"projectRun\.recordedDecisions" must be an object of issue keys, each to \{ "heading": <one line of 1 to 200 characters>, "sha256": <64 lowercase hex characters> \}/u, JSON.stringify(bad));
-    assert.deepEqual(read.config.projectRun.recordedDecisions, {}, 'the default stands');
+  for (const value of [true, false]) {
+    const read = loadConfig(project(value));
+    assert.deepEqual([read.errors, read.config.projectRun.recordedDecisions], [[], value]);
+  }
+  const moved = loadConfig(project({ 'ENG-1': { heading: 'Export format', sha256: 'a'.repeat(64) } }));
+  assert.match(moved.errors.join('\n'), /"projectRun\.recordedDecisions" must be true or false, no longer an object of entries: record each issue's decision in this machine's store with `aidrian project decision ISSUE --heading TEXT --record` from a session the Human attends/u);
+  assert.equal(moved.config.projectRun.recordedDecisions, false, 'no entry of the old object is read');
+  for (const value of [{}, 'true', 1, null]) {
+    const read = loadConfig(project(value));
+    assert.ok(read.errors.some((error) => error.includes('"projectRun.recordedDecisions" must be true or false')), JSON.stringify(value));
+    assert.equal(read.config.projectRun.recordedDecisions, false);
   }
 });
 

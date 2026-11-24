@@ -34,6 +34,7 @@ import { ARMING_FILE, madeWorktrees, openStore, SESSION_ID, startedFolders, star
 import { DETECT_VARS, HOSTS, IDENTITY_VARS, mainCheckoutPaths, opaqueShellCommand } from './hosts/index.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir, stateRoot } from './project.mjs';
 import { GIT_VARS } from './review/env.mjs';
+import { DECISION_STORE_FOLDER, decisionStoreFolders } from './project-decision-store.mjs';
 import { SIGNOFF_FOLDER, signoffFolders } from './review/signoff-store.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { SESSION_FILES } from './session-folder.mjs';
@@ -215,10 +216,12 @@ export function handoffContinueDenial(input, { names: { human } }) {
 const opaqueRuns = (texts, actions) => [/\bhandoff\b/iu, new RegExp(String.raw`\b(?:${actions.join('|')})\b`, 'iu')].every((word) => texts.some((text) => word.test(text)));
 
 // Whether a command walkCommands read runs `aidrian handoff <action>` for one of `actions`, read as handoffContinueDenial
-// says: a command word or action it cannot read counts, unless a later plain word is `check` or `snapshot`.
+// says: a command word or action it cannot read counts, unless a later plain word is `check` or `snapshot`. In a text
+// the lexer cannot read, such as a script a shell runs, `handoff` and the action count only as whole words: a word that
+// joins them by a hyphen, a dot, or a slash, as the test file name `handoff-continue-hooks` does, is one argument.
 const runsGate = (actions) => ({ invocation, unread }) => {
   const names = actions.join('|');
-  if (unread !== undefined && new RegExp(String.raw`\bhandoff\b[^\n;|&]*\b(?:${names})\b`, 'u').test(unread)) return true;
+  if (unread !== undefined && new RegExp(String.raw`(?<![\w./-])handoff(?![\w./-])[^\n;|&]*(?<![\w./-])(?:${names})(?![\w./-])`, 'u').test(unread)) return true;
   if (invocation.dynamic) {
     const words = invocation.args.filter((token) => !token.dynamic).map((token) => token.text);
     const at = words.indexOf('handoff');
@@ -787,6 +790,23 @@ function reachesStateFolder(input, { files, globs, modes }, { dir, links, folder
 // `sessions` alone never counts, since a project may hold a folder of that name.
 const escapedNames = (names) => names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|');
 const BARE_SESSION_FILES = SESSION_FILES.filter((name) => name !== 'usage.json');
+// A path with a placeholder part in angle brackets, such as `<state>/sessions/<session id>/prs.jsonl` in the text of a
+// plan an interpreter's code writes: prose that says where a file lives, never a file a command opens, as long as no
+// folder the guard keeps has `<` or `>` in its real path (sessionFoldersWriteDenial checks that before it strips one).
+// Each placeholder is a word, spaces and `-` included; the path runs to a space or a quote, which a path in code ends
+// at, or to a `<` or `>` that is no placeholder's. One with a `..` part keeps its text: a folder of the placeholder's literal name could be made, and `..` would
+// leave it for a real one. Linear in the text: each placeholder becomes one mark, a bounded match, then the text is
+// split at its spaces and quotes once, so a long interpreter body cannot hold the guard past its deadline.
+const PLACEHOLDER = /<[\w -]{1,64}>/gu;
+const MARK = '\u0000';
+const UP = /(?:^|[\\/])\.\.(?:[\\/]|$)/u;
+export function withoutPlaceholderPaths(text) {
+  if (!text.includes('<')) return text;
+  const marked = text.replaceAll(MARK, '').replace(PLACEHOLDER, MARK);
+  if (!marked.includes(MARK)) return text;
+  // A `<` or `>` left once the placeholders are marked is no placeholder's, and bounds a path as a space does.
+  return marked.split(/([\s'"\x60<>]+)/u).map((part) => (part.includes(MARK) && !UP.test(part) ? ' ' : part)).join('');
+}
 export const SESSION_FILE_NAME = new RegExp(String.raw`(?<![\w.-])sessions[\\/]+[^\\/]+[\\/]+(?:${escapedNames(SESSION_FILES)})(?![\w.-])|(?<![\w.-])(?:${escapedNames(BARE_SESSION_FILES)})(?![\w.-])`, 'iu');
 
 // The sessions folders of every project's default state folder under the state root, `<root>/projects/<id>/sessions`,
@@ -879,16 +899,24 @@ export function sessionFoldersWriteDenial(input, project, { names: { human }, st
   const writer = subagent ? 'only the hooks and the `aidrian` commands write' : `only the hooks and the \`aidrian\` commands write, ${UNATTENDED}`;
   const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the session folders, where ${writer}`, human);
   const held = () => subagent || unattended();
-  const named = (text) => SESSION_FILE_NAME.test(text);
+  const started = () => readOnce(input, 'origins', () => origins(input.session_id));
+  // A placeholder path is prose only while no folder the guard keeps, the state root's, the project's, or one the
+  // session started with, has an angle bracket in its own path, as written or as its real path, or that of its sessions
+  // folder, through any link, as the reachability scan resolves them (scanSessions); read
+  // once, and only for a text that names a session file.
+  let bracketed;
+  const kept = () => [stateRoot(), ...defaultSessionsFolders(input), ...(project === null ? [] : folders(state)), ...started()];
+  const spellings = (folder) => [folder, real(folder), real(path.join(folder, 'sessions'))];
+  const prose = () => (bracketed ??= kept().flatMap(spellings).some((each) => /[<>]/u.test(each))) === false;
+  const named = (text) => SESSION_FILE_NAME.test(text) && (!prose() || SESSION_FILE_NAME.test(withoutPlaceholderPaths(text)));
   const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
   if (names.some(named) || unplaced.some(({ text }) => named(text)) || globs.some((glob) => (glob.unsure || glob.opaque) && named(glob.text))) {
     return held() ? { match: 'may change the session folders', reason: why('may change', 'sessions/<id>') } : null;
   }
-  const started = readOnce(input, 'origins', () => origins(input.session_id));
   const roots = () => readOnce(input, `roots:${project?.root ?? ''}`, () => (project === null ? [] : projectCheckouts(project, deadlineGit) ?? project.checkouts).map(real));
   // Every state folder `state` gives (stateFolders), then those the session started with.
-  const sessions = () => sessionsFolders(input, [...(project === null ? [] : folders(state)), ...started], roots());
-  const anchors = started.map(real);
+  const sessions = () => sessionsFolders(input, [...(project === null ? [] : folders(state)), ...started()], roots());
+  const anchors = started().map(real);
   const hit = reachesStateFolder(input, { files, globs, modes }, { dir: project !== null && Boolean(dir), links, folders: sessions, roots, anchors });
   if (!hit || !held()) return null;
   const verb = opaque ? 'may change' : 'changes';
@@ -966,14 +994,14 @@ function reaches({ files, known, placed, linksTo }, folder, shields, roots) {
 // in a folder no path gives, and a word of a command in a shell the lexer cannot read, count when a part of it is named
 // `unattended`, or, for a glob, may name it (globNamesFile). With `links` false it skips the link walk.
 export function unattendedMarkWriteDenial(input, config, { project = null, links = true, unattended = () => false, folders = markFolders() } = {}) {
-  return stateFoldersWriteDenial(input, config, { project, links, unattended, marks: folders, terminals: [], origins: [], signoffs: [] });
+  return stateFoldersWriteDenial(input, config, { project, links, unattended, marks: folders, terminals: [], origins: [], signoffs: [], decisions: [] });
 }
 
 // Why the call in `input` may not run because it changes the shell records of lib/terminal-replace.mjs, or null, read
 // as unattendedMarkWriteDenial reads the marks, in `folders` (terminalFolders), by the folder name `handoff-terminals`:
 // a record names the session a shell opens in its terminal next, which only a session's own Stop hook writes.
 export function terminalRecordWriteDenial(input, config, { project = null, links = true, unattended = () => false, folders = terminalFolders() } = {}) {
-  return stateFoldersWriteDenial(input, config, { project, links, unattended, marks: [], terminals: folders, origins: [], signoffs: [] });
+  return stateFoldersWriteDenial(input, config, { project, links, unattended, marks: [], terminals: folders, origins: [], signoffs: [], decisions: [] });
 }
 
 // Why the call in `input` may not run because it writes in the sign-off store (lib/review/merge-trust.mjs), or null:
@@ -982,18 +1010,19 @@ export function terminalRecordWriteDenial(input, config, { project = null, links
 // subagent, and for a main session `unattended()` says no Human attends, and reads a call's targets as
 // unattendedMarkWriteDenial does, with `folders` (signoffFolders) and the part name `signoffs`.
 export function signoffWriteDenial(input, config, { project = null, links = true, unattended = () => false, folders = signoffFolders() } = {}) {
-  return stateFoldersWriteDenial(input, config, { project, links, unattended, signoffsHeld: unattended, marks: [], terminals: [], origins: [], signoffs: folders });
+  return stateFoldersWriteDenial(input, config, { project, links, unattended, signoffsHeld: unattended, marks: [], terminals: [], origins: [], signoffs: folders, decisions: [] });
 }
 
 // The guards above in one pass, which the agent gates hook runs, with the session origins of lib/session-origins.mjs,
 // which name the session folders the session-folder guard holds: the call's write targets, and its link walk, are read
-// once for the four folders. `marks`, `terminals`, `origins`, and `signoffs` are the folders of each. `unattended()`
-// holds a main session to the terminals and the origins; `marksHeld()` and `signoffsHeld()`, `unattended()` by default,
-// to the marks and the sign-off store, so a project run's driver, which a Human may not attend for hours, is held to them
-// too (scripts/hook-agent-gates.mjs).
+// once for the five folders. `marks`, `terminals`, `origins`, `signoffs`, and `decisions` (the recorded-decision store,
+// lib/project-decision-store.mjs) are the folders of each. `unattended()` holds a main session to the terminals and the
+// origins; `marksHeld()` and `signoffsHeld()`, `unattended()` by default, to the marks and the sign-off store, and
+// `decisionsHeld()`, `signoffsHeld()` by default, to the recorded-decision store, so a project run's driver, which a
+// Human may not attend for hours, is held to them too (scripts/hook-agent-gates.mjs).
 export function stateFoldersWriteDenial(input, { names: { human } }, {
-  project = null, links = true, unattended = () => false, marksHeld = unattended, signoffsHeld = unattended,
-  marks = markFolders(), terminals = terminalFolders(), origins = originFolders(), signoffs = signoffFolders(),
+  project = null, links = true, unattended = () => false, marksHeld = unattended, signoffsHeld = unattended, decisionsHeld = signoffsHeld,
+  marks = markFolders(), terminals = terminalFolders(), origins = originFolders(), signoffs = signoffFolders(), decisions = decisionStoreFolders(),
 } = {}) {
   const { files, names, globs } = writeTargets(input);
   const modes = modeTargets(input);
@@ -1017,6 +1046,10 @@ export function stateFoldersWriteDenial(input, { names: { human } }, {
     {
       name: SIGNOFF_FOLDER, folders: signoffs, held: signoffsHeld, what: 'the sign-off store', tells: 'which holds the Human\'s flow sign-offs a merge no Human asks for reads',
       writer: '`aidrian pr signoff` in a session the Human attends', subagentWriter: '`aidrian pr signoff` in a main session the Human attends',
+    },
+    {
+      name: DECISION_STORE_FOLDER, folders: decisions, held: decisionsHeld, what: 'the recorded-decision store', tells: 'which holds the decisions the Human recorded that a project run\'s sessions act on',
+      writer: '`aidrian project decision --record` in a session the Human attends', subagentWriter: '`aidrian project decision --record` in a main session the Human attends',
     },
   ];
   for (const spec of specs) {

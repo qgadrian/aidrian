@@ -194,7 +194,8 @@ A signal with target `plugin` lands in the [plugin's inbox](#the-plugins-inbox).
 
 - **The [delivery check](hooks.md#delivery-check) sends a subagent back.** Key `delivery-check:<agent type>`; P2, `bug`;
   target `plugin` for an `aidrian:` agent, `project` for any other.
-  It stays quiet: it fires only when a file the agent said it wrote does not exist, once per stop.
+  It stays quiet: it fires only when a file the agent said it wrote does not exist, or a handoff file its brief named
+  is still unwritten, with no report to write there or a write that failed, once per stop. Its note names which of the two it was.
 - **A subagent ends its turn with a background task it started still running**, after the [background check](hooks.md#background-check)
   already sent it back 5 times in a row to wait. Key `idle-with-children:<agent type>`; P2, `gap`; target `plugin`.
   It stays quiet: a send-back is the check working; only the stop the cap lets end, with the task still running, counts.

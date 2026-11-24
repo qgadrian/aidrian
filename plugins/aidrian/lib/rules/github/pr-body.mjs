@@ -38,7 +38,7 @@ import { findProject, projectCheckouts, stateDir } from '../../project.mjs';
 import { sessionFolder } from '../../session-folder.mjs';
 import { remoteRepos, repoName } from '../../review-gate.mjs';
 import { boundedSearch, timeBudget } from '../../bounded-regexp.mjs';
-import { lexPipeline, readInvocation, readShortOptions, walkCommands } from '../../shell-lex.mjs';
+import { lexPipeline, readInvocation, readShortOptions, shellWord, walkCommands } from '../../shell-lex.mjs';
 import { invocationRepo } from './review-request.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
@@ -77,9 +77,28 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   for (const { call, entry, written } of bodyCalls(command, cwd)) {
     const { folder, chained, line } = entry;
     const reason = judge(call, line, { cwd: folder ?? cwd, projectFolder: chained ?? cwd, ghRepo: invocationRepo(entry.invocation.environment, env), folderKnown: folder !== null, env, written, listOpenPrs: chained === null || chained === cwd ? listOpenPrs : openPrBodies(chained), readRuns });
-    if (reason) return reason;
+    if (reason) return withFolderNote(reason, entry, cwd);
   }
   return null;
+}
+
+// A deny under the session's rules for a call whose project this rule cannot read from the folder gh runs in: after a
+// `cd` joined to gh by a `;` or a newline rather than `&&` alone, which gh runs past when the `cd` fails, or a folder a
+// variable holds, as in `env -C "$W"` or `cd "$W" &&`. The reason says whose rules they are, and the form that answers
+// to another project's, a folder written out, so a refusal never reads as that project's config. A leading `cd` into
+// another project is named.
+function withFolderNote(reason, { folder, chained }, cwd) {
+  if (chained !== null) return reason;
+  const own = findProject(cwd);
+  if (!own) return reason;
+  const there = folder === null ? null : findProject(folder);
+  if (there?.root === own.root) return reason;
+  const into = there ? `the \`cd\` into ${folder} is joined to gh by a \`;\` or a newline, not \`&&\` alone, so gh runs in the session's folder when it fails`
+    : 'the folder gh runs in is one this rule cannot read, such as one a variable holds, or one after a `cd` joined to gh by a `;` or a newline';
+  const word = there ? shellWord({ text: folder, dynamic: false }) : '<the folder, written out>';
+  const note = ` These are the rules of ${own.root}, the session's project: ${into}. For another project's rules, run \`env -C ${word} gh …\`.`;
+  const at = reason.indexOf('\nTo override');
+  return at < 0 ? `${reason}${note}` : `${reason.slice(0, at)}${note}${reason.slice(at)}`;
 }
 
 // Each gh call `read` matches, as { call, entry, written }, with the folder it runs in (shell-lex `walkCommands`), in

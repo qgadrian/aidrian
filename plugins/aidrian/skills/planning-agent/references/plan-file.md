@@ -33,7 +33,10 @@ The `knowledge` skill's `references/tracker.md` says how each tracker writes the
 2. `## Goal` — one paragraph.
 3. `## Current state` — short factual summary of repo reality at `generated_at`.
 4. `## Scope` — bullet list of in-scope changes.
-5. `## Non-goals` — bullet list of explicit exclusions.
+5. `## Non-goals` — bullet list of explicit exclusions. A freeze names the meaning it keeps, such as "hospitality
+   wording keeps its meaning", never bytes, such as "byte-identical" or "no existing value changes": a defect in a
+   frozen copy, such as a grammar bug the in-scope fix also finds there, is still fixed, and only a fix that would
+   change the copy's meaning is a `scope_collision`.
 6. `## Approach` — chosen implementation shape and rationale; reference `architect` consultation when used.
 7. `## Affected surfaces` — paths or modules touched, grouped by area.
 8. `## Slices` — ordered list of independently verifiable slices (see schema below). Required for implementation plans.

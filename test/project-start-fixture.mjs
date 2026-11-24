@@ -23,9 +23,10 @@ import { openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { noteBeacon } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { CONFINE_PLAN, CONFINE_VERDICT } from '../plugins/aidrian/lib/project-confine.mjs';
 import { writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
-import { findProject } from '../plugins/aidrian/lib/project.mjs';
+import { findProject, projectId } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { sectionOf } from '../plugins/aidrian/lib/project-decision.mjs';
+import { recordDecision } from '../plugins/aidrian/lib/project-decision-store.mjs';
 import { writeIssueTexts } from '../plugins/aidrian/lib/project-issue-text.mjs';
 import { appendToRun, initRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 
@@ -295,7 +296,7 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
 }
 
 // A decision the Human recorded on ENG-1: the issue's description in the tracker, whose section under DECIDED.heading
-// names the question and the chosen path in full, and `entry`, what projectRun.recordedDecisions pins it by.
+// names the question and the chosen path in full, and `entry`, what the recorded-decision store pins it by.
 export const DECIDED = Object.freeze({
   heading: 'Export format',
   description: [
@@ -313,10 +314,12 @@ export const DECIDED = Object.freeze({
 export const decidedEntry = (description = DECIDED.description, heading = DECIDED.heading) =>
   ({ heading, sha256: createHash('sha256').update(sectionOf(description, heading)).digest('hex') });
 
-// runFixture with ENG-1's recorded decision pinned by `entry` on the base branch, both reads alike, and `description`
-// as the run kept ENG-1's text at init, marked cut off at its cap when `cut`.
-export function decidedFixture(t, { entry = decidedEntry(), description = DECIDED.description, cut = false, projectRun = { allow: true, unverifiedHosts: true }, ...options } = {}) {
-  const fx = runFixture(t, { ...options, projectRun: { ...projectRun, recordedDecisions: { 'ENG-1': entry } } });
+// runFixture with the team's projectRun.recordedDecisions switch `on`, both reads alike, ENG-1's decision recorded by
+// `entry` in the fixture's recorded-decision store (null records none), and `description` as the run kept ENG-1's text
+// at init, marked cut off at its cap when `cut`.
+export function decidedFixture(t, { entry = decidedEntry(), on = true, description = DECIDED.description, cut = false, projectRun = { allow: true, unverifiedHosts: true }, ...options } = {}) {
+  const fx = runFixture(t, { ...options, projectRun: { ...projectRun, recordedDecisions: on } });
+  if (entry) recordDecision({ projectKey: projectId(fx.project), key: 'ENG-1', heading: entry.heading, sha256: entry.sha256, env: fx.env });
   writeIssueTexts(runFolder(fx.state, 'launch'), { 'ENG-1': { title: 'Export', description, criteria: '', labels: [], ...(cut ? { descriptionCut: true } : {}) } });
   return fx;
 }

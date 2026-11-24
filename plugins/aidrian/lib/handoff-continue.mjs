@@ -41,7 +41,7 @@ import { baseBranchTip, commandConfig, committedConfig, machineSwitch, stateDirP
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { foldCase, resolvedPath } from './fs.mjs';
 import { treeOf } from './git.mjs';
-import { arm, cancelArmed, CHAIN_CEILING, chainLimit, checkedSha, clearPending, floorFits, floorProgress, fresh, hasControl, keepBrief, noteEnding, noteFrom, openStore, PLAIN_NAME, promote, readContainedBrief, readFollow, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
+import { arm, cancelArmed, CHAIN_CEILING, chainLimit, chainOwner, checkedSha, clearPending, floorFits, floorProgress, fresh, hasControl, keepBrief, noteEnding, noteFrom, openStore, ownerOfStarted, PLAIN_NAME, promote, readContainedBrief, readFollow, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchOf } from './handoff-sections.mjs';
 import { sectionItems } from './markdown-sections.mjs';
@@ -573,17 +573,23 @@ function startedLines(host, marker, { ending = null, unhooked = false } = {}) {
     ? `This session has ended its work; this terminal switches to the new one, \`${called}\`, once this turn ends.`
     : `This session has ended its work${stops}; the new one is \`${called}\`${open}.${unhooked ? ` ${unhookedLine(host)}` : ''}`;
   const named = marker.name ? ` '${marker.name}'` : '';
+  // A terminal that switches follows each later handoff itself; a say line the Human reads to open the session does not.
+  const pointer = ending === 'switch' ? '' : ` ${laterOwner(marker)}`;
   // A start record an earlier version wrote, whose session started in the host's default mode: it may stop at a prompt.
   const mode = marker.mode === null ? ' It runs in the host\'s default permission mode, since this session\'s own could not be read, so it may stop at a permission prompt.' : '';
   return {
     exitCode: 0,
     out: [
       'continue: background',
-      `say: The brief ${marker.slug} continues in the new background session ${marker.id}${named}, started in ${marker.cwd}, with nothing to type: ${look}.${mode} It resumes from ${marker.brief}. ${last}`,
+      `say: The brief ${marker.slug} continues in the new background session ${marker.id}${named}, started in ${marker.cwd}, with nothing to type: ${look}.${mode} It resumes from ${marker.brief}.${pointer} ${last}`,
     ],
     err: [],
   };
 }
+
+// The pointer a say line leaves for after the session it names hands off in turn, which then stops: that line still
+// names the first, so it names the command that follows the chain to the session that owns the work then.
+const laterOwner = (marker) => `If that session hands off in turn, \`aidrian handoff owner ${marker.id}\`, run in ${marker.cwd}, names the one that owns the work then.`;
 
 const none = (why) => ({ exitCode: 0, out: ['continue: none', ...(why ? [`fallback: ${why}`] : [])], err: [] });
 
@@ -621,18 +627,44 @@ export function cancelOnPrompt(store, host, { session, prompt }) {
 }
 
 // The line that names the background session `session` handed its work to, from the start the store recorded, or null.
+// When that session handed off in turn, the line names the last of the chain, which owns the work now (chainOwner).
 export function backgroundNotice(store, host, session, { now = Date.now() } = {}) {
   const started = readStarted(store, session, { now });
   if (!started) return null;
-  const look = host.capabilities.handoffContinue.attachLine?.({ id: started.id, name: started.name }) ?? `its id is ${started.id}`;
+  const look = lookAt(host, started);
   // A project run's start: the driver session started it for one issue, and owns the run still.
   if (started.project) {
     return `Project run: this session started the background session ${started.id} for the issue ${started.project.issue} of the run ${started.project.run}, attempt ${started.project.attempt}: ${look}. ` +
       'That session owns the issue\'s work; `aidrian project wait` reads how it ends.';
   }
-  return `Handoff: this session handed the work of the brief ${started.slug} to the background session ${started.id}, which owns it now: ${look}. ` +
+  const { record: last, hops } = chainOwner(store, session, { now }) ?? { record: started, hops: 1 };
+  const later = handoffs(hops - 1);
+  const owns = hops > 1 ? `which handed it on in turn: ${later} later, the background session ${last.id} owns it now: ${lookAt(host, last)}` : `which owns it now: ${look}`;
+  return `Handoff: this session handed the work of the brief ${started.slug} to the background session ${started.id}, ${owns}. ` +
     'Before doing any of that work here, tell the Human, so the two sessions do not work on it at once.';
 }
+
+// `n handoff` or `n handoffs`.
+const handoffs = (n) => `${n} ${n === 1 ? 'handoff' : 'handoffs'}`;
+
+// How the Human opens the background session a start record names, as the host says it.
+const lookAt = (host, record) => host.capabilities?.handoffContinue?.attachLine?.({ id: record.id, name: record.name }) ?? `its id is ${record.id}`;
+
+// `aidrian handoff owner ID`: the lines that name the background session that owns the work of the background session
+// `id` now, following each later handoff (ownerOfStarted), as { exitCode, out, err }.
+export function ownerLines(store, host, id, { now = Date.now() } = {}) {
+  const found = ownerOfStarted(store, id, { now });
+  if (found === null) return refuseOwner(`no background start of the last day in this project's continuation store names the session ${id}`);
+  if (found.ambiguous) return refuseOwner(`${found.ambiguous} background starts of the last day name a session that starts with ${id}: give more of its id`);
+  const { record, hops } = found;
+  const later = handoffs(hops - 1);
+  const moved = hops > 1 ? `, after ${later} since` : ', which has not handed off since';
+  const what = record.project ? `the issue ${record.project.issue} of the project run ${record.project.run}` : `the brief ${record.slug}`;
+  const named = record.name ? ` '${record.name}'` : '';
+  return { exitCode: 0, out: [`owner: ${record.id}`, `say: The background session ${record.id}${named} owns the work of ${what} now${moved}: ${lookAt(host, record)}.`], err: [] };
+}
+
+const refuseOwner = (reason) => ({ exitCode: 1, out: [], err: [`aidrian handoff owner: ${reason}`] });
 
 // SessionEnd by a clear: the ending session's armed `clear` marker becomes ready for the session the clear starts.
 export const promoteCleared = (store, host, session) => promote(store, session, { hostPid: hookHostPid(host) });

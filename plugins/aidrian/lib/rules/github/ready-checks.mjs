@@ -22,7 +22,7 @@ import { commandPath, readWords } from './review-request.mjs';
 
 // How long after an edit a check it re-queues may take to show. Past it, an edit that re-queued nothing holds nothing.
 export const EDIT_WINDOW_MS = 30_000;
-const VIEW = 'url,number,isDraft,createdAt,statusCheckRollup';
+export const VIEW = 'url,number,isDraft,createdAt,statusCheckRollup';
 // The options of `gh pr edit` and `gh pr create` that take a value, so the words after them are read as gh reads them.
 const VALUES = new Set(['-t', '--title', '-b', '--body', '-F', '--body-file', '-B', '--base', '-H', '--head', '-m', '--milestone',
   '-a', '--assignee', '-l', '--label', '-p', '--project', '-r', '--reviewer', '-T', '--template', '-R', '--repo',
@@ -34,8 +34,8 @@ const PULL_URL = /^https?:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/(\d+)(?:[/?#]|$)/iu
 export const SAME_COMMAND_REASON =
   'Blocked: this edits a pull request\'s title or body, or opens one, and marks a pull request ready in the same call. ' +
   'The edit re-queues the checks that run on it, such as a title check, and the ready lands before they report. ' +
-  'Make the edit alone, wait with `gh pr checks <n> --watch` until every check reports, then mark it ready with ' +
-  '`gh pr ready <n>` in a separate call.';
+  'Make the edit alone, wait with `aidrian pr ready-wait <n>` until the re-queued checks show and every check reports, ' +
+  'then mark it ready with `gh pr ready <n>` in a separate call.';
 
 // Whether one gh invocation edits a pull request's title or body, or opens a pull request.
 function editsText({ program, args }) {
@@ -61,17 +61,22 @@ function pendingChecks(rollup) {
 // The latest start among the checks of `rollup`, in ms, or -Infinity with none.
 const lastStart = (rollup) => Math.max(-Infinity, ...rollup.map((row) => millis(row?.startedAt)).filter(Number.isFinite));
 
-const pendingReason = (n, names) =>
+// `ref` is how the commands it names take the pull request (pullRef).
+const pendingReason = (n, names, ref = n) =>
   `Blocked: pull request #${n} has checks that have not finished on its head: ${[...new Set(names)].join(', ')}. ` +
   'A check an edit or a push re-queued can still fail after the draft is marked ready. ' +
-  `Wait with \`gh pr checks ${n} --watch\` until every check reports, then mark it ready with \`gh pr ready ${n}\` in a separate call.`;
+  `Wait with \`gh pr checks ${ref} --watch\` until every check reports, then mark it ready with \`gh pr ready ${ref}\` in a separate call.`;
 
 const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/u, 'Z');
 
-const missingReason = (n, what, changedAt) =>
+// The route it names is a wait that ends: `gh pr checks --watch` reads the run from before, so it returns at once, and a
+// ready sent right after it was refused again, three times in a row in one session.
+const missingReason = (n, what, changedAt, ref = n) =>
   `Blocked: pull request #${n} ${what} at ${iso(changedAt)}, and no check has started since. GitHub takes a few seconds to ` +
-  'queue the checks a change re-runs, such as a title check, and until then the checks shown are the ones from before. ' +
-  `Run \`gh pr checks ${n} --watch\` once the new run shows, then mark it ready with \`gh pr ready ${n}\` in a separate call. ` +
+  'queue the checks a change re-runs, such as a title check, and until then the checks shown are the ones from before, ' +
+  `so \`gh pr checks ${ref} --watch\` returns at once and a ready sent after it is refused again. ` +
+  `Wait with \`aidrian pr ready-wait ${ref}\`, which returns once the new run has shown and every check has reported, ` +
+  `then mark it ready with \`gh pr ready ${ref}\` in a separate call. ` +
   `With no check that runs on this change, the hold lifts at ${iso(changedAt + EDIT_WINDOW_MS)}.`;
 
 // The newest change to the pull request that may re-queue a check and that is inside the window, as { what, at }, or null.
@@ -94,18 +99,27 @@ function editsOf(forge, view) {
   }
 }
 
-// The deny reason for one pull request, `view` as `pr view` gave it, or null.
-function judgeView(view, forge, now) {
+// How a command takes the pull request `view` names: its number, or with `elsewhere`, a call that named another
+// repository or a URL, the URL gh gave, which names the host, the repository, and the number alike.
+export const pullRef = (view, elsewhere) => {
+  const n = Number.isInteger(view?.number) ? view.number : '<n>';
+  return elsewhere && typeof view?.url === 'string' && PULL_URL.test(view.url) ? view.url : n;
+};
+
+// The deny reason for one pull request, `view` as `pr view` gave it, or null. `aidrian pr ready-wait` waits on it.
+// With `elsewhere`, the commands the reason names take the pull request by its URL (pullRef).
+export function holdReason(view, forge, now, { elsewhere = false } = {}) {
   if (view?.isDraft !== true || !Array.isArray(view.statusCheckRollup)) return null;
   const n = Number.isInteger(view.number) ? view.number : '<n>';
+  const ref = pullRef(view, elsewhere);
   const pending = pendingChecks(view.statusCheckRollup);
-  if (pending.length) return pendingReason(n, pending);
+  if (pending.length) return pendingReason(n, pending, ref);
   const started = lastStart(view.statusCheckRollup);
   const unseen = (change) => change && started < change.at;
   const opened = recentChange([{ what: 'was opened', at: millis(view.createdAt) }], now());
-  if (unseen(opened)) return missingReason(n, opened.what, opened.at);
+  if (unseen(opened)) return missingReason(n, opened.what, opened.at, ref);
   const edited = recentChange(editsOf(forge, view), now());
-  return unseen(edited) ? missingReason(n, edited.what, edited.at) : null;
+  return unseen(edited) ? missingReason(n, edited.what, edited.at, ref) : null;
 }
 
 // The deny reason for each ready call, { target, repo } at `folder`, read in turn under one deadline, or null.
@@ -120,7 +134,7 @@ function judgeCalls(calls, seams) {
     } catch {
       continue;
     }
-    const reason = judgeView(view, forge, now);
+    const reason = holdReason(view, forge, now, { elsewhere: Boolean(repo) || PULL_URL.test(String(target ?? '')) });
     if (reason) return reason;
   }
   return null;

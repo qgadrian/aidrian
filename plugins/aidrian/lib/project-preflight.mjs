@@ -33,8 +33,9 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
-import { mayFollowTeamDefault } from './project.mjs';
+import { mayFollowTeamDefault, projectId } from './project.mjs';
 import { recordedDecision } from './project-decision.mjs';
+import { readRecordedDecision } from './project-decision-store.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, SERIAL, teamsNote } from './project-run.mjs';
 import { openPullHead } from './project-result.mjs';
@@ -419,7 +420,9 @@ function secretsLine({ facade, named, repository, policy, check, asks }) {
 // (project-issue-text.mjs recordedTexts); then `next` lines as `aidrian project next` prints them for turn 1, with the
 // maxParallel it reads (as project-run-gate.mjs runParallel reads it, through `forge` at the repository init would pin), and a
 // `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote). For each issue that may
-// still start whose decision the team's policy pins, as start reads it, a `recorded-decision` line (decisionChecks).
+// still start whose decision this machine's recorded-decision store holds, while the team's policy turns the store on as
+// start reads it, a `recorded-decision` line (decisionChecks), none while the state folder fails runPlace, which is a
+// `blocker snapshot` line of its own, as init refuses it.
 // Exit 1 on any blocker.
 export function snapshotCheck({ project, config, file, session = null, env = process.env, home, forge = null }) {
   const read = readSnapshotInput(file, refNames(project, config));
@@ -440,7 +443,10 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   const startable = new Set(plan.order.filter((key) => !plan.done.includes(key)));
   // The issues that may still start: ready now, or once their blockers are done; never a canceled or skipped one.
   const mayStart = new Set([...plan.ready, ...plan.blocked.filter(({ reason }) => reason === 'waiting').map(({ key }) => key)]);
-  const decisions = decisionChecks({ policy, base, mayStart, texts: kept.texts });
+  // A state folder init would refuse is a blocker of its own, whatever else passes, and then no recorded decision is
+  // named as standing: the run that would read it cannot be made there.
+  if (place.problem) blockers.push(`blocker snapshot: ${place.problem}`);
+  const decisions = place.problem ? { blockers: [], notes: [] } : decisionChecks({ policy, base, mayStart, texts: kept.texts, project, env });
   blockers.push(...decisions.blockers);
   if (!trackerReachable(base)) {
     blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !kept.texts[issue.key])
@@ -451,34 +457,37 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   return blockers.length ? { exitCode: 1, out, err: ['aidrian project init --check: clear each blocker, then check again'] } : { exitCode: 0, out, err: [] };
 }
 
-// The lines of the decisions the Human recorded on the issues of `mayStart`, as the team's `policy` pins them, the one
-// start applies (project-run-gate.mjs teamPolicy recordedDecisions, the entries the local ref and the forge define
-// alike), checked against `texts`, the descriptions this session's tracker reads recorded (project-decision.mjs
-// recordedDecision): { blockers, notes }. An issue with no description recorded is a blocker, since the grant would be
-// void at every start; any other void is a note, and the run goes on without the grant; one that stands is a note
-// naming its heading, and, with projectRun.forgeProtectionAccepted set, a note says the grant is as strong as the hooks
-// that keep a session's script from pushing one to the default branch. A policy that cannot be read, while the base
-// branch's config `base` (baseBranchConfig) pins a decision of one of `mayStart`, is a blocker: whether it stands
-// cannot be told.
-function decisionChecks({ policy, base, mayStart, texts }) {
+// The lines of the decisions the Human recorded on the issues of `mayStart` in this machine's recorded-decision store
+// under `env` (project-decision-store.mjs), read for `project` only while the team's `policy` turns
+// projectRun.recordedDecisions on, as start reads them (project-run-gate.mjs teamPolicy and decisionFor), checked against
+// `texts`, the descriptions this session's tracker reads recorded (project-decision.mjs recordedDecision):
+// { blockers, notes }. An issue with no description recorded is a blocker, since the grant would be void at every start;
+// any other void, a store that cannot be trusted included, is a note, and the run goes on without the grant; one that
+// stands is a note naming its heading. A policy that cannot be read, while the base branch's config `base`
+// (baseBranchConfig) turns the switch on and the store holds a decision of one of `mayStart`, is a blocker: whether it
+// stands cannot be told. The switch is asked first, as start asks it: with it off, no store is opened. `read` is the
+// store's reader, a test's stand-in.
+export function decisionChecks({ policy, base, mayStart, texts, project, env, read = readRecordedDecision }) {
   const blockers = [];
   const notes = [];
+  const on = policy.problem ? base.config?.projectRun?.recordedDecisions === true : policy.recordedDecisions === true;
+  if (!on) return { blockers, notes };
+  const projectKey = projectId(project);
+  const stored = [...mayStart].sort().map((key) => ({ key, ...read({ projectKey, key, env }) })).filter((each) => each.problem || each.entry);
   if (policy.problem) {
-    const pinned = Object.keys(base.config?.projectRun?.recordedDecisions ?? {}).filter((key) => mayStart.has(key)).sort();
-    if (pinned.length) blockers.push(`blocker recorded-decision: the team's policy cannot be read (${policy.problem}), so whether the decisions recorded for ${pinned.join(', ')} stand cannot be told; check again once it can`);
+    if (stored.length) blockers.push(`blocker recorded-decision: the team's policy cannot be read (${policy.problem}), so whether the decisions recorded for ${stored.map(({ key }) => key).join(', ')} stand cannot be told; check again once it can`);
     return { blockers, notes };
   }
-  const entries = policy.recordedDecisions ?? {};
-  const granted = Object.keys(entries).filter((key) => mayStart.has(key)).sort();
-  for (const key of granted) {
+  for (const { key, entry, problem } of stored) {
     const description = texts[key]?.description ?? '';
-    const checked = recordedDecision(entries[key], description, { cut: texts[key]?.descriptionCut === true });
-    if (description.trim() === '') blockers.push(`blocker recorded-decision: ${key} has a recorded decision in projectRun.recordedDecisions and this session recorded no description of it; read it in this session with the tracker's own issue read`);
+    if (problem) {
+      notes.push(`note recorded-decision: ${key} void: ${problem}`);
+      continue;
+    }
+    const checked = recordedDecision(entry, description, { cut: texts[key]?.descriptionCut === true });
+    if (description.trim() === '') blockers.push(`blocker recorded-decision: ${key} has a recorded decision in this machine's recorded-decision store and this session recorded no description of it; read it in this session with the tracker's own issue read`);
     else if (checked.void) notes.push(`note recorded-decision: ${key} void: ${checked.void}`);
-    else notes.push(`note recorded-decision: ${key} stands: ${entries[key].heading}`);
-  }
-  if (granted.length && policy.forgeProtectionAccepted === true) {
-    notes.push('note recorded-decision: the team accepts no forge protection (projectRun.forgeProtectionAccepted), so a grant is as strong as the hooks that keep a script an issue session runs from pushing one to the default branch');
+    else notes.push(`note recorded-decision: ${key} stands: ${entry.heading}`);
   }
   return { blockers, notes };
 }

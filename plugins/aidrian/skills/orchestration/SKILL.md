@@ -37,7 +37,6 @@ with `git ls-remote --heads origin <branch>` and `gh pr view <n>`, and read its 
 An agent that ends its turn while a command or agent it started in the background still runs goes idle, and nothing wakes it.
 So every brief to an agent that pushes, waits on CI, or starts a reviewer says to wait in the foreground:
 the push or CI wait as a foreground command with a timeout, repeated until it ends, and the reviewer in the foreground.
-The stop hook sends a subagent back once when it stops with one still running.
 
 **Briefs.** Read `references/briefs.md` before the first brief, before a retraction, and before several pull
 requests land: the handoff file, decisions on record, pushes, logs, and landing order.
@@ -87,7 +86,7 @@ requests land: the handoff file, decisions on record, pushes, logs, and landing 
 - Run each finding through `aidrian pr disposition` with the reviewer's four axes and any `--cites`.
   A finding missing an axis is handled as `references/review-rules.md` says for `needs_axis`.
 - `fix_now` goes to its owner, highest likelihood × impact first.
-  The owner fixes every copy of the pattern, not only the flagged line.
+  The owner fixes every copy of the pattern, not only the flagged line; a copy it leaves is a finding (`references/briefs.md`).
   A fix no registry entry or skill default owns goes to `doc-updater` when it is docs only; otherwise ask the Human for its owner.
 - In one worktree, one fixing agent works at a time, so two commits never race for the index.
 - `accepted_residual` goes in the pull request body, through the `pr-write` skill.

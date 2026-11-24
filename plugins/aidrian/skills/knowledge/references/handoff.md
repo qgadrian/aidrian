@@ -8,6 +8,9 @@ Add a field only when your role emits it or the dispatch asks for it. Use these 
   project rule it breaks, as `<doc>#<section>`, else `null`, which `--cites` passes), `summary` (the impact), and
   `next_step` (the fix direction).
   A finding never carries its own disposition.
+  A developer that leaves a copy of the defect it fixed, such as the same bug in a sibling a non-goal seems to freeze,
+  reports that copy as a finding with the four axes, never only in `decision` prose; one whose fix would change what a
+  non-goal freezes is a `scope_collision`, raised, never skipped in silence.
   `plan_change` (any reviewer, on a finding about a slice's closure criterion): `{kind, existing_tests, break}`.
   `kind` is `proof` when the same people, inputs, and observable result stay and only the test or slice proving them moves,
   with no test double for any component the criterion names; `promise` when the finding proposes changing that behaviour,

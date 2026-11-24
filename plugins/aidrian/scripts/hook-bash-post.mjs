@@ -9,7 +9,8 @@
 // call's top level that the call ran to its end, with its status and counts (lib/check-runs.mjs), read through the
 // adapter's `shellRun`, and from the tail of the file the host kept a long output in; a call stopped, or started in or moved to the background, records none. The hook writes nothing
 // outside the session folders, always exits 0, and prints nothing, so no record or output text reaches the model. It
-// writes nothing for a call the host stopped, a session id that fails SESSION_ID, or a folder with no project.
+// writes nothing for a call the host stopped, a session id that fails SESSION_ID, or a folder with no project; a test run is
+// filed in the project of the call's folder, else in that of the folder it runs in, after a `cd` or with `env -C`.
 
 import path from 'node:path';
 
@@ -67,24 +68,53 @@ export async function handle(input) {
 
 if (isMain(import.meta.url)) await runHook(handle);
 
-// The check-run rows of a finished call, appended to the session's record.
+// The check-run rows of a finished call, appended to the session's record: all of them in the project of the call's
+// folder; with none there, each run in the project of the folder it runs in, as that project's config reads the line.
 async function recordCheckRuns(input, command) {
   const run = detectHost({ input }).shellRun?.(input.tool_response);
   if (!run?.finished) return;
-  const [{ checkRows, appendCheckRuns }, { findProject, projectCheckouts, stateDir }, { loadConfig }, { sessionFolder }] = await Promise.all([
+  const [{ checkRows, appendCheckRuns, testRuns }, { findProject, projectCheckouts, stateDir }, { DEFAULTS, loadConfig }, { sessionFolder }, { walkCommands }] = await Promise.all([
     import('../lib/check-runs.mjs'),
     import('../lib/project.mjs'),
     import('../lib/config.mjs'),
     import('../lib/session-folder.mjs'),
+    import('../lib/shell-lex.mjs'),
   ]);
-  const project = findProject(input.cwd);
-  if (!project) return;
-  const { config } = loadConfig(project);
   const agentId = typeof input.agent_id === 'string' ? input.agent_id : null;
-  const rows = checkRows({ command, cwd: input.cwd, output: run.output, persisted: run.persisted ?? null, exitZero: run.exitZero, testing: config.testing, agentId });
-  if (rows.length === 0) return;
-  const folder = sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) });
-  if (folder) appendCheckRuns(folder, rows);
+  const record = (project, keep, lineRuns) => {
+    const { config } = loadConfig(project);
+    const rows = checkRows({ command, cwd: input.cwd, output: run.output, persisted: run.persisted ?? null, exitZero: run.exitZero, testing: config.testing, agentId, keep, lineRuns });
+    const folder = rows.length ? sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) }) : null;
+    if (folder) appendCheckRuns(folder, rows);
+  };
+  const home = findProject(input.cwd);
+  if (home) {
+    record(home);
+    return;
+  }
+  // A session whose starting folder another session removed gets the home folder as its cwd from the host, and runs its
+  // tests after a `cd` into a worktree, or with `env -C`.
+  const folders = walkCommands(command, input.cwd).map((entry) => entry.folder).filter((folder) => typeof folder === 'string' && path.isAbsolute(folder));
+  const projects = new Map();
+  for (const folder of new Set(folders)) {
+    const project = findProject(folder);
+    if (project && !projects.has(project.root)) projects.set(project.root, project);
+  }
+  const keeps = [...projects.values()].map((project) => [project, (folder) => findProject(folder)?.root === project.root]);
+  // The runs of the whole line: every run any config of the line, the defaults included, reads on it, each once, by its
+  // command and folder, as often as the config that reads it most often does. So a run in no project, or one only another
+  // project reads, counts too: the line's one count goes to a lone run only, and a count too high only withholds it.
+  const most = new Map();
+  for (const testing of [DEFAULTS.testing, ...keeps.map(([project]) => loadConfig(project).config.testing)]) {
+    const seen = new Map();
+    for (const { key, folder } of testRuns(command, input.cwd, testing)) {
+      const id = `${key}\u0000${folder ?? input.cwd}`;
+      seen.set(id, (seen.get(id) ?? 0) + 1);
+    }
+    for (const [id, count] of seen) most.set(id, Math.max(most.get(id) ?? 0, count));
+  }
+  const lineRuns = [...most.values()].reduce((sum, count) => sum + count, 0);
+  for (const [project, keep] of keeps) record(project, keep, lineRuns);
 }
 
 // Records the links of `command`, run from `cwd`, whose output was `output`: for each `aidrian worktree new` of the line

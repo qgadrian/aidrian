@@ -702,7 +702,7 @@ async function runLanding({ opts, project, config, forge, repo, view, held, onPr
     } catch {}
   }
   const next = opts.verdict === 'land'
-    ? `${verdictNext(waiver, opts.pr, project.paths.local)}; run no review step on this head first: a new step's outcome comes after the verdict, and the verdict no longer stands`
+    ? `${verdictNext(waiver, opts.pr, project.paths.local, repo)}; run no review step on this head first: a new step's outcome comes after the verdict, and the verdict no longer stands`
     : 'the cap stands: report round_limit, the judge\'s evidence, and the findings left open';
   const extension = entry ? { source: entry.source, round: entry.round, head: entry.head, status: entry.status, by: entry.by, reasons: entry.reasons } : null;
   console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, extension, waiver, next, ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));

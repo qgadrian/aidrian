@@ -252,7 +252,7 @@ test('aidrian pr waive records a round_cap verdict on the current head, visible 
   assert.equal(code, 0);
   assert.equal(out.status, 'recorded');
   assert.deepEqual({ ...out.waiver, at: null }, { head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'the three open findings are style nits', judge: 'unknown', at: null });
-  assert.match(out.next, /gh pr merge 5 --match-head-commit abcdef1234567890/u);
+  assert.match(out.next, new RegExp(`gh pr merge 5 --match-head-commit ${HEAD} --repo acme/notes\``, 'u'));
   assert.equal(readLocalState(r.project(), 5).waivers.length, 1);
   assert.equal(issue.length, 1, 'posted the summary comment');
   assert.equal(stateFromComment(issue[0].body, 5).waivers[0].head, HEAD, 'the comment carries the record');
@@ -498,7 +498,7 @@ test('a verdict counts only for a merge that names its head', (t) => {
   for (const command of ['gh pr merge 5 --squash', 'gh api -X PUT repos/acme/notes/pulls/5/merge']) {
     const reason = merge(r, command);
     assert.match(reason ?? '', /is `round_limit`/u, command);
-    assert.match(reason, /A judge's recorded verdict waives this head, but only for a merge that names it: merge with `gh pr merge 5 --match-head-commit abcdef1234567890abcdef1234567890abcdef12`, or give the merge tool its `sha`\.$/u, command);
+    assert.match(reason, /A judge's recorded verdict waives this head, but only for a merge that names it: merge with `gh pr merge 5 --match-head-commit abcdef1234567890abcdef1234567890abcdef12 --repo acme\/notes`, or give the merge tool its `sha`\.$/u, command);
   }
   const mcp = checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 5 }, { cwd: r.dir, input: { transcript_path: r.transcript }, viewPr: viewer([]), waiverForge: teamForge() });
   assert.match(mcp ?? '', /only for a merge that names it/u, 'the MCP tool without sha');
@@ -507,7 +507,7 @@ test('a verdict counts only for a merge that names its head', (t) => {
 test('without a verdict that stands for this head and kind, the denial is today\'s, plus the route under both switches', (t) => {
   const r = repo(t, { local: ON });
   const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
-  const route = /Or the Human merges in their own shell\. Or, under the unattended waiver this repository allows \(github\.unattendedWaiver\), a run with no Human present reads `waiver` in the JSON of `aidrian pr review 5`, and only when it says a judge may rule runs the one judge its `dispatch` names, as the pr-review-loop skill's references\/review-plan\.md § At the cap says, then records that judge's verdict with `aidrian pr extend 5 --verdict land\|stop --reason "<evidence>" --head abcdef1234567890abcdef1234567890abcdef12 --judge <agent id>`, and on `land` merges naming that head\.$/u;
+  const route = /Or the Human merges in their own shell\. Or, under the unattended waiver this repository allows \(github\.unattendedWaiver\), a run with no Human present reads `waiver` in the JSON of `aidrian pr review 5 --repo acme\/notes`, and only when it says a judge may rule runs the one judge its `dispatch` names, as the pr-review-loop skill's references\/review-plan\.md § At the cap says, then records that judge's verdict with `aidrian pr extend 5 --verdict land\|stop --reason "<evidence>" --head abcdef1234567890abcdef1234567890abcdef12 --judge <agent id> --repo acme\/notes`, and on `land` merges naming that head\.$/u;
   for (const [name, edit] of [
     ['no entry', (state) => roundLimit(state)],
     ['an entry for another head', (state) => (roundLimit(state), waiver(state, { head: NEXT }))],
@@ -1074,7 +1074,7 @@ test('aidrian pr extend --verdict land at the check: stops it, the cap stands, a
   assert.equal(code, 0);
   assert.deepEqual({ ...out.waiver, at: null }, { head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'R2-1 is acceptable_as_is at src/a.js:3', judge: 'unknown', ...JUDGE, at: null });
   assert.deepEqual([out.extension.status, out.extension.by], ['stopped', 'judge']);
-  assert.match(out.next, /gh pr merge 5 --match-head-commit abcdef1234567890[\s\S]*run no review step on this head first/u);
+  assert.match(out.next, new RegExp(`gh pr merge 5 --match-head-commit ${HEAD} --repo acme/notes\`[\\s\\S]*run no review step on this head first`, 'u'), 'the merge names the pull request\'s repository');
   const state = readLocalState(r.project(), 5);
   assert.deepEqual([state.outcome.status, state.outcome.at, state.outcome.cap.head], ['round_limit', T0, HEAD], 'the cap stands, at the time it was reached');
   assert.equal(state.extensions[0].judge.verdict, 'land');

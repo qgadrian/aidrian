@@ -515,17 +515,18 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
     return { allow: true, note: '', route: '' };
   }
   if (verdict) {
-    return { ...none, route: ` A judge's recorded verdict waives this head, but only for a merge that names it: merge with \`gh pr merge ${pr} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.` };
+    return { ...none, route: ` A judge's recorded verdict waives this head, but only for a merge that names it: merge with \`gh pr merge ${pr} --match-head-commit ${head} --repo ${home}\`, or give the merge tool its \`sha\`.` };
   }
   return {
     ...none,
-    route: ` Or, under the unattended waiver this repository allows (github.unattendedWaiver), a run with no Human present reads \`waiver\` in the JSON of \`aidrian pr review ${pr}\`, and only when it says a judge may rule runs the one judge its \`dispatch\` names, as the pr-review-loop skill's references/review-plan.md § At the cap says, then records that judge's verdict with \`aidrian pr extend ${pr} --verdict land|stop --reason "<evidence>" --head ${head} --judge <agent id>\`, and on \`land\` merges naming that head.`,
+    route: ` Or, under the unattended waiver this repository allows (github.unattendedWaiver), a run with no Human present reads \`waiver\` in the JSON of \`aidrian pr review ${pr} --repo ${home}\`, and only when it says a judge may rule runs the one judge its \`dispatch\` names, as the pr-review-loop skill's references/review-plan.md § At the cap says, then records that judge's verdict with \`aidrian pr extend ${pr} --verdict land|stop --reason "<evidence>" --head ${head} --judge <agent id> --repo ${home}\`, and on \`land\` merges naming that head.`,
   };
 }
 
-// What to run after a recorded verdict.
-export const verdictNext = (entry, pr, local) => (entry.verdict === 'waive'
-  ? `merge with \`gh pr merge ${pr} --match-head-commit ${entry.head}\`: the merge guard accepts this verdict only while github.unattendedWaiver.allow is true on the base and default branches and the switch is on in ${local}`
+// What to run after a recorded verdict, naming the pull request's repository `repo` (`owner/name`) when known, so the
+// merge acts on that repository whatever the checkout's default.
+export const verdictNext = (entry, pr, local, repo = null) => (entry.verdict === 'waive'
+  ? `merge with \`gh pr merge ${pr} --match-head-commit ${entry.head}${repo ? ` --repo ${repo}` : ''}\`: the merge guard accepts this verdict only while github.unattendedWaiver.allow is true on the base and default branches and the switch is on in ${local}`
   : 'the guard stands: the Human merges, or answers the merge guard\'s question with "Merge with the findings filed"');
 
 // The CLI body. It reads and writes the record where the review step does: this machine's state folder and, unless the
@@ -576,7 +577,7 @@ export async function runWaive(args, project, config, deps = {}) {
   sameRevision(project, opts.pr, repo, local);
   writeLocalState(project, state, { repo });
   const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `waiver ${opts.verdict}`, postContext({ forge, repo, n: opts.pr, project, configs: [committed, config], env: deps.env ?? process.env })) : null;
-  console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, waiver: entry, next: verdictNext(entry, opts.pr, project.paths.local), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
+  console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, waiver: entry, next: verdictNext(entry, opts.pr, project.paths.local, repo), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
   return 0;
 }
 

@@ -1944,10 +1944,10 @@ do it, and how critical it is. It sends a turn back at most once ([Send-backs pe
 - An item counts as rated when it holds one of blocking, blocker, critical, high, medium, or low, in any case.
 
 With no such item, the same check sends back once a question for the Human about doing more in the change at hand,
-one that names this pull request, the same one, or this branch, whose own recommendation, on its line or in the three
-lines after it up to the next question, on that line or a later one, is yes: "Recommended: yes", "Recommendation: yes",
-or "Yes (recommended)", never with a "not" between.
-The reason quotes the question as data. The AI once asked whether to
+one that names this pull request, the same one, or this branch, in a paragraph with a line that recommends yes, such as
+"Recommended: yes" or "Yes (recommended)", and no "not", "never", or "don't" on that line. A paragraph is the lines
+between blank lines, as a quoted "Decision needed" block is one; two questions in one paragraph share its recommendation,
+the accepted residual of a send-back made once a turn. The reason quotes the question as data. The AI once asked whether to
 add a missing check to the pull request that fixed the bug class the check guards, and the Human answered that it should
 not have to ask. A gap the work finds in its own scope is a defect to fix there, through its owner; the Human is asked
 only a real choice the work opens, such as a product behavior or a cost the scope did not plan. The question tool's hook

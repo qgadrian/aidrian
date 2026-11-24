@@ -193,32 +193,25 @@ function handsOver(item, pr, file) {
 
 // A question about the change at hand: one that names this pull request, this same one, or this branch.
 export const SAME_CHANGE = /\b(?:this|the same|this same)\s+(?:pull request|PR|branch)\b/iu;
-// An answer of yes the text recommends: "Recommended: yes", "Recommendation: yes", or "Yes (recommended)", never with a
-// `not` between, as in "Yes (not recommended)".
-export const RECOMMENDS_YES = /\brecommend(?:ed|s|ation)?\b\W{0,3}(?:(?!not\b)\w+\W+){0,2}?yes\b|\byes\b(?:(?!\bnot\b)[^\n]){0,15}\brecommended\b/iu;
-// How many lines after the question its recommendation may sit, as in a quoted "Decision needed" block.
-const RECOMMENDATION_LINES = 3;
+// Whether one line recommends answering yes: it names a recommendation and a yes, as "Recommended: yes" or
+// "Yes (recommended)" do, and no negation, as "Yes (not recommended)" or "Never recommended: yes" hold.
+export const recommendsYes = (line) => /\brecommend/iu.test(line) && /\byes\b/iu.test(line) && !/\b(?:not|never|don['’]t)\b/iu.test(line);
 
-// The first question of `message` that asks to do more in the change at hand and recommends yes, cut to 80 characters,
-// or null. A question is the text from the line, sentence, or question before it up to its `?`; its recommendation is
-// read from that `?` up to the next one, within RECOMMENDATION_LINES lines, so a yes given to another question, on the
-// same line or a later one, is never its own. Fenced code is dropped, as handBackLists drops it.
+// The first question of `message` that asks to do more in the change at hand while its paragraph recommends yes, cut to
+// 80 characters, or null. A paragraph is the lines between blank lines, as a quoted "Decision needed" block is one, and
+// the recommendation may sit on any of its lines, before the question or after it. Fenced code is dropped, as
+// handBackLists drops it. Accepted residual: two questions in one paragraph share its recommendation; the send-back is
+// once a turn, and its reason keeps a real choice.
 export function scopeAsk(message) {
   if (typeof message !== 'string') return null;
   const all = message.split('\n');
   const fenced = fencedIn(all);
-  const text = all.filter((_, at) => !fenced[at]).join('\n');
-  for (let at = text.indexOf('?'); at !== -1; at = text.indexOf('?', at + 1)) {
-    const after = (mark) => {
-      const found = text.lastIndexOf(mark, at - 1);
-      return found === -1 ? 0 : found + mark.length;
-    };
-    const start = Math.max(after('\n'), after('?'), after('. '));
-    const question = text.slice(start, at + 1).replace(/^[>\s*_#-]+/u, '').trim();
-    if (!SAME_CHANGE.test(question)) continue;
-    const next = text.indexOf('?', at + 1);
-    const answer = text.slice(at + 1, next === -1 ? text.length : next).split('\n').slice(0, 1 + RECOMMENDATION_LINES).join('\n');
-    if (!RECOMMENDS_YES.test(answer)) continue;
+  const paragraphs = all.filter((_, at) => !fenced[at]).join('\n').split(/\n\s*\n/u);
+  for (const paragraph of paragraphs) {
+    const lines = paragraph.split('\n');
+    const asked = lines.find((line) => line.includes('?') && SAME_CHANGE.test(line));
+    if (!asked || !lines.some(recommendsYes)) continue;
+    const question = asked.replace(/^[>\s*_#-]+/u, '').trim();
     return question.length > 80 ? `${question.slice(0, 77)}...` : question;
   }
   return null;

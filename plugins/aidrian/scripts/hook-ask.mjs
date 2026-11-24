@@ -10,7 +10,7 @@ import { block, isMain, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { personalWords } from '../lib/names.mjs';
 import { findProject } from '../lib/project.mjs';
-import { RECOMMENDS_YES, SAME_CHANGE, scopeAskReason } from '../lib/stop-handback.mjs';
+import { recommendsYes, SAME_CHANGE, scopeAskReason } from '../lib/stop-handback.mjs';
 
 // Every text of the call the human reads: the title, and each question, its header and description, and each option's
 // label and description. An option's preview holds mockups and code, so it is left out.
@@ -32,7 +32,7 @@ function texts(input) {
 function scopeQuestion(input) {
   const questions = Array.isArray(input?.questions) ? input.questions : [];
   const found = questions.find((q) => typeof q?.question === 'string' && SAME_CHANGE.test(q.question)
-    && (Array.isArray(q.options) ? q.options : []).some((o) => RECOMMENDS_YES.test(`${o?.label ?? ''} ${o?.description ?? ''}`)));
+    && (Array.isArray(q.options) ? q.options : []).some((o) => recommendsYes(`${o?.label ?? ''} ${o?.description ?? ''}`)));
   if (!found) return null;
   return found.question.length > 80 ? `${found.question.slice(0, 77)}...` : found.question;
 }

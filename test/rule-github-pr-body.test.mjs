@@ -456,4 +456,6 @@ test("a redirect resolves in the shell's folder, and the body file in the folder
   // After a leading cd that a `;` ends, the shell may still be where it was, so the heredoc may never reach sub/b.md:
   // the write is one the rule cannot place, whatever folder env -C gives gh.
   assert.match(run(`cd sub && true; cat > b.md <<'EOF'\n${GOOD}EOF\nenv -C ${path.join(dir, 'sub')} gh pr create -t x -F b.md`) ?? '', /^Blocked: the body is one this rule cannot read/u);
+  // A tee whose file env -C places, with a redirect the rule cannot place, may race its own write.
+  assert.match(run(`cd sub && true; env -C ${path.join(dir, 'sub')} tee b.md > b.md <<'EOF'\n${GOOD}EOF\nenv -C ${path.join(dir, 'sub')} gh pr create -t x -F b.md`) ?? '', /^Blocked: the body is one this rule cannot read/u);
 });

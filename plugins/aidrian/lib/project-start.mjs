@@ -719,13 +719,16 @@ function keepClone({ state, run, row, folder, unpushed }) {
 // file of that session's own and gives back those it could not remove: the record keeps them, for the next sweep, and
 // goes once none is left. Only the session the start row `row` launched: a record that names another session removes
 // no file, and is dropped. The session has ended. Whether no file is left. Never throws.
+// A file the host cannot place in that session's folder stays recorded, so its folder stays too, for a person to clear.
 function forgetToken({ cap, folder, row, env, home }) {
   const record = safely(() => tokenFiles(folder));
-  const own = record && (typeof row.child !== 'string' || record.session === row.child);
+  // A record that is there but cannot be read may still name a file: it stays, and keeps the folder.
+  if (!record) return !existsSync(path.join(folder, TOKEN_FILES));
+  const own = typeof row.child !== 'string' || record.session === row.child;
   // A host with no such files has none to remove; one whose removal threw leaves every file recorded.
   const left = own && typeof cap.forgetShellEnv === 'function' ? safely(() => cap.forgetShellEnv({ files: record.files, session: record.session, env, home })) : [];
   const files = Array.isArray(left) ? left.filter((file) => record.files.includes(file)) : record.files;
-  return safely(() => keepTokenFiles(folder, { session: record?.session, files })) === true && files.length === 0;
+  return safely(() => keepTokenFiles(folder, { session: record.session, files })) === true && files.length === 0;
 }
 
 // Whether the clone of the attempt in `folder`, which the start row `row` made, holds a commit the forge of `repository`

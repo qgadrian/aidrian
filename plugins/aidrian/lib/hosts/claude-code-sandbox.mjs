@@ -314,18 +314,18 @@ export const sessionEnvFile = ({ env = process.env, session, home }) => (inSessi
 // Removes each of `files`, the session environment files the plugin's SessionStart hook handed the forge token to for
 // the host session `session`, once that session ended (lib/project-start.mjs sweepAttempts): only a regular file of this
 // user, not a link, directly in that session's own folder of the host's session-env tree, so no other session's file,
-// and no file elsewhere, is ever removed. The host reads that file only while the session runs. The files left, each
-// one there that could not be removed, for the caller to try again; a file in no such folder is never one to remove.
+// and no file elsewhere, is ever removed. The host reads that file only while the session runs. The files left: every
+// one still there that it did not remove, as one it could not place in that folder, such as under another config
+// folder, or whose removal failed, for the caller to keep recorded. Only a file removed, or gone already, is not left.
 export function forgetEnvFiles({ files, session, env = process.env, home }) {
   if (!Array.isArray(files)) return [];
   const uid = typeof process.getuid === 'function' ? process.getuid() : null;
   const left = [];
   for (const file of files) {
-    if (!inSessionFolder(file, session, env, home)) continue;
     try {
       const stat = lstatSync(file);
-      if (!stat.isFile() || (Number.isInteger(uid) && stat.uid !== uid)) continue;
-      unlinkSync(file);
+      if (!inSessionFolder(file, session, env, home) || !stat.isFile() || (Number.isInteger(uid) && stat.uid !== uid)) left.push(file);
+      else unlinkSync(file);
     } catch (error) {
       if (error.code !== 'ENOENT') left.push(file);
     }

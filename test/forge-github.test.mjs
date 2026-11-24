@@ -1678,14 +1678,24 @@ test('hasCommit: the git database read of one commit, false only when GitHub con
   assert.equal(forge.hasCommit('acme/widgets', sha, { host: 'ghe.example.com' }), true);
   assert.deepEqual(args(), [['api', '--hostname', 'ghe.example.com', `repos/acme/widgets/git/commits/${sha}`]]);
   const fails = (text) => Object.assign(new Error(text), { stderr: text });
-  // A 404 of the commit, and a repository that reads: the commit is missing.
-  const missing = recorded((call) => {
-    if (call.at(-1).includes('/git/commits/')) throw fails('gh: Not Found (HTTP 404)');
-    return JSON.stringify({ full_name: 'acme/widgets' });
-  });
+  // A 404 of the commit, while the same route reads the default branch's head: the commit is missing.
+  const main = 'c'.repeat(40);
+  const answers = (commit) => (call) => {
+    const route = call.at(-1);
+    if (route === `repos/acme/widgets/git/commits/${sha}`) throw fails('gh: Not Found (HTTP 404)');
+    if (route === 'repos/acme/widgets') return JSON.stringify({ default_branch: 'main' });
+    if (route === 'repos/acme/widgets/branches/main') return JSON.stringify({ commit: { sha: main } });
+    return commit(route);
+  };
+  const missing = recorded(answers(() => JSON.stringify({ sha: main })));
   assert.equal(missing.forge.hasCommit('acme/widgets', sha), false);
-  assert.deepEqual(missing.args().map((call) => call.at(-1)), [`repos/acme/widgets/git/commits/${sha}`, 'repos/acme/widgets']);
-  // A 404 of the repository too, as for a token that cannot see it: nothing is confirmed.
+  assert.deepEqual(missing.args().map((call) => call.at(-1)), [`repos/acme/widgets/git/commits/${sha}`, 'repos/acme/widgets', 'repos/acme/widgets/branches/main', `repos/acme/widgets/git/commits/${main}`]);
+  // A token that reads the repository but not its commits, as one without Contents read: nothing is confirmed.
+  const noContents = recorded(answers(() => {
+    throw fails('gh: Not Found (HTTP 404)');
+  }));
+  assert.throws(() => noContents.forge.hasCommit('acme/widgets', sha), /HTTP 404/u);
+  // A 404 of the repository too, as for a token that cannot see it.
   const hidden = recorded(() => {
     throw fails('gh: Not Found (HTTP 404)');
   });

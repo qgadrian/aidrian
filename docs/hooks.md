@@ -265,7 +265,7 @@ What each rule matches:
   `--body-file -` reads the heredoc fed to gh. The rule fails closed where the shell could change what it read:
   a heredoc beside a `< file` or `<<< word` input, or fed to a descriptor other than 0 (`3<<EOF`); a `cat` write
   through a descriptor other than 1 (`cat 2> b.md`) or with standard output duplicated off it (`>&2`), while `2>&1`
-  writes no file; a `tee` whose own output lands on its file; a body file a
+  writes no file; a `tee` whose own output lands on its file, or on a target the rule cannot place; a body file a
   redirect writes, gh's own output on any descriptor included (`-F b.md {fd}>b.md`), a redirect's target read in the
   shell's own folder and a body file in the one `env -C` or `git -C` gives its program, as bash opens a redirect first,
   and the shell's folder known only as a `cd` joined by `&&` alone moves it, so after `cd x && true;` a relative

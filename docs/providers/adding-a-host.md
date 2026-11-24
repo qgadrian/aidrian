@@ -308,7 +308,7 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   and the first 100 commit messages, whole or not, for the closing-word check.
 - The repository: `repo`, `repository`, `branchHead`, the commit a branch points to, `hasCommit(repo, sha, { host })`,
   whether the forge holds a commit on any ref, false only once it confirms it has none (GitHub: a 404 of the commit
-  while the repository reads), and a throw on any other answer, `contents`, `tree`, one folder of a
+  while the same route reads the default branch's head commit), and a throw on any other answer, `contents`, `tree`, one folder of a
   commit's tree with each entry's mode, `visibility`, `viewer`, `authToken({ host })`, the token the forge's CLI
   signs in to `host` with, from its own login wherever it keeps it, read with no network call (`gh auth token`), and
   `tokenCanPush(repo, { host, token })`, whether that token may push there, by a probe that writes nothing (GitHub: the

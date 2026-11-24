@@ -983,18 +983,23 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     },
     // Whether `repo` holds the commit `sha`, a full hex id, on any ref or none: true, false only when the forge confirms
     // it has no such commit, or a throw when the answer is not conclusive. Read through the git database, whose answer
-    // is the commit alone, never its diff. GitHub answers 404 both for a commit it lacks and for a repository the
-    // token cannot see, so a 404 counts as missing only once the repository itself reads; any other answer, such as an
-    // outage, a validation error, or one that names another commit, throws, and the caller asks again later.
+    // is the commit alone, never its diff. GitHub answers 404 both for a commit it lacks and for one the token may not
+    // read, which needs Contents read where the repository's own read needs only Metadata, so a 404 counts as missing
+    // only once the same route reads the default branch's head commit; any other answer, such as an outage, a
+    // validation error, or one that names another commit, throws, and the caller asks again later.
     hasCommit: (repo, sha, { host } = {}) => {
-      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(String(sha))) throw new Error('a commit is a full hex id');
+      const full = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+      if (!full.test(String(sha))) throw new Error('a commit is a full hex id');
+      const read = (id) => rest(`repos/${repo}/git/commits/${id}`, { host });
       let answer;
       try {
-        answer = rest(`repos/${repo}/git/commits/${sha}`, { host });
+        answer = read(sha);
       } catch (error) {
         if (!notFound(error)) throw error;
-        // Throws when the repository does not read either: then nothing is confirmed.
-        rest(`repos/${repo}`, { host });
+        // Each read below throws when it does not answer: then nothing is confirmed.
+        const main = rest(`repos/${repo}`, { host })?.default_branch;
+        const known = typeof main === 'string' ? rest(`repos/${repo}/branches/${encodeURIComponent(main)}`, { host })?.commit?.sha : null;
+        if (!full.test(String(known)) || known === sha || read(known)?.sha !== known) throw error;
         return false;
       }
       if (answer?.sha !== sha) throw new Error(`the forge answered another commit than ${sha}`);

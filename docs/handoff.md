@@ -627,7 +627,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   clone's HEAD or issue branch, read from its git folder as files, never through a link, is a commit the forge lacks, or
   when those refs cannot be read, a missing HEAD included, the folder stays for the
   run's life with a `kept` ledger row, and `wait` prints `kept ISSUE attempt N: …; recover the work from <clone>`.
-  A forge that cannot answer, or answers a 404 for the repository too, leaves the folder for the next `wait`.
+  A forge that cannot answer, or whose 404 the token's read of the default branch's head commit cannot confirm, leaves
+  the folder for the next `wait`.
   `end` sweeps a last time.
 - **A halt, or a driver that ended, waits for `aidrian project resume <run>`.** A start whose proof failed, and a
   usage limit past the run's 24 pauses, write a `halt` row, and every later start refuses. The resume runs from the

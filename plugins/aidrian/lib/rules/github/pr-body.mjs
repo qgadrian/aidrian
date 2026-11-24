@@ -232,8 +232,9 @@ export function lineWrites(top) {
       [target, text] = [opened(redirects[0][1]), stdinBody(entry)];
     } else if (program === 'tee' && args.length === 1 && !args[0].text.startsWith('-')) {
       target = at(args[0]);
-      // A redirect of its own output onto the same file races the write: what lands there is unknown.
-      text = target !== null && redirects.some(([, each]) => opened(each) === target) ? null : stdinBody(entry);
+      // A redirect of its own output onto the same file races the write, and so may one the rule cannot place: what
+      // lands there is unknown.
+      text = target !== null && redirects.some(([, each]) => [null, target].includes(opened(each))) ? null : stdinBody(entry);
     } else if (program === 'cp' && !redirects.length) {
       const operands = args.filter((arg) => !/^-[fpv]+$/u.test(arg.text));
       const source = operands.length === 2 && !operands[0].text.startsWith('-') ? at(operands[0]) : null;

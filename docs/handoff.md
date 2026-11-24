@@ -640,7 +640,13 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   driver's `wait` takes it in: it reads the file without following a link, as a regular file of the user with one
   link, under 64 KiB, checks every field again, and holds a merged or open pull request to the issue's own on the forge;
   anything else ends the attempt `bad_result`. `wait` removes an attempt's folder once its session ended, but never
-  while its drop holds a result not yet taken in.
+  while its drop holds a result not yet taken in, and never while its clone holds work the forge does not have: when the
+  clone's HEAD or issue branch, read from its git folder as files, never through a link, is a commit the forge lacks, or
+  when those refs cannot be read, a missing HEAD included, the folder stays for the
+  run's life with a `kept` ledger row, and `wait` prints `kept ISSUE attempt N: …; recover the work from <clone>`.
+  A forge that cannot answer, or whose 404 the token's read of the default branch's head commit cannot confirm, leaves
+  the folder for the next `wait`.
+  `end` sweeps a last time.
 - **A halt, or a driver that ended, waits for `aidrian project resume <run>`.** A start whose proof failed, and a
   usage limit past the run's 24 pauses, write a `halt` row, and every later start refuses. The resume runs from the
   Human's own shell, or from another session a person attends that never drove the run: the hooks and the command
@@ -660,6 +666,31 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   sign-off where [Project run](config.md#project-run) asks for one; otherwise its clone holds the base branch's copies,
   git leaves them out of its commits, and a push that changes one is refused.
   The branch's own changes stay in its commits for the pull request's review.
+  An issue's session never writes a host file, on any attempt and whatever `github.autoMerge.includeGuardedPaths` says.
+  A low or medium review finding whose fix lies in one, that the review step does not mark as a
+  [security finding](review.md#reviewers), and that has the engine's own [id](review.md#finding-ids), is a stated
+  residual, never a decision: one item of the residual section
+  `github.pullRequest.residuals` names, by default Accepted residuals, in its [format](config.md#pull-request-contract).
+  The item opens with the finding's [id](review.md#finding-ids) and a colon, then `the run may not write a host file this
+  finding needs`, and fills each field the format lists with that same text.
+  Neither that item nor the result's stop names the finding's file, title, or reason, so it publishes nothing.
+  Every other finding of the round takes its own route first and keeps any decision it raises.
+  Only when such residuals are the one stop left is the result `pr_open`, with `<id>: the run may not write a host file
+  this finding needs` as its stop, for the Human's merge.
+  The Human reads the finding's file and text in the review record.
+  Whenever the pull request's copy of the record lacks the finding's details, as under `review.record: "local"`, the
+  Human reads them in the review record on the machine that ran the review.
+  When the [pull request body rule](config.md#pull-request-contract) refuses that item or its section for any reason,
+  such as a closed list of sections without it or an issue key pattern that matches the id, the session never works
+  around it: the issue parks as before.
+  A security finding in a host file, and one with no engine id, parks as before.
+  A finding outside host files keeps its route.
+  A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
+  It parks a pull request into another branch than the default.
+  On a conflict its line names the one route, on the branch the clone is on, its commits kept, once HEAD holds the forge's branch.
+  A host file `git merge-tree` names as conflicting records `pr_open` with that path in its stop; else `git merge origin/<base>`, never a rebase.
+  It never edits a host file: git merges the base copies in the index alone and leaves them on disk.
+  The push guard lets that merge's host files through only as git merges them ([agent gates](hooks.md#agent-gates)).
   A branch the run's ledger cannot account for, or base copies that cannot be made safely, park the issue as
   unreconciled, with the branch and pull request untouched ([Project run](config.md#project-run) lists each case).
   To start an issue over, a person deletes its branch on the forge; closing the pull request alone does not.

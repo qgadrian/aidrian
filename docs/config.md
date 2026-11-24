@@ -555,6 +555,11 @@ lock or a read refuses is not merged.
 - A head the review bot has not passed.
 - Any other cause of the cap, or a sign-off the Human owes on the head.
 
+With either switch off, or a cap the waiver does not cover, a session no Human attends is not asked to put a question
+to anyone: the merge guard's denial says the session does not merge, files what the review left open as a follow-up
+issue, reports the pull request stopped at its round limit, and stops, and it names both switches
+([Merge guard](hooks.md#merge-guard)). The Human merges it later, or turns the waiver on for the next run.
+
 ### Example
 
 1. The review of pull request #151 stops at the cap on head `abc1234` with `extension_check`, and its `waiver` says `"may": true`.
@@ -1938,7 +1943,9 @@ on the issue's last attempt: the cause is fixed once for the whole run, not once
 a halt again under the ledger's lock. The attempt counts toward the issue's 3, as after `failed`: with attempts left,
 `aidrian project resume RUN` lets the next start take the same issue up again. The attempt's folder stays for the
 run's life, so work its clone holds that a failed push never sent can be recovered from
-`<state>/runs/RUN/attempts/ISSUE.ATTEMPT/work`.
+`<state>/runs/RUN/attempts/ISSUE.ATTEMPT/work`. So does any ended attempt whose clone holds a commit the forge does not
+have, whatever its result, with a `kept` row and a `kept` line from `wait` ([Handoff](handoff.md)): a usage limit or a
+crash that ends a session mid-work never loses what it committed and did not push.
 The driver lifts two kinds of halt by itself, once each, when the preflight's own checks of that cause pass
 (`lib/project-recheck.mjs`): an environment result's, re-checked by `commit`, `host`, `trust`, and `access` with its
 `token-reads`, and a failed proof's but the sandbox proof's, by `host`, `trust`, and `access`. When the driver's
@@ -1971,7 +1978,7 @@ one action. The `why` is cleaned and capped as a result's `stop` is, and a forge
 | Merged on the forge | `done`: record the result `merged` | |
 | Closed; a base other than the default branch; a reason `team`, `local`, `checks`, `paths`, `author`, `outsider`, or `closes`; a `review` that is changes requested; a reason it does not know; a draft | `park`: record the result `pr_open` with the line as its stop | |
 | `trust` with `signoff` | `park`: record the result `parked`, with one decision for the Human's sign-off, whose first and recommended option is to leave the pull request unmerged; of class `security` when any unsigned flow is a security one (an id that holds the word `security`, or a `require` that names `agent:security-engineer`), and `product` otherwise | |
-| A conflict with the base | `merge_base`: the session fetches the base and its branch, merges the base on top of its branch as the forge has it, resolves it, and pushes with a full refspec, never with force | 2 base updates per issue, with the next row |
+| A conflict with the base | `merge_base`: the session fetches the base and its branch, and stays on its own branch, its commits kept; a fetch that fails is run again in the same turn, up to three times in all, and one that still fails merges nothing and records `pr_open` naming the failed fetch, with no second `stop-action`, so no second base update is spent; when `git merge-base --is-ancestor origin/<branch> HEAD` fails, it records `pr_open` naming the divergence and merges nothing; when `git merge-tree --write-tree --name-only` names a host config or instruction file that would conflict, or git refuses the merge over one, it records `pr_open` with that file's path in its stop and merges nothing; else it merges the base into HEAD with a merge commit, resolves it, and pushes with a full refspec, never with force | 2 base updates per issue, with the next row |
 | Behind the base | `update_branch`: the forge merges the base in, or rebases under the `rebase` strategy where the branch's rules allow a push that is no fast-forward | the same 2 |
 | GitHub still computing it, a head that moved while read, or pending checks | `wait` | 3 per head |
 | The bot asked already for this head and not passed yet | `wait`: `aidrian pr await-review <n>`, with no second request | the same 3 per head |
@@ -1990,7 +1997,13 @@ facade. Each capped action is recorded in `stops.jsonl` in the drop folder of th
 driver's `wait` removes an ended attempt's folder, it keeps that file's rows in the run's `stops/<issue>.jsonl`, with
 a row that marks the attempt archived, so a new attempt resets no cap. It keeps only the action, head, pull request number, and attempt of each row. Every history file is opened without following
 a link or waiting on a FIFO, and must be a regular file of this user with one link. A history that is not, or holds a
-row the command did not write, parks. `stop-action` exits 1 when it refuses, such as for another session or a pull
+row the command did not write, parks.
+With `--catch-up`, which the first message of a later or resumed attempt asks for before any other work, it reads only the pull request:
+`park` when it targets another branch than the default, as above.
+A merged or closed pull request gets exactly the answer the command gives without `--catch-up`: `done`, or a `park`.
+On a conflict it gives `merge_base`, and `wait` while the forge works it out, under the caps above; otherwise `none`.
+It reads no auto-merge answer, so a draft that conflicts gets `merge_base`, whose line then says to go on with the checks and the review on the new head.
+`stop-action` exits 1 when it refuses, such as for another session or a pull
 request that is not the issue's own: the session then records `pr_open` with that line as its stop.
 
 At the end of its loop the driver runs `aidrian project end RUN`, which writes an `end` row: an end row counts only when
@@ -2015,6 +2028,12 @@ the review bot, github.reviewer on the default branch, passed exactly that head 
 the harness-config flow on that head, or the default branch sets `github.autoMerge.includeGuardedPaths` and no policy
 file changed; otherwise its clone holds the base branch's copies, git leaves them out of its commits, and a push that
 changes one is refused.
+A low or medium review finding whose fix lies in a host file, no security finding, is a stated residual named by its
+finding id alone, in the project's [residual format](#pull-request-contract), never a decision; once it is the one stop
+left, the result is `pr_open`. A security finding, a finding with no engine id, and an item the pull request body rule
+refuses for any reason park as before ([Host files no review saw](handoff.md#a-project-run)).
+Whenever the pull request's copy of the review record lacks the finding's details, the Human reads them in the review
+record on the machine that ran the review.
 The start pins the base tip, reads the team policy once with its local half at that commit, and decides everything
 from that read: the machine's switch and solo, projectRun.unverifiedHosts, the caps, maxStarts asked again under the
 ledger's lock with the write-ahead row, the access check with outsideSandbox and localBinding, the clone's checks, and
@@ -2030,6 +2049,14 @@ after the read is an accepted residual.
 The start row records that head as `overlay`, and `<attempt>/base-copies.txt` lists the files, cleaned and fenced as
 data from the branch.
 The branch's own changes stay in its commits for the pull request's review.
+The one change to those files a push may carry is a merge of a moved base, which a later or resumed attempt makes when its pull request conflicts with it.
+The session asks `aidrian project stop-action RUN ISSUE --catch-up` first, whose `merge_base` line names the one route (below).
+The push guard lets each host file through only as git's clean merge of `overlay` and that base gives it ([agent gates](hooks.md#agent-gates)).
+Once HEAD holds a newer base, every host file must be as that merge gives it, one the branch kept as it was too.
+It refuses a host file that conflicted in that merge, whatever bytes the session kept for it.
+The start keeps each base copy out of the clone's sparse-checkout definition, with `sparse.expectFilesOutsideOfPatterns` set.
+So the merge writes git's merge of each to the index alone, the base copy stays on disk, and none needs a refresh.
+Without that, git refuses any merge that changes a base copy, as a local change it would overwrite.
 Each start row records the commit the branch was at as `head`, and every later attempt goes on only on a branch that
 holds the last head recorded, of a start that ran or a result: a start given back (`void`) records none.
 A later run resumes from the same latest head of the earlier run's rows; only a run whose rows carry no head at all

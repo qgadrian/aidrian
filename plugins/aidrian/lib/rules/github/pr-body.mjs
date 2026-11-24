@@ -12,7 +12,8 @@
 // `--body-file -` reads the heredoc fed to gh itself: the file does not exist yet when the hook runs.
 //
 // A call answers to the repository it targets. The project is the one the folder gh runs in finds (`chained` in
-// shell-lex walkCommands), and the session's only where that folder cannot be known. A call that names a repository
+// shell-lex walkCommands). Where that folder cannot be known, a call that posts text is refused with the folder-written-out
+// form (`unreadDestination`), and the session's project stands in only for one that names the session's repository. A call that names a repository
 // other than that checkout's remotes, by -R, a pull request URL, or GH_REPO, answers to no rule here
 // (`targetsAnotherRepo`): the machine cannot find that repository's config.
 //
@@ -26,7 +27,7 @@
 // its second sentence, right after the cause, as the two steps that pass (`twoSteps`). The first sentence stays the
 // cause, since the dispatch log records it.
 
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
@@ -76,6 +77,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   if (env[OVERRIDE] === '1') return null;
   for (const { call, entry, written } of bodyCalls(command, cwd)) {
     const { folder, chained, line } = entry;
+    const unread = unreadDestination(call, entry, cwd, env);
+    if (unread) return deny(unread);
     const reason = judge(call, line, { cwd: folder ?? cwd, projectFolder: chained ?? cwd, ghRepo: invocationRepo(entry.invocation.environment, env), folderKnown: folder !== null, env, written, listOpenPrs: chained === null || chained === cwd ? listOpenPrs : openPrBodies(chained), readRuns });
     if (reason) return withFolderNote(reason, entry, cwd);
   }
@@ -100,6 +103,36 @@ function withFolderNote(reason, { folder, chained }, cwd) {
   const at = reason.indexOf('\nTo override');
   return at < 0 ? `${reason}${note}` : `${reason.slice(0, at)}${note}${reason.slice(at)}`;
 }
+
+// Why the gh call `call` (readBodyCall), run as the walkCommands entry `entry` from a session whose folder `cwd` lies in
+// a project, may not post: the folder gh runs in is one this rule cannot read (`chained` null), so the rules of the
+// repository it posts to, its public text patterns, private words, pull request contract, and attribution, are not
+// known, and the session's own never stand in for them. The answer names the form that is read, the folder written out.
+// null for a call that names its repository (-R, a URL target, GH_REPO), which is judged as that name says
+// (targetsAnotherRepo), one that posts no text, a help, web, or dry run, a session in no project, and a leading `cd`
+// into the session's own project: gh then runs there or, when that `cd` fails, in the session's folder, both under the
+// same rules. The pull request body, public text, and attribution rules each refuse with it.
+export function unreadDestination(call, entry, cwd, env = process.env) {
+  if (entry.chained !== null || call.help || call.web || call.dryRun || call.deleteLast || !postsText(call)) return null;
+  const ghRepo = invocationRepo(entry.invocation.environment, env);
+  const named = targetUrl(call) ?? call.repo ?? (ghRepo ? { text: ghRepo, dynamic: false } : null);
+  if (named && !named.dynamic && repoName(named.text) !== null) return null;
+  const own = findProject(cwd);
+  if (!own) return null;
+  const there = entry.folder === null ? null : findProject(entry.folder);
+  if (there?.root === own.root) return null;
+  const word = there ? shellWord({ text: entry.folder, dynamic: false }) : '<the folder, written out>';
+  const cause = there
+    ? `the \`cd\` into ${entry.folder} is joined to gh by a \`;\` or a newline, not \`&&\` alone, so gh may post from the session's folder instead`
+    : 'gh runs in a folder this hook cannot read, such as one a variable holds, or one after a `cd` joined to gh by a `;` or a newline';
+  return `${cause}, and the rules of the repository it posts to cannot be read. Its public text patterns, private words, pull request contract, ` +
+    `and attribution go unchecked, and the rules of ${own.root}, the session's project, never stand in for them. ` +
+    `Write the folder out, as \`env -C ${word} gh …\` or \`cd ${word} && gh …\`.`;
+}
+
+// Whether the gh call `call` posts text: a create or a comment always does, through an editor or a prompt when given no
+// body; an edit, a close, a reopen, or a merge only with a body or a title.
+const postsText = (call) => ['create', 'comment'].includes(call.subcommand) || call.fill || call.body !== null || call.bodyFile !== null || call.title !== null;
 
 // Each gh call `read` matches, as { call, entry, written }, with the folder it runs in (shell-lex `walkCommands`), in
 // substitutions and inline shells too: `cd <worktree> && gh pr create --body-file b.md` reads that worktree's b.md and
@@ -158,18 +191,28 @@ export function lineWrites(top) {
     if (known && !known.dynamic) vars.set(name, known.text);
     else vars.delete(name);
   };
-  const fileOf = (each, entry) => {
+  // A word the command reads resolves in the folder it runs in, and a redirect's target in its shell's, which opens it
+  // before a wrapper such as `env -C` moves (shell-lex walkCommands `shell`).
+  const fileOf = (each, entry, folder = entry.folder) => {
     const known = token(each, entry);
-    return known && !known.dynamic && known.text && known.text !== '-' ? resolveIn(entry.folder, known.text) : null;
+    return known && !known.dynamic && known.text && known.text !== '-' ? joinedIn(folder, known.text) : null;
   };
+  const targetOf = (each, entry) => fileOf(each, entry, entry.shell === undefined ? entry.folder : entry.shell);
+  // `files` is keyed by each file's identity (fileIdentity), so two names of one file, through a link or a second hard
+  // link, are one entry; a path whose identity cannot be told is no key, and a write to one may be to any file.
+  const same = (a, b) => a !== null && b !== null && mayAlias(fileIdentity(a), fileIdentity(b));
   const outputs = (segment) => segment.flatMap((each, i) => (each.operator && each.operator !== '<' && !segment[i + 1]?.fdDup ? [[each, segment[i + 1]]] : []));
   const overwrites = (entry, file) => {
     const body = file ? fileOf(file, entry) : null;
-    return body !== null && outputs(entry.segment).some(([, each]) => [null, body].includes(fileOf(each, entry)));
+    return body !== null && outputs(entry.segment).some(([, each]) => {
+      const target = targetOf(each, entry);
+      return target === null || fileIdentity(target) === null || same(target, body);
+    });
   };
   const note = (entry) => {
     const { segment, invocation, folder, heredocs = [] } = entry;
     const at = (each) => fileOf(each, entry);
+    const opened = (each) => targetOf(each, entry);
     const { program, args, environment = [] } = invocation;
     const set = nested(entry) ? (name) => vars.delete(name) : assign;
     if (program === '') {
@@ -192,20 +235,36 @@ export function lineWrites(top) {
     const stdoutMoved = segment.some((each, i) => each.operator === '>' && segment[i + 1]?.fdDup && [undefined, '1'].includes(each.fd));
     if (program === 'cat' && args.every((arg) => arg.text === '-') && redirects.length === 1 && redirects[0][0].operator === '>' &&
       [undefined, '1'].includes(redirects[0][0].fd) && !stdoutMoved) {
-      [target, text] = [at(redirects[0][1]), stdinBody(entry)];
+      [target, text] = [opened(redirects[0][1]), stdinBody(entry)];
     } else if (program === 'tee' && args.length === 1 && !args[0].text.startsWith('-')) {
       target = at(args[0]);
-      // A redirect of its own output onto the same file races the write: what lands there is unknown.
-      text = target !== null && redirects.some(([, each]) => at(each) === target) ? null : stdinBody(entry);
+      // A redirect of its own output onto the same file races the write, and so may one the rule cannot place: what
+      // lands there is unknown.
+      text = target !== null && redirects.some(([, each]) => {
+        const out = opened(each);
+        return out === null || fileIdentity(out) === null || same(out, target);
+      }) ? null : stdinBody(entry);
     } else if (program === 'cp' && !redirects.length) {
       const operands = args.filter((arg) => !/^-[fpv]+$/u.test(arg.text));
       const source = operands.length === 2 && !operands[0].text.startsWith('-') ? at(operands[0]) : null;
       target = source === null || operands[1].text.endsWith('/') ? null : at(operands[1]);
       if (target !== null && isDirectory(target)) target = null;
-      else if (target !== null) text = files.has(source) ? files.get(source) : readText(source);
+      else if (target !== null) {
+        const from = fileIdentity(source);
+        const before = from === null ? { text: null } : writtenText(files, from);
+        text = before ? before.text : readText(source);
+      }
     }
     const unknown = () => {
       for (const known of files.keys()) files.set(known, null);
+    };
+    // A write to `file` with `value`: to its identity, or, for a file whose identity cannot be told, to any file.
+    const write = (file, value) => {
+      const key = fileIdentity(file);
+      if (key === null) return unknown();
+      // Another spelling of the name may be this very file.
+      for (const known of files.keys()) if (known !== key && mayAlias(known, key)) files.set(known, null);
+      files.set(key, value);
     };
     // A command that is neither a known reader nor one of the writes above may change any file: a script, `sed -i`, or
     // a program fed its own code on stdin.
@@ -214,15 +273,15 @@ export function lineWrites(top) {
       // A file it names on disk is one it may change too.
       for (const each of segment) {
         const file = each.operator || each.fdDup ? null : at(each);
-        if (file !== null) files.set(file, null);
+        if (file !== null) write(file, null);
       }
     }
     for (const [, each] of redirects) {
-      const file = at(each);
-      if (file !== null) files.set(file, null);
+      const file = opened(each);
+      if (file !== null) write(file, null);
       else unknown();
     }
-    if (target !== null) files.set(target, text);
+    if (target !== null) write(target, text);
   };
   return { files, token, note, overwrites };
 }
@@ -251,7 +310,92 @@ const onlyHeredoc = (heredocs) => (heredocs.length === 1 && [undefined, '0'].inc
 // `< file` or `<<< word`, may replace it, so the input is one this rule cannot know.
 export const stdinBody = ({ segment = [], heredocs = [] }) => (segment.some((each) => each.operator === '<') ? null : onlyHeredoc(heredocs));
 
-const resolveIn = (folder, file) => (path.isAbsolute(file) ? path.resolve(file) : folder === null ? null : path.resolve(folder, file));
+// A path joined as the system opens it, a link followed before a `..` after it, never normalized first.
+const joinedIn = (folder, file) => (path.isAbsolute(file) ? file : folder === null ? null : `${folder}/${file}`);
+
+// The identity of the file the absolute path `file` names, for telling two names of one file apart, or null when it
+// cannot be told: an existing file's device and inode, so a second hard link is the same file; else the device and
+// inode of the deepest folder of the path that exists, as the system resolves it, each link before a `..` after it
+// (realpathSync.native, never Node's own, which drops a `..` first), a link at the end of that part, even one whose
+// target is not there yet, followed in turn, with the names below it joined on, in the case they were spelled. A read
+// that fails, or more links than LINK_HOPS, gives null. Whether a disk folds case is not told from here, so two spellings of a name are neither one
+// file nor two: a write to either makes the other unknown, and a read of one never takes the other's text (writtenText).
+export function fileIdentity(file) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  const gone = (error) => ['ENOENT', 'ENOTDIR'].includes(error?.code);
+  let head = file;
+  const rest = [];
+  for (let hops = 0; hops <= LINK_HOPS; hops += 1) {
+    try {
+      // Exact numbers: an inode past 2^53 rounds in a plain number, and two folders could share a key.
+      const stat = statSync(realpathSync.native(head), { bigint: true });
+      if (rest.length === 0 && !stat.isDirectory()) return `inode:${stat.dev}:${stat.ino}`;
+      // The names below the deepest folder that exists are folders the line makes, never links, so `.` and `..` fold
+      // as written; one that climbs above that folder cannot be told.
+      const below = rest.length ? path.posix.normalize(rest.join('/')) : '';
+      if (below === '..' || below.startsWith('../')) return null;
+      const names = below && below !== '.' ? below.split('/') : [];
+      // A `..` that folded away may lead back to a file or folder that is there: its identity is that one's.
+      if (rest.includes('..') && names.length && hops < LINK_HOPS) {
+        const reached = `${realpathSync.native(head)}/${names.join('/')}`;
+        if (existsAt(reached)) return fileIdentity(reached);
+      }
+      // That folder by its own identity, so two spellings of it are one, and the names below it.
+      return [`folder:${stat.dev}:${stat.ino}`, ...names].join('/');
+    } catch (error) {
+      if (!gone(error)) return null;
+    }
+    let link = null;
+    try {
+      if (lstatSync(head).isSymbolicLink()) link = readlinkSync(head);
+    } catch (error) {
+      if (!gone(error)) return null;
+    }
+    if (link !== null) {
+      head = path.isAbsolute(link) ? link : `${path.dirname(head)}/${link}`;
+      continue;
+    }
+    const parent = path.dirname(head);
+    if (parent === head) return null;
+    rest.unshift(path.basename(head));
+    head = parent;
+  }
+  return null;
+}
+const LINK_HOPS = 40;
+// Whether something is at `file`, a link not followed: a look that fails counts as nothing there.
+const existsAt = (file) => {
+  try {
+    lstatSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Whether two identities (fileIdentity) may be one file: the same, or, for names that are no file yet, below the very
+// same existing folder, the names below it the same part by part, each pair equal, equal but for ASCII letter case, or
+// either one not plain ASCII. A disk may fold case, Unicode spellings, and ignorable characters in ways this rule never
+// tries to match, so a name with any character past ASCII may be any other at its place; folding more than a disk
+// does only makes a write unknown, never a body read as another's.
+const PLAIN_PART = /^[\x20-\x7e]*$/u;
+const partsAlias = (x, y) => x === y || !PLAIN_PART.test(x) || !PLAIN_PART.test(y) || x.toLowerCase() === y.toLowerCase();
+function mayAlias(a, b) {
+  if (a === null || b === null) return false;
+  if (a === b) return true;
+  if (a.startsWith('inode:') || b.startsWith('inode:')) return false;
+  const [left, right] = [a.split('/'), b.split('/')];
+  return left[0] === right[0] && left.length === right.length && left.every((part, i) => partsAlias(part, right[i]));
+}
+
+// What the line wrote to the file of identity `key`, from `written` (lineWrites files): { text } when it holds that
+// file's text, { text: null } when a write it cannot read, or one to a name that may be the same file, came before,
+// and null when the line wrote neither.
+function writtenText(files, key) {
+  if (files.has(key)) return { text: files.get(key) };
+  for (const known of files.keys()) if (mayAlias(known, key)) return { text: null };
+  return null;
+}
 
 const isDirectory = (file) => {
   try {
@@ -751,9 +895,9 @@ const unread = (cause, fix = '') => ({ text: null, unread: { cause, fix } });
 // ''. A rule that refuses an unread body takes both from this one call: a second read could find a file the first did
 // not, and leave the text unchecked with no cause to refuse it. The pull request body, public text, and attribution rules
 // refuse with it, so the first deny names the form that passes.
-export function bodyRead(call, cwd, written = new Map()) {
+export function bodyRead(call, cwd, lineFiles = new Map()) {
   if (call.bodyOverwritten) {
-    return unread('a redirect on the gh call writes onto its own body file, which bash empties before gh reads it', 'Send that output to another file.');
+    return unread('a redirect on the gh call writes, or may write, onto its own body file, which bash would empty before gh reads it', 'Send that output to another file.');
   }
   if (call.body) {
     if (!call.body.dynamic) return { text: call.body.text };
@@ -771,9 +915,14 @@ export function bodyRead(call, cwd, written = new Map()) {
   if (cwd === null && !path.isAbsolute(given)) {
     return unread(`the body file \`${given}\` is a relative path, and the folder gh runs in is unknown after that directory change`, 'Write the path out in full.');
   }
-  const file = resolveIn(cwd, given);
-  if (written.has(file)) {
-    const text = written.get(file);
+  // Only a line that wrote files asks which file this is: the read below is then the one look at it.
+  const file = lineFiles.size ? fileIdentity(joinedIn(cwd, given)) : null;
+  if (file === null && lineFiles.size) {
+    return unread(`the body file \`${given}\` is one whose identity the hook cannot tell, so whether another command on this line writes it first cannot be told`, 'Run that command first, then gh as its own command.');
+  }
+  const before = file === null ? null : writtenText(lineFiles, file);
+  if (before) {
+    const { text } = before;
     return text !== null ? { text } : unread('another command on this line changes the body file before gh reads it, such as a script or `sed -i`, ' +
       'or a redirect', 'Run that command first, then gh as its own command.');
   }

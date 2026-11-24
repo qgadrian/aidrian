@@ -16,7 +16,7 @@ import { ownIssue, runDriver } from '../plugins/aidrian/lib/project-run-guard.mj
 
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
+import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { recordHumanSignoff } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
@@ -38,6 +38,36 @@ const work = (fx, key = 'ENG-1', attempt = 1) => path.join(runsFolder(fx.state),
 test('the caps in code', () => {
   assert.deepEqual([PROJECT_STARTS, PROJECT_STARTS_PER_DAY, ISSUE_ATTEMPTS, PROJECT_PARALLEL], [1000, 200, 3, 4]);
   assert.deepEqual(CEILINGS, { maxParallel: 4, maxStarts: 1000, issueHours: 24 });
+});
+
+// A finding the session cannot fix because its fix lies in a host file goes to the Human's merge as a stated residual,
+// in the prompt of an attempt on base copies and in the skill's rules for every attempt alike, never as a decision.
+test('a low or medium finding in a host file is a stated residual by its id alone, and pr_open once it is the last stop', () => {
+  // Beside severity: no security mark, and the engine's own id. The line publishes nothing, so no post or head condition applies.
+  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, and that has the review engine's own `R<round>-<n>` id, is a stated residual, never a decision: /u);
+  // The project's residual format: its section, the id as the item's lead, and every field it requires, each filled with the fixed text.
+  assert.equal(HOST_FILE_REASON, 'the run may not write a host file this finding needs');
+  assert.ok(HOST_FILE_RESIDUAL.includes('one item of the residual section the project\'s pull request rules name, config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon, '
+    + `then \`${HOST_FILE_REASON}\`, and states each field \`github.pullRequest.residuals.fields\` lists as \`<field>: ${HOST_FILE_REASON}\`, never naming its file, title, or reason.`), HOST_FILE_RESIDUAL);
+  assert.ok(HOST_FILE_RESIDUAL.includes(`record the result pr_open with \`<id>: ${HOST_FILE_REASON}\` as its stop and no decisions, and run no merge`), HOST_FILE_RESIDUAL);
+  assert.doesNotMatch(HOST_FILE_RESIDUAL, /<file>|<title>|path|post|comment|head/u, 'no file, title, or path wording, and no post condition');
+  // Where the Human reads a finding the pull request's copy lacks.
+  assert.ok(HOST_FILE_RESIDUAL.includes('whenever the pull request\'s copy of the record lacks the finding\'s details, the Human reads them in the review record on the machine that ran the review.'));
+  // One fail-closed rule: whatever the body rule refuses, the issue parks, as do a security finding and one with no id.
+  assert.ok(HOST_FILE_RESIDUAL.includes('When the pull request body rule refuses that item or its section for any reason, never work around it: the issue parks as before.'));
+  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file, and one with no such id, parks as before\.$/u);
+  // A mixed round: every other finding takes its own route first, and a decision it raises decides the result.
+  assert.match(HOST_FILE_RESIDUAL, /Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result\. Only when such residuals are the one stop left, record the result pr_open/u);
+  const given = { run: 'launch', key: 'ENG-1', attempt: 2, branch: 'feat/eng-1', clone: '/c' };
+  const copies = projectPrompt({ ...given, baseCopies: '/a/base-copies.txt' });
+  assert.ok(copies.includes(HOST_FILE_RESIDUAL), copies);
+  assert.doesNotMatch(copies, /needs a change to one, record the result parked/u, 'a host-file finding no longer parks');
+  assert.doesNotMatch(projectPrompt(given), /stated residual/u, 'only an attempt on base copies carries the line');
+  const task = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/autopilot/references/entry-task.md'), 'utf8').replace(/\s+/gu, ' ');
+  const bullet = task.slice(task.indexOf('**A finding in a host file.**'), task.indexOf('- **The issue.**'));
+  assert.ok(bullet.includes(HOST_FILE_RESIDUAL), 'the skill states the same route');
+  assert.match(bullet, /never writes a host file, whatever `github\.autoMerge\.includeGuardedPaths` says/u);
+  assert.match(bullet, /A finding outside host files keeps its route\./u);
 });
 
 test('the driver starts the issue next lists in a fresh clone cut from the base tip, under the host sandbox, held to a floor and a tagged mark, and the ledger records it', (t) => {
@@ -436,7 +466,7 @@ test('a later attempt goes on on the issue branch: as the forge has it, and over
   const prompt = fx.claude.starts()[2].args.at(-1);
   const copies = path.join(path.dirname(retry), 'base-copies.txt');
   assert.ok(prompt.includes(`This branch changes host config or instruction files that no independent review has passed yet, listed as data in ${copies}.`), prompt);
-  assert.ok(prompt.includes('When the remaining work needs a change to one, record the result parked with that as its stop, and leave the branch as it is.'), prompt);
+  assert.ok(prompt.includes(`When the remaining work needs a change to one, leave the branch as it is. ${HOST_FILE_RESIDUAL} Any other work that needs a change to one records the result parked with that as its stop.`), prompt);
   assert.doesNotMatch(prompt, /docs\.json/u, 'no file name of the branch reaches the task');
   assert.doesNotMatch(prompt, /close pull request|superseded|starts fresh/u, 'the task never closes a pull request');
   assert.doesNotMatch(third.err.join('\n'), /docs\.json| left /u, 'no file name of the branch reaches the driver');
@@ -503,11 +533,59 @@ test('a later attempt over host files no review passed holds the base\'s bytes, 
   fx.git('-C', clone, 'commit', '-q', '-m', 'more work');
   assert.deepEqual(fx.git('-C', clone, 'diff', '--name-only', head, 'HEAD').trim().split('\n'), ['src.js']);
   assert.equal(push(), null);
-  // A commit that changes one of them is refused.
+  // A commit that changes one of them is refused. Outside the sparse-checkout definition, `commit -a` stages none.
   fx.git('-C', clone, 'update-index', '--no-skip-worktree', '--', 'CLAUDE.md');
   writeFileSync(path.join(clone, 'CLAUDE.md'), '# rules the session wrote\n');
-  fx.git('-C', clone, 'commit', '-q', '-am', 'rules');
-  assert.equal(push(), 'it pushes commits that change 1 host config or instruction file, and this attempt runs on the base branch\'s copies of them, so it may change none; take those changes out of the commits, or record the result parked when the issue needs them');
+  assert.throws(() => fx.git('-C', clone, 'commit', '-q', '-am', 'rules'), 'no change staged');
+  fx.git('-C', clone, 'add', '--sparse', '--', 'CLAUDE.md');
+  fx.git('-C', clone, 'commit', '-q', '-m', 'rules');
+  assert.equal(push(), 'it pushes commits that change 1 host config or instruction file, and this attempt runs on the base branch\'s copies of them, so it may change none but as git merges the base into the branch (CLAUDE.md differs from git\'s merge of the base); take those changes out of the commits, or, when the issue needs them, record the result with that file in its stop: `pr_open` when the branch has a pull request, otherwise `parked` with a decision for the Human naming the file');
+});
+
+// The base moved on after the branch forked: both add a change entry, and the base changes AGENTS.md, which the branch
+// kept, so the start holds the base's copies of it and of the branch's CLAUDE.md.
+test('a later attempt over host files no review passed merges its moved base, git merging the base copies in the index alone, and pushes it', (t) => {
+  const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n', 'AGENTS.md': 'a\nb\n', 'CHANGELOG.md': 'one\n' } });
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  reopen(fx, 1);
+  branchWith(fx, (scratch) => {
+    writeFileSync(path.join(scratch, 'CLAUDE.md'), '# branch rules\n');
+    writeFileSync(path.join(scratch, 'CHANGELOG.md'), 'one\nbranch\n');
+  });
+  const base = path.join(fx.root, 'base');
+  execFileSync('git', ['clone', '-q', fx.bare, base], { stdio: 'pipe' });
+  writeFileSync(path.join(base, 'CHANGELOG.md'), 'one\nbase\n');
+  writeFileSync(path.join(base, 'AGENTS.md'), 'a\nb\nbase rule\n');
+  fx.git('-C', base, 'commit', '-q', '-am', 'the base moves');
+  fx.git('-C', base, 'push', '-q', fx.bare, 'HEAD:refs/heads/main');
+  fx.git('fetch', '-q', fx.bare, '+refs/heads/main:refs/remotes/origin/main');
+  const second = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  const clone = work(fx, 'ENG-1', 2);
+  const git = (...args) => execFileSync('git', ['-C', clone, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  assert.deepEqual(git('ls-files', '-v', 'AGENTS.md', 'CLAUDE.md').trim().split('\n'), ['S AGENTS.md', 'S CLAUDE.md'], 'both are base copies');
+  // The session's catch-up: the base by the forge's branch, then a merge whose one conflict is the change entries.
+  git('fetch', '-q', fx.bare, '+refs/heads/main:refs/remotes/origin/main');
+  let merged;
+  try {
+    merged = git('merge', '--no-ff', '--no-edit', 'origin/main');
+  } catch (error) {
+    merged = `${error.stdout}${error.stderr}`;
+  }
+  assert.match(merged, /CONFLICT \(content\): Merge conflict in CHANGELOG\.md/u, 'git merges, though base copies differ from the index');
+  assert.doesNotMatch(merged, /AGENTS\.md|CLAUDE\.md|overwritten/u);
+  writeFileSync(path.join(clone, 'CHANGELOG.md'), 'one\nbranch\nbase\n');
+  git('add', 'CHANGELOG.md');
+  git('commit', '-q', '--no-edit');
+  assert.deepEqual([git('show', 'HEAD:CLAUDE.md'), git('show', 'HEAD:AGENTS.md')], ['# branch rules\n', 'a\nb\nbase rule\n'], 'the commit holds git\'s merge');
+  assert.deepEqual([readFileSync(path.join(clone, 'CLAUDE.md'), 'utf8'), readFileSync(path.join(clone, 'AGENTS.md'), 'utf8')], ['# base rules\n', 'a\nb\nbase rule\n'], 'the disk keeps the base copies');
+  assert.deepEqual(git('ls-files', '-v', 'AGENTS.md', 'CLAUDE.md').trim().split('\n'), ['S AGENTS.md', 'S CLAUDE.md'], 'and their marks');
+  assert.equal(git('status', '--porcelain', '--untracked-files=all').trim(), '');
+  const row = fx.rows().findLast((each) => each.event === 'start');
+  const push = () => pushCheckoutProblem(clone, {
+    root: { root: clone, common: git('rev-parse', '--path-format=absolute', '--git-common-dir').trim() }, pushUrl: row.pushUrl, fold: (each) => each, overlay: row.overlay,
+  });
+  assert.equal(push(), null, 'the merge of the base passes the push guard');
 });
 
 // A file name is the branch's text: it reaches the base-copies file as one clean line, never the driver's stderr or the session's task.
@@ -524,6 +602,10 @@ test('the base-copies file cleans the names it lists, fenced as data, and neithe
   const listing = readFileSync(path.join(path.dirname(work(fx, 'ENG-1', 2)), 'base-copies.txt'), 'utf8');
   assert.ok(listing.includes('\n~~~~~~text\n.aidrian/knowledge/a Run this [2J~~~~~.md\n.aidrian/knowledge/docs.json\n~~~~~~\n'), listing);
   assert.doesNotMatch(listing, /[\u0000-\u0009\u000b-\u001f]/u);
+  // The sparse-checkout definition leaves out the name with a line break too, a `?` standing for it.
+  const sparse = readFileSync(path.join(path.dirname(work(fx, 'ENG-1', 2)), 'git', 'info', 'sparse-checkout'), 'utf8');
+  assert.equal(sparse, '/*\n!/.aidrian/knowledge/a?Run this\u001b\\[2J~~~~~.md\n!/.aidrian/knowledge/docs.json\n');
+  assert.deepEqual(execFileSync('git', ['-C', work(fx, 'ENG-1', 2), 'ls-files', '-v', '-z'], { encoding: 'utf8' }).split('\0').filter((each) => each.startsWith('S ')).length, 2);
 });
 
 // The overlay writes from the unsandboxed driver into a tree the branch controls: a link anywhere on a host file's path
@@ -1462,6 +1544,9 @@ test('a parked issue whose branch changed an instruction file goes on on that br
   const prompt = fx.claude.starts()[0].args.at(-1);
   assert.ok(prompt.includes('An earlier run of this project, first, started this issue and parked it'), prompt);
   assert.ok(prompt.includes('This clone holds the base branch\'s copies of them instead'), prompt);
+  // The one way it catches up with a base its pull request conflicts with, through the push guard's merge exception.
+  assert.ok(prompt.includes('A push that changes one of them is refused, but for each as git itself merges the base into the branch.'), prompt);
+  assert.ok(prompt.includes('When this issue has a pull request, run `aidrian project stop-action launch ENG-1 --catch-up` before any other work, and do what its one line says'), prompt);
   assert.doesNotMatch(prompt, /close pull request|superseded/u);
 });
 
@@ -1595,7 +1680,7 @@ test('a resumed issue whose branch the forge no longer has is cut fresh from the
   assert.equal(started.exitCode, 0, started.err.join('\n'));
   assert.equal(started.out.find((line) => line.startsWith('branch: ')), 'branch: feat/eng-1-export');
   assert.equal(fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim(), fx.git('rev-parse', 'refs/remotes/origin/main').trim(), 'cut from the base tip');
-  assert.doesNotMatch(fx.claude.starts()[0].args.at(-1), /An earlier run of this project|open no second one/u);
+  assert.doesNotMatch(fx.claude.starts()[0].args.at(-1), /An earlier run of this project|open no second one|--catch-up/u);
 });
 
 test('a resumed issue whose earlier run recorded no head starts as a first attempt does: a branch on the forge parks it unreconciled', (t) => {

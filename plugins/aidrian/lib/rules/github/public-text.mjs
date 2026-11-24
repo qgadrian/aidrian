@@ -8,7 +8,8 @@
 // rule asks nothing about the repository's visibility. Body and title are read as the pull request body rule reads them
 // (pr-body `bodyCalls`). Private words stay private wherever a call posts, so readable text answers to them even on a call
 // naming another repository; the config patterns and the unread-text refusals answer to the repository the call targets
-// (`targetsAnotherRepo`).
+// (`targetsAnotherRepo`). A call that posts from a folder whose project cannot be read, such as `cd "$W" && gh …`, is
+// refused whatever its text, since that repository's patterns are unknown (pr-body `unreadDestination`).
 //
 // A deny names a config pattern and never echoes the text around the match, since the dispatch log records its first
 // sentence. A hit from the private file names neither the word nor its pattern, only the file and where it matched.
@@ -24,7 +25,7 @@ import { BANNED_FILE, usableBannedLines } from '../../banned-terms.mjs';
 import { boundedSearch, timeBudget } from '../../bounded-regexp.mjs';
 import { loadConfig } from '../../config.mjs';
 import { findProject } from '../../project.mjs';
-import { bodyCalls, bodyFilePath, bodyRead, readBodyCall, stateFolder, targetsAnotherRepo, TEXT_HEREDOC, twoSteps } from './pr-body.mjs';
+import { bodyCalls, bodyFilePath, bodyRead, readBodyCall, stateFolder, targetsAnotherRepo, TEXT_HEREDOC, twoSteps, unreadDestination } from './pr-body.mjs';
 import { invocationRepo } from './review-request.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PUBLIC_TEXT';
@@ -56,6 +57,9 @@ export function check(command, { cwd = process.cwd(), env = process.env, started
   const calls = [];
   for (const { call, entry, written } of bodyCalls(command, cwd, readBodyCall, TEXT_HEREDOC)) {
     if (call.help || call.dryRun || call.deleteLast) continue;
+    // A folder whose project cannot be read hides the patterns and words of the repository the call posts to.
+    const hidden = unreadDestination(call, entry, cwd, env);
+    if (hidden) return deny(hidden);
     const project = findProject(entry.chained ?? cwd);
     const config = project ? loadConfig(project).config : null;
     const patterns = config?.github.publicText.patterns ?? [];

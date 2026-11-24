@@ -1,12 +1,14 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import fs from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 
-import { check, OVERRIDE } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
+import { check, fileIdentity, OVERRIDE } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { appearsAfterFirstStat } from './fixtures/fs-faults.mjs';
 
 const GOOD = '## Summary\nShare links expire.\n\n## Tests run\n- `npm test`: pass\n';
@@ -186,7 +188,8 @@ test('a body file the same command writes first, from a heredoc or a copy, is re
     [`${write('b.md', GOOD)}${create('other.md')}`, 'gh reads another file'],
     [`${create('b.md')} && ${write('b.md', GOOD)}`, 'the write comes after gh'],
     [`cp missing.md b.md && ${create('b.md')}`, 'a copy of a file the rule cannot read'],
-    [`cd .. || true; ${write('b.md', GOOD)}${create('b.md')}`, 'a folder the rule cannot know'],
+    // A -R names where it posts, so its folder alone is unknown (unreadDestination): the checkout has no remote to tell it apart.
+    [`cd .. || true; ${write('b.md', GOOD)}${create('b.md')} -R acme/notes`, 'a folder the rule cannot know'],
     [`sed -i '' 's/^## Testing$/## Tests run/' draft.md; ${create('draft.md')}`, 'a file on disk another command edits first'],
     [`python3 fix.py draft.md && ${create('draft.md')}`, 'a script that names it'],
     [`gh pr view 3 --json body -q .body > draft.md && ${create('draft.md')}`, 'a redirect from a reader still writes'],
@@ -220,10 +223,13 @@ test('a heredoc that another input or a later command can replace is never trust
   t.after(() => rmSync(out, { recursive: true, force: true }));
   const file = path.join(out, 'b.md');
   const anywhere = project(t, { version: 1, github: { pullRequest: { sharedTempBodyFile: false } } });
-  // A real deny's shape: after a cd that is not leading, the folder is unknown, and `2>&1` must not poison the write.
-  assert.equal(anywhere(`${write(file)}cd ${out} && gh auth status 2>&1 | head -3 && git push -q 2>&1 | tail -3 && ${create(file)}`), null,
+  // A real deny's shape: after a cd that is not leading, the folder is unknown, and `2>&1` must not poison the write. A -R
+  // names where gh posts, so the unknown folder alone does not refuse it (unreadDestination).
+  assert.equal(anywhere(`${write(file)}cd ${out} && gh auth status 2>&1 | head -3 && git push -q 2>&1 | tail -3 && ${create(file)} -R acme/notes`), null,
     'a 2>&1 duplicates a descriptor and writes no file');
-  assert.match(anywhere(`${write(file)}cd ${out} && gh auth status 2> err.txt; ${create(file)}`) ?? '', /cannot read/, 'a relative redirect in an unknown folder still does');
+  // The shell opens a redirect where it is whenever the command runs: after `cd x &&`, in x; after `cd x;`, unknown.
+  assert.equal(anywhere(`${write(file)}cd ${out} && gh auth status 2> err.txt; ${create(file)} -R acme/notes`), null, 'a redirect in the folder the && chain names');
+  assert.match(anywhere(`${write(file)}cd ${out}; gh auth status 2> err.txt; ${create(file)} -R acme/notes`) ?? '', /^Blocked: the body is one this rule cannot read/, 'a relative redirect in an unknown folder still does');
 });
 
 test('a redirection that names a descriptor is read as bash runs it, failing closed on any but stdin or stdout', (t) => {
@@ -432,4 +438,96 @@ test('a target URL names the repository before -R does', (t) => {
   const run = (command) => check(command, { cwd: dir, env: {} });
   assert.equal(run("gh pr edit https://github.com/other/repo/pull/3 -R acme/notes --body 'no sections'"), null);
   assert.match(run("gh pr edit https://github.com/acme/notes/pull/3 -R other/repo --body 'no sections'") ?? '', /^Blocked: the body has no/);
+});
+
+// bash opens a redirect in its own folder before `env -C` moves the program, which reads its body file in the new one.
+test("a redirect resolves in the shell's folder, and the body file in the folder env -C gives gh", (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  mkdirSync(path.join(dir, 'sub'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  writeFileSync(path.join(dir, 'good.md'), GOOD);
+  writeFileSync(path.join(dir, 'sub/good.md'), GOOD);
+  const run = (command) => check(command, { cwd: dir, env: {} });
+  assert.equal(run('env -C sub gh pr create -t x -F good.md > good.md'), null, 'gh reads sub/good.md, and bash empties good.md beside the session');
+  assert.match(run('env -C sub gh pr create -t x -F ../good.md > good.md') ?? '', /^Blocked: the body is one this rule cannot read/u,
+    'gh reads the very good.md bash empties first');
+  // A heredoc a wrapped cat writes lands in the shell's folder, where a later gh reads it.
+  assert.equal(run(`env -C sub cat > b.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F b.md`), null);
+  // After a leading cd that a `;` ends, the shell may still be where it was, so the heredoc may never reach sub/b.md:
+  // the write is one the rule cannot place, whatever folder env -C gives gh.
+  assert.match(run(`cd sub && true; cat > b.md <<'EOF'\n${GOOD}EOF\nenv -C ${path.join(dir, 'sub')} gh pr create -t x -F b.md`) ?? '', /^Blocked: the body is one this rule cannot read/u);
+  // A tee whose file env -C places, with a redirect the rule cannot place, may race its own write.
+  assert.match(run(`cd sub && true; env -C ${path.join(dir, 'sub')} tee b.md > b.md <<'EOF'\n${GOOD}EOF\nenv -C ${path.join(dir, 'sub')} gh pr create -t x -F b.md`) ?? '', /^Blocked: the body is one this rule cannot read/u);
+});
+
+// Two names of one file, through a link or a second hard link, are one file to every write and read the rule tracks.
+test('a write through a link or a hard link to a body file is a write to it', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  for (const name of ['b.md', 'c.md']) writeFileSync(path.join(dir, name), GOOD);
+  symlinkSync('b.md', path.join(dir, 'link.md'));
+  linkSync(path.join(dir, 'c.md'), path.join(dir, 'hard.md'));
+  symlinkSync('new.md', path.join(dir, 'ahead.md'));
+  const run = (command) => check(command, { cwd: dir, env: {} });
+  const unread = /^Blocked: the body is one this rule cannot read/u;
+  assert.match(run('gh pr create -t x -F b.md > link.md') ?? '', unread, 'bash empties b.md through the link before gh reads it');
+  assert.match(run(`tee b.md > link.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F b.md`) ?? '', unread, 'tee races its own output through the link');
+  assert.match(run(`cat > c.md <<'EOF'\n${GOOD}EOF\necho x > hard.md\ngh pr create -t x -F c.md`) ?? '', unread, 'the echo rewrites c.md through its hard link');
+  // A `..` after a link climbs from where the link leads, as the system opens the path: sub/up/../b.md is b.md here.
+  mkdirSync(path.join(dir, 'sub'));
+  mkdirSync(path.join(dir, 'deep', 'other'), { recursive: true });
+  symlinkSync('../deep/other', path.join(dir, 'sub', 'up'));
+  writeFileSync(path.join(dir, 'deep', 'b.md'), GOOD);
+  assert.match(run('gh pr create -t x -F deep/b.md > sub/up/../b.md') ?? '', unread, 'the redirect lands on deep/b.md');
+  assert.equal(run('gh pr create -t x -F b.md > sub/up/../other.md'), null, 'and only there');
+  // Whether the disk folds case is not told, so two spellings of a name the line writes are neither one file nor two:
+  // a write to one makes the other unknown, and gh reading one never gets the other's heredoc, on any disk.
+  assert.match(run(`cat > New.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`) ?? '', unread, 'the heredoc may be another file');
+  assert.match(run(`cat > a.md <<'EOF'\n${GOOD}EOF\ncat > A.md <<'EOF'\nno sections\nEOF\ngh pr create -t x -F a.md`) ?? '', unread, 'the second write may be the first file');
+  assert.equal(run(`cat > a.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F a.md`), null, 'one spelling is read as written');
+  assert.equal(run(`cat > a.md <<'EOF'\n${GOOD}EOF\nmkdir -p r && echo x > r/a.md\ngh pr create -t x -F a.md`), null, 'a name in another folder is another file');
+  mkdirSync(path.join(dir, 'r'));
+  assert.equal(run(`cat > r\uff0fa.md <<'EOF'\n${GOOD}EOF\necho x > r/a.md\ngh pr create -t x -F r\uff0fa.md`), null, 'a fullwidth slash in a name is no folder');
+  // A folder the line makes is reached through `.` and `..` as the shell reaches it.
+  assert.match(run(`mkdir -p new && cat > new/body.md <<'EOF'\n${GOOD}EOF\necho x > new/./body.md\ngh pr create -t x -F new/body.md`) ?? '', unread, 'new/./body.md is new/body.md');
+  assert.match(run(`mkdir -p new/in && cat > new/body.md <<'EOF'\n${GOOD}EOF\necho x > new/in/../body.md\ngh pr create -t x -F new/body.md`) ?? '', unread, 'and so is new/in/../body.md');
+  // A `..` out of a folder the line makes may reach a file that is there already: it is that file.
+  assert.match(run(`cat > c.md <<'EOF'\n${GOOD}EOF\nmkdir -p made && echo x > made/../c.md\ngh pr create -t x -F c.md`) ?? '', unread, 'made/../c.md is the existing c.md');
+  // A folder that exists is one folder however it is spelled, and two folders that exist are never one.
+  mkdirSync(path.join(dir, 'caf\u00e9'));
+  assert.equal(run(`cat > caf\u00e9/n.md <<'EOF'\n${GOOD}EOF\necho x > r/n.md\ngh pr create -t x -F caf\u00e9/n.md`), null, 'n.md in two existing folders');
+  symlinkSync('r', path.join(dir, 'also-r'));
+  assert.match(run(`cat > r/m.md <<'EOF'\n${GOOD}EOF\necho x > also-r/M.md\ngh pr create -t x -F r/m.md`) ?? '', unread, 'the same folder by a link, the name in another case');
+  // So is a name with any character past ASCII against another in its folder, as a disk may fold Unicode spellings,
+  // and drop ignorable characters, in ways the rule never tries to match: é composed and decomposed, ß against SS,
+  // the capital ẞ against ss, a zero-width joiner.
+  for (const [first, second] of [['caf\u00e9.md', 'cafe\u0301.md'], ['stra\u00dfe.md', 'STRASSE.md'], ['\u1e9e.md', 'ss.md'], ['a\u200d.md', 'a.md']]) {
+    assert.match(run(`cat > ${first} <<'EOF'\n${GOOD}EOF\ncat > ${second} <<'EOF'\nno sections\nEOF\ngh pr create -t x -F ${first}`) ?? '', unread, `${first} and ${second}`);
+  }
+  // A heredoc written through a link whose target is not there yet is the body gh then reads by the target's name.
+  assert.equal(run(`cat > ahead.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`), null);
+  assert.match(run(`cat > ahead.md <<'EOF'\n## Summary\nEOF\ngh pr create -t x -F new.md`) ?? '', /^Blocked: the body has no `## Tests run` section/u);
+});
+
+test('a folder identity keeps an inode past 2^53 exact, so two folders never share one', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const name of ['a', 'b']) mkdirSync(path.join(dir, name));
+  const big = { [path.join(dir, 'a')]: 2n ** 60n, [path.join(dir, 'b')]: 2n ** 60n + 1n };
+  const real = fs.statSync;
+  t.mock.method(fs, 'statSync', (file, options) => {
+    if (!(file in big)) return real(file, options);
+    // A plain number rounds both to one value, as on a disk with inodes that large.
+    return { isDirectory: () => true, dev: options?.bigint ? 1n : 1, ino: options?.bigint ? big[file] : Number(big[file]) };
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  assert.notEqual(fileIdentity(path.join(dir, 'a', 'x.md')), fileIdentity(path.join(dir, 'b', 'x.md')));
 });

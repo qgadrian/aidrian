@@ -20,7 +20,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl', 'pullUrl',
-  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush', 'tokenReads',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'hasCommit', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush', 'tokenReads',
   'conversationComments', 'comment', 'issue', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'mergeStatus', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
@@ -1710,4 +1710,41 @@ test('reviewThreads, changeEdits, and reviewsWithComments send the owner and nam
     assert.throws(() => forge.reviewsWithComments('acme/notes', bad), /must be a positive whole number/u, String(bad));
   }
   assert.equal(args().length, 3, 'no gh call for a number that fails');
+});
+
+test('hasCommit: the git database read of one commit, false only when GitHub confirms it has none', () => {
+  const sha = 'a'.repeat(40);
+  const { forge, args } = recorded(() => JSON.stringify({ sha }));
+  assert.equal(forge.hasCommit('acme/widgets', sha, { host: 'ghe.example.com' }), true);
+  assert.deepEqual(args(), [['api', '--hostname', 'ghe.example.com', `repos/acme/widgets/git/commits/${sha}`]]);
+  const fails = (text) => Object.assign(new Error(text), { stderr: text });
+  // A 404 of the commit, while the same route reads the default branch's head: the commit is missing.
+  const main = 'c'.repeat(40);
+  const answers = (commit) => (call) => {
+    const route = call.at(-1);
+    if (route === `repos/acme/widgets/git/commits/${sha}`) throw fails('gh: Not Found (HTTP 404)');
+    if (route === 'repos/acme/widgets') return JSON.stringify({ default_branch: 'main' });
+    if (route === 'repos/acme/widgets/branches/main') return JSON.stringify({ commit: { sha: main } });
+    return commit(route);
+  };
+  const missing = recorded(answers(() => JSON.stringify({ sha: main })));
+  assert.equal(missing.forge.hasCommit('acme/widgets', sha), false);
+  assert.deepEqual(missing.args().map((call) => call.at(-1)), [`repos/acme/widgets/git/commits/${sha}`, 'repos/acme/widgets', 'repos/acme/widgets/branches/main', `repos/acme/widgets/git/commits/${main}`]);
+  // A token that reads the repository but not its commits, as one without Contents read: nothing is confirmed.
+  const noContents = recorded(answers(() => {
+    throw fails('gh: Not Found (HTTP 404)');
+  }));
+  assert.throws(() => noContents.forge.hasCommit('acme/widgets', sha), /HTTP 404/u);
+  // A 404 of the repository too, as for a token that cannot see it.
+  const hidden = recorded(() => {
+    throw fails('gh: Not Found (HTTP 404)');
+  });
+  assert.throws(() => hidden.forge.hasCommit('acme/widgets', sha), /HTTP 404/u);
+  for (const text of ['gh: Bad Gateway (HTTP 502)', 'gh: Validation Failed (HTTP 422)']) {
+    assert.throws(() => recorded(() => {
+      throw fails(text);
+    }).forge.hasCommit('acme/widgets', sha), /HTTP/u, text);
+  }
+  assert.throws(() => recorded(() => JSON.stringify({ sha: 'b'.repeat(40) })).forge.hasCommit('acme/widgets', sha), /another commit/u, 'an answer that names another commit');
+  assert.throws(() => forge.hasCommit('acme/widgets', 'HEAD'), /a commit is a full hex id/u, 'no call for a ref that is not a commit id');
 });

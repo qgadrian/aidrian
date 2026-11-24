@@ -11,7 +11,7 @@ import { DEFAULT_REVIEWER, exitCodeFor, runAwaitReview } from '../plugins/aidria
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { extensionSummary, formatExtensions } from '../plugins/aidrian/lib/report-reviews.mjs';
 import {
-  askQuestion, atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
+  askQuestion, atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, retireChecks, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
 import { listedTo, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, recordFile, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -230,6 +230,21 @@ test('atCap: the judge`s verdict and the Human`s answer move one entry, and only
   const denied = atCap({ state, source: 'plan', round: 2, head: 'abcdef1234', policy: { mode: 'ask', max: 2 }, history: passing, pr: 7 });
   assert.deepEqual([denied.status, denied.extension.status, denied.extension.by], ['round_limit', 'denied', 'human']);
   assert.deepEqual(rows, [{ event: 'review_extension', source: 'plan', round: 2, outcome: 'judging', by: null, signals: [] }]);
+});
+
+test('a check a catch-up retired reopens under the policy in force: a judge\'s extend asks or grants as that policy says', () => {
+  for (const [before, after, status] of [['ask', 'auto', 'granted'], ['auto', 'ask', 'asking']]) {
+    const state = emptyState(7, 'o/r');
+    assert.equal(atCap({ state, source: 'plan', round: 2, head: 'b', policy: { mode: before, max: 2 }, history: passing, pr: 7 }).status, 'extension_check', before);
+    retireChecks(state, { source: 'plan', head: 'c0ffee1234' });
+    const [entry] = state.extensions;
+    assert.deepEqual([entry.status, entry.by, entry.superseded_by], ['stopped', 'catch_up', 'c0ffee1234'], before);
+    // The base branch's github.extraRounds changed meanwhile; a later step at the cap is no catch-up.
+    assert.equal(atCap({ state, source: 'plan', round: 2, head: 'b', policy: { mode: after, max: 3 }, history: passing, pr: 7 }).status, 'extension_check', after);
+    assert.deepEqual([entry.status, entry.mode, entry.max, entry.superseded_by], ['judging', after, 3, undefined], `${before} to ${after}: the policy in force`);
+    recordVerdict(state, { verdict: 'extend', reason: 'a.js:90 was a valid high finding' });
+    assert.equal(entry.status, status, `${before} to ${after}: an extend ${status === 'granted' ? 'needs no Human' : 'asks the Human'}`);
+  }
 });
 
 test('atCap on a head no round reviewed: the judge is told, the question names the fix, and a stop says so', () => {

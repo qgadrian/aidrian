@@ -78,15 +78,18 @@ const passes = async (command, cwd) => {
   assert.deepEqual([status, stderr], [0, ''], command);
 };
 
-// Each of `befores` whose gh call the footer rule, which only the session's own repository keeps, did not judge.
-async function unjudged(befores, footer) {
-  const missed = [];
-  for (const before of befores) if (!footer.test((await hook(`${before} gh pr edit 1 --body-file ${FOOTER}`)).stderr)) missed.push(before);
-  return missed;
-}
-
 const noSummary = /^Blocked: the body has no `## Summary` section/;
 const noWhy = /^Blocked: the body has no `## Why` section/;
+// The refusal of a post whose folder names no project the hook can read (pr-body unreadDestination).
+const unreadable = /^Blocked: (?:gh runs in a folder this hook cannot read|the `cd` into \S+ is joined to gh by a `;` or a newline)[^\n]*, and the rules of the repository it posts to cannot be read\./;
+
+// Each of `befores` whose gh call, with a body PLAIN's empty rules would let through, the hook did not refuse as one
+// whose folder it cannot read.
+async function unrefused(befores) {
+  const missed = [];
+  for (const before of befores) if (!unreadable.test((await hook(`${before} gh pr edit 1 --body-file ${FOOTER}`)).stderr)) missed.push(before);
+  return missed;
+}
 
 test("the session's own repository keeps its rules", async () => {
   const refused = hookProcess(`gh pr edit 1 --body-file ${WHY}`);
@@ -129,26 +132,43 @@ test("another project's rules apply where the call runs: env -C and a leading cd
   await refuses(`env -C ${OTHER} gh pr edit 1 --body-file ${FOOTER}`, /carries the "Generated with \[Claude Code\]" footer/);
 });
 
-test("a deny under the session's rules for gh in a folder a variable holds says so, and how to name the folder", async () => {
+test('a post from a folder a variable holds is refused, even with a body the session\'s rules pass, and names the form that is read', async () => {
   // A variable's value at run time is not read: an assignment may sit in a branch that never ran, or be unset since.
+  // The session's project, which a SUMMARY body satisfies, never stands in for the rules of the repository gh posts to.
   for (const line of [`W=${OTHER}; env -C "$W" gh`, `env -C $W gh`, `cd "$W" && gh`]) {
-    const { status, stderr } = await hook(`${line} pr edit 1 --body-file ${WHY}`);
-    assert.equal(status, 2, line);
-    assert.match(stderr, noSummary, line);
-    assert.ok(stderr.includes(`These are the rules of ${OWN}, the session's project: the folder gh runs in is one this rule cannot read`), stderr);
-    assert.ok(stderr.includes('run `env -C <the folder, written out> gh …`'), stderr);
+    for (const body of [WHY, SUMMARY]) {
+      const { status, stderr } = await hook(`${line} pr edit 1 --body-file ${body}`);
+      assert.equal(status, 2, line);
+      assert.match(stderr, unreadable, line);
+      assert.ok(stderr.includes(`the rules of ${OWN}, the session's project, never stand in for them`), stderr);
+      assert.ok(stderr.includes('as `env -C <the folder, written out> gh …` or `cd <the folder, written out> && gh …`'), stderr);
+    }
   }
+  // A comment and an issue, which the public text rule reads, and a pull request the attribution rule asks lines of.
+  await refuses(`cd "$W" && gh pr comment 1 --body ok`, unreadable);
+  await refuses(`cd "$W" && gh issue create --title t --body ok`, unreadable);
+  await refuses(`cd "$W" && gh pr create --title 'feat: x' --body-file ${SUMMARY}`, unreadable);
+  // A call that posts no text, or a help or web call, has nothing to check.
+  await passes('cd "$W" && gh pr edit 1 --add-label x');
+  await passes('cd "$W" && gh pr create --web');
+  await passes('cd "$W" && gh pr close 1');
 });
 
-test("a deny under the session's rules after a cd into another project says whose rules they are and how to reach the other's", async () => {
+test("a post after a cd into another project joined by ; is refused, naming that folder; one that names the session's repository keeps its rules", async () => {
   const { stderr } = await hook(`cd ${OTHER} && true; gh pr edit 1 --body-file ${WHY}`);
-  assert.match(stderr, noSummary);
-  assert.ok(stderr.includes(`These are the rules of ${OWN}, the session's project`), stderr);
-  assert.ok(stderr.includes(`run \`env -C ${OTHER} gh …\``), stderr);
-  assert.ok(stderr.indexOf('These are the rules') < stderr.indexOf('To override'), 'the note sits before the override line');
-  // No cd into another project: no note.
+  assert.match(stderr, unreadable);
+  assert.ok(stderr.includes(`the \`cd\` into ${OTHER} is joined to gh`), stderr);
+  assert.ok(stderr.includes(`as \`env -C ${OTHER} gh …\``), stderr);
+  // A -R that names the session's repository says where it posts: its rules, with the note on why they are the session's.
+  const named = await hook(`cd ${OTHER} && true; gh pr edit 1 -R acme/own --body-file ${WHY}`);
+  assert.match(named.stderr, noSummary);
+  assert.ok(named.stderr.includes(`These are the rules of ${OWN}, the session's project`), named.stderr);
+  assert.ok(named.stderr.includes(`run \`env -C ${OTHER} gh …\``), named.stderr);
+  assert.ok(named.stderr.indexOf('These are the rules') < named.stderr.indexOf('To override'), 'the note sits before the override line');
+  // No cd, or a cd into the session's own project, which gh answers to whether it works or not: its rules, no note.
   assert.ok(!(await hook(`gh pr edit 1 --body-file ${WHY}`)).stderr.includes('These are the rules'));
-  assert.ok(!(await hook(`cd ${OWN} && true; gh pr edit 1 --body-file ${WHY}`)).stderr.includes('These are the rules'));
+  await refuses(`cd ${OWN} && true; gh pr edit 1 --body-file ${WHY}`, noSummary);
+  await passes(`cd ${OWN} && true; gh pr edit 1 --title 'feat: x' --body-file ${SUMMARY}`);
 });
 
 test('a later cd joined to gh by && alone still names the project gh answers to', async () => {
@@ -163,16 +183,15 @@ test('a later cd joined to gh by && alone still names the project gh answers to'
   await passes(`true; cd ${OTHER} && sh -c 'gh pr edit 1 --body-file ${WHY}'`);
 });
 
-test("a cd gh may run without leaves the session's rules", async () => {
+test('a post after a cd gh may run without is refused, as its folder is not known', async () => {
   for (const line of [`cd ${OTHER}; gh`, `cd ${OTHER} || gh`, `(cd ${OTHER}); gh`, `(cd ${OTHER}) && gh`, `(cd ${OTHER} && true) && gh`, `cd ${OTHER} | cat; gh`, `true; cd ${OTHER} && true; gh`, `true; cd ${OTHER} && true || gh`, `cd "$WT" && gh`, 'cd - && gh', `true; cd "$WT" && gh`]) {
-    await refuses(`${line} pr edit 1 --body-file ${WHY}`, noSummary);
+    await refuses(`${line} pr edit 1 --body-file ${WHY}`, unreadable);
   }
   await refuses(`true; cd ${OWN} && gh pr edit 1 --body-file ${WHY}`, noSummary);
 });
 
-test("a cd that may not move the shell gh runs in leaves the session's rules", async () => {
-  const footer = /carries the "Generated with \[Claude Code\]" footer/;
-  const judged = await unjudged([
+test('a cd that may not move the shell gh runs in leaves its folder unknown, and the post is refused', async () => {
+  const judged = await unrefused([
     `true || cd ${PLAIN} &&`, // skipped: `true` already succeeded
     `true | cd ${PLAIN} &&`, // in a pipeline's own process
     `true |& cd ${PLAIN} &&`,
@@ -188,17 +207,15 @@ test("a cd that may not move the shell gh runs in leaves the session's rules", a
     `nohup cd ${PLAIN} &&`,
     `cd ${path.join(ROOT, 'missing')} && true;`, // a cd that fails leaves gh where it was
     `cd ${path.join(ROOT, 'missing')} && true ||`,
-  ], footer);
-  assert.deepEqual(judged.map((before) => before.replaceAll(ROOT, '')), [], 'each of these must keep the session\'s rules');
-  const attribution = /^Blocked: the pull request body lacks its attribution/;
-  await refuses(`true || cd ${PLAIN} && gh pr create --title 'feat: x' --body-file ${SUMMARY}`, attribution);
-  await refuses(`true | cd ${PLAIN} && gh pr create --title 'feat: x' --body-file ${SUMMARY}`, attribution);
+  ]);
+  assert.deepEqual(judged.map((before) => before.replaceAll(ROOT, '')), [], 'each of these must be refused as a folder the hook cannot read');
+  await refuses(`true || cd ${PLAIN} && gh pr create --title 'feat: x' --body-file ${SUMMARY}`, unreadable);
+  await refuses(`true | cd ${PLAIN} && gh pr create --title 'feat: x' --body-file ${SUMMARY}`, unreadable);
 });
 
 test('a cd holds only when every link to gh is && in the same shell: a folder that exists can still refuse entry', async () => {
   // The hook never tries the cd, so any folder shows it: gh would stay in the session's checkout if this cd failed.
-  const footer = /carries the "Generated with \[Claude Code\]" footer/;
-  const judged = await unjudged([
+  const judged = await unrefused([
     `cd ${PLAIN} && true;`,
     `cd ${PLAIN} && true\n`,
     `cd ${PLAIN} && true ||`,
@@ -206,16 +223,16 @@ test('a cd holds only when every link to gh is && in the same shell: a folder th
     `cd ${PLAIN} && (true) &&`,
     `cd ${PLAIN} && ! true &&`,
     `true; cd ${PLAIN} && true;`,
-  ], footer);
-  assert.deepEqual(judged.map((before) => before.replaceAll(ROOT, '')), [], 'each of these must keep the session\'s rules');
-  await refuses(`cd ${OTHER} && true; gh pr edit 1 --body-file ${WHY}`, noSummary);
-  await refuses(`cd ${OTHER} && true | cat; gh pr edit 1 --body-file ${WHY}`, noSummary);
+  ]);
+  assert.deepEqual(judged.map((before) => before.replaceAll(ROOT, '')), [], 'each of these must be refused as a folder the hook cannot read');
+  await refuses(`cd ${OTHER} && true; gh pr edit 1 --body-file ${WHY}`, unreadable);
+  await refuses(`cd ${OTHER} && true | cat; gh pr edit 1 --body-file ${WHY}`, unreadable);
 });
 
-test('gh on a new line after a heredoc write answers to the session; joined on its first line, or by env -C or -R, it does not', async () => {
+test('gh on a new line after a heredoc write is refused as a folder the hook cannot read; joined on its first line, or by env -C or -R, it is judged', async () => {
   const body = path.join(OTHER, 'c.md');
   const write = `cat > ${body} <<'EOF'`;
-  await refuses(`cd ${OTHER} && ${write}\n## Why\nThe reason.\nEOF\ngh pr edit 1 --body-file ${body}`, noSummary);
+  await refuses(`cd ${OTHER} && ${write}\n## Why\nThe reason.\nEOF\ngh pr edit 1 --body-file ${body}`, unreadable);
   await passes(`cd ${OTHER} && ${write} && gh pr edit 1 --body-file ${body}\n## Why\nThe reason.\nEOF`);
   await refuses(`cd ${OTHER} && ${write} && gh pr edit 1 --body-file ${body}\n## Summary\nThe change.\nEOF`, noWhy);
   await passes(`${write}\n## Why\nThe reason.\nEOF\nenv -C ${OTHER} gh pr edit 1 --body-file ${body}`);

@@ -171,8 +171,9 @@ export function judgeProblem({ project, config, state, entry }) {
 // Why what stopped the review at the cap keeps a judge's verdict from standing for `head`, or null. It reads the cap's
 // cause, which the review step keeps on the outcome (review/run.mjs capCause): a verdict stands only when open findings
 // of this machine's own reviewers are the whole cause. Refused: a record with no cause for `head` (an older record); a
-// cause a step judged past the cap by attested results alone (`past_cap`), which read no flow check; the review bot's
-// own round limit; a flow left with an invariant violated, unverified, or unsigned, on this round or, for
+// cause a step judged past the cap by attested results alone (`past_cap`), which read no flow check; a cause rebuilt
+// for a round an older plugin kept none for (`reconstructed`), whose flow checks and bot limit the record does not
+// hold; the review bot's own round limit; a flow left with an invariant violated, unverified, or unsigned, on this round or, for
 // a head no round reviewed, the last one; a flow test deleted; a failing flow check; a pass of this machine that never
 // reviewed the head; open findings counted and not listed one by one; and any listed finding of the review bot or a
 // stage not this machine's, above WAIVER_CEILING or of no known severity, or a security finding (marked, which
@@ -187,6 +188,7 @@ export function capProblem(state, head) {
     return 'the record keeps no cause of the round cap on this head, as a record from an older plugin, so what stopped the review cannot be told';
   }
   if (cause.past_cap === true) return 'a step past the cap judged this head by attested results alone, before its flow checks: it needs a review round, the Human\'s extra round, before any waiver';
+  if (cause.reconstructed === true) return 'the cause of the round cap was rebuilt from an older plugin\'s record, which keeps no flow check or review bot result of that round: it needs a review round, the Human\'s extra round, before any waiver';
   if (cause.bot === true) return 'the review bot reached its own round limit, and a verdict never stands in for the bot';
   const listOf = (value) => (Array.isArray(value) ? value : null);
   const flows = [...(listOf(cause.flows) ?? []), ...(listOf(cause.unsigned) ?? [])];

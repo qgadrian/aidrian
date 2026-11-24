@@ -1,6 +1,7 @@
-// Generates each host's agents from one provider-neutral source per agent.
+// Generates each host's agents from one provider-neutral source per agent, and OpenCode's hook routes from hooks.json.
 //
-//   node scripts/build.mjs           write plugins/aidrian/agents/*.md (Claude Code) and plugins/aidrian/codex/agents/*.toml
+//   node scripts/build.mjs           write plugins/aidrian/agents/*.md (Claude Code), plugins/aidrian/codex/agents/*.toml,
+//                                    and plugins/aidrian/opencode/routes.generated.json
 //   node scripts/build.mjs --check   exit 1 if a generated file is missing, stale (a hand edit included), or extra
 //
 // plugins/aidrian/agents-src/<group>/<name>.md holds an agent once: the neutral fields in NEUTRAL, and the body every host
@@ -15,6 +16,9 @@
 // becomes a standalone TOML role that plugins/aidrian/codex/install-agents.mjs copies into ~/.codex/agents/.
 // Text only one host needs goes in plugins/aidrian/agent-addons/<name>.<provider>.md, after the body in that host's agent.
 // Adding a host takes a providers/<name>.json and an entry in GENERATORS.
+//
+// OpenCode reads no hooks.json, so its bridge runs the hooks plugins/aidrian/opencode/routes.generated.json lists:
+// every hooks.json hook, in its order, as { event, matcher, script, args, timeoutMs } (renderRoutes).
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -33,6 +37,8 @@ const SKILLS = path.join(PLUGIN, 'skills');
 export const CLAUDE_AGENTS = path.join(PLUGIN, 'agents');
 export const CODEX_AGENTS = path.join(PLUGIN, 'codex/agents');
 export const PREFIX = 'aidrian-';
+export const HOOKS_FILE = path.join(PLUGIN, 'hooks/hooks.json');
+export const OPENCODE_ROUTES = path.join(PLUGIN, 'opencode/routes.generated.json');
 const rel = (file) => path.relative(ROOT, file);
 
 // The fields an agent source may set. Whatever one host decides belongs in that host's providers/<name>.json.
@@ -303,6 +309,96 @@ export function compareGenerated(provider, expected = renderAgents(provider), di
   return problems;
 }
 
+// The one hooks.json command form a bridge can run without a shell: node on a script in scripts/, then literal flags.
+const HOOK_COMMAND = /^node "\$CLAUDE_PLUGIN_ROOT\/scripts\/([a-z0-9-]+\.mjs)"((?: --[a-z][a-z0-9-]*)*)$/;
+
+// The events whose matcher is tested on a tool name. Claude Code runs a group of one of these with no matcher on every
+// tool, which a null route matcher would never fire on, so such a group must say "*".
+const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied']);
+
+// A matcher Claude Code reads as a list of exact names: only letters, digits, _, -, and |. It reads any other as a
+// regular expression that may match anywhere in the name (code.claude.com/docs/en/hooks, Matcher patterns).
+const NAME_LIST = /^[A-Za-z0-9_|-]+$/u;
+
+// Syntax JavaScript takes and Rust's regex crate, which compiles each hooks.json matcher on Codex, does not: lookahead,
+// lookbehind, and backreferences. Codex skips a matcher it cannot compile, so its hook would never run there.
+const RUST_UNSUPPORTED = /\(\?<?[=!]|\\[1-9]|\\k</u;
+
+// A hooks.json matcher as a route matches it, which route-select.mjs tests unanchored with the u flag, so the route fires
+// where Claude Code fires the hook: null for a group with none, "*" for any tool, a list of names as the anchored
+// ^(?:A|B)$, since none of its characters means anything else in a pattern, and any other matcher as its own source,
+// once it compiles. One with a comma or whitespace throws: Claude Code reads "Edit, Write" as a list of names, and a
+// pattern as one name, so "|" separates names here.
+export function routeMatcher(matcher) {
+  if (matcher === undefined || matcher === null) return null;
+  if (matcher === '*') return '*';
+  if (typeof matcher !== 'string' || matcher === '') throw new Error(`matcher ${JSON.stringify(matcher)} is not a pattern; use "*" for every tool`);
+  if (/[\s,]/u.test(matcher)) throw new Error(`matcher ${JSON.stringify(matcher)} holds a comma or whitespace, which a host may read as a list; separate names with "|"`);
+  if (NAME_LIST.test(matcher)) return `^(?:${matcher})$`;
+  if (RUST_UNSUPPORTED.test(matcher)) {
+    throw new Error(`matcher ${JSON.stringify(matcher)} holds a lookaround or a backreference, which Codex's Rust regex, that reads hooks.json too, rejects`);
+  }
+  new RegExp(matcher, 'u');
+  return matcher;
+}
+
+// The OpenCode route list as the text routes.generated.json holds. Any hook the bridge cannot run as a route fails the
+// build, naming its event and command: a hook skipped here would run on Claude Code and Codex and never on OpenCode.
+export function renderRoutes(hooksFile = HOOKS_FILE) {
+  const where = rel(hooksFile);
+  const { hooks } = JSON.parse(readFileSync(hooksFile, 'utf8'));
+  if (!isPlainObject(hooks)) throw new Error(`${where}: "hooks" must be an object of events`);
+  const routes = Object.entries(hooks).flatMap(([event, groups]) => {
+    if (!Array.isArray(groups)) throw new Error(`${where}: ${event} must be a list of hook groups`);
+    return groups.flatMap((group) => {
+      if (!isPlainObject(group) || !Array.isArray(group.hooks)) throw new Error(`${where}: ${event}: a group needs a "hooks" list`);
+      const extra = Object.keys(group).find((field) => !GROUP_FIELDS.has(field));
+      if (extra !== undefined) {
+        const commands = group.hooks.map((hook) => JSON.stringify(hook?.command)).join(', ');
+        throw new Error(`${where}: ${event} group of ${commands}: field ${JSON.stringify(extra)} is one the OpenCode bridge cannot honour`);
+      }
+      if (TOOL_EVENTS.has(event) && (group.matcher === undefined || group.matcher === null)) {
+        throw new Error(`${where}: ${event}: a group with no matcher runs on every tool on Claude Code and on none on OpenCode; say "*" to mean every tool`);
+      }
+      let matcher;
+      try {
+        matcher = routeMatcher(group.matcher);
+      } catch (error) {
+        throw new Error(`${where}: ${event}: ${error.message}`, { cause: error });
+      }
+      return group.hooks.map((hook) => ({ event, matcher, ...routeCommand(where, event, hook) }));
+    });
+  });
+  return `${JSON.stringify(routes, null, 2)}\n`;
+}
+
+// The fields a route carries. Any other, such as a handler's `if`, `async`, or `statusMessage`, changes when or how the
+// host runs the hook, and a route that dropped it would run the hook where the host does not.
+const GROUP_FIELDS = new Set(['matcher', 'hooks']);
+const HANDLER_FIELDS = new Set(['type', 'command', 'timeout']);
+
+function routeCommand(where, event, hook) {
+  const command = hook?.command;
+  const refuse = (why) => new Error(`${where}: ${event} hook ${JSON.stringify(command)}: ${why}`);
+  if (hook?.type !== 'command') throw refuse(`type must be "command", not ${JSON.stringify(hook?.type)}`);
+  const extra = Object.keys(hook).find((field) => !HANDLER_FIELDS.has(field));
+  if (extra !== undefined) throw refuse(`field ${JSON.stringify(extra)} is one the OpenCode bridge cannot honour`);
+  const match = typeof command === 'string' ? HOOK_COMMAND.exec(command) : null;
+  if (!match) throw refuse('the OpenCode bridge runs only node "$CLAUDE_PLUGIN_ROOT/scripts/<name>.mjs", then --flag arguments');
+  // Rounded to whole milliseconds: a timer takes those, up to 2**31 - 1, and past that Node fires it at once.
+  const timeoutMs = typeof hook.timeout === 'number' ? Math.round(hook.timeout * 1000) : NaN;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2 ** 31 - 1) {
+    throw refuse('timeout must be a positive number of seconds, at most 2147483.647');
+  }
+  return { script: match[1], args: match[2].split(' ').filter(Boolean), timeoutMs };
+}
+
+// What differs between routes.generated.json and the text it should hold.
+export function compareRoutes(expected = renderRoutes(), file = OPENCODE_ROUTES) {
+  if (!existsSync(file)) return [`missing ${rel(file)}`];
+  return readFileSync(file, 'utf8') === expected ? [] : [`stale ${rel(file)}`];
+}
+
 function toList(value) {
   if (value === undefined) return [];
   return Array.isArray(value) ? value : String(value).split(',').map((item) => item.trim());
@@ -332,14 +428,16 @@ function main(args) {
   const agents = readAgents();
   const providers = readProviders({ agents });
   const outputs = PROVIDER_NAMES.map((provider) => ({ provider, ...GENERATORS[provider], files: renderAgents(provider, agents, providers[provider]) }));
+  const routes = renderRoutes();
   const counted = outputs.map(({ label, files }) => `${files.size} ${label} agents`).join(' and ');
+  const routeCount = `${JSON.parse(routes).length} OpenCode hook routes`;
   if (args.includes('--check')) {
-    const problems = outputs.flatMap(({ provider, files }) => compareGenerated(provider, files));
+    const problems = [...outputs.flatMap(({ provider, files }) => compareGenerated(provider, files)), ...compareRoutes(routes)];
     if (problems.length) {
-      console.error(`Generated agents are out of date; edit agents-src/ or providers/, then run npm run build:\n  ${problems.join('\n  ')}`);
+      console.error(`Generated files are out of date; edit agents-src/, providers/, or hooks/hooks.json, then run npm run build:\n  ${problems.join('\n  ')}`);
       process.exit(1);
     }
-    console.log(`ok: ${counted} are current`);
+    console.log(`ok: ${counted} are current, and so are the ${routeCount}`);
     return;
   }
   for (const { dir, files } of outputs) {
@@ -347,7 +445,8 @@ function main(args) {
     mkdirSync(dir, { recursive: true });
     for (const [file, text] of files) writeFileSync(path.join(dir, file), text);
   }
-  console.log(`wrote ${counted}`);
+  writeFileSync(OPENCODE_ROUTES, routes);
+  console.log(`wrote ${counted}, and ${routeCount}`);
 }
 
 // Run only as the entry script. process.argv[1] is unset under `node -e` and need not be a file under `node -p`.

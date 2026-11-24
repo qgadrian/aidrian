@@ -113,7 +113,7 @@ export const HELD_REFS = Object.freeze({
   refs: { branch: 'main', protected: true, why: null, tags: [{ name: 'tags', all: true, creation: true, update: true, bypass: 'never' }] },
   secrets: { secrets: 0, workflowPush: false },
 });
-export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true } = {}) {
+export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true, has = () => true } = {}) {
   const calls = [];
   const missing = () => Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
   const forge = {
@@ -138,6 +138,11 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
     authToken: (options) => {
       calls.push(['authToken', options]);
       return token();
+    },
+    // Whether the forge holds a commit: `has(sha)`, which the fixture answers from its bare repository.
+    hasCommit: (repo, sha, options) => {
+      calls.push(['hasCommit', repo, sha, options]);
+      return has(sha);
     },
     branchHead: (repo, branch, options) => {
       calls.push(['branchHead', repo, branch, options]);
@@ -298,7 +303,15 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
   const serveConfig = (value) => {
     served = value;
   };
-  const forge = fakeForge(text, () => execFileSync('git', ['-C', bare, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim());
+  const onForge = (sha) => {
+    try {
+      execFileSync('git', ['-C', bare, 'cat-file', '-e', `${sha}^{commit}`], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const forge = fakeForge(text, () => execFileSync('git', ['-C', bare, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim(), {}, { has: onForge });
   const claude = fakeClaude({ dir, env });
   const store = openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
   if (init) {

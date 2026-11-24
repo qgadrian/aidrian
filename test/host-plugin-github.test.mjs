@@ -20,7 +20,7 @@ const [LIST, PLUGIN] = GROUPS.map((group) => group.matcher);
 const JUDGED = LIST.split('|').filter((name) => name.startsWith('mcp__github__')).map((name) => name.slice('mcp__github__'.length));
 
 // Claude Code tests a matcher with any character outside [A-Za-z0-9_ ,|-] as an unanchored JavaScript regular expression;
-// the conformance suite reads matchers anchored, as a host that compares whole names would. The pattern must agree on both.
+// a host that compares whole names would read it anchored. The pattern anchors itself, so it must agree on both.
 const fires = (matcher, name) => new RegExp(matcher, 'u').test(name) && new RegExp(`^(?:${matcher})$`, 'u').test(name);
 
 const OTHERS = [

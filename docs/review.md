@@ -952,7 +952,25 @@ head, and the reviewer is told to review that diff alone; a pass the merge does 
 dropped what the base brought, as `git merge -s ours` does, is touched. It counts as a round. Later steps on the same
 merge head keep that scope, through the `remerge` entry of the record.
 
-Neither the carry nor the resolution-only round applies when the base branch, from the merge base of the reviewed head
+**Catch-up at the round cap.** A head at the round cap catches up with the base branch when all of these hold.
+Every commit on its first-parent chain back to the last round's head is a two-parent merge.
+Each merge's other parent is an ancestor of the base branch tip.
+And the pull request's own diff, from its merge base with the base branch tip, is the same at both heads.
+That diff keeps git's three lines of context around each change, so one edit moved to another occurrence of a line reads differently.
+The `index` lines with their blob ids, and each hunk header, whole, do not count in it.
+That header holds line numbers, and a function or section label git may take from a line far outside the context, so a base edit there still carries.
+A pull request whose own diff, at either head, holds a binary file's patch or any U+FFFD never catches up.
+Git prints no contents for a binary file, and each byte that is not UTF-8 reads back as U+FFFD, so that text is no proof the change is the same.
+A change the base made within three lines of the pull request's own changes alters that context, and that head is reviewed.
+Such a head runs no reviewer, opens no round, and asks no extra-round question.
+The step returns `round_limit` on it, with `carried_from`, `carried_base`, the last round's cause, and the `raise` command, but no question.
+A merge whose resolution changes the pull request's own diff, or any git failure, is reviewed as any head at the cap is.
+The Human may still raise the cap with that command.
+A check at the cap still waiting for its judge or the Human is retired in the same write: `stopped` by `catch_up`, with `superseded_by` the new head.
+So a judge's verdict for the new head, as the step's `dispatch` offers it, records with no check of the old step in its way.
+A later step at the cap that is no catch-up opens that check again, as a fresh one, with the mode and ceiling of the policy in force.
+
+Neither the carry, the catch-up, nor the resolution-only round applies when the base branch, from the merge base of the reviewed head
 and the merge's base parent to the base branch's current tip, changes how the project is reviewed: a rule that lands on
 the base after the merged commit counts too, on every later step for the merge head. That covers the config's `review`
 group (a flow, a rule, a reviewer, the plan command), a file the plan command, a visual hook, or a reviewer command
@@ -1292,6 +1310,7 @@ Among them, on exactly that head:
   each listed, each of `medium` severity or lower, and none a security finding, of a security pass, or of the
   `security-engineer`;
 - a review round stopped on the head: a cause judged past the cap by attested results alone (`past_cap`) is never waived;
+- the cause was not rebuilt from an older plugin's record (`reconstructed`), which keeps no flow check or bot result;
 - no sign-off of the Human's is owed on the head;
 - the review bot passed exactly the head on the forge: a verdict never stands in for it;
 - the host confirms the judge's dispatch in the dispatch log, which Codex cannot, and no judge has ruled on the head yet;
@@ -1480,7 +1499,8 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
 - **Outcome.** Every return of the step writes its status to this machine's record as `outcome`: `{ status, head, at,
   reason, reasons, depth, carried_from, carried_base }`, where `reasons` and `depth`, set only on a `none_needed`, are its
   plan's, which [auto-merge](config.md#when-it-is-on) reads, and `carried_from` and `carried_base` are set only on a `received` that a
-  [clean merge from the base branch](#rounds) carried, and name the head that was reviewed and the base commit merged
+  [clean merge from the base branch](#rounds) carried, or a `round_limit` that a
+  catch-up at the round cap carried, and name the head that was reviewed and the base commit merged
   in. The summary comment shows that outcome under **Carried review**, rewritten from the record on every write. The early returns, `none_needed`, `unsatisfied`,
   and `too_large`, write it to the state folder only and post nothing; a `held` return writes nothing. Before any
   reviewer, the plan command, or the bot runs, the step writes `running` for its head, so a merge during the first step
@@ -1523,6 +1543,11 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   A head past the cap that holds a result a pass uses, as one `aidrian pr attest` recorded there, is judged by its own results instead.
   That cause is `past_cap`: the step stopped before the flows' checks, so no waiver passes it until a review round, the Human's extra round, runs.
   It replaces the round's, so a later head no pass reviewed inherits no cause, and a waiver refuses that head too.
+  A round an older plugin kept no cause for, its `cap` missing altogether, gets one at the next cap, by the same code, and keeps it.
+  That cause reads only the results its passes recorded on its head, and a pass with no result there is one that never reviewed the head.
+  The record holds none of that round's flow checks, bot limit, or sign-offs, so every flow of the plan reads unsigned.
+  It is `reconstructed`, and no waiver passes it until a review round, the Human's extra round, runs.
+  A round whose `cap` is another head's, as a `past_cap` cause leaves, is never rebuilt.
   The posted copy keeps no `cap`,
   on the outcome or a round, and no waiver's `judge_id` and `session`. Each binds to one head and
   one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the

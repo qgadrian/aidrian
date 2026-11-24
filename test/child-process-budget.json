@@ -35,6 +35,7 @@
     "project-start-guard.test.mjs": 1800,
     "project-start-sandbox.test.mjs": 5850,
     "project-stops.test.mjs": 5200,
+    "project-sweep.test.mjs": 1050,
     "project-token.test.mjs": 1600,
     "project-trust.test.mjs": 500,
     "quorum-provisional.test.mjs": 3500,

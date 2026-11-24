@@ -26,15 +26,16 @@ const alternatives = (names) => [...new Set(names.filter((name) => typeof name =
 // The words that rate an item: the scale the orchestrator and issue-implement reports use, with `critical` and `blocker`.
 export const RATINGS = /\b(?:blocking|blocker|critical|high|medium|low)\b/iu;
 
-// One character of an emoji, or a space between emoji: a pictograph, a skin tone, a regional indicator of a flag, a
-// variation selector, or a joiner. A keycap, a digit, `#`, or `*` followed by U+20E3, optionally after U+FE0F, is read in withoutEmoji.
-const EMOJI_PART = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\uFE0F\u200D ]$/u;
+// One character of an emoji, or a space between emoji: a pictograph, a skin tone, a regional indicator of a flag, a tag
+// character of a subdivision flag, a variation selector, or a joiner. A keycap, a digit, `#`, or `*` followed by U+20E3,
+// optionally after U+FE0F, is read in withoutEmoji.
+const EMOJI_PART = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u{E0020}-\u{E007F}\uFE0F\u200D ]$/u;
 const KEYCAP_BASE = /^[0-9#*]$/u;
 
-// `label` without the run of emoji it opens with, as in "🙋 For the Human", "🇪🇸 For Adrian", or "1️⃣ For you", read one
-// code point at a time: a label that opens with anything else, such as "7 of 9's to-do", is returned as it is.
-function withoutEmoji(label) {
-  const points = [...label];
+// `text` without the run of emoji it opens with, as in "🙋 For the Human", "🇪🇸 For Adrian", or "1️⃣ For you", read one
+// code point at a time, once: text that opens with anything else, such as "7 of 9's to-do", is returned as it is.
+function withoutEmoji(text) {
+  const points = [...text];
   let at = 0;
   for (;;) {
     if (at < points.length && EMOJI_PART.test(points[at])) at += 1;
@@ -45,17 +46,32 @@ function withoutEmoji(label) {
   return points.slice(at).join('').trim();
 }
 
-// A heading, a bold line, or a line that ends in a colon, with its markup, the emoji it opens with (withoutEmoji), and
-// that colon removed; null for any other line. The text after a colon on the same line, such as "For Adrian: merge it",
-// is returned as `inline`.
+// A heading, a bold line, or a line that ends in a colon, with its markup and that colon removed; null for any other line.
+// The text after a colon on the same line, such as "For Adrian: merge it", is returned as `inline`.
 function labelOf(line) {
   const heading = /^#{1,6}\s+(.*)$/u.exec(line);
   const text = (heading ? heading[1] : line).trim();
   const bold = /^(?:\*\*|__)(.+?)(?:\*\*|__)\s*(?::\s*(.*))?$/u.exec(text);
-  if (bold) return { label: withoutEmoji(bold[1].replace(/:\s*$/u, '')), inline: bold[2]?.trim() ?? '' };
+  if (bold) return { label: bold[1].replace(/:\s*$/u, '').trim(), inline: bold[2]?.trim() ?? '' };
   const colon = /^([^:]{1,60}):\s*(.*)$/u.exec(text);
-  if (colon) return { label: withoutEmoji(colon[1]), inline: colon[2].trim() };
-  return heading ? { label: withoutEmoji(text), inline: '' } : null;
+  if (colon) return { label: colon[1].trim(), inline: colon[2].trim() };
+  return heading ? { label: text, inline: '' } : null;
+}
+
+// labelOf's result for `line` when its label is addressed to the Human (`patterns`), else null. The label is tried as
+// written, then without the emoji it opens with (withoutEmoji), as in "**🙋 For Adrian**"; then the same for the line
+// without the emoji its text opens with, past a heading's `#`s, as in "🙋 **Needs Adrian:**". A configured name that
+// opens with an emoji, such as "⭐ Adrian", so matches as written.
+function addressedLabel(line, patterns) {
+  const heading = /^#{1,6}\s+/u.exec(line)?.[0] ?? '';
+  for (const text of [line, `${heading}${withoutEmoji(line.slice(heading.length))}`]) {
+    const found = labelOf(text);
+    if (!found) continue;
+    for (const label of [found.label, withoutEmoji(found.label)]) {
+      if (patterns.some((pattern) => pattern.test(label))) return { ...found, label };
+    }
+  }
+  return null;
 }
 
 // A label addressed to the Human: "For Adrian", "Open items for the Human", "Needs Adrian", "Waiting on the user",
@@ -79,8 +95,8 @@ export function handBackLists(message, human) {
   const patterns = addressed(human);
   const lists = [];
   for (let i = 0; i < lines.length; i += 1) {
-    const found = labelOf(lines[i].trim());
-    if (!found || !patterns.some((pattern) => pattern.test(found.label))) continue;
+    const found = addressedLabel(lines[i].trim(), patterns);
+    if (!found) continue;
     const items = found.inline ? [found.inline] : [];
     let j = i + 1;
     if (!items.length && lines[j]?.trim() === '') j += 1;

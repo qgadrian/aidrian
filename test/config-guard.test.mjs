@@ -1460,7 +1460,7 @@ test('a subagent, and a session the background route started, may not write in t
     ['Bash', { command: "python3 - <<'EOF'\np='plan.md'\nnew='''a row lands in `<state>/sessions/<session id>/prs.jsonl`'''\nopen(p,'w').write(new)\nEOF" }],
     ['Bash', { command: "node -e \"require('fs').writeFileSync('plan.md', 'see <state>/sessions/<id>/checks.jsonl')\"" }],
     // In a Markdown link's destination, and in parentheses.
-    ['Bash', { command: "python3 - <<'EOF'\nopen('plan.md','w').write('''the [ledger](<state>/sessions/<id>/prs.jsonl), (or <state>/sessions/<id>/links.jsonl)''')\nEOF" }],
+    ['Bash', { command: "python3 - <<'EOF'\nopen('plan.md','w').write('''the [ledger](<state>/sessions/<id>/prs.jsonl), (or <state>/sessions/[draft]/links.jsonl)''')\nEOF" }],
     // Heredoc data written to another file is no write to the paths it quotes.
     ['Bash', { command: `cat > ${path.join(dir, 'plan.md')} <<'EOF'\nThe hook appends to ${own}/prs.jsonl.\nEOF` }],
   ];
@@ -1478,7 +1478,7 @@ test('a subagent, and a session the background route started, may not write in t
   }
 });
 
-test('a placeholder path is prose only when it starts with the placeholder: a state.dir with brackets in its path stays guarded', async (t) => {
+test('a placeholder path is prose only while no state folder has a bracket in its path: a state.dir with one stays guarded', async (t) => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-bracketed-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bracketed = path.join(root, '<team>', 'state');
@@ -1488,10 +1488,10 @@ test('a placeholder path is prose only when it starts with the placeholder: a st
   const refused = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
   assert.equal(refused.status, 2, refused.stderr);
   assert.match(refused.stderr, /the session folders/u);
-  // The same project's plan prose, a path that starts with its placeholder, still passes.
+  // Placeholder prose cannot be told from such a path here, so it is refused too: the guard stays closed.
   const prose = "python3 - <<'EOF'\nopen('plan.md','w').write('''rows land in `<state>/sessions/<session id>/prs.jsonl`''')\nEOF";
-  const passed = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command: prose }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
-  assert.equal(passed.status, 0, passed.stderr);
+  const held = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command: prose }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
+  assert.equal(held.status, 2, held.stderr);
 });
 
 // A session folder of `session` under the state folder of the project at `dir`, as the hooks make it.

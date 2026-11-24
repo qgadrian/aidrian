@@ -6,7 +6,7 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { appendFileSync, readdirSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -135,6 +135,53 @@ test('off fullAuto, resume --custody asks what resume asks and takes custody onl
     assert.deepEqual(fx.cmd(['resume', 'launch'], { session: OTHER }).out, ['resumed launch']);
     assert.equal(fx.halted(), false);
   }
+});
+
+test('a resume rechecks under the ledger lock: a continuation the host records meanwhile lifts no halt', (t) => {
+  const fx = runFixture(t, { projectRun: ON });
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'halt', cause: 'a test halt', at: new Date().toISOString() }] }));
+  const transcript = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'), `${DRIVER}.jsonl`);
+  const moved = new Date(Date.parse(fx.run().init.at) + 1000).toISOString();
+  // The host records OTHER as the driver's continuation after the resume read it, while it waits for the lock.
+  const listing = (command, args, options) => {
+    if (args[0] === 'agents') appendFileSync(transcript, `${JSON.stringify({ type: 'continued-in', timestamp: moved, sessionId: DRIVER, continuedInSessionId: OTHER })}\n`);
+    return fx.claude.run(command, args, options);
+  };
+  const raced = fx.cmd(['resume', 'launch'], { session: OTHER, spawn: listing });
+  assert.equal(raced.exitCode, 1);
+  assert.match(raced.err[0], /the host's record of the run's driver changed while this command read it/u);
+  assert.equal(fx.rows().some((row) => row.event === 'resume' || row.event === 'driver'), false, 'no halt lifted, no custody moved');
+});
+
+test('a custody move whose ledger row is never written puts the unattended mark back as it was', (t) => {
+  const fx = continued(t);
+  const marks = path.join(fx.env.XDG_STATE_HOME, 'aidrian', 'unattended');
+  const ledger = path.join(fx.state, 'runs', 'launch', 'ledger.jsonl');
+  const read = () => readUnattendedMark(NEXT, { env: fx.env, home: fx.home });
+  // No mark before: none after.
+  chmodSync(ledger, 0o400);
+  try {
+    assert.throws(() => fx.cmd(['resume', 'launch', '--custody'], { session: NEXT }));
+  } finally {
+    chmodSync(ledger, 0o600);
+  }
+  assert.equal(read(), null);
+  assert.deepEqual(fx.custodyRows(), []);
+  // A mark before, its own folder: the same mark after.
+  const other = path.join(fx.root, 'elsewhere');
+  mkdirSync(other);
+  markUnattended(NEXT, { root: fx.dir, cwd: other, env: fx.env });
+  chmodSync(ledger, 0o400);
+  try {
+    assert.throws(() => fx.cmd(['resume', 'launch', '--custody'], { session: NEXT }));
+  } finally {
+    chmodSync(ledger, 0o600);
+  }
+  assert.equal(read()?.cwd, other);
+  assert.ok(readdirSync(marks).every((name) => !name.endsWith('.tmp')));
+  // With the ledger writable, the same call moves custody and files the mark.
+  assert.equal(fx.cmd(['resume', 'launch', '--custody'], { session: NEXT }).exitCode, 0);
+  assert.equal(read()?.cwd, fx.dir);
 });
 
 test('the command reads resume\'s words as the hook does: an option twice, a value on --custody, and --custody after -- are refused', (t) => {

@@ -86,7 +86,7 @@ import { pushPreflight } from './push-preflight.mjs';
 import { signoffFolder, signoffFolders, storePathProblem } from './review/signoff-store.mjs';
 import { recordsStart } from './run-driver.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
-import { markDriver, markUnattended, PENDING_AGE, readBeacon, readUnattendedMark } from './unattended-mark.mjs';
+import { markDriver, markUnattended, markUnattendedUndoably, PENDING_AGE, readBeacon, readUnattendedMark } from './unattended-mark.mjs';
 
 export { cleanText, ISSUE_ATTEMPTS, RESULT_CAP, validateResult };
 export { DECISION_CLASSES, RESULT_STATUSES } from './project-result.mjs';
@@ -1280,25 +1280,51 @@ export function resumeRun({ project, config, run, custody: custodyOnly = false, 
   }
   // A halt is lifted only by a resume that takes no custody as the host's continuation of the driver.
   const lifts = !custodyOnly && !continued;
-  const written = appendToRun(opened.state, run, (fresh) => {
-    const driver = driverOf(fresh);
-    // Under the lock, the run must still be live, and a continuation still the host's word for this session.
-    if (endedIn(fresh)) return { problem: `the run ${run} ended` };
-    const again = stranded ? hostContinued(fresh, { env, home }) : null;
-    if (stranded && (continued ? again?.id !== session : again !== null)) return { problem: 'the host\'s record of the run\'s driver changed while this command read it; run resume again' };
-    const take = stranded && driver.session === stranded ? [{ event: 'driver', session, from: driver.session, sha256: sha256(Buffer.from(`resume ${run} ${session} ${iso(now)}`)), via: 'resume', at: iso(now) }] : [];
-    // The marks come before the custody row, under the lock and only once every check passed and custody moves: a
-    // session that would drive without its driver mark would not be held as a driver, and a refused resume files none.
-    // A continuation that took custody with no attended check is held as no Human attends it, by its unattended mark.
-    if (take.length && waiver.waived && !markUnattended(session, { root: fresh.init.main, cwd: fresh.init.main, env, now })) return { problem: 'this session\'s unattended mark cannot be filed, so custody stays where it is; run resume again' };
-    if (take.length && !markCustodian(session, fresh, run, opened.state, env)) return { problem: 'this session\'s driver mark cannot be filed, so custody stays where it is; run resume again' };
-    return { rows: [...(lifts && haltOf(fresh) ? [{ event: 'resume', session, at: iso(now) }] : []), ...take] };
-  });
-  if (written.problem) return refuse(written.problem);
+  // The unattended mark the waiver files, put back as it was when the custody row is never written.
+  let filed = null;
+  const filing = (mark) => {
+    filed = mark;
+  };
+  let written;
+  try {
+    written = appendToRun(opened.state, run, (fresh) => resumeRows({ fresh, run, session, named, continued, stranded, waiver, lifts, opened, env, home, now, filing }));
+  } catch (error) {
+    filed?.undo();
+    throw error;
+  }
+  if (written.problem) {
+    filed?.undo();
+    return refuse(written.problem);
+  }
   const took = written.rows.some((row) => row.event === 'driver');
   const resumed = written.rows.some((row) => row.event === 'resume');
   const stands = !lifts && haltOf(opened.found) ? [`note: the halt stands: this resume takes custody only, and another session a person attends, or the Human's own shell, lifts it with \`aidrian project resume ${run}\``] : [];
   return { exitCode: 0, out: [...(resumed ? [`resumed ${run}`] : []), ...(took ? [`custody: this session now drives the run ${run}; its last driver ended`] : []), ...stands, ...other], err: [] };
+}
+
+// The rows `resumeRun` writes under the ledger's lock, from `fresh`, the ledger read there: { rows } or { problem }.
+// The run must still be live, the host's record of the driver what the command read, and the session still one that
+// may resume, so neither the halt nor custody moves on a read the lock outdated. The marks come before the custody
+// row, only once every check passed and custody moves: a session that would drive without its driver mark would not
+// be held as a driver, and a refused resume files none. A continuation that took custody with no attended check is held
+// as no Human attends it by its unattended mark, filed last and handed to `filing`, so a driver mark that fails leaves
+// none, and the caller puts it back when the row is never written.
+function resumeRows({ fresh, run, session, named, continued, stranded, waiver, lifts, opened, env, home, now, filing }) {
+  const driver = driverOf(fresh);
+  if (endedIn(fresh)) return { problem: `the run ${run} ended` };
+  const again = named ? hostContinued(fresh, { env, home }) : null;
+  const changed = continued ? again?.id !== session : again?.id === session || (stranded && again !== null);
+  if (changed) return { problem: 'the host\'s record of the run\'s driver changed while this command read it; run resume again' };
+  const member = named && !waiver.waived ? resumerProblem({ found: fresh, store: opened.store, session, now, env }) : null;
+  if (member) return { problem: member };
+  const take = stranded && driver.session === stranded ? [{ event: 'driver', session, from: driver.session, sha256: sha256(Buffer.from(`resume ${run} ${session} ${iso(now)}`)), via: 'resume', at: iso(now) }] : [];
+  if (take.length && !markCustodian(session, fresh, run, opened.state, env)) return { problem: 'this session\'s driver mark cannot be filed, so custody stays where it is; run resume again' };
+  if (take.length && waiver.waived) {
+    const filed = markUnattendedUndoably(session, { root: fresh.init.main, cwd: fresh.init.main, env, now });
+    filing(filed);
+    if (!filed.file) return { problem: 'this session\'s unattended mark cannot be filed, so custody stays where it is; run resume again' };
+  }
+  return { rows: [...(lifts && haltOf(fresh) ? [{ event: 'resume', session, at: iso(now) }] : []), ...take] };
 }
 
 // Whether `resume --custody` from `session`, the session the host continued the run's driver as, skips the attended

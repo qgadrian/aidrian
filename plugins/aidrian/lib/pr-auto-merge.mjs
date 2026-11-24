@@ -348,6 +348,10 @@ export const includesPolicyFiles = (policies) => includesGuardedPaths(policies)
 //     the merge leaves; no SHA, or a read that fails, refuses. Two SHAs, so no branch name is spelled into the route.
 //     Accepted residual: the base can move between this compare and the merge; the branch protection setting
 //     "Require branches to be up to date before merging" closes it on the forge (docs/config.md, Auto-merge);
+//   - each policy file the head holds, the pointer and the config.json it locates, is a regular file there: its entry in
+//     its folder's listing at the head, through the forge's contents route, which lists a link as "symlink" and never
+//     follows it, is of type "file" (a pointer may be absent). A file read follows an in-repository link, while git and
+//     every reader of the merged tree see the link itself, so a link refuses, and so does a listing that fails;
 //   - the head's own config, read from the forge at exactly the head commit `pr.head` as branchConfig reads a branch's,
 //     its pointer by strictConfigPathIn, so a malformed one never falls back to the default folder, sits at the path the
 //     default branch's does (`policies.configFile`), parses with no error, and keeps the default branch's
@@ -373,6 +377,8 @@ export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
     }
   })();
   if (behind !== 0) return `head ${at} ${behind === null ? 'cannot be compared with its base on the forge' : `is behind its base ${pr.base} by ${behind} ${behind === 1 ? 'commit' : 'commits'}`}, so the merged config is not the one checked; merge the base first`;
+  const linked = headEntryProblem(forge, pr, `${prefix}.aidrian.json`, { optional: true });
+  if (linked) return linked;
   const seen = [];
   let config;
   try {
@@ -381,6 +387,8 @@ export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
     return `it changes a policy file, and its config at head ${at} cannot be read whole (${String(error.message).split('\n')[0]})`;
   }
   if (config === null) return `it changes a policy file, and head ${at} has no config, so the checks that judge the next merge cannot be told`;
+  const located = headEntryProblem(forge, pr, seen.at(-1));
+  if (located) return located;
   if (seen.at(-1)?.toLowerCase() !== String(policies.configFile).toLowerCase()) return `its config at head ${at} is ${JSON.stringify(seen.at(-1))}, not ${JSON.stringify(policies.configFile)} where ${pr.repo} ${policies.main} keeps it, which includePolicyFiles never lets a pull request move by itself`;
   const { github: policy, state } = policies.policy;
   const same = (a, b) => new Set(a).size === new Set(b).size && a.every((each) => b.includes(each));
@@ -389,6 +397,27 @@ export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
   if (!differing.length) return null;
   const names = differing.map((key) => (key === 'state.dir' ? key : `github.${key}`)).join(' and ');
   return `its config at head ${at} changes ${names} from ${pr.repo} ${policies.main}, which includePolicyFiles never lets a pull request change by itself`;
+}
+
+// Why `file`, from the top of the repository, is no regular file at the head commit `pr.head`, or null: its entry in its
+// folder's listing through the forge's contents route at that commit must be of type "file". A link is "symlink" there,
+// never followed. With `optional`, no entry is no file and passes. A listing that fails, or is no list, refuses.
+function headEntryProblem(forge, pr, file, { optional = false } = {}) {
+  const at = String(pr.head).slice(0, 7);
+  const cut = file.lastIndexOf('/');
+  const [folder, name] = [cut < 0 ? '' : file.slice(0, cut), file.slice(cut + 1)];
+  let listing;
+  try {
+    listing = forge.contents(pr.repo, folder, pr.head, { host: pr.host });
+  } catch (error) {
+    if (optional && notFound(error)) return null;
+    return `it changes a policy file, and the folder of ${JSON.stringify(file)} at head ${at} cannot be listed (${ghError(error)}), so whether it is a regular file cannot be told`;
+  }
+  if (!Array.isArray(listing)) return `it changes a policy file, and ${JSON.stringify(folder || '.')} at head ${at} is no folder the forge lists, so whether ${JSON.stringify(file)} is a regular file cannot be told`;
+  const entry = listing.find((each) => each?.name === name);
+  if (!entry) return optional ? null : `it changes a policy file, and head ${at} lists no ${JSON.stringify(file)}`;
+  if (entry.type !== 'file') return `${JSON.stringify(file)} at head ${at} is a ${typeof entry.type === 'string' ? entry.type : 'entry of no known type'}, not a regular file, which includePolicyFiles never lets through`;
+  return null;
 }
 
 // GitHub's REST file statuses as the GraphQL change types `gh pr view` gives and pathsProblem reads. `unchanged`, a file

@@ -86,6 +86,7 @@ function headTree(modes) {
   }
   return folders;
 }
+const SHA_REF = /^[0-9a-f]{40}$/u;
 const notStubbed = () => {
   throw Object.assign(new Error('Command failed: gh api'), { stderr: 'gh: Not Found (HTTP 404)\n' });
 };
@@ -113,6 +114,14 @@ function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configTex
       calls.push(['contents', repo, file, ref, host]);
       assert.match(ref, /^(?:refs\/heads\/.|[0-9a-f]{40}$)/u, 'a branch, never a tag of the same name, or a commit by its SHA');
       const key = `${repo}@${ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref}:${file}`;
+      // A folder at a commit that `files` does not name lists what `files` holds below it at that commit: each a
+      // regular file, or a folder for a deeper path.
+      const below = `${repo}@${ref}:${file === '' ? '' : `${file}/`}`;
+      const held = Object.keys(files).filter((each) => each.startsWith(below) && each !== below.slice(0, -1));
+      if (!Object.hasOwn(files, key) && SHA_REF.test(ref) && held.length) {
+        const names = new Map(held.map((each) => each.slice(below.length).split('/')).map((parts) => [parts[0], parts.length > 1 ? 'dir' : 'file']));
+        return [...names].map(([name, type]) => ({ type, name, path: `${file === '' ? '' : `${file}/`}${name}` }));
+      }
       if (!Object.hasOwn(files, key)) throw Object.assign(new Error(`Command failed: gh api ${repo} ${file}\ngh: Not Found (HTTP 404)`), { stderr: 'gh: Not Found (HTTP 404)\n' });
       if (typeof files[key] === 'function') return files[key]();
       if (Array.isArray(files[key])) return files[key].map((name) => ({ type: 'file', name, path: `${file}/${name}` }));
@@ -1001,6 +1010,15 @@ test('includeGuardedPaths true on the default branch and the base lets a guarded
   assert.match(run(t, r, ['7'], onStack(relocated, '.aidrian/config.json')).out[0], /its config at head abcdef1 is "tools\/policy\/config\.json", not "\.aidrian\/config\.json"/u, 'a pointer the base changed underneath');
   const malformed = { ...branches(policies, policies), [`acme/notes@${HEAD}:.aidrian.json`]: '{ "dir": ', [`acme/notes@${HEAD}:.aidrian/config.json`]: configText(policies) };
   assert.match(run(t, r, ['7'], onStack(malformed, '.aidrian/config.json')).out[0], /cannot be read whole \(\.aidrian\.json: invalid JSON/u, 'a malformed pointer with a valid fallback config');
+  // Each policy file the head holds is a regular file there: a config, or a pointer, the head's listing calls a link is off.
+  const linking = (folder, name) => ({ [`acme/notes@${HEAD}:${folder}`]: () => [{ type: 'symlink', name, path: folder ? `${folder}/${name}` : name }] });
+  const symlinked = run(t, r, ['7'], { ...headed(configText(policies)), files: { ...headed(configText(policies)).files, ...linking('.aidrian', 'config.json') } });
+  assert.deepEqual([symlinked.code, symlinked.out[0]], [1, 'auto-merge off for #7: ".aidrian/config.json" at head abcdef1 is a symlink, not a regular file, which includePolicyFiles never lets through']);
+  const pointerLink = { ...headed(configText(policies)).files, [`acme/notes@${HEAD}:`]: () => [{ type: 'dir', name: '.aidrian', path: '.aidrian' }, { type: 'symlink', name: '.aidrian.json', path: '.aidrian.json' }] };
+  assert.match(run(t, r, ['7'], { ...headed(configText(policies)), files: pointerLink }).out[0], /"\.aidrian\.json" at head abcdef1 is a symlink, not a regular file/u, 'a pointer that is a link');
+  const unlisted = { ...headed(configText(policies)).files, [`acme/notes@${HEAD}:.aidrian`]: () => { throw Object.assign(new Error('gh: Server Error (HTTP 500)'), { stderr: 'gh: Server Error (HTTP 500)\n' }); } };
+  assert.match(run(t, r, ['7'], { ...headed(configText(policies)), files: unlisted }).out[0], /the folder of "\.aidrian\/config\.json" at head abcdef1 cannot be listed/u, 'a listing that fails');
+  assert.deepEqual(reasonOf(t, r, headed(configText(policies))), [0, null], 'a regular config and no pointer');
   assert.equal(headPolicyProblem(null, { repo: 'acme/notes', head: HEAD }, { policy: JSON.parse(configText(LIFTED)), basePolicy: JSON.parse(configText(LIFTED)), policyFiles: [] }, [{ path: '.aidrian/config.json' }]), null, 'no lift, no read');
 });
 

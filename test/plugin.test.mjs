@@ -1561,6 +1561,18 @@ function markdownFiles(dir) {
   return allFiles(dir).filter((file) => file.endsWith('.md'));
 }
 
+test('every agent that returns findings asks for cites, the written rule a finding breaks, and keeps violated_rule a label', () => {
+  // The disposition table reads `cites` alone: a lens label in violated_rule, such as the critic's `simpler`, is no citation.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  for (const rel of ['agents-src/review/code-reviewer.md', 'agents-src/review/critic.md', 'agents-src/review/security-engineer.md', 'agents-src/build/backend-developer.md', 'agents-src/build/frontend-developer.md']) {
+    const text = read(rel);
+    assert.match(text, /`violated_rule`, `cites`|`cites` the written project rule/u, `${rel} lists cites beside violated_rule`);
+    assert.match(text, /`<doc>#<section>`/u, `${rel} says how cites names the rule`);
+  }
+  assert.doesNotMatch(read('agents-src/review/critic.md'), /`violated_rule` names the project doc/u, 'the critic names a doc in cites, not in violated_rule');
+  assert.match(read('skills/knowledge/references/handoff.md'), /`violated_rule` \(the rule or lens the finding names, a label no table reads\), `cites`/u);
+});
+
 test('every agent that pushes, and the orchestration skill, says to wait in the foreground for what it starts', () => {
   // A subagent that ends its turn with a background push or reviewer running goes idle, and nothing wakes it.
   const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');

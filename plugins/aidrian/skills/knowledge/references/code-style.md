@@ -18,3 +18,7 @@ These are the plugin's defaults. A project's own `code_style` docs win where the
   as long as it does not block a fuller one later. When it leaves a known limit, mark the spot with a comment
   that starts `SHORTCUT:` and says why it is enough now and what would replace it.
 - **Docs and comments state the contract and the why**, not a retelling of the code, so they do not drift from it.
+- **Docs describe the present.** When a change removes or replaces a thing, delete its text or rewrite the passage
+  to what holds now, rather than keeping a "retired" or "formerly" section about it: a reader takes every section
+  as current, and git and the ADRs keep the history. Keep a past fact only when a reader acts on it now,
+  such as a migration step for data the old behaviour left.

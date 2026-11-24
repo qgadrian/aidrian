@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
+import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
+import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, rereadAt, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
 import { gitPaths } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
 import { cleanOutput, FINDINGS_SCHEMA, REQUEST_BRIEF, reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
@@ -40,6 +41,37 @@ test('parseFindings: the disposition table decides which findings still block', 
   assert.equal(result.findings - result.fixed - result.accepted, result.open);
 });
 
+test('parseFindings: a low finding that cites a written project rule in cites is fix_now and blocks', () => {
+  const low = { title: 'Error text names no next step', file: 'src/a.ts', severity: 'low', likelihood: 'contrived', affects: 'internal', state: 'accepted' };
+  const result = parseFindings(JSON.stringify([low, { ...low, cites: 'docs/rules.md#errors' }, { ...low, cites: '' }, { ...low, cites: null }, { ...low, violated_rule: 'simpler' }]));
+  assert.deepEqual(result.list.map((each) => each.disposition), ['drop_unless_cited', 'fix_now', 'drop_unless_cited', 'drop_unless_cited', 'drop_unless_cited'], 'a lens label in violated_rule is no citation');
+  assert.deepEqual(result.list.map((each) => each.cites ?? null), [null, 'docs/rules.md#errors', null, null, null], 'the record keeps the citation');
+  assert.deepEqual(result.list.map(blocks), [false, true, false, false, false], 'a cited finding cannot be accepted');
+});
+
+test('parseFindings: from the late round on, an agent\'s low finding is a residual, cited or trivial, as the review loop reads it', () => {
+  const low = { title: 'Copy names no next step', file: 'src/a.ts', severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', state: 'accepted' };
+  const medium = { ...low, severity: 'medium', likelihood: 'plausible', affects: 'operators', cost: 'bounded' };
+  const raw = JSON.stringify([low, { ...low, cost: 'structural', likelihood: 'contrived', affects: 'internal', cites: 'docs/rules.md' }, { ...low, severity: 'medium', cost: 'bounded' }, medium, { title: 'No axes', severity: 'medium', state: 'accepted' }, { title: 'Late nit', severity: 'low', state: 'accepted' }]);
+  const N = loadTable().lateRoundFrom;
+  assert.deepEqual(parseFindings(raw, [], { round: N - 1 }).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'needs_axis', 'needs_axis']);
+  const late = parseFindings(raw, [], { round: N });
+  assert.deepEqual(late.list.map((each) => each.disposition), ['accepted_residual', 'accepted_residual', 'fix_now', 'accepted_residual', 'needs_axis', 'accepted_residual'], 'the loop\'s late reading; a routine medium stays, a finding with no axes still needs them, and a late low takes lateRound with or without');
+  assert.equal(late.open, 2);
+  assert.deepEqual(parseFindings(raw).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'needs_axis', 'needs_axis'], 'no round: early');
+});
+
+test('rereadAt: a result read again at a late round follows the table there, unless counts were attested over a kept list', () => {
+  const N = loadTable().lateRoundFrom;
+  const list = () => [{ title: 'Late nit', file: 'a.js', severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', state: 'accepted', disposition: 'fix_now' }];
+  const listed = { list: list(), open: 1, itemized: true };
+  assert.deepEqual([rereadAt(listed, N), listed.list[0].disposition, listed.open], [true, 'accepted_residual', 0]);
+  assert.deepEqual([rereadAt(listed, N), listed.open], [false, 0], 'nothing changes a second time');
+  const counted = { list: list(), open: 1 };
+  assert.deepEqual([rereadAt(counted, N), counted.list[0].disposition, counted.open], [false, 'fix_now', 1], 'counts attested over a kept list stand, even when they give the same open count');
+  assert.equal(rereadAt({ list: null, open: 2 }, N), false, 'a counts-only result is left as it is');
+});
+
 test('parseFindings: a malformed file is refused, never read as zero findings', () => {
   assert.throws(() => parseFindings('nope'), /must be a JSON file/u);
   assert.throws(() => parseFindings('{"items":[]}'), /list of findings/u);
@@ -53,7 +85,7 @@ test('parseFindings: already_ruled is kept only when it names a settled entry an
   const settled = [{ title: 'Button text overflows at 360px', file: 'src/app/x.tsx', severity: 'medium' }, { title: 'The retry has no cap' }];
   const raw = JSON.stringify([
     finding({ severity: 'medium', likelihood: 'contrived', already_ruled: '  Button text overflows at 360px ' }),
-    finding({ title: 'Retry again', file: 'src/y.ts', severity: 'low', already_ruled: 'The retry has no cap' }),
+    finding({ title: 'Retry again', file: 'src/y.ts', severity: 'low', affects: 'internal', already_ruled: 'The retry has no cap' }),
     finding({ title: 'Self-named', already_ruled: 'Self-named' }),
     finding({ file: 'src/other.tsx', severity: 'medium', likelihood: 'contrived', already_ruled: 'Button text overflows at 360px' }),
     finding({ already_ruled: '   ' }),
@@ -81,7 +113,8 @@ test('parseFindings: already_ruled is kept only when it names a settled entry an
 test('parseFindings: a finding more severe than the settled prior finding it names stays open, and is noted; a residual settles a low finding only', () => {
   const settled = [{ title: 'Low one', file: 'a.js', severity: 'low' }, { title: 'The retry has no cap' }];
   const residual = 'The retry has no cap';
-  const at = (severity, over) => finding({ title: `${severity} repeat`, file: 'a.js', severity, already_ruled: 'Low one', ...over });
+  // A low finding that reaches users is fixed now (finding-disposition.json), so the low repeats here reach only internal readers.
+  const at = (severity, over) => finding({ title: `${severity} repeat`, file: 'a.js', severity, already_ruled: 'Low one', ...(['low', 'nit', 'informational'].includes(severity) ? { affects: 'internal' } : {}), ...over });
   const result = parseFindings(JSON.stringify([
     at('critical'), at('blocker'), at('medium'), at('low'), at('nit'),
     at('critical', { already_ruled: residual }), at('medium', { already_ruled: residual }), at('low', { already_ruled: residual }), at('informational', { already_ruled: residual }),
@@ -98,8 +131,8 @@ test('parseFindings: a finding more severe than the settled prior finding it nam
 test('parseFindings: a prior finding takes precedence over a residual of the same text, which cannot lift its file or its cap', () => {
   const settled = [{ title: 'Shared', file: 'a.js', severity: 'low' }, { title: 'Shared' }];
   const result = parseFindings(JSON.stringify([
-    finding({ title: 'Elsewhere', file: 'b.js', severity: 'low', already_ruled: 'Shared' }),
-    finding({ title: 'Here', file: 'a.js', severity: 'low', already_ruled: 'Shared' }),
+    finding({ title: 'Elsewhere', file: 'b.js', severity: 'low', affects: 'internal', already_ruled: 'Shared' }),
+    finding({ title: 'Here', file: 'a.js', severity: 'low', affects: 'internal', already_ruled: 'Shared' }),
   ]), settled);
   assert.deepEqual(result.list.map((each) => each.already_ruled ?? null), [null, 'Shared'], 'the residual does not settle the repeat in another file');
   assert.deepEqual(result.notes, ['--findings-file[0].already_ruled names a settled finding in another file ("Shared"): read as it stands']);

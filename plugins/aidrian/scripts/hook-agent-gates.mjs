@@ -55,7 +55,7 @@ import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial, writesNothing } from '../lib/config-guard.mjs';
 import { GUARD_BUDGET_MS, guardBudget, PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { baseReader, continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, mainCheckoutWriteDenial, prEnvDenial, projectRunWriteDenial, remoteChangeDenial, sessionFoldersWriteDenial, startedUnattended, stateFolders, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
+import { baseReader, continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostServiceDenial, hostSessionStartDenial, mainCheckoutWriteDenial, prEnvDenial, projectRunWriteDenial, remoteChangeDenial, sessionFoldersWriteDenial, startedUnattended, stateFolders, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
 import { block, HookExit, isMain, runHook } from '../lib/hook-io.mjs';
 import { humanPrompts } from '../lib/hosts/index.mjs';
 import { findProject, openProject } from '../lib/project.mjs';
@@ -158,7 +158,7 @@ async function gate(input) {
       // A command longer than the guards read may hide one of those stores in the words they skip.
       outside = withinDeadline(budget, () => opaqueLimitDenial(input, DEFAULTS, { unattended, drove, issue, mark })
         ?? handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended }) ?? prEnvDenial(input, DEFAULTS, { unattended })
-        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? remoteChangeDenial(input, DEFAULTS, { unattended, mark })
+        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? hostServiceDenial(input, DEFAULTS, { unattended }) ?? remoteChangeDenial(input, DEFAULTS, { unattended, mark })
         ?? projectCommandDenial(input, DEFAULTS, { unattended, mark })
         ?? stateFoldersWriteDenial(input, DEFAULTS, { unattended, marksHeld: droveHeld, signoffsHeld: droveHeld })
         ?? sessionFoldersWriteDenial(input, null, DEFAULTS, null, { unattended })
@@ -250,6 +250,7 @@ function guards(input, project, config, gated, snapshot, others, holds, base, ow
     ?? handoffEnvDenial(input, config, { unattended })
     ?? prEnvDenial(input, config, { unattended })
     ?? hostSessionStartDenial(input, config, { unattended })
+    ?? hostServiceDenial(input, config, { unattended })
     ?? remoteChangeDenial(input, config, { unattended, mark: holds.mark })
     ?? projectCommandDenial(input, config, { unattended, mark: holds.mark })
     ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended, drives, base })

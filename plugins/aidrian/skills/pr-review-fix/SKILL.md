@@ -38,6 +38,7 @@ The `pr-review` skill's `references/manifest.md` defines its fields and statuses
 - Run `aidrian pr disposition --manifest <manifest>`. Exit 1 lists each finding whose `disposition` its axes do not give:
   write the first of its `expected` values in its place, and name each in the report. An empty `expected` means its axes
   are not in the vocabulary: set that finding `blocked`, with that in `note`, and report that the `pr-review` skill asks its agent again.
+  Each `status_drift` entry: set the finding's status to its `expected`, `open`, and name it in the report.
   Exit 2: the file is unreadable; stop.
 - Check that the manifest's `head_sha` still covers the remote head `@{u}`. It does not when `git merge-base --is-ancestor <head_sha> @{u}` fails,
   or when `git log --format=%h <head_sha>..@{u}` lists a commit that no finding records in its `commit`: nobody reviewed that commit.
@@ -48,7 +49,7 @@ The `pr-review` skill's `references/manifest.md` defines its fields and statuses
 
 ## 3. Selection
 
-1. `fix_now` findings with status `open`, by severity, then likelihood. With `--only`, those ids alone.
+1. `fix_now` findings with status `open`, by severity, then likelihood, a low one that cites a project rule (`cites`) among them. With `--only`, those ids alone.
 2. `accepted_residual` findings with status `open` get no code fix: a short code comment at the line that names the residual,
    and a line in the pull request body's Accepted residuals section, written with the `pr-write` skill.
    The owner of their files writes the comments in one last commit and pushes it; record it in each finding's `commit` and `note`,

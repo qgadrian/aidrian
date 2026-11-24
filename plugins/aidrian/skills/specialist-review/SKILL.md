@@ -90,8 +90,10 @@ On a reply, set the entry's `head_sha` and `last_used_at`.
 Compute each finding's verdict from the agent's own axes:
 
 ```bash
-aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>]
+aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>] [--cites <doc>#<section>]
 ```
+
+Pass the agent's `cites` as `--cites` only when it names a written project rule that the code breaks.
 
 A finding without `likelihood` or `affects` gets `needs_axis`; never fill in an axis for the agent.
 Then render with `references/render.md`: the findings in the order to fix them, and the agent's status as it returned it.

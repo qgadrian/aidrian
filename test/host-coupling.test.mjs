@@ -19,11 +19,12 @@ const ADAPTER_FOLDERS = [`lib${path.sep}hosts${path.sep}`, `lib${path.sep}tracke
 
 const COUPLINGS = {
   // CODEX_TIMEOUT_SEC is the plugin's own constant, for the second-opinion command, and no variable of Codex.
-  'host variable': /\b(?:CLAUDECODE|CLAUDE_[A-Z0-9][A-Z0-9_]*|CODEX_(?!TIMEOUT_SEC\b)[A-Z0-9][A-Z0-9_]*|PLUGIN_(?:ROOT|DATA)[A-Z0-9_]*)\b/gu,
+  // OPENCODE and OPENCODE_* start at a word, so the plugin's own AIDRIAN_OPENCODE_TRACE is no variable of OpenCode.
+  'host variable': /\b(?:CLAUDECODE|CLAUDE_[A-Z0-9][A-Z0-9_]*|CODEX_(?!TIMEOUT_SEC\b)[A-Z0-9][A-Z0-9_]*|PLUGIN_(?:ROOT|DATA)[A-Z0-9_]*|OPENCODE(?:_[A-Z0-9][A-Z0-9_]*)?)\b/gu,
   // An environment read by a computed or bracketed name: the name above sees the literal, and this one the access to a part of it.
-  'env bracket': /\benv\[\s*['"`](?:CLAUDE|CODEX|PLUGIN)/gu,
+  'env bracket': /\benv\[\s*['"`](?:CLAUDE|CODEX|PLUGIN|OPENCODE)/gu,
   'host tool': /['"`](?:apply_patch|Edit|Write|NotebookEdit|Bash|Agent|Task|AskUserQuestion|EnterWorktree|ExitPlanMode|TodoWrite|Read|Grep|Glob|LS|NotebookRead|spawn_agent)['"`]/gu,
-  'host name': /[!=]==\s*['"`](?:Claude Code|claude-code|claude|Claude|Codex|codex)['"`]/gu,
+  'host name': /[!=]==\s*['"`](?:Claude Code|claude-code|claude|Claude|Codex|codex|OpenCode|opencode)['"`]/gu,
   // A Claude Code transcript entry's marks of who gave it: a subagent's, the app it came from, and whose permission decision.
   // Whether an answer is the Human's is the adapter's to say (lib/hosts/index.mjs humanAnswer).
   'transcript mark': /\b(?:isSidechain|entrypoint|permissionDecision|user_temporary)\b/gu,
@@ -104,6 +105,15 @@ if (entry.isSidechain === false && entry.entrypoint === 'cli' && entry.permissio
   assert.equal(count('env bracket'), 1);
   assert.equal(count('transcript mark'), 4, 'the marks of the Human`s own answer stay behind the adapter');
   assert.equal([...'const CODEX_TIMEOUT_SEC = 780;'.matchAll(COUPLINGS['host variable'])].length, 0);
+  const opencode = `if (env.OPENCODE_SESSION_ID || env.OPENCODE === '1') run();
+if (host === 'opencode' || name !== "OpenCode") run();
+const id = env['OPENCODE_' + 'X'];
+`;
+  const opencodeCount = (name) => [...opencode.matchAll(COUPLINGS[name])].length;
+  assert.equal(opencodeCount('host variable'), 2, 'OpenCode`s session id and its marker');
+  assert.equal(opencodeCount('host name'), 2, 'its name in either case');
+  assert.equal(opencodeCount('env bracket'), 1);
+  assert.equal([...'const trace = env.AIDRIAN_OPENCODE_TRACE;'.matchAll(COUPLINGS['host variable'])].length, 0, 'the plugin`s own variable');
   assert.ok(SHARED.includes('bin'), 'the commands are shared code too');
   assert.ok(walk(path.join(PLUGIN, 'bin')).length > 0, 'and the walk reaches them');
 });

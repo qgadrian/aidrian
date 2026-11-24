@@ -1,5 +1,5 @@
 {
-  "$comment": "Lookup table for lib/finding-disposition.mjs (aidrian pr disposition): severity x likelihood x affects [x cost] [x phase] -> disposition. What real users and operators hit routinely outranks contrived exploits; a trivial fix is always worth taking, while a structural one must earn its place. First matching rule wins, after `lateRound`: from review round `lateRoundFrom` a bot finding of a `lateRound` severity takes its disposition before any axis or rule, so a late nit costs no round. Change the table, not a prompt.",
+  "$comment": "Lookup table for lib/finding-disposition.mjs (aidrian pr disposition): severity x likelihood x affects [x cost] [x phase] -> disposition. What real users and operators hit routinely outranks contrived exploits; a trivial fix is worth taking, a low finding's too, until `lateRound` makes a late low bot finding a residual, while a structural one must earn its place. A drop_unless_cited finding that cites a written project rule (`cites`) is fix_now, unless `lateRound` applies first. First matching rule wins, after `lateRound`: from review round `lateRoundFrom` a bot finding of a `lateRound` severity takes its disposition before any axis or rule, so a late nit costs no round. Change the table, not a prompt.",
   "severities": [
     "critical",
     "high",
@@ -39,7 +39,7 @@
     "fix_now": "fix in this PR",
     "accepted_residual": "real defect, consciously not fixed: written into the pull request body as an accepted residual with a code comment, no issue. On a path where a customer buys or signs up, the residual is allowed and made visible, never answered with a refusal",
     "acceptable_as_is": "not a defect worth recording: no PR-body entry, no comment",
-    "drop_unless_cited": "surface only when it cites a written project rule or a documented anti-pattern; otherwise do not report it",
+    "drop_unless_cited": "a low finding with more than a trivial fix that reaches only internal readers or revenue, needs a contrived setup, or costs a structural change: fixed only when it cites a written project rule or a documented anti-pattern (`--cites`, which gives fix_now); otherwise do not report it",
     "needs_axis": "a human or user finding without likelihood and affects: classify it, never guess",
     "trivial": "a few lines, local, no new state or migration; cheaper to fix than to discuss",
     "bounded": "a contained change within the touched module, tests included",
@@ -52,6 +52,36 @@
       "when": {
         "severity": [
           "critical"
+        ]
+      },
+      "disposition": "fix_now"
+    },
+    {
+      "when": {
+        "severity": [
+          "low"
+        ],
+        "cost": [
+          "trivial"
+        ]
+      },
+      "disposition": "fix_now"
+    },
+    {
+      "when": {
+        "severity": [
+          "low"
+        ],
+        "cost": [
+          "bounded"
+        ],
+        "affects": [
+          "users",
+          "operators"
+        ],
+        "likelihood": [
+          "routine",
+          "plausible"
         ]
       },
       "disposition": "fix_now"

@@ -55,8 +55,8 @@ simpler alternative is medium when it removes real surface, low otherwise.
 ## Output
 
 Return the machine handoff from the `knowledge` skill with `findings`, each with `severity`, `likelihood`, `affects`,
-`cost`, `file`, `line`, `violated_rule`, `summary`, and `next_step`, ordered by severity; `summary` is the impact and
-`next_step` the fix direction. `violated_rule` names the project doc and section when one applies, else the lens:
-`gap`, `assumption`, `docs-drift`, `simpler`, or `improvement`. Add `sign_off` when the dispatch asks for one.
+`cost`, `file`, `line`, `violated_rule`, `cites`, `summary`, and `next_step`, ordered by severity; `summary` is the impact and
+`next_step` the fix direction. `violated_rule` names the lens: `gap`, `assumption`, `docs-drift`, `simpler`, or `improvement`.
+`cites` names the project doc and section the code breaks, as `<doc>#<section>`, when one applies, else `null`. Add `sign_off` when the dispatch asks for one.
 With no findings, `findings` is `[]` and `decision` says which lenses you covered.
 Use Markdown only when talking to the Human directly.

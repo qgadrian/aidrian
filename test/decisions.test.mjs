@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { loadTable as dispositionTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { ageDays, CLASS_MAX, DECISION_DOMAINS, DECISION_STATUSES, decisionClasses, decisionWarnings, escalateDocWarnings, isClassName, isDecisionLine, loadVocab, lowerMode, parseDecisions, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision } from '../plugins/aidrian/lib/decisions.mjs';
 import { findWrapViolations } from '../plugins/aidrian/lib/markdown-wrap.mjs';
 import { check as prBodyDeny } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
@@ -653,4 +654,38 @@ test('an older marker of a class with its own domain counts toward that domain\'
   const answer = (over) => resolveAuthority({ decisions: block }, question({ ...over, pending })).rule;
   assert.equal(answer({ domain: 'product', class: 'product-behaviour' }), 'domain-paused');
   assert.notEqual(answer({ domain: 'ux', class: 'copy' }), 'domain-paused', 'it no longer counts for the domain it recorded');
+});
+
+// The review rules' fix-cost stop went to the Human under every setting, so an unattended run whose team opted in to
+// decide-reversible still parked on it. Each place that states the stop names one resolve command, and that command
+// must reach `decide` once a team opts in, and ask under the defaults.
+test('the review rules\' fix-cost stop resolves to decide under decide-reversible and asks under the defaults', () => {
+  const sources = ['plugins/aidrian/skills/orchestration/references/review-rules.md', 'docs/review.md'];
+  const command = /aidrian decisions resolve --domain (\S+) --class (\S+) --reversible ([a-z,]+)/u;
+  const named = sources.map((file) => {
+    const text = readFileSync(path.join(ROOT, file), 'utf8');
+    assert.match(text, /worth its cost is a `scope` decision/u, `${file} states the cost stop as a scope decision`);
+    const found = text.match(command);
+    assert.ok(found, `${file} names the resolve command for the cost stop`);
+    return found.slice(1);
+  });
+  assert.deepEqual(named[1], named[0], 'the doc names the rules\' command');
+  assert.match(readFileSync(path.join(ROOT, 'plugins/aidrian/skills/pr-review-loop/SKILL.md'), 'utf8'), /cost stop is a `scope` decision for `aidrian decisions resolve`/u);
+  const [domain, kind, words] = named[0];
+  const keys = Object.keys(loadVocab().reversibility);
+  const reversible = Object.fromEntries(words.split(',').map((word, i) => [keys[i], word === 'yes']));
+  assert.equal(Object.keys(reversible).length, keys.length, 'it answers every reversibility question');
+  const stop = question({ domain, class: kind, reversible });
+  assert.deepEqual(pick(resolveAuthority(open, stop)), ['decide', 'mode']);
+  assert.equal(resolveAuthority(DEFAULTS, stop).authority, 'ask');
+  // The stop records nothing a second look could read, so one that covers it fails closed to ask. Its severity is the
+  // lowest, so only a secondLook at minSeverity low covers it, and the default (high) leaves a plain decide.
+  const severities = dispositionTable().severities;
+  assert.equal(severities.at(-1), 'low', 'low is the lowest severity a secondLook can name');
+  assert.equal(DEFAULTS.decisions.secondLook.minSeverity, 'high', 'the default second look does not cover the stop');
+  for (const file of sources) {
+    const text = readFileSync(path.join(ROOT, file), 'utf8').replace(/\s+/gu, ' ');
+    assert.match(text, /`decide`,? with `secondLook` `null` or its `minSeverity` above `low`, this stop's severity/u, `${file} decides only past a second look`);
+    assert.match(text, /`decide` with a `secondLook` at `minSeverity` `low`.*treats? the answer as `ask`/u, `${file} fails closed on a second look`);
+  }
 });

@@ -32,7 +32,7 @@
       "tags": []
     },
     "hooks.md": {
-      "summary": "Bash rules: pr-body, main-checkout, commits, amend, gates, merge guard, product feedback, ready hold, AIDRIAN_ALLOW_UNHELD_READY, announce, review-loop checks.",
+      "summary": "Bash rules: pr-body, main-checkout, commits, amend, gates, merge guard, product feedback, ready hold, AIDRIAN_ALLOW_UNHELD_READY, announce, review-loop, bridge.",
       "tags": []
     },
     "project-folder.md": {
@@ -91,8 +91,12 @@
       "summary": "Codex host: install, update, local checkout, running aidrian, hooks, trust, app connector tool names, proving the tracker guard, models, effort, gates, limits.",
       "tags": []
     },
+    "providers/opencode.md": {
+      "summary": "OpenCode 2.0+ host: install by Git specifier, bridge plugin, session ledger, AIDRIAN_NODE, AIDRIAN_OPENCODE_TRACE, no guard on an OpenCode session, limits.",
+      "tags": []
+    },
     "providers/adding-a-host.md": {
-      "summary": "Adding a host, tracker, or forge: adapter files, fields and methods, lib/hosts, lib/trackers, lib/forges, conformance and coupling tests, what needs a hand.",
+      "summary": "Adding a host, tracker, or forge: adapter files, fields, methods, bridge, lib/hosts, lib/trackers, lib/forges, conformance, coupling tests, what needs a hand.",
       "tags": []
     }
   }

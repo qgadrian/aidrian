@@ -8,6 +8,7 @@ export default {
     any: ['faketracker'],
     'claude-code': [],
     codex: ['codex_apps_faketracker'],
+    opencode: [],
   },
   readTool: 'site_info',
   writeVerbs: ['add_*', 'transition_*', 'edit_ticket'],

@@ -486,7 +486,12 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
 6. It records the start for this session, which stops the session from starting another until the host lists the
    started one as ended, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
-   host's command to open it. The line ends on what becomes of this session: with the
+   host's command to open it. Unless this terminal switches to the new session, it then names
+   `aidrian handoff owner <id>`, run in that folder, for when the new session hands off in turn: the line still names
+   the first, which then stops, and the command follows each later start the store records, from the session `<id>`
+   to the last. It prints `owner: <id>` and a `say:` line that names that session and how to open it, exit 0, or
+   exits 1 when no start of the last day names `<id>`, or several do. It writes nothing.
+   The line ends on what becomes of this session: with the
    [shell function](#replacing-the-terminal), that this terminal switches to the new session once the turn ends, with
    nothing to open by hand; without it, `This session has ended its work; the new one is <name>, open it with <the
    host's command>.` A session the background route started, which no terminal follows, says it stops once this turn
@@ -500,7 +505,10 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    updated first, with the host's update command when the host declares one.
    The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
-   work, so the old session does not take up the same work unasked.
+   work, so the old session does not take up the same work unasked. When that session handed off in turn, the line
+   names the one it started, and so on to the last of the chain, which owns the work now. The walk ends at a start
+   record that names no full session id and at a session met twice, and never takes a project run's start, which is
+   other work: the session that made it owns the brief still.
 
 When the host cannot start the session, such as with no host command on an absolute folder of PATH, a folder the
 listing does not name, a folder the host does not trust, or a start that fails, the gate falls back to the clear route

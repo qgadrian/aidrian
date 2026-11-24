@@ -6,9 +6,10 @@ How to build, check, and release a change is in [contributing.md](contributing.m
 ## Where to work
 
 - Work in a task worktree, `aidrian worktree new <branch>`, never in the main checkout.
-  Several sessions share that folder, so the [main-checkout guard](hooks.md#main-checkout) blocks edits there,
-  branch switches away from `main`, `git add -A`, and every commit or move of the branch, such as a reset or rebase.
-  The [commit guard](hooks.md#commit-guard) refuses a commit in the main checkout too.
+  Several sessions share that folder, so on Claude Code and Codex the [main-checkout guard](hooks.md#main-checkout)
+  blocks edits there, branch switches away from `main`, `git add -A`, and every commit or move of the branch, such as
+  a reset or rebase, and the [commit guard](hooks.md#commit-guard) refuses a commit there too.
+- On OpenCode no guard holds the session, so work only in a task worktree and never merge ([its limits](providers/opencode.md#limits)).
 - A session runs the plugin version installed on its machine, never the branch it edits.
   To see a change to a hook, skill, or agent at work, [try the branch](contributing.md#trying-a-branch).
 
@@ -22,7 +23,8 @@ How to build, check, and release a change is in [contributing.md](contributing.m
 - A hook lets the action run when it cannot read its input: a hook never breaks a session.
 - Plugin text names no project, project path, person, or bare slash command; a project's rules live in its own `.aidrian/`.
 - The harness is provider agnostic: shared rules, code, and config assume no one host.
-  Claude Code and Codex are today's hosts; others, such as opencode, DeepSeek Code, or Kimi Code, may follow.
+  Claude Code, Codex, and OpenCode 2.0 and later are today's hosts, OpenCode with the session ledger alone and no guard
+  ([its limits](providers/opencode.md#limits)); others, such as DeepSeek Code or Kimi Code, may follow.
 - `mcp__<server>__<tool>` is the standard format for naming an MCP tool in permissions and config.
   A host that names tools or events differently gets a translation layer that maps to the standard;
   the difference never spreads into shared code.
@@ -43,8 +45,8 @@ How to build, check, and release a change is in [contributing.md](contributing.m
   the pull request's Conventional Commit title calls for ([Versions](contributing.md#versions)).
 - `aidrian test changed` passes before a push; CI runs the commands of `npm run check` on the pushed head, the tests in
   two jobs a Node version ([Build and check](contributing.md#build-and-check)), and every `Check (Node N)` is green before ready.
-- The session that opens a pull request owns it to the end: it runs the review loop, marks it ready, and merges it
-  through `pr-auto-merge` once every review signed off and every check is `SUCCESS`, without asking Adrian.
+- On Claude Code and Codex, the session that opens a pull request owns it to the end: it runs the review loop, marks it
+  ready, and merges it through `pr-auto-merge` once every review signed off and every check is `SUCCESS`, without asking Adrian.
   Where that gate or the [merge guard](hooks.md#merge-guard) refuses, as for a guarded path such as a workflow,
   knowledge, or a guard rule, or a pull request an earlier session in a handoff chain marked ready, the session never
   works around it. A refusal it can clear, such as a timed-out read, a pending check, or open review work, it retries

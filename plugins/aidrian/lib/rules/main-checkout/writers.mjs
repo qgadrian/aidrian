@@ -4,7 +4,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { isLongOption, readShortOptions } from '../../shell-lex.mjs';
+import { assignsVariable, isLongOption, readShortOptions } from '../../shell-lex.mjs';
 
 // Programs whose every operand is written, and the options of each that take a value: the rest of a short option's
 // word (`-e's/a/b/'`), or else the next word. A long one also matches by a prefix, as getopt_long reads it:
@@ -69,6 +69,27 @@ const CHANGES_FOLDER = new Map([['perl', ['-x']], ['ruby', ['-C', '-x']]]);
 const COPIERS = new Set(['cp', 'ln', 'install']);
 // An rsync operand naming another host: `host:path`, `user@host:path`, `host::module`, or `rsync://host/module`.
 const REMOTE = /^[^/]*:/u;
+// A single-colon remote operand, `host:path`, `user@host:path`, or a bracketed IPv6 host, `[::1]:path`: a remote shell
+// starts the other side, never a daemon, as for `host::module` and `rsync://host/module`.
+const SHELL_REMOTE = /^(?!rsync:\/\/)(?:[^/:]*|(?:[^/:@[]*@)?\[[^\]/]*\]):(?!:)/u;
+// The remote shells that reach another machine: a bare ssh or rsh, or one by its absolute path in a system program
+// folder. Any other program the call names, such as `./sh`, or a shim named ssh by any other path, as `./ssh`,
+// `bin/ssh`, or `~/ssh`, may run the other side here, so a single-colon destination's path part is then a local one.
+// Accepted residuals: a shim on PATH named ssh, and ssh or rsh to this machine, as `-e ssh localhost:<path>`, write
+// here unseen.
+const REMOTE_SHELLS = new Set(['ssh', 'rsh']);
+const SYSTEM_PROGRAMS = new Set(['/usr/bin', '/bin', '/usr/local/bin', '/opt/homebrew/bin']);
+const isRemoteShell = (word) => REMOTE_SHELLS.has(word) || (path.isAbsolute(word) && SYSTEM_PROGRAMS.has(path.dirname(word)) && REMOTE_SHELLS.has(path.basename(word)));
+// Whether the remote shell the call names may run the other side here: its program word, the first word of the last
+// `-e`, `--rsh`, or `--rsh=` value, or else of an RSYNC_RSH the call itself sets (assignsVariable), as a prefix
+// assignment or `env` does, is not a remote shell (isRemoteShell). One built at run time may be anything.
+function shellMayBeLocal(rsh, invocation) {
+  const value = rsh ?? (assignsVariable(invocation, 'RSYNC_RSH') ? invocation.environment.findLast((change) => change.name === 'RSYNC_RSH')?.value : null);
+  if (!value) return false;
+  return value.dynamic === true || !isRemoteShell(value.text.trim().split(/\s+/u)[0]);
+}
+// The path part of a remote operand, `.` when it names none, as `host:` lands in the folder the other side starts in.
+const remotePart = (token) => ({ ...token, text: token.text.slice(SHELL_REMOTE.exec(token.text)[0].length) || '.' });
 
 // A write target as the shell reads a leading `~`: `~` and `~/x` are in the home folder, not in the shell's folder.
 // `~user` stays as written, and so does a token marked `literal`, cut from inside a word or built by this rule: the shell
@@ -77,9 +98,12 @@ const isHomeWord = ({ text, literal = false }) => !literal && (text === '~' || t
 export const expandHome = (token) => (isHomeWord(token) ? path.join(homedir(), token.text.slice(1)) : token.text);
 
 // The operands a writer writes: all of them, every path of mv, the destination of cp and rsync (and rsync's sources
-// under --remove-source-files), and the files of sed -i, never its script.
-export function written(program, args, valueFlags = WRITERS.get(program)) {
+// under --remove-source-files), and the files of sed -i, never its script; for cp, ln, install, mv, and rsync, also the
+// name each makes inside a destination folder (joinedNames). `invocation` is the call as shell-lex.mjs readInvocation
+// reads it, whose own changes to its environment may name rsync's remote shell.
+export function written(program, args, valueFlags = WRITERS.get(program), invocation = { environment: [] }) {
   const flags = [];
+  let rsh = null;
   const operands = [];
   let folder = null;
   let suffix = null;
@@ -89,12 +113,14 @@ export function written(program, args, valueFlags = WRITERS.get(program)) {
     if (!ended && text === '--') ended = true;
     else if (!ended && text.startsWith('--')) {
       flags.push(text);
+      if (program === 'rsync' && isLongOption(text, '--rsh', '--rsh')) rsh = text.includes('=') ? { text: text.slice(text.indexOf('=') + 1), dynamic: args[i].dynamic } : args[i + 1] ?? null;
       if (valueFlags.has(text) || (/^--[^=]+$/u.test(text) && [...valueFlags].some((option) => option.startsWith(text)))) i += 1;
     } else if (!ended && text.startsWith('-') && text.length > 1) {
       // Drop the values of fixed-shape options, up to the first option that takes the rest of the word.
       const cluster = SHORT_VALUES.has(program) ? withoutShortValues(text, program) : text;
       const { options, value } = readShortOptions(cluster, valueFlags, REST_VALUES.get(program));
       flags.push(...options);
+      if (program === 'rsync' && value?.option === '-e') rsh = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic };
       if (SCRIPT_OPTIONS.has(program) && value?.option === '-i') suffix = { text: value.attached ?? '', dynamic: args[i].dynamic };
       if (CHANGES_FOLDER.get(program)?.includes(value?.option)) {
         // ruby changes folder at each option, so `ruby -C one -C two` runs in one/two; perl keeps only its last -x.
@@ -114,14 +140,20 @@ export function written(program, args, valueFlags = WRITERS.get(program)) {
   if (program === 'install' && flags.some((flag) => flag === '-d' || isLongOption(flag, '--directory', '--d'))) return operands;
   if (COPIERS.has(program) || program === 'mv') {
     const directory = targetDirectory(args);
-    if (program === 'mv') return directory ? [...operands, directory] : operands;
-    if (directory) return [directory];
-    return operands.length >= 2 ? operands.slice(-1) : [];
+    const joined = copyJoined(program, operands, directory, program === 'cp' && flags.some((flag) => isLongOption(flag, '--parents', '--pa')));
+    if (program === 'mv') return [...operands, ...(directory ? [directory] : []), ...joined];
+    if (directory) return [directory, ...joined];
+    return [...(operands.length >= 2 ? operands.slice(-1) : []), ...joined];
   }
   if (program === 'rsync') {
     if (operands.length < 2) return [];
     const removesSources = flags.some((flag) => isLongOption(flag, '--remove-source-files', '--remov') || isLongOption(flag, '--remove-sent-files', '--remov'));
-    return (removesSources ? operands : operands.slice(-1)).filter((token) => !REMOTE.test(token.text));
+    // -R keeps the source's relative path, and the last of it and --no-R wins.
+    const relative = flags.findLastIndex((flag) => flag === '-R' || isLongOption(flag, '--relative', '--rel')) > flags.findLastIndex((flag) => flag === '--no-R' || isLongOption(flag, '--no-relative', '--no-rel'));
+    // Under a remote shell that may run here, a single-colon destination is judged by its path part, as a local one.
+    const into = operands.at(-1);
+    const synced = shellMayBeLocal(rsh, invocation) && SHELL_REMOTE.test(into.text) ? [...operands.slice(0, -1), remotePart(into)] : operands;
+    return [...(removesSources ? synced : synced.slice(-1)).filter((token) => !REMOTE.test(token.text)), ...syncJoined(synced, relative)];
   }
   if (SCRIPT_OPTIONS.has(program)) {
     // perl -i and ruby -i edit their files in place; without -i they only read them, and -c only checks syntax.
@@ -141,6 +173,63 @@ export function written(program, args, valueFlags = WRITERS.get(program)) {
   const scripted = flags.some((flag) => flag === '-e' || flag === '-f' || isLongOption(flag, '--expression', '--e') || isLongOption(flag, '--file', '--fi'));
   return scripted ? operands : operands.slice(1);
 }
+
+// A destination the text shows is a folder: one with a closing slash, `.`, `..`, or ending in either.
+const FOLDER_TEXT = /\/$|(?:^|\/)\.\.?$/u;
+// A source's last part, or kept path, that names no file the copy makes: `.` or `..`, or one built at run time or by a glob.
+const NO_NAME = /^\.\.?$|[$`*?[{]/u;
+
+// The names cp, ln, install, or mv makes inside a destination folder (joinedNames): its sources are every operand but
+// the destination, and the destination is certain a folder for -t, two or more sources, FOLDER_TEXT, ln with one
+// operand, which links into the shell's folder, or cp --parents, which makes each source's relative path there.
+function copyJoined(program, operands, directory, parents) {
+  const lone = program === 'ln' && !directory && operands.length === 1;
+  const sources = directory || lone ? operands : operands.slice(0, -1);
+  const into = directory ?? (lone ? { text: '.', dynamic: false, literal: true } : operands.at(-1));
+  if (!into) return [];
+  const certain = Boolean(directory) || lone || parents || sources.length >= 2 || FOLDER_TEXT.test(into.text);
+  return joinedNames(sources, into, certain, parents ? keptPath : path.basename);
+}
+
+// The names rsync makes inside its destination (joinedNames). Each is certain: rsync never renames a folder source, so
+// `rsync -a pkg/dir new` makes new/dir whether or not new is there. The price is a rare extra refusal of a file synced
+// to a new name, as `rsync -a pkg/x.md new.md` also names new.md/x.md. A source spelled remote lands by its path part,
+// `host:/x/y` as `<into>/y`, since an `-e` shim can make it local; a remote destination makes no local name, unless
+// the remote shell the call names may run here (anything but ssh or rsh, bare or in a system program folder), when
+// written() hands it here by its path part.
+// Without -R a source with a closing slash copies its contents, the stated residual below; with -R it makes its kept
+// path, which GNU rsync starts after a `/./` marker and openrsync does not, so a marked source names both.
+function syncJoined(operands, relative) {
+  const into = operands.at(-1);
+  if (REMOTE.test(into.text)) return [];
+  const sources = operands.slice(0, -1).map((source) => (REMOTE.test(source.text) ? { ...source, text: source.text.slice(source.text.indexOf(':') + 1) } : source));
+  if (!relative) return joinedNames(sources.filter((source) => !source.text.endsWith('/')), into, true);
+  const marked = sources.flatMap((source) => {
+    const marker = source.text.indexOf('/./');
+    return marker === -1 ? [source] : [source, { ...source, text: source.text.slice(marker + 3) }];
+  });
+  return joinedNames(marked, into, true, keptPath);
+}
+
+// The path rsync -R and cp --parents make below the destination: the source without a leading `/` or `./`.
+const keptPath = (text) => path.normalize(text).replace(/^\/+|\/+$/gu, '');
+
+// `<into>/<name of each source>`, its last part or, with `name` keptPath, its relative path, each marked
+// `joined: { into, certain }`: `into` the destination token, and `certain` when the text says it is a folder. A reader
+// keeps an uncertain one only when its destination is a folder on the disk (bash-writes.mjs bashWrites,
+// unattended-shell.mjs shellWrites), so a rename yields none. Accepted residual: what a copied, moved, or synced folder
+// holds is not read, so `cp -R pkg <dest>` is judged by `<dest>/pkg` alone, however many host files pkg holds, as is
+// `rsync -a pkg/ <dest>/` by `<dest>`, and a source named by a glob.
+function joinedNames(sources, into, certain, name = path.basename) {
+  return sources
+    .map((source) => name(source.text))
+    .filter((each) => each !== '' && !NO_NAME.test(each))
+    .map((each) => ({ text: joinedText(into, each), dynamic: into.dynamic, literal: into.literal, joined: { into, certain } }));
+}
+
+// The text of `name` inside the destination token `into`. A destination built from a variable or led by `~` is joined as
+// written, not normalized, so `$TMPDIR/../t/x` and `~/../t/x` keep the part the reader expands; path.join folds them to `t/x`.
+const joinedText = (into, name) => (into.dynamic || isHomeWord(into) ? `${into.text.replace(/\/+$/u, '')}/${name}` : path.join(into.text, name));
 
 // The backup an in-place edit with `suffix` writes for `file`, as each interpreter does it (checked by running both):
 // perl puts the file, as written, in place of each `*` (`-i'old/*'` on `src/f` writes `old/src/f`) and otherwise

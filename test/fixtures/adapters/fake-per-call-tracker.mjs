@@ -9,6 +9,7 @@ export default {
     any: ['faketickets'],
     'claude-code': ['claude_ai_FakeTickets'],
     codex: ['codex_apps_faketickets'],
+    opencode: [],
   },
   // Each write carries the site it goes to, and the read that could say which is connected lists them all.
   workspaceInput: 'cloudId',

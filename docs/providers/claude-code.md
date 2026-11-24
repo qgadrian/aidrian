@@ -410,7 +410,10 @@ How issue sessions and the driver relate to the cap of five background continuat
   a denied absent file on Linux, makes git die);
   `.claude/settings.json`, `.claude/settings.local.json`, and `.mcp.json` as `{}`, which `--setting-sources user` and
   `--strict-mcp-config` never load, each excluded through the git folder's `info/exclude`; and empty `.claude/skills`,
-  `agents`, `commands`, `hooks`, and `workflows` folders. A file the base branch tracks stays as it is.
+  `agents`, `commands`, `hooks`, and `workflows` folders; and the other hosts' root host files, each host's
+  `protectedPaths` this host does not protect: OpenCode's empty `.opencode` and `.agents` folders, and `opencode.json`
+  and `opencode.jsonc` as `{}`, excluded the same way ([OpenCode](opencode.md#rules-for-the-other-hosts-sessions)).
+  A file the base branch tracks stays as it is.
   `.claude/scheduled_tasks.json` is left out, as its shape is the host's. No placeholder is written through a link:
   each part of its path below the clone is checked, and one that is a link, as a `.claude` that leads elsewhere,
   refuses the start and leaves the link's target untouched. Any other `commondir` or `config.worktree`, a second
@@ -461,7 +464,7 @@ whole). A scalar passed with `--settings` wins over the user's settings; a list 
 | `sandbox.enableWeakerNetworkIsolation` | `true` on macOS only, where git and gh need it |
 | `sandbox.allowAppleEvents`, `sandbox.allowNestedUserNamespaces` | `false`: no sandboxed command launches another application, or a user namespace of its own |
 | `sandbox.filesystem.allowWrite` | the clone's git folder, the drop folder, the attempt's `cache` folder, the state work folders `plans`, `reviews`, `tmp`, and `dispatch`, the real `/tmp`, and the host's temporary folder; never the dispatch log |
-| `sandbox.filesystem.denyWrite` | the clone's `.git` pointer, its git folder's `config`, `hooks`, `commondir`, and `config.worktree`, on every platform, each a placeholder there at launch; each protected host file of the clone: `.claude/settings.json`, `.claude/settings.local.json`, `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`, `.claude/scheduled_tasks.json`, and `.mcp.json`; and, as `**` globs, any `.claude` folder itself at any depth, so none is made or made a link, those of each, its `settings*.json`, and any `SKILL.md`; the [sign-off store](../review.md#merge-trust)'s folders, `$XDG_STATE_HOME/aidrian/signoffs` and `~/.local/state/aidrian/signoffs`, the gate's `guarded`, by their real paths, the first made owner-only before the start, so no user `allowWrite` opens them; `permissions.deny` adds an `Edit` rule for each, for the file tools, which run outside the sandbox; and the keep file `.keep-attempt` of the attempt's `drop` and `cache` folders, there at launch, so neither can be emptied and removed, and a link put in its place |
+| `sandbox.filesystem.denyWrite` | the clone's `.git` pointer, its git folder's `config`, `hooks`, `commondir`, and `config.worktree`, on every platform, each a placeholder there at launch; each protected host file of the clone: `.claude/settings.json`, `.claude/settings.local.json`, `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`, `.claude/scheduled_tasks.json`, and `.mcp.json`, and every other host's, OpenCode's `.opencode`, `.agents`, `opencode.json`, and `opencode.jsonc`; and, as `**` globs, any `.claude` folder itself at any depth, so none is made or made a link, those of each, its `settings*.json`, and any `SKILL.md`, and every other host's `nestedGlobs`, OpenCode's `.opencode` and `.agents` folders and all they hold and its config files at any depth; the [sign-off store](../review.md#merge-trust)'s folders, `$XDG_STATE_HOME/aidrian/signoffs` and `~/.local/state/aidrian/signoffs`, the gate's `guarded`, by their real paths, the first made owner-only before the start, so no user `allowWrite` opens them; `permissions.deny` adds an `Edit` rule for each, for the file tools, which run outside the sandbox; and the keep file `.keep-attempt` of the attempt's `drop` and `cache` folders, there at launch, so neither can be emptied and removed, and a link put in its place |
 | `sandbox.filesystem.denyRead` | the user's credential stores, below, and the main checkout, whose git-ignored files, such as env files, a session never reads |
 | `sandbox.filesystem.allowRead` | the main checkout's git folder, when it lies in the main checkout: the clone borrows its objects |
 | `sandbox.network` | `strictAllowlist: true`, `allowedDomains` the forge's hosts (`github.com` and its API host for GitHub) and the hosts of each registry the base branch's [`projectRun.registries`](../config.md#project-run) lists, none by default, `allowAllUnixSockets: false`, `allowLocalBinding: false`, or `true` where the base branch sets [`projectRun.localBinding`](../config.md#project-run); no `allowUnixSockets` |
@@ -533,7 +536,10 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   environment names and the one the `npm` on PATH lies under, `~/.bunfig.toml`, `~/.local/share/gem/credentials`, `~/.bundle/config`,
   pnpm's `~/.config/pnpm/rc` and `~/Library/Preferences/pnpm/rc`, pip's `pip.conf` in `~/.config/pip`, `~/.pip`, and
   `~/Library/Application Support/pip`, poetry's `auth.toml` in `~/.config/pypoetry` and
-  `~/Library/Application Support/pypoetry`, and `~/.local/share/uv/credentials`. Credential-named environment variables are unset in the sandbox, as the table says, and the
+  `~/Library/Application Support/pypoetry`, and `~/.local/share/uv/credentials`; and the other hosts' logins and
+  service state, each adapter's `credentialStores`: Codex's `auth.json` under `CODEX_HOME` and in `~/.codex`, and
+  OpenCode's `opencode` folders of the data, state, and config folders and the one `OPENCODE_CONFIG_DIR` names
+  ([OpenCode](opencode.md#rules-for-the-other-hosts-sessions)). Credential-named environment variables are unset in the sandbox, as the table says, and the
   main checkout is unreadable but its git folder. The forge CLI's login, `~/.config/gh`, and its token variables stay:
   the session pushes and opens pull requests through them. Since the sandbox also hides the system keyring, where gh
   keeps its token by default, the session gets the forge token as `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` for a GitHub
@@ -667,7 +673,11 @@ Residual risks, each known and accepted:
 - The product quorum parks in a confined session, which starts no other session.
 - The agent gate hook refuses a confined session's write to any `SKILL.md` in its clone, and to any glob that may name
   one, such as `docs/*.md`; a session edits such a file with a literal path, and a skill with the Edit tool only where
-  the hook allows it.
+  the hook allows it. It refuses every session no Human attends a write to the same nested host files in the temporary
+  folders, `TMPDIR` and `/tmp`, at any depth, though not by a glob there, and the root host files in each folder
+  between its worktree and a checkout nested in it, such as `.claude/worktrees/`
+  ([OpenCode](opencode.md#rules-for-the-other-hosts-sessions)), since a host that reads the folders above its start
+  folder loads them.
 
 Before `verified` changes, a live Claude Code must show every one of these, each on a named version:
 

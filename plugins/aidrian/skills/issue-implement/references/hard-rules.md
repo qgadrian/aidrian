@@ -69,5 +69,6 @@ attachment, assignment, or state change, ever.
 2. **Estimate correction.** Only when phase 4 recorded a re-size, after the pull request opens, phase 7 makes two writes:
    one comment with the new size and its reason, and one write of the estimate and the sizes in the description.
 3. **Follow-up issues.** Work found outside the issue, in phase 4 or later, becomes a new issue through `agent-issue-writer`,
-   rather than widened scope or a follow-up handed to the Human.
+   rather than widened scope or a follow-up handed to the Human. With config.json `review.fixSmallGaps` true, a gap
+   whose fix is `trivial` on the cost axis of `aidrian pr disposition --vocab` is fixed in the same slice instead, and no issue is filed.
 4. **A silent issue.** In phase 0, `agent-issue-writer` fills in an issue with no acceptance criteria, only on the Human's yes.

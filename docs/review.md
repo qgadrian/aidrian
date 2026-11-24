@@ -220,7 +220,15 @@ pull request's own config can only add flows, rules, and reviewers under new nam
 plan command it adds, take effect once they are merged. The plan command runs from a temporary checkout of the base,
 so editing its script changes nothing until the merge. A flow the pull request adds reads its invariants from the
 pull request, and takes its invariants' `approvers` from there too, so the config change that adds it waits for the
-Human's `harness-config` sign-off. A change to any of these triggers the built-in `harness-config` flow, which the Human signs off. A
+Human's `harness-config` sign-off. A change to any of these triggers the built-in `harness-config` flow, which the Human signs off.
+A change to one of the config's review settings that the step compares, `engine`, `rules`, `ignore`, `nonBehaviour`,
+`flows`, `planCommand`, `reviewers`, `split`, `visual`, `approvals`, or `unattendedSignoff`, is still reviewed under that
+flow, as on main; any other edit of the config follows the usual file rules.
+The flow's reviewer signs it in place of the Human only when the pull request's base commits
+`github.autoMerge.includePolicyFiles` with `includeGuardedPaths` ([Auto-merge](config.md#auto-merge)) and merge trust's
+rule asks the Human no sign-off for these files.
+The step reads only the base: an unattended merge also needs the default branch to hold both keys, so with only the base
+opted in, the merge still asks the Human. A
 flow's deleted test stops the review even when the change touches nothing else in the flow.
 
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no
@@ -1623,7 +1631,8 @@ for both: the waiver's read serves merge trust.
      content;
    - any flow whose `tests` match a deleted file;
    - `harness-config` when a changed file is a policy file of aidrian, a file either branch's config was read from, or a
-     doc a flow's invariants cite, or one of those commands is set;
+     doc a flow's invariants cite, or one of those commands is set; a policy file or a file a config was read from asks
+     none while both branches commit `github.autoMerge.includePolicyFiles` with `includeGuardedPaths`;
    - every such flow when the list holds a rename or is cut short.
    A sign-off kept from an earlier head ([Sign-off by the Human](#sign-off-by-the-human)) does not count here: the Human
    signs off the head that merges. A sign-off given on another machine is not in this machine's store.

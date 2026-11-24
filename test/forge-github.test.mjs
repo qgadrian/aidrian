@@ -632,11 +632,13 @@ test('the reviews report`s calls: the merged list and its search string, +1 reac
   forge.mergedChanges(2, { sinceMs: Date.parse('2026-10-22T12:00:00.500Z') });
   assert.deepEqual(forge.reactions('acme/notes', 2, '+1'), [{ content: '+1' }, { content: '+1' }]);
   assert.deepEqual(forge.compare('acme/notes', 'c1', 'c2'), { status: 'ahead' });
+  forge.compare('acme/notes', 'main', 'c2', { host: 'ghe.example.com' });
   assert.deepEqual(args(), [
     ['pr', 'list', '--state', 'merged', '--limit', '20', '--json', 'number,reviews'],
     ['pr', 'list', '--state', 'merged', '--limit', '2', '--search', 'merged:>=2026-10-22T12:00:00+00:00', '--json', 'number,reviews'],
     ['api', '--paginate', '--slurp', 'repos/acme/notes/issues/2/reactions?content=%2B1'],
     ['api', 'repos/acme/notes/compare/c1...c2'],
+    ['api', '--hostname', 'ghe.example.com', 'repos/acme/notes/compare/main...c2'],
   ]);
 });
 
@@ -1005,6 +1007,7 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
           headRefOid: sha,
           headRefName: 'feat/x',
           baseRefName: 'release',
+          baseRefOid: 'c'.repeat(40),
           title: 'feat: x',
           body: 'Fixes ENG-1',
           history: { totalCount: 101, nodes: [{ commit: { oid: sha, message: 'feat: x' } }] },
@@ -1031,7 +1034,7 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
   const paths = { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' };
   assert.deepEqual(forge.reviewTrail('acme/notes', 7, { paths }), {
     viewer: 'adrian', head: sha, headRef: 'feat/x', title: 'feat: x', body: 'Fixes ENG-1', messages: [{ oid: sha, message: 'feat: x' }], messagesComplete: false,
-    base: 'release', author: 'adrian', draft: false, reviewDecision: 'APPROVED',
+    base: 'release', baseOid: 'c'.repeat(40), author: 'adrian', draft: false, reviewDecision: 'APPROVED',
     latestReviews: [{ author: { login: 'lead' }, state: 'APPROVED' }],
     checks: { head: sha, rows: [{ name: 'e2e', state: 'IN_PROGRESS', run: null, workflowId: null, event: null }, { name: 'deploy', state: 'SUCCESS' }], complete: true },
     files: [{ path: 'src/a.js', changeType: 'MODIFIED' }], filesTotal: 2, filesComplete: false,

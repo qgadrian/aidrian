@@ -18,7 +18,8 @@
 //      them, as the default branch commits its indexes (startDocs), which must be readable, unless both branches commit
 //      `github.autoMerge.includeGuardedPaths` true, which lifts those refusals alone, never for a policy
 //      file (POLICY_PATHS). None, with the key on or off, is one of the files the gate reads its policy from,
-//      including a folder the pointer file names (branchPolicies' policyFiles). `gh pr view` lists at most 100 files,
+//      including a folder the pointer file names (branchPolicies' policyFiles), unless both branches also commit
+//      `github.autoMerge.includePolicyFiles` true, which lifts those two refusals too (includesPolicyFiles). `gh pr view` lists at most 100 files,
 //      so a longer pull request's list is read whole from the forge's paged list (wholeFiles), at the head the view gave.
 //   4. local: the main checkout's local file turns it on (project.localAutoMerge), or sets nothing under the default
 //      branch's `github.autoMerge.default` "on".
@@ -83,12 +84,12 @@
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part); exit 0 merges nothing.
 // A failed read of the full file list, or of the head after it, is off (paths): the paths check names it.
 
-import { configFromText, loadConfig, resolveAutoMerge, stateDirProblem } from './config.mjs';
+import { configFromText, loadConfig, resolveAutoMerge, stateDirProblem, strictConfigFromText } from './config.mjs';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { knownPrefix } from './git.mjs';
 import { indexedAlways } from './knowledge.mjs';
 import { noneNeededProblem, RELEASE_SCRIPT, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
-import { configPathIn, GUARDED_PATHS, isPluginRepository, knowledgeIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, POLICY_PATHS, trailPaths } from './project.mjs';
+import { configPathIn, GUARDED_PATHS, isPluginRepository, isPolicyPath, knowledgeIn, strictConfigPathIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, POLICY_PATHS, trailPaths } from './project.mjs';
 import { hostOf } from './remotes.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
@@ -106,7 +107,7 @@ import { recordFor, scoped } from './rules/github/merge-review.mjs';
 // Whether no Human attends `session`: its unattended mark, a pending or unreadable one included, or its driver mark.
 const heldSession = (session, options = {}) => (readUnattendedMark(session, options) ?? driverHold(session, options)) !== null;
 
-export const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
+export const VIEW_FIELDS = 'number,headRefOid,baseRefName,baseRefOid,author,url,files,changedFiles,reviewDecision,latestReviews';
 const SHA = /^[0-9a-f]{40}$/iu;
 // The `github` keys `aidrian pr checks` judges by (pr-checks.mjs computeVerdict).
 const CHECK_LISTS = ['requiredChecks', 'conditionalChecks', 'ignoreCancelledChecks'];
@@ -132,7 +133,7 @@ export function parseArgs(argv) {
 // The pull request as `gh pr view` describes it: { number, head, base, author, repo, host, files, changedFiles,
 // reviewDecision, latestReviews }, or a string naming what is missing.
 export function readView(view) {
-  const { number, headRefOid: head, baseRefName: base, url, files, changedFiles, reviewDecision, latestReviews } = view ?? {};
+  const { number, headRefOid: head, baseRefName: base, baseRefOid, url, files, changedFiles, reviewDecision, latestReviews } = view ?? {};
   const author = view?.author?.login;
   const host = hostOf(url);
   const repo = typeof url === 'string' ? repoName(url) : null;
@@ -143,7 +144,9 @@ export function readView(view) {
   if (!Array.isArray(files) || files.some((file) => typeof file?.path !== 'string') || !Number.isInteger(changedFiles) || typeof reviewDecision !== 'string' || !Array.isArray(latestReviews)) {
     return 'gh returned no file list, changed-file count, review decision, or latest reviews for the pull request';
   }
-  return { number, head, base, author, repo, host, files: files.map(({ path, changeType }) => ({ path, changeType })), changedFiles, reviewDecision, latestReviews };
+  // The base's tip by its SHA, or null: only the policy-file lift reads it, and refuses without one (headPolicyProblem).
+  const baseOid = typeof baseRefOid === 'string' && SHA.test(baseRefOid) ? baseRefOid : null;
+  return { number, head, base, baseOid, author, repo, host, files: files.map(({ path, changeType }) => ({ path, changeType })), changedFiles, reviewDecision, latestReviews };
 }
 
 // The default branch of `repo` on GitHub, through the forge facade. Throws when gh cannot say.
@@ -164,23 +167,24 @@ export function defaultBranch(forge, { repo, host }) {
 // repository, with its trailing slash: GitHub's paths start at the top, and config paths at the project root. `locate` and
 // `parse` find the file and read its text, for a caller that holds a broken file to stricter rules. `seen`, when given,
 // collects every path it reads from the top of the repository: the pointer file, then the config.json it located.
-export function branchConfig(forge, { repo, host }, branch, prefix = '', { locate = configPathIn, parse = configFromText, seen = null } = {}) {
+// `ref`, when given, reads that commit instead, `branch` then only naming it in a message.
+export function branchConfig(forge, { repo, host }, branch, prefix = '', { locate = configPathIn, parse = configFromText, seen = null, ref = null } = {}) {
   const read = (name) => {
     const file = `${prefix}${name}`;
     seen?.push(file);
-    return branchText(forge, { repo, host }, branch, file);
+    return branchText(forge, { repo, host }, branch, file, ref ?? `refs/heads/${branch}`);
   };
   const file = locate(read);
   return parse(read(file), file);
 }
 
 // The text of `file`, from the top of the repository, as the branch `branch` of `repo` commits it on GitHub now, at
-// `refs/heads/<branch>`, or null when GitHub has no such file (404). Any other failure, or an answer with no file
-// content, throws, naming the file and the branch.
-function branchText(forge, { repo, host }, branch, file) {
+// `refs/heads/<branch>` or the commit `ref` names, or null when GitHub has no such file (404). Any other failure, or an
+// answer with no file content, throws, naming the file and the branch.
+function branchText(forge, { repo, host }, branch, file, ref = `refs/heads/${branch}`) {
   let body;
   try {
-    body = forge.contents(repo, file, `refs/heads/${branch}`, { host });
+    body = forge.contents(repo, file, ref, { host });
   } catch (error) {
     if (notFound(error)) return null;
     throw new Error(`could not read ${file} on ${repo} ${branch} with gh (${ghError(error)})`);
@@ -328,6 +332,97 @@ export const soloOn = ({ policy, basePolicy }) => policy.solo === true && basePo
 export const includesGuardedPaths = ({ policy, basePolicy }) =>
   policy.github.autoMerge.includeGuardedPaths === true && basePolicy.github.autoMerge.includeGuardedPaths === true;
 
+// Whether the team lets a policy file through the paths gate too: true only when includesGuardedPaths is, and the default
+// branch and the base both commit `github.autoMerge.includePolicyFiles` true, read as `allow` is. The gate reads its
+// policy from those two branches as GitHub holds them, never from the head, so the pull request that sets the key, or
+// lowers any other policy, is still judged under the old one.
+export const includesPolicyFiles = (policies) => includesGuardedPaths(policies)
+  && policies.policy.github.autoMerge.includePolicyFiles === true && policies.basePolicy.github.autoMerge.includePolicyFiles === true;
+
+// Why a change the includePolicyFiles lift lets through the paths check may not merge, or null. The policy that judges
+// the merges after this one is the config the merge leaves, so, in this order, each failing closed:
+//   - the pull request changes no pointer file (trailPaths' `pointer`, at the project root, in any case), which would move the
+//     config the gate reads;
+//   - its head holds the base's tip now: the forge's compare of the base's tip by its SHA, `pr.baseOid` (the pull
+//     request's baseRefOid), with the head, through the same facade, is behind by none, so the head's config is the one
+//     the merge leaves; no SHA, or a read that fails, refuses. Two SHAs, so no branch name is spelled into the route.
+//     Accepted residual: the base can move between this compare and the merge; the branch protection setting
+//     "Require branches to be up to date before merging" closes it on the forge (docs/config.md, Auto-merge);
+//   - each policy file the head holds, the pointer and the config.json it locates, is a regular file there: its entry in
+//     its folder's listing at the head, through the forge's contents route, which lists a link as "symlink" and never
+//     follows it, is of type "file" (a pointer may be absent). A file read follows an in-repository link, while git and
+//     every reader of the merged tree see the link itself, so a link refuses, and so does a listing that fails;
+//   - the head's own config, read from the forge at exactly the head commit `pr.head` as branchConfig reads a branch's,
+//     its pointer by strictConfigPathIn, so a malformed one never falls back to the default folder, sits at the path the
+//     default branch's does (`policies.configFile`), parses with no error, and keeps the default branch's
+//     github.requiredChecks, conditionalChecks, and ignoreCancelledChecks as sets, and its state.dir.
+// The checks row compares only the checkout the gate runs in, which may be the unchanged base, so without this a pull
+// request could drop the checks or move the review record that judge the merge after its own. Read only while the lift
+// counts (includesPolicyFiles) and a changed file in `files` ({ path }, from the top of the repository) is a policy file
+// (isPolicyPath, with `policies.policyFiles`). `pr` is { repo, host, head, base, baseOid }, and `policies` branchPolicies' answer.
+// Both the gate (gateVerdict) and the merge guard (merge-review.mjs policyProblem) ask it.
+export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
+  if (!includesPolicyFiles(policies) || !files.some(({ path }) => isPolicyPath(path, policies.policyFiles))) return null;
+  const at = String(pr.head).slice(0, 7);
+  const pointer = trailPaths(prefix).pointer.toLowerCase();
+  const moved = files.find(({ path }) => path.toLowerCase() === pointer);
+  if (moved) return `it changes ${JSON.stringify(moved.path)}, the pointer file that locates the config, which includePolicyFiles never lets a pull request change by itself`;
+  const behind = (() => {
+    try {
+      if (typeof pr.baseOid !== 'string' || !SHA.test(pr.baseOid)) return null;
+      const compared = forge.compare(pr.repo, pr.baseOid, pr.head, { host: pr.host });
+      return Number.isInteger(compared?.behind_by) ? compared.behind_by : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (behind !== 0) return `head ${at} ${behind === null ? 'cannot be compared with its base on the forge' : `is behind its base ${pr.base} by ${behind} ${behind === 1 ? 'commit' : 'commits'}`}, so the merged config is not the one checked; merge the base first`;
+  const linked = headEntryProblem(forge, pr, trailPaths(prefix).pointer, { optional: true });
+  if (linked) return linked;
+  const seen = [];
+  let config;
+  try {
+    config = branchConfig(forge, pr, `head ${at}`, prefix, { ref: pr.head, seen, locate: strictConfigPathIn, parse: (text, file) => (text === null ? null : strictConfigFromText(text, file, () => true)) });
+  } catch (error) {
+    return `it changes a policy file, and its config at head ${at} cannot be read whole (${String(error.message).split('\n')[0]})`;
+  }
+  if (config === null) return `it changes a policy file, and head ${at} has no config, so the checks that judge the next merge cannot be told`;
+  const located = headEntryProblem(forge, pr, seen.at(-1));
+  if (located) return located;
+  if (seen.at(-1)?.toLowerCase() !== String(policies.configFile).toLowerCase()) return `its config at head ${at} is ${JSON.stringify(seen.at(-1))}, not ${JSON.stringify(policies.configFile)} where ${pr.repo} ${policies.main} keeps it, which includePolicyFiles never lets a pull request move by itself`;
+  const { github: policy, state } = policies.policy;
+  const same = (a, b) => new Set(a).size === new Set(b).size && a.every((each) => b.includes(each));
+  const differing = CHECK_LISTS.filter((key) => !same(policy[key], config.github[key]));
+  if (state.dir !== config.state.dir) differing.push('state.dir');
+  if (!differing.length) return null;
+  const names = differing.map((key) => (key === 'state.dir' ? key : `github.${key}`)).join(' and ');
+  return `its config at head ${at} changes ${names} from ${pr.repo} ${policies.main}, which includePolicyFiles never lets a pull request change by itself`;
+}
+
+// Why `file`, from the top of the repository, is no regular file at the head commit `pr.head`, or null: its entry in its
+// folder's listing through the forge's contents route at that commit must be of type "file". A link is "symlink" there,
+// never followed. With `optional`, no entry is no file and passes. A listing that fails, or is no list, refuses, and so
+// does one of LISTING_CAP entries or more: GitHub's contents route lists at most that many, so the entry may be left out.
+const LISTING_CAP = 1000;
+function headEntryProblem(forge, pr, file, { optional = false } = {}) {
+  const at = String(pr.head).slice(0, 7);
+  const cut = file.lastIndexOf('/');
+  const [folder, name] = [cut < 0 ? '' : file.slice(0, cut), file.slice(cut + 1)];
+  let listing;
+  try {
+    listing = forge.contents(pr.repo, folder, pr.head, { host: pr.host });
+  } catch (error) {
+    if (optional && notFound(error)) return null;
+    return `it changes a policy file, and the folder of ${JSON.stringify(file)} at head ${at} cannot be listed (${ghError(error)}), so whether it is a regular file cannot be told`;
+  }
+  if (!Array.isArray(listing)) return `it changes a policy file, and ${JSON.stringify(folder || '.')} at head ${at} is no folder the forge lists, so whether ${JSON.stringify(file)} is a regular file cannot be told`;
+  if (listing.length >= LISTING_CAP) return `it changes a policy file, and the forge lists ${listing.length} entries of ${JSON.stringify(folder || '.')} at head ${at}, at or past its cap of ${LISTING_CAP}, so whether ${JSON.stringify(file)} is a regular file cannot be told`;
+  const entry = listing.find((each) => each?.name === name);
+  if (!entry) return optional ? null : `it changes a policy file, and head ${at} lists no ${JSON.stringify(file)}`;
+  if (entry.type !== 'file') return `${JSON.stringify(file)} at head ${at} is a ${typeof entry.type === 'string' ? entry.type : 'entry of no known type'}, not a regular file, which includePolicyFiles never lets through`;
+  return null;
+}
+
 // GitHub's REST file statuses as the GraphQL change types `gh pr view` gives and pathsProblem reads. `unchanged`, a file
 // listed with no change to its content, reads as MODIFIED, so its path still meets every guard.
 const REST_CHANGE_TYPES = Object.freeze({
@@ -382,8 +477,9 @@ export function wholeFiles(forge, pr) {
 // startDocs read it: a doc or index file of it is guarded too, and an unreadable answer is off, as no list would be
 // whole. `pluginRepository` is whether the project is the plugin's own repository, whose release script is guarded too
 // (PLUGIN_REPOSITORY_PATHS). `includeGuardedPaths` lifts only the guarded-path refusals, these included, the team having
-// accepted that risk on both branches, and never for a policy file (POLICY_PATHS).
-export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuardedPaths = false, policyFiles = [], startDocs = { docs: [], folder: null }, pluginRepository = false } = {}) {
+// accepted that risk on both branches, and never for a policy file (POLICY_PATHS), unless `includePolicyFiles` is on as
+// well (includesPolicyFiles): then neither a policy file nor one of `policyFiles` is refused. Alone it lifts nothing.
+export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuardedPaths = false, includePolicyFiles = false, policyFiles = [], startDocs = { docs: [], folder: null }, pluginRepository = false } = {}) {
   if (prefix === null) return 'git could not give the project\'s folder in the repository';
   if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
   const hidden = files.find(({ changeType }) => changeType === 'RENAMED' || !changeType);
@@ -394,6 +490,7 @@ export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuar
   const policyRead = files.find(({ path }) => read.has(path.toLowerCase()));
   const readLine = policyRead && `it changes ${JSON.stringify(policyRead.path)}, a file the gate reads its policy from`;
   if (includeGuardedPaths) {
+    if (includePolicyFiles) return null;
     const policy = files.find(({ path }) => POLICY_PATHS.test(path));
     if (policy) return `it changes ${JSON.stringify(policy.path)}, a policy file of aidrian, which includeGuardedPaths never lets through`;
     return readLine || null;
@@ -625,6 +722,7 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
   let main;
   let policy;
   let includeGuarded = false;
+  let includePolicy = false;
   let policyFiles = [];
   let policies;
   try {
@@ -632,6 +730,7 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
     ({ main, policy, policyFiles } = policies);
     refusing = refusingBranches(policies, pr.base, 'autoMerge');
     includeGuarded = includesGuardedPaths(policies);
+    includePolicy = includesPolicyFiles(policies);
     team = { ...policy.github.autoMerge, allow: refusing.length === 0 };
   } catch (error) {
     return fail(error.message);
@@ -662,8 +761,9 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
     else {
       listed = prefix === null ? pr : wholeFiles(forge, pr);
       if (prefix !== null && typeof listed !== 'string') loaded = startDocs(forge, pr, main, policies.configFile, prefix);
-      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix, { includeGuardedPaths: includeGuarded, policyFiles, startDocs: loaded ?? undefined, pluginRepository });
-      if (paths) [effective, reason, why] = [false, 'paths', paths];
+      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix, { includeGuardedPaths: includeGuarded, includePolicyFiles: includePolicy, policyFiles, startDocs: loaded ?? undefined, pluginRepository });
+      const head = paths || typeof listed === 'string' ? null : headPolicyProblem(forge, pr, policies, listed.files, prefix);
+      if (paths || head) [effective, reason, why] = [false, 'paths', paths || head];
     }
   }
   if (effective) {

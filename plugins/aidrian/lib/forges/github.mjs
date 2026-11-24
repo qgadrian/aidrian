@@ -468,6 +468,7 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
       headRefOid
       headRefName
       baseRefName
+      baseRefOid
       title
       body
       isDraft
@@ -1318,6 +1319,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
         messages: history.nodes.map((each) => ({ oid: each?.commit?.oid ?? null, message: typeof each?.commit?.message === 'string' ? each.commit.message : null })),
         messagesComplete: history.complete,
         base: typeof pr.baseRefName === 'string' ? pr.baseRefName : null,
+        // The base branch's tip as GitHub gives it, for a compare by commit (pr-auto-merge.mjs headPolicyProblem).
+        baseOid: typeof pr.baseRefOid === 'string' ? pr.baseRefOid : null,
         author: typeof pr.author?.login === 'string' ? pr.author.login : null,
         draft: pr.isDraft === true,
         reviewDecision: typeof pr.reviewDecision === 'string' ? pr.reviewDecision : '',
@@ -1357,7 +1360,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     commit: (repo, sha) => rest(`repos/${repo}/commits/${sha}`),
     // The check runs of one commit, every page.
     checkRuns: (repo, sha) => (list(`repos/${repo}/commits/${sha}/check-runs`) ?? []).flatMap((page) => page.check_runs ?? []),
-    compare: (repo, base, head) => rest(`repos/${repo}/compare/${base}...${head}`),
+    compare: (repo, base, head, { host } = {}) => rest(`repos/${repo}/compare/${base}...${head}`, { host }),
     // The web link that shows the commits from `from` to `to` of `repo` (R9), on the forge's own identity of that
     // repository: the `html_url` GitHub answers for it, read once per repository, so a GitHub Enterprise repository
     // links to its own host. Built only from two full-hex SHAs, an owner login and a repository name GitHub accepts, and

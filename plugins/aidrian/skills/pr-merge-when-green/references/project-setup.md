@@ -37,6 +37,7 @@ Never add an entry on your own during a merge run.
   except the policy files, which stay off: `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`,
   and the `.aidrian` entry itself.
   With the key on or off, none is one of the files the gate reads its policy from, including a folder `.aidrian.json` names.
+  Only `github.autoMerge.includePolicyFiles` true on both branches too lets those policy files through.
 - `local`: this machine opted in, with `"github": { "autoMerge": { "enabled": true } }` in the main checkout's `.aidrian.local.json`, which git must not track, or it has no setting and the default branch's `github.autoMerge.default` is `"on"`.
 - `author`: the pull request is the gh user's own.
 - `outsider`: every comment and review on the pull request is by an owner, member, or collaborator, or by the `github.reviewer` bot.

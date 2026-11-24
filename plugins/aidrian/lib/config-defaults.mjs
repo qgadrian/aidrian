@@ -51,9 +51,11 @@ export const DEFAULTS = deepFreeze({
     // A machine opts in under it from the local file (resolveAutoMerge). `includeGuardedPaths` lets a pull request that
     // changes a guarded path (project.mjs GUARDED_PATHS) through the paths gate, but never one of the files the gate
     // reads its policy from, including a folder the pointer file names; the team accepts that risk on both branches
-    // (pr-auto-merge.mjs). `unreviewedPaths` lists the files a pull request whose review was `none_needed` may change and
+    // (pr-auto-merge.mjs). `includePolicyFiles` lets those policy files through too, and lets a project run's issue
+    // sessions write them and the guarded paths, only while `includeGuardedPaths` counts as well (pr-auto-merge.mjs
+    // includesPolicyFiles, project-run-gate.mjs teamPolicy). `unreviewedPaths` lists the files a pull request whose review was `none_needed` may change and
     // still auto-merge, on both branches (pr-auto-merge-docs.mjs); empty, no such pull request auto-merges.
-    autoMerge: { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false, unreviewedPaths: [] },
+    autoMerge: { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false, includePolicyFiles: false, unreviewedPaths: [] },
     // The team's ceiling on a recorded judge verdict standing in for the Human's answer to the merge guard's question
     // (lib/review/waiver.mjs). A machine opts in under it from the local file (resolveUnattendedWaiver), or, with the
     // switch unset there, follows the base branch's `solo` (config-local.mjs machineSwitch).

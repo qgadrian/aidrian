@@ -140,8 +140,9 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const plain = unquoted(command);
   const erases = isBash && named.length === 0 && /aidrian|[*?[]|\bclean\b|\bstash\b/iu.test(plain);
   if (named.length === 0 && !erases) return null;
-  const { files, names, globs } = writeTargets(input);
+  const { files, names, globs, langs = [] } = writeTargets(input);
   const local = project.paths.local;
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
   const locals = configFiles(project).filter((file) => path.basename(file) === local).map((file) => [file]);
   const seen = linkWalk(input);
@@ -157,7 +158,8 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const matches = (glob) => globParts(glob.text, [], 'i').pattern.test(local);
   const globbed = () => globs.some((glob) => !glob.opaque && (erases ? matches(glob) && here(glob) : matches(glob) || linked(glob)));
   // The paths and names first: a call they settle reads no folder on disk.
-  const aimed = targets.length > 0 || names.some((name) => name.toLowerCase().includes(local)) || globbed();
+  // Code an interpreter runs that names the file only in prose, as a docs edit or a pull request body does, aims at none.
+  const aimed = targets.length > 0 || names.some((name, i) => name.toLowerCase().includes(local) && !(langs[i] && mentionsOnly(name, langs[i], local, cwd))) || globbed();
   const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, seen, project.checkouts) !== null;
   if (!aimed && !reached && !(erases && !opaque && erasesOtherwise(input, project, plain, globs))) return null;
   const hit = opaque || isBash ? named[0] ?? EVERY_SWITCH : named.find((each) => changesSwitch(input, targets[0], each, local));
@@ -298,10 +300,11 @@ function switchIn(text, valueIn) {
   }
 }
 
-// What the call writes: { files, names, globs, code }. `files` are absolute paths; `names` are texts that may name a file
+// What the call writes: { files, names, globs, code, langs }. `files` are absolute paths; `names` are texts that may name a file
 // in a folder no path gives: a relative target written after a `cd` to an unknown folder, code an interpreter runs, and
 // the words of a command in a shell the lexer cannot read (opaqueWords); `globs` are bashWrites's glob targets; `code`,
-// for a Bash call only, says of each of `names`, by its index, whether it is an interpreter's code, input, or words.
+// for a Bash call only, says of each of `names`, by its index, whether it is an interpreter's code, input, or words, and
+// `langs`, by the same index, which interpreter's code it is, or null.
 // lib/handoff-guard.mjs reads them too. A path with a bracket class is a file and a glob both. A command in a shell the
 // lexer cannot read writes, failing closed, to the path each of its first OPAQUE_WORDS words gives, from the call's folder
 // when it is relative and from the home folder after a leading `~`, and to the glob each such word with `*`, `?`, or `[`
@@ -342,6 +345,8 @@ function readTargets(input) {
     // Whether each of `names`, by its place, is an interpreter's code, input, or words, for a refusal that says it read
     // the path there: not a target, or a whole line read for want of its code.
     code: [...targets.map(() => false), ...interpreted.map((each) => each.code)],
+    // The interpreter whose code each of `names` is, by its place, or null for any other text (mentionsOnly).
+    langs: [...targets.map(() => null), ...interpreted.map((each) => each.lang ?? null)],
     // The lexer reads a bracket class, as in `[.]continue`, as a plain word; the shell expands it as a glob.
     globs: [...writes.filter((write) => write.glob), ...files.filter((file) => BRACKET.test(file)).map((text) => ({ text, dirs: [], unsure: false }))],
   };
@@ -622,12 +627,57 @@ function interpretedCode(command) {
           code = given ? inputs[i].join('\n') : line;
         } else continue;
         if (rest.length) found.push({ text: rest.join(' '), code: true });
-        if (!(reads && onlyReads(code, reads))) found.push({ text: code, code: given });
+        if (!(reads && onlyReads(code, reads))) found.push({ text: code, code: given, lang: given ? interpreter.name : null });
       }
     }
   };
   read(command, 0);
   return found;
+}
+
+// A quoted text or a comment of each interpreter's code (shell-lex.mjs INTERPRETERS): Python's string prefixes and
+// triple quotes, Node's template literals and block comments, a backslash escape, and a text left open to the end.
+const QUOTED = String.raw`(?:\\[\s\S]|(?!\2)[^\\])*(?:\2|$)`;
+const PIECES = {
+  python: new RegExp(String.raw`(?<!\w)([rRbBuUfF]{0,2})("""|'''|"|')${QUOTED}|#[^\n]*`, 'gu'),
+  node: new RegExp(String.raw`()(["'\x60])${QUOTED}|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)`, 'gu'),
+  perl: new RegExp(String.raw`()(["'\x60])${QUOTED}|#[^\n]*`, 'gu'),
+};
+PIECES.ruby = PIECES.perl;
+
+// Whether `code`, an interpreter's code in `lang`, names the file `name` only in prose, as a docs edit or a pull request
+// body written from Python does, so it is no write to that file: each place it names it is inside a quoted text or a
+// comment of more than one word, as a word of prose (the name alone, or wrapped in Markdown's code, emphasis, or brackets, and followed by
+// punctuation), in a text that interpolates nothing and that, read as a shell command, as `os.system` would run it,
+// writes no file of that name (bashWrites). Any other place names the file: `open('<name>', 'w')`, a path that ends in
+// it, or a `cp` or `tee` to it in a text. So does a path quoted inside a longer text, as a test fixture written from
+// Python holds: the guard cannot tell whose code that text is.
+function mentionsOnly(code, lang, name, cwd) {
+  const lower = name.toLowerCase();
+  const word = new RegExp(String.raw`^[\x60*_([]*${lower.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}[\x60*_)\].,;:!?]*$`, 'iu');
+  const pieces = PIECES[lang];
+  if (!pieces) return false;
+  let at = 0;
+  for (const match of code.matchAll(pieces)) {
+    checkDeadline();
+    if (code.slice(at, match.index).toLowerCase().includes(lower)) return false;
+    at = match.index + match[0].length;
+    if (!match[0].toLowerCase().includes(lower)) continue;
+    const [whole, prefix = '', quote] = match;
+    // A line end, tab, or return escape parts words as the white space it stands for does.
+    const text = (quote ? whole.slice(prefix.length + quote.length, whole.endsWith(quote) ? -quote.length : undefined) : whole.replace(/^(?:#|\/\/|\/\*)/u, '')).replace(/\\[ntr]/gu, ' ');
+    const interpolates = lang === 'python' ? /f/iu.test(prefix) && text.includes('{') : quote !== "'" && /[$#]\{|[$@][\w(]/u.test(text);
+    const words = text.split(/\s+/u).filter(Boolean);
+    // A text that is the name alone, as `open('<name>', 'w')` gives it, is a path, not prose.
+    if (interpolates || words.length < 2 || words.some((each) => each.toLowerCase().includes(lower) && !word.test(each))) return false;
+    try {
+      const writes = bashWrites(text, cwd, { followCd: true, shells: true, restores: true, globs: true });
+      if (writes.some((each) => [each.text, ...each.files].some((file) => path.basename(file).toLowerCase() === lower))) return false;
+    } catch {
+      return false;
+    }
+  }
+  return !code.slice(at).toLowerCase().includes(lower);
 }
 
 // Whether every statement of `code`, split at `;` and line ends, is one `reads` matches.

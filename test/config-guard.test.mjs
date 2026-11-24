@@ -7,7 +7,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { configWriteDenial, OPAQUE_WORDS } from '../plugins/aidrian/lib/config-guard.mjs';
+import { configWriteDenial, machineSwitchWriteDenial, OPAQUE_WORDS } from '../plugins/aidrian/lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { defaultSessionsFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
@@ -445,6 +445,49 @@ test('a subagent may not set the auto-merge switch, with or without gates; other
     const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: '.aidrian.local.json', content: on });
     assert.equal((await run(main)).status, 0, 'the main session may');
   }
+});
+
+test('interpreter code that names the local file only in prose sets no switch; one that writes it by any route is refused', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const found = findProject(dir);
+  const judge = (command) => machineSwitchWriteDenial(subagent(dir, 'Bash', { command }), found, { names: { human: 'the owner' } })?.match ?? null;
+  const L = '.aidrian.local.json';
+  const py = (code) => `python3 - <<'PY'\n${code}\nPY`;
+  const js = (code) => `node - <<'JS'\n${code}\nJS`;
+  for (const command of [
+    // A docs edit whose new text names the file and a key, as the issue's subagent ran.
+    py(`import pathlib\np = pathlib.Path('docs/config.md')\nt = p.read_text()\nt = t.replace('x', 'Set github.autoMerge in ${L} to "on".')\np.write_text(t)`),
+    py(`import pathlib\np = pathlib.Path('docs/hooks.md')\np.write_text(p.read_text() + "\\n- A subagent may not set \`github.autoMerge\` in \`${L}\`.\\n")`),
+    py(`# a note on ${L} and github.autoMerge\nopen('docs/x.md', 'a').write("""Notes on **${L}**, and its keys.\n""")`),
+    // No key named: the rule that any write to the file erases a switch reads the same prose.
+    py(`open('docs/x.md', 'a').write('the ${L} file')`),
+    js(`// docs: ${L}\nrequire('fs').appendFileSync('docs/x.md', 'Set github.autoMerge in ${L}.')`),
+  ]) assert.equal(judge(command), null, command);
+  for (const [command, match] of [
+    [py(`open('${L}', 'w').write('{"github": {"autoMerge": "on"}}')`), /sets github\.autoMerge/u],
+    [py(`import json\np = '${L}'\nd = json.load(open(p))\nd['github'] = {'autoMerge': 'on'}\njson.dump(d, open(p, 'w'))`), /sets github\.autoMerge/u],
+    [py(`import shutil\nshutil.copy('prepared.json', '${L}')`), /changes \.aidrian\.local\.json/u],
+    [py(`import os\nos.system('cp prepared.json ${L}')  # autoMerge`), /sets github\.autoMerge/u],
+    [py(`import os\ncmd = 'cp x'\nos.system(f"{cmd} ${L}")  # autoMerge`), /sets github\.autoMerge/u],
+    [py(`import os\nopen(f"{os.path.join('.', "${L}")}", 'w').write('autoMerge')`), /sets github\.autoMerge/u],
+    [py(`open('notes.md', 'w').write('see ${L} or ~/${L}')  # autoMerge`), /sets github\.autoMerge/u],
+    [py(`open('x', 'w').write('a'); open("""${L}""", 'w')  # autoMerge`), /sets github\.autoMerge/u],
+    [`python3 - ${L} <<'PY'\nimport sys, json\njson.dump({'github': {'autoMerge': 'on'}}, open(sys.argv[1], 'w'))\nPY`, /sets github\.autoMerge/u],
+    [`python3 -c "open('${L}','w').write('autoMerge')"`, /sets github\.autoMerge/u],
+    // A path quoted inside a longer text, as a test fixture written from code holds, still names the file.
+    [js(`require('fs').writeFileSync('test/x.test.mjs', "writeFileSync(path.join(dir, '${L}'), JSON.stringify({ github: { autoMerge: 'on' } }))")`), /sets github\.autoMerge/u],
+    [js(`require('child_process').execSync('echo autoMerge | tee ${L}')`), /sets github\.autoMerge/u],
+    ['node -e "require(\'fs\').writeFileSync(`${process.cwd()}/' + L + '`, \'autoMerge\')"', /sets github\.autoMerge/u],
+    [`ruby -e 'File.write("${L}", "autoMerge")'`, /sets github\.autoMerge/u],
+    [`perl -e 'open(F, ">${L}"); print F "autoMerge"'`, /sets github\.autoMerge/u],
+    // The shell's own writes are read as before, a copy over the file among them.
+    [`echo autoMerge | tee ${L}`, /sets github\.autoMerge/u],
+    [`sed -i '' 's/off/on/' ${L}  # autoMerge`, /sets github\.autoMerge/u],
+    [`perl -pi -e 's/off/on/' ${L}`, /changes \.aidrian\.local\.json/u],
+    [`cp prepared.json ${L}`, /changes \.aidrian\.local\.json/u],
+    [`mv prepared.json ${L}`, /changes \.aidrian\.local\.json/u],
+    [`echo '{}' > ${L}`, /changes \.aidrian\.local\.json/u],
+  ]) assert.match(judge(command) ?? 'allowed', match, command);
 });
 
 test('a subagent may not set the review approvals switch, with or without gates; other local writes and the main session stay allowed', async (t) => {

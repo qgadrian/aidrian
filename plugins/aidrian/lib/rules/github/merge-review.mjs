@@ -199,22 +199,27 @@ function hostNamed(word, { bare = false } = {}) {
   return host === null ? UNREAD_HOST : host.toLowerCase().replace(/^api\.(?=[^.]+\.[^.]+)/u, '');
 }
 
-// The hosts one gh merge names, as { hosts } and { hostUnread: true }, each only when there is one: the target URL, `-R`,
-// GH_REPO, GH_HOST, and, for `gh api`, `--hostname`, else the host `gh api` defaults to, github.com. Every one is kept,
-// whichever gh would use, so a merge whose spellings disagree is held to all of them; a word the shell builds is unread.
-// A `gh pr merge` told no host reads it from the checkout's remotes, the pinned one's for a session no Human attends.
+// The hosts one gh merge names, as { hosts } and { hostUnread: true }, each only when there is one, in gh's order:
+// `gh pr merge` reads a pull request URL, else `-R`, else GH_REPO, with GH_HOST for a bare `OWNER/REPO` or none (gh
+// then reads the checkout's remotes, the pinned one's for a session no Human attends); `gh api` reads `--hostname`,
+// else GH_HOST, else github.com, and GH_REPO too, which may fill its `{owner}/{repo}`. Every `-R` given is kept, and
+// for `gh api` every host it may use, so a merge is held to all of them; a word the shell builds is unread.
 function ghHosts(args, environment, env, api) {
   const { words, flags } = readWords(args, new Set(api ? API_VALUES : MERGE_VALUES));
   const repos = flags.filter((flag) => ['-R', '--repo'].includes(flag.name)).map((flag) => flag.value ?? { text: '', dynamic: true });
-  const named = [invocationValue('GH_REPO', environment, env), ...repos].filter(Boolean).map((word) => hostNamed(word));
+  const ghRepo = invocationValue('GH_REPO', environment, env);
   const host = invocationValue('GH_HOST', environment, env);
-  if (host) named.push(hostNamed(host, { bare: true }));
+  const withHost = (named) => (host && !named.some((each) => each !== null) ? [...named, hostNamed(host, { bare: true })] : named);
   if (api) {
     const given = flags.filter((flag) => flag.name === '--hostname');
+    const named = [ghRepo, ...repos].filter(Boolean).map((word) => hostNamed(word));
     named.push(...given.map((flag) => hostNamed(flag.value, { bare: true })));
-    if (!given.length && !host) named.push(API_HOST);
-  } else if (words[2] && /:\/\//u.test(words[2].text)) named.push(hostNamed(words[2]));
-  return placesOf(named);
+    if (!given.length) named.push(host ? hostNamed(host, { bare: true }) : API_HOST);
+    return placesOf(named);
+  }
+  if (words[2] && /:\/\//u.test(words[2].text)) return placesOf([hostNamed(words[2])]);
+  const chosen = repos.length ? repos : [ghRepo].filter(Boolean);
+  return placesOf(withHost(chosen.map((word) => hostNamed(word))));
 }
 const API_HOST = 'github.com';
 

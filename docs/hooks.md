@@ -775,9 +775,11 @@ session makes that the checks above let through, with a record or none, the Huma
 name its number and its full 40-character head (`--match-head-commit`, `sha=`, the merge tool's `sha`, or the GitHub MCP
 server's `expectedHeadSha`, which its merge passes to GitHub), in the repository the session is pinned to, its project
 run's, read from the run's ledger, else the main checkout's origin (a merge naming another repository is refused), and on
-its host: every host the merge names, in any spelling gh takes (a pull request URL, `-R HOST/OWNER/NAME` or a URL,
-`GH_REPO`, `GH_HOST`, and `gh api --hostname`, else `gh api`'s default, `github.com`), and a `curl` merge's URL, with
-`api.github.com` read as `github.com`, must be the pinned host, and a repository or host the shell builds refuses; read
+its host: the host the merge names, read as gh reads it, must be the pinned host, and a repository or host the shell
+builds refuses. `gh pr merge` reads a pull request URL, else `-R HOST/OWNER/NAME` or a URL, else `GH_REPO`, with
+`GH_HOST` for a bare `OWNER/NAME` or none; `gh api` reads `--hostname`, else `GH_HOST`, else `github.com`, and
+`GH_REPO`'s host too, since it may fill `{owner}/{repo}`; a `curl` merge reads its URL, with `api.github.com` read as
+`github.com`; read
 its record files bounded, each parsed once a call; and pass on the forge, in one GraphQL
 read on the waiver's clock below, `aidrian pr auto-merge`'s policy and [merge trust](review.md#merge-trust). The policy:
 `github.autoMerge.allow` on both branches, the main checkout's own switch on, the default branch's required checks named,
@@ -804,6 +806,8 @@ for proof, protect the branch with a required review from a second account. [Lim
 Limits:
 
 - A record written on another machine is not read here.
+- A `curl` merge whose whole URL the shell builds, or whose options come from a config file (`-K`, `.curlrc`), is not
+  read, like the other commands the shell lexer does not see through, such as `xargs`.
 - Two sessions writing the same record at once can lose an update; the last write wins.
 - Two concurrent review steps on one pull request share one open mark: the first to finish clears the other's.
 - In a fork checkout with gh offline, `aidrian pr request`, `attest`, and `signoff` fall back to origin, and a merge

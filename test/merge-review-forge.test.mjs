@@ -313,6 +313,8 @@ test('an unattended merge naming another host, in any spelling gh takes, is refu
     `gh pr merge https://github.com/acme/notes/pull/7 ${named}`,
     `gh pr merge 7 -R github.com/acme/notes ${named}`,
     `GH_HOST=github.com gh pr merge 7 ${named}`,
+    `GH_REPO=ghe.example.com/acme/notes gh pr merge 7 -R acme/notes ${named}`,
+    `GH_HOST=ghe.example.com gh pr merge 7 -R github.com/acme/notes ${named}`,
     `gh api --hostname github.com -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`,
     `curl -X PUT https://api.github.com/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`,
   ]) assert.equal(merge(r, command), null, command);

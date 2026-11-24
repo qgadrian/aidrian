@@ -98,7 +98,23 @@ Fix every finding a review identified; never leave one silently open. Do not go 
 - The table decides what blocks: a finding blocks while it is `fix_now`, whatever setup it needs.
 - Each round's findings get one fix pass. Add no hardening, check, or config that no review found.
 - When the fixes since round 1 pass half of what the pull request first added, or a finding comes back at a spot already
-  fixed, stop before the next pass and ask the Human whether the rest is worth its cost.
+  fixed, stop before the next pass: whether the rest is worth its cost is a `scope` decision. Its options: fix the open
+  findings within the round cap, record the open findings whose disposition is `accepted_residual`
+  as accepted residuals; any other follows its own disposition action; or split the pull request.
+  Its class is `backlog-rank`: the question is which findings get fixed now and which become residuals or follow-ups.
+  No option writes data, reaches outside the repository, or merges unreviewed, so run, as `knowledge/references/decisions.md` says:
+
+  ```bash
+  aidrian decisions resolve --domain backlog --class backlog-rank --reversible no,no,no,no
+  ```
+
+  - `decide`, with `secondLook` `null` or its `minSeverity` above `low`, this stop's severity: fix within the round cap.
+    The record is the `decision_made` row `resolve` logs and one line in the report: it writes no rule, so it takes no marker.
+  - `decide` with a `secondLook` at `minSeverity` `low`: it names a second look for this stop, which records nothing for one
+    to read, so run none and treat the answer as `ask`.
+  - `ask`: ask the Human, and in an unattended run park it with class `scope`, whatever `unattended` says.
+
+  The round cap and the extra rounds past it are unchanged: this settles only the cost question before the cap.
 
 ## Disposition actions
 

@@ -1125,6 +1125,22 @@ the same findings come back, the fixes grow the change, or the review wanders in
 decides, as the base branch commits it, with `github.maxExtraRounds` (2) as the ceiling ([config.md](config.md#keys)).
 It applies to `aidrian pr review` and to `aidrian pr await-review --request`, which count their own rounds.
 
+Before the cap, the cost stop of the [review rules](../plugins/aidrian/skills/orchestration/references/review-rules.md#proportion) asks it earlier.
+The session stops before the next pass when the fixes since round 1 pass half of what the pull request first added,
+or a finding comes back at a spot already fixed.
+Whether the rest is worth its cost is a `scope` decision.
+Its options: fix the open findings within the round cap,
+record the open findings whose disposition is `accepted_residual` as accepted residuals; any other follows its own disposition action;
+or split the pull request.
+The session runs `aidrian decisions resolve --domain backlog --class backlog-rank --reversible no,no,no,no` ([Decisions](config.md#decisions)).
+Its class is `backlog-rank`, since the question is which findings get fixed now and which become residuals or follow-ups.
+Under `decide`, with `secondLook` `null` or its `minSeverity` above `low`, this stop's severity, the session fixes within the round cap.
+The record is the `decision_made` row `resolve` logs and one line in the session's report: it writes no rule, so it takes no marker.
+A `decide` with a `secondLook` at `minSeverity` `low` names a second look for this stop, which records nothing for one to read.
+So the session runs none and treats the answer as `ask`.
+Under `ask`, the Human answers, and an unattended run parks it with class `scope`, whatever `unattended` says.
+The stop changes neither the cap nor the rules below: an extra round over a red flag always needs the Human.
+
 1. `"off"`, or the ceiling reached: `round_limit`, as before.
 2. **Signals.** The command reads the round history and computes four signals. A red flag is no dead end: it goes to
    the judge as evidence, in `extension.red_flags`, and an extra round over it always needs the Human, under `"auto"`

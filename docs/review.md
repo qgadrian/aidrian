@@ -1181,7 +1181,8 @@ The stop changes neither the cap nor the rules below: an extra round over a red 
    Under the [unattended waiver](config.md#unattended-waiver), the step's JSON also carries `waiver`, the waiver's gate on this head.
    Only when `waiver.may` is true, the brief offers the judge a third verdict, `land`.
    `land` means the cap stands, and the pull request may merge with its open findings filed.
-   `record` then reads `--verdict extend|stop|land` and ends in `--judge <agent id>`, the agent id the host returned for the judge.
+   `record` is then the `land|stop` line, ending in `--judge <agent id>`, the agent id the host returned for the judge.
+   `record_extend` is the `extend` line, with no `--judge`, which `extend` refuses.
    [At the cap under autopilot](#at-the-cap-under-autopilot) says what `land` and a `stop` with `--judge` record.
 
 4. **Grant.** `stop` and `land` are `round_limit`. `extend` grants the round under `"auto"` when no red flag stands. Under

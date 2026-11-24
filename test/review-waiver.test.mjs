@@ -15,7 +15,7 @@ import { baseProblem } from '../plugins/aidrian/lib/review/in-force.mjs';
 import { emptyState, owed, readLocalState, refreshSummary, stateFromComment, summaryBody, WAIVER_HEADING, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { capProblem, guardWaiver, MAX_REASON, parseWaive, runWaive, takeWaivedMerge, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { budgetProblem, judgeProblem, offerWaiver, runOf, WAIVED_MERGES } from '../plugins/aidrian/lib/review/waiver-stand.mjs';
-import { offerLand, runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
+import { atCap, offerLand, runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
@@ -998,14 +998,15 @@ const atCheck = (state, head = HEAD, extra = {}) => {
 
 // The review gate's forge and `aidrian pr extend`'s in one: the pull request is on this checkout's own branch, which,
 // as the default branch, holds `policy` (by default allowing the waiver), so holdToBase and the gate read the same base.
-function landForge(r, { policy = ALLOW, ...options } = {}) {
+// `comments` are the pull request's comments; `visibility` answers the forge's reading of the repository.
+function landForge(r, { policy = ALLOW, comments = [], visibility = () => 'PRIVATE', ...options } = {}) {
   const branch = r.git('branch', '--show-current');
   const make = teamForge({ main: policy, [branch]: policy }, { base: branch, ...options });
-  const issue = [];
+  const issue = comments;
   const facade = make({});
   return Object.assign({
     ...facade,
-    visibility: () => 'PRIVATE',
+    visibility,
     pull: () => ({ author_association: 'MEMBER', base: { repo: { fork: false } } }),
     change: (ref, fields, given) => (fields === 'isCrossRepository' ? { isCrossRepository: false } : facade.change(ref, fields, given)),
     conversationComments: () => issue,
@@ -1045,7 +1046,8 @@ test('the review step reports the waiver gate at the cap, and offers its judge `
   const judging = { ...capped('extension_check'), dispatch: [{ pass: 'extension-judge', agent: 'code-reviewer', brief: 'Read-only.', record: `aidrian pr extend 5 --verdict extend|stop --reason "<evidence>" --head ${HEAD} --check 'plan'` }] };
   const check = offerLand(judging, offerWaiver(judging, r.project(), config, seams()));
   assert.equal(check.waiver.may, true, check.waiver.why);
-  assert.equal(check.dispatch[0].record, `aidrian pr extend 5 --verdict extend|stop|land --reason "<evidence>" --head ${HEAD} --check 'plan' --judge <agent id>`);
+  assert.equal(check.dispatch[0].record, `aidrian pr extend 5 --verdict land|stop --reason "<evidence>" --head ${HEAD} --check 'plan' --judge <agent id>`);
+  assert.equal(check.dispatch[0].record_extend, `aidrian pr extend 5 --verdict extend --reason "<evidence>" --head ${HEAD} --check 'plan'`, 'extend takes no --judge');
   assert.match(check.dispatch[0].brief, /^Read-only\. `waiver\.may` is true: .*a third verdict is open: `land`/u);
   // Whatever the gate refuses, the step says why and offers no `land`: the same gate as `aidrian pr waive --gate`.
   r.record(5, (state) => (atCheck(state), (state.index = { 'R1-1': openFinding('R1-1', { severity: 'high' }) })));
@@ -1103,6 +1105,67 @@ test('aidrian pr extend --verdict land is refused whenever the gate refuses, and
   const kept = before(atCheck);
   await assert.rejects(extend(t, r, ['--verdict', 'land', '--reason', 'nits', '--judge', 'judge-9']), /the dispatch log holds no dispatch of the code-reviewer judge-9/u);
   assert.equal(JSON.stringify(readLocalState(r.project(), 5)), kept);
+});
+
+// The words of one command line as a shell reads them: single- and double-quoted parts kept whole.
+const words = (line) => [...line.matchAll(/'([^']*)'|"([^"]*)"|(\S+)/gu)].map((m) => m[1] ?? m[2] ?? m[3]);
+
+test('every verdict runs as the record line the step prints says: extend with record_extend, land and stop with record and --judge', async (t) => {
+  const r = repo(t, { local: ON });
+  // The step's own check at the cap, with land offered: its dispatch as atCap builds it and offerLand changes it.
+  const built = emptyState(5, 'acme/notes');
+  atCheck(built);
+  const result = atCap({ state: built, source: 'plan', round: 2, head: HEAD, policy: { mode: 'ask', max: 2 }, pr: 5, history: () => ({ rounds: [{ round: 1, head: HEAD, open: 1, findings: [] }], originalFiles: null, files: null }) });
+  assert.equal(result.status, 'extension_check');
+  const [judge] = offerLand({ ...result, pr: 5, head: HEAD }, { may: true, why: null }).dispatch;
+  const run = (line, verdict) => {
+    const filled = line.replace('land|stop', verdict).replace('<evidence>', 'R2-1 is acceptable_as_is at src/a.js:3').replace('<agent id>', JUDGE.judge_id);
+    const [cli, pr, action, ...args] = words(filled);
+    assert.deepEqual([cli, pr, action, args[0]], ['aidrian', 'pr', 'extend', '5']);
+    return extend(t, r, args.slice(1));
+  };
+  for (const [verdict, line, status, waived] of [['extend', judge.record_extend, 'asking', null], ['land', judge.record, 'stopped', 'waive'], ['stop', judge.record, 'stopped', 'refuse']]) {
+    r.record(5, atCheck);
+    const { code, out } = await run(line, verdict);
+    assert.deepEqual([code, out.extension.status, out.waiver?.verdict ?? null], [0, status, waived], verdict);
+  }
+});
+
+test('aidrian pr extend --verdict land is refused when the record file changed after the read it was built from', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, atCheck);
+  // The pull request's summary comment holds a newer copy, so the record is built on it, and the forge's reading of
+  // the repository, which that choice asks for after this machine's file was read, is when another write lands.
+  const copy = emptyState(5, 'acme/notes');
+  atCheck(copy);
+  copy.revision = 50;
+  const comments = [{ id: 1, user: { login: 'someone' }, author_association: 'MEMBER', body: summaryBody(copy, null, 'extension_check', { reading: { visibility: 'PRIVATE', inside: true }, checker: { allows: () => true } }) }];
+  let wrote = false;
+  const visibility = () => {
+    if (!wrote) {
+      wrote = true;
+      const current = readLocalState(r.project(), 5);
+      current.note = 'written between the reads';
+      writeLocalState(r.project(), current);
+    }
+    return 'PRIVATE';
+  };
+  await assert.rejects(extend(t, r, ['--verdict', 'land', '--reason', 'nits', '--judge', JUDGE.judge_id], { forge: landForge(r, { comments, visibility }) }), /the review record of #5 changed while the verdict was recorded: run again/u);
+  assert.ok(wrote, 'the write came between the read and the verdict');
+  const kept = readLocalState(r.project(), 5);
+  assert.deepEqual([kept.note, kept.waivers, kept.extensions[0].status], ['written between the reads', undefined, 'judging'], 'that write stands, and nothing was recorded over it');
+});
+
+test('aidrian pr extend --verdict land weighs the reviews another record file owes for the pull request: one owed refuses, writing nothing', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, atCheck);
+  // A record of the same number, written before records were keyed by repository, owes a review of acme/notes#5.
+  const other = emptyState(5, 'other/notes');
+  other.pending = [{ id: 'owed-1', kind: 'review', head: HEAD, at: T0, by: 'someone', repo: 'acme/notes' }];
+  writeLocalState(r.project(), other, { repo: 'other/notes' });
+  const before = JSON.stringify(readLocalState(r.project(), 5, 'acme/notes'));
+  await assert.rejects(extend(t, r, ['--verdict', 'land', '--reason', 'nits', '--judge', JUDGE.judge_id]), /may not land #5: 1 review entry is still owed on #5: a verdict never covers an owed review/u);
+  assert.equal(JSON.stringify(readLocalState(r.project(), 5, 'acme/notes')), before, 'nothing written');
 });
 
 test('at a round_limit with no check, the judge it dispatched lands with one extend call, and its stop records the refuse', async (t) => {

@@ -712,6 +712,8 @@ export const otherRecordMessage = (pr, recorded, repo, what) =>
 // { held, why: 'findings', finding }, with `own`, this machine's record and the copy's security marks, for the delete.
 // A caller that read no reading, such as a test of the record alone, builds on the copy as on a private one.
 // With `ignoreOther`, this machine's record is left out when it names another repository than `repo` (otherRecordRepo).
+// Every { state } also carries `local`, this machine's record file of that one read (or null), so a writer compares the
+// revision the state was built from, and merges its owed entries, with no second read before its write.
 export function readRecord(project, pr, comments, repo, reading = undefined, { ignoreOther = false } = {}) {
   const body = summaryComment(comments)?.body;
   const read = readLocalState(project, pr, repo);
@@ -720,13 +722,13 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   const held = remote ? null : heldRevision(body);
   if (held !== null && (local?.revision ?? 0) < held) return { held, why: heldWhy(body) };
   const chosen = newer(local, remote);
-  if (!chosen || chosen !== remote) return { state: chosen ?? emptyState(pr, repo) };
+  if (!chosen || chosen !== remote) return { state: chosen ?? emptyState(pr, repo), local: read };
   if (reading !== undefined && !isPrivate(typeof reading === 'function' ? reading() : reading)) {
     const own = widenMarks(local ?? emptyState(pr, repo), remote);
     const current = Array.isArray(remote.planNote?.current) ? remote.planNote.current : null;
     const finding = untextedBlocking(remote, local, current);
     if (finding) return { held: remote.revision ?? 0, why: 'findings', finding, own };
-    return { state: restartFrom(own, remote) };
+    return { state: restartFrom(own, remote), local: read };
   }
   // The private copy holds less than the record where a check withheld a string: that is filled from this machine's own
   // record. A machine with none fills from an empty one, so every finding of the copy is marked adopted.
@@ -735,7 +737,7 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   // since nothing takes one back: it is kept (record-merge.mjs keepHuman), as when a session on an older plugin posted
   // from its old-name file.
   if (local) keepHuman(remote, local);
-  return { state: remote };
+  return { state: remote, local: read };
 }
 
 // The pull request's comment copy `copy` as `repo`'s record, or null. The comment is that pull request's own, so a copy

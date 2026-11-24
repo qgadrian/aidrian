@@ -35,7 +35,7 @@ import { postContext, readReading, shellQuote } from './dispatch.mjs';
 // One reading of a red flag, a full reason or the bare name a posted copy keeps (publish.mjs flagName).
 import { flagName } from './publish.mjs';
 import { isFindingId, twinMatch } from './findings.mjs';
-import { checkId, heldMessage, mergePending, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
+import { checkId, heldMessage, mergePending, publishState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
 
 export { checkId };
 
@@ -339,7 +339,7 @@ const LAND_TEST =
 const LAND_BRIEF =
   '`waiver.may` is true: the team lets this pull request merge at the cap with its open findings filed, on your word. ' +
   'So a third verdict is open: `land`, the cap stands and the pull request may merge as it is. When no extra round is ' +
-  `worth it, rule \`land\` or \`stop\`. ${LAND_TEST}`;
+  `worth it, rule \`land\` or \`stop\`. ${LAND_TEST} The session records \`extend\` with \`record_extend\`, with no \`--judge\`.`;
 
 // The brief of the one judge a `round_limit` dispatches when its `waiver` says one may rule: no check runs there.
 const WAIVER_BRIEF =
@@ -352,13 +352,16 @@ const JUDGE_ARG = ' --judge <agent id>';
 
 // Adds the step's `waiver` (waiver-stand.mjs offerWaiver) to a capped `result`, and, only when it says a judge may
 // rule, the `land` verdict: to the check's judge at `extension_check`, or, at a `round_limit`, a dispatch of one judge
-// for it. `repoArg` is the step's ` --repo <owner>/<name>` or ''. Returns `result`.
+// for it. Its `record` is then the `land|stop` line, with `--judge`; at the check, `record_extend` is the `extend` line,
+// with none, since parseExtend refuses `--judge` with `extend`. `repoArg` is the step's ` --repo <owner>/<name>` or ''.
+// Returns `result`.
 export function offerLand(result, waiver, repoArg = '') {
   result.waiver = waiver;
   if (waiver?.may !== true) return result;
   if (result.status === 'extension_check' && Array.isArray(result.dispatch) && result.dispatch[0]?.pass === JUDGE_PASS) {
     const [judge, ...rest] = result.dispatch;
-    result.dispatch = [{ ...judge, brief: `${judge.brief} ${LAND_BRIEF}`, record: `${judge.record.replace(VERDICT_ARG, '--verdict extend|stop|land ')}${JUDGE_ARG}` }, ...rest];
+    const record_extend = judge.record.replace(VERDICT_ARG, '--verdict extend ');
+    result.dispatch = [{ ...judge, brief: `${judge.brief} ${LAND_BRIEF}`, record: `${judge.record.replace(VERDICT_ARG, '--verdict land|stop ')}${JUDGE_ARG}`, record_extend }, ...rest];
   } else if (result.status === 'round_limit' && typeof result.head === 'string') {
     result.dispatch = [{ pass: WAIVER_PASS, agent: JUDGE_AGENT, brief: WAIVER_BRIEF, record: `aidrian pr extend ${result.pr} --verdict land|stop --reason "<evidence>" --head ${result.head}${JUDGE_ARG}${repoArg}` }];
   }
@@ -640,7 +643,7 @@ export async function runExtend(args, project, config, deps = {}) {
   if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held, record.why, record.finding));
   const { state } = record;
   const env = deps.env ?? process.env;
-  if (opts.judge !== null) return runLanding({ opts, project, config, forge, repo, view, held, onPr, comments, state, env, gate: deps.gate ?? {} });
+  if (opts.judge !== null) return runLanding({ opts, project, config, forge, repo, view, held, onPr, comments, state, local: record.local, env, gate: deps.gate ?? {} });
   let entry;
   if (opts.verdict) entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head, current, check: opts.check });
   else {
@@ -664,11 +667,12 @@ export async function runExtend(args, project, config, deps = {}) {
 // the judge: `waive` for `land`, only once the gate `aidrian pr waive --gate` runs (waiver-stand.mjs readGate) says a
 // judge may rule on this very record and head, and `refuse` for `stop`, so one judge rules per head. Any refusal writes
 // nothing.
-async function runLanding({ opts, project, config, forge, repo, view, held, onPr, comments, state, env, gate }) {
+async function runLanding({ opts, project, config, forge, repo, view, held, onPr, comments, state, local, env, gate }) {
   const current = view?.headRefOid ?? null;
   if (typeof current !== 'string' || !SHA_REF.test(current)) throw new Error('cannot read the pull request\'s head: a verdict binds to one head');
   if (opts.head !== null && !sameCommit(opts.head, current)) throw new Error(`the pull request's head is ${current.slice(0, 7)}, not ${opts.head.slice(0, 7)}: the verdict binds to the current head`);
-  const local = readLocalState(project, opts.pr, repo);
+  // `local` is this machine's record file of the read `state` was built from: the write below is refused when the file
+  // changed since (sameRevision), and its owed entries are kept.
   state.pending = mergePending(local?.pending, state.pending);
   const check = waiting(state, 'judging', opts.check);
   let entry = null;

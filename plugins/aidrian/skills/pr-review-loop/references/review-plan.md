@@ -192,8 +192,9 @@ With `github.extraRounds` on, the cap first checks whether one more round is wor
   that `head`, the last reviewed head (`from`), and the `fix` between them.
   Run `dispatch[0]` as its read-only `agent` with `brief` and `extension`. It returns `extend` or `stop` with
   evidence; record it with `record`, its `--reason` naming that evidence. Then run the step again.
-  When `waiver.may` is true, `brief` also offers `land`, and `record` ends in `--judge <agent id>`: read
-  § At the cap: a judge's waiver before recording it.
+  When `waiver.may` is true, `brief` also offers `land`: `record` is then the `land|stop` line, ending in
+  `--judge <agent id>`, and `record_extend` the `extend` line, with no `--judge`. Read § At the cap: a judge's waiver
+  before recording it.
   The session never writes a verdict the judge did not give.
 - `extension_ask`: the judge said extend, under `"ask"` or over a red flag, and the Human decides. Ask `question` with AskUserQuestion, with `options`
   as given, word for word. Record what the Human picked: `aidrian pr extend <n> --human approve` for the option that
@@ -240,8 +241,9 @@ no waiver: run the step again on it. The session runs no gate command: the step 
   `brief` for `land` or `stop`. Run it as its read-only `agent`, with `brief` and the step's result: never the agent
   that wrote the change, and never one that reviewed a round of this pull request. One judge per head: never dispatch
   another to get a different verdict. Keep the agent id the host returns for it.
-- Record the verdict the judge gave, and only that one, with `record`, naming the judge:
-  `aidrian pr extend <n> --verdict <the judge's verdict> --reason "<the judge's evidence>" --head <sha> --judge <agent id>`.
+- Record the verdict the judge gave, and only that one. `land` or `stop`: run `record`, naming the judge:
+  `aidrian pr extend <n> --verdict land|stop --reason "<the judge's evidence>" --head <sha> --judge <agent id>`.
+  `extend`, only at `extension_check`: run `record_extend`, which takes no `--judge`.
   The session never writes a verdict the judge did not give, and never turns the judge's `stop` into `land`.
   `land` asks the gate again and is refused, with nothing written, whenever the gate refuses: report that refusal.
 - On `land`: run no review step on this head, since its new outcome would come after the verdict. Under `autopilot`,

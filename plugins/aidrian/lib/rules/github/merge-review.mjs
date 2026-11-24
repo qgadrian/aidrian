@@ -397,12 +397,17 @@ export const UNREAD_REASON =
 // per number, so a fork checkout holds upstream#5 and origin#5 in one record: each merge reads only its own entries.
 // `readLocalState` gives a merge of `repo` that repository's own record alone; the entries another repository's record
 // holds for it (state.mjs owedElsewhere), as one written before the record was keyed by repository does, are added.
-export const recordFor = (project, pr, repo) => {
-  const own = readLocalState(project, pr, repo);
+export const recordFor = (project, pr, repo) => withOwedElsewhere(readLocalState(project, pr, repo), project, pr, repo);
+
+// `own`, a record of pull request `pr` of `repo` (null: none), with the entries owed for `repo` that another
+// repository's record holds added to a copy of it: what recordFor reads, for a record a command has in hand, such as
+// the one `aidrian pr extend --verdict land` is about to write, so its gate weighs every owed review. `own` itself is
+// never changed.
+export function withOwedElsewhere(own, project, pr, repo) {
   const extra = repo === null ? [] : owedElsewhere(project, pr, repo);
   if (!extra.length) return own;
   return { ...(own ?? { ...emptyState(pr, repoName(repo)) }), pending: [...(own?.pending ?? []), ...extra] };
-};
+}
 
 export function scoped(state, project, repo) {
   const target = repo === null ? null : repoName(repo);

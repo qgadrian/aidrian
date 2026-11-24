@@ -249,6 +249,21 @@ test('check warns of OpenCode\'s unguarded tracker route once the project\'s Ope
   assert.match(stderr, /^warning: tracker\.enabled: nobody has verified the guard on OpenCode/mu);
 });
 
+// No aidrian guard holds an OpenCode session, which the tracker's one route understates: the check names that gap
+// wherever OpenCode is set up, with no tracker on.
+const UNGUARDED = /^warning: OpenCode is set up here, and no merge guard, Bash rule, or write guard holds an OpenCode session: work there only in a task worktree, and never merge from it \(docs\/providers\/opencode\.md#limits\)$/mu;
+test('check warns that no guard holds an OpenCode session once OpenCode is set up, with no tracker too', async (t) => {
+  const dir = exampleRepo(t);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  assert.deepEqual(await run(['check'], dir).then(({ status, stderr }) => [status, stderr]), [0, ''], 'no OpenCode config');
+  mkdirSync(path.join(dir, '.opencode'));
+  writeFileSync(path.join(dir, '.opencode/opencode.jsonc'), '{ "plugins": ["aidrian"] }');
+  const { status, stderr } = await run(['check'], dir);
+  assert.equal(status, 0, stderr);
+  assert.match(stderr, UNGUARDED);
+  assert.equal(stderr.match(new RegExp(UNGUARDED.source, 'gmu'))?.length, 1, 'once');
+});
+
 test('state prints the state folder, with or without a project folder', async (t) => {
   const dir = exampleRepo(t);
   // As a process, so the state command stays tested through bin/aidrian's own entry.

@@ -163,8 +163,11 @@ export default {
       unguardedRoutes: [{ name: 'any MCP tool', reason: 'the bridge forwards no MCP tool call to a hook in this version' }],
     },
     // Whether OpenCode is set up to run this plugin here, `setUp({ env, root })`, from its config files alone
-    // (opencode-setup.mjs): `aidrian check` names OpenCode's unguarded routes only then (lib/tracker-check.mjs).
+    // (opencode-setup.mjs): `aidrian check` names OpenCode's unguarded routes, and the gap below, only then
+    // (lib/tracker-check.mjs).
     setUp,
+    // What no hook holds on it: the bridge runs no guard, so `aidrian check` names this where OpenCode is set up.
+    unguarded: { what: 'no merge guard, Bash rule, or write guard holds an OpenCode session', doc: 'docs/providers/opencode.md#limits' },
     // Nothing here says whether OpenCode would let a session push to the remote.
     pushPermission: () => ({ answer: 'unknown' }),
     handoffContinue: { routes: [] },

@@ -4,6 +4,7 @@
 // here. Each one is silent at run time, since a
 // write that no hook judges passes. These are warnings: the guard is right to stay on for the hosts where it holds.
 // Only `aidrian check` loads this for all hosts; the start hook asks for one host, so no other hook pays to read a host's files.
+// It also says, by the same setup probe, of a host set up here whose sessions no guard holds at all (unguardedWarnings).
 
 import { nameMatches } from './agent-gates.mjs';
 import { detectHost, HOSTS, trackerGuards, UNKNOWN_HOST } from './hosts/index.mjs';
@@ -56,6 +57,14 @@ function probedSetUp(host, ask) {
   } catch {
     return false;
   }
+}
+
+// The warnings for each host its setup probe finds set up here whose adapter says no guard holds its sessions
+// (`capabilities.unguarded`, { what, doc }), whether a tracker is on or not. The probe reads files alone, so the check
+// gives one answer whichever host's shell runs it.
+export function unguardedWarnings({ env = process.env, hosts = HOSTS, root } = {}) {
+  return hosts.filter((host) => typeof host.capabilities?.unguarded?.what === 'string' && probedSetUp(host, { env, root }))
+    .map((host) => `${host.name} is set up here, and ${host.capabilities.unguarded.what}: work there only in a task worktree, and never merge from it (${host.capabilities.unguarded.doc})`);
 }
 
 // The warnings for `tracker`, the loaded key, with `root` the project's root, which a host's setup probe may read.

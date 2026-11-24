@@ -175,12 +175,17 @@ function capCause(s, extra) {
   const onHead = !pastCap || passes.some(({ pass }) => sameCommit(resultFor(pass)?.head, head));
   if (!onHead) {
     let kept = isObject(round?.cap) && round.cap.head === round.head ? round.cap : null;
-    // A round an older plugin kept no cause for: this same function gives it, on that round's own head, from the
-    // results the passes recorded there, and keeps it on the round. A pass with none there is `unrun`, which no waiver
-    // passes.
-    if (!kept && typeof round?.head === 'string') {
+    // A round an older plugin kept no cause for, its `cap` missing altogether (a cause of another head, as `past_cap`
+    // leaves, is never rebuilt): this same function gives it, on that round's own head, from the results the passes
+    // recorded there alone, and keeps it on the round. A pass with none there is `unrun`. The record holds none of that
+    // round's evidence beyond its reviewers (its flow checks, the bot's limit, its sign-offs), so the cause is
+    // `reconstructed`, which no waiver passes, and every flow of the plan reads unsigned.
+    if (round && round.cap === undefined && typeof round.head === 'string') {
       const onRound = (pass) => (isObject(state.passes?.[pass.id]) && sameCommit(state.passes[pass.id].head, round.head) ? state.passes[pass.id] : null);
-      if (passes.some(({ pass }) => onRound(pass))) kept = capCause({ ...s, head: round.head, resultFor: onRound }, extra);
+      if (passes.some(({ pass }) => onRound(pass))) {
+        kept = capCause({ state, plan, map, head: round.head, resultFor: onRound }, {});
+        kept.reconstructed = true;
+      }
     }
     if (!kept) return { head, reviewed: round?.head ?? null, items: [], counted: null, itemized: false, unrun: [], unsigned: null, flows: [], tests_removed: tests, checks_failing: 0, bot, human };
     return {
@@ -227,8 +232,8 @@ function capReached(s, extra) {
   // A head that only caught up with the base since the last round (step.mjs `catchUp`): the cap carries to it as it
   // stood, with the last round's cause, and no extra-round check runs. The Human may still raise the cap.
   if (s.catchUp && !sameCommit(state.rounds.at(-1)?.head, head)) {
-    const raise = raiseAsk({ pr: n, repo, source: 'plan', round: state.rounds.length, granted: grantedRounds(state, 'plan', policy), withBot: Boolean(opts?.withBot) });
-    return finish(s, 'round_limit', { ...extra, carried_from: s.catchUp.from, carried_base: s.catchUp.base, ...raise, cap: cause });
+    const { raise } = raiseAsk({ pr: n, repo, source: 'plan', round: state.rounds.length, granted: grantedRounds(state, 'plan', policy), withBot: Boolean(opts?.withBot) });
+    return finish(s, 'round_limit', { ...extra, carried_from: s.catchUp.from, carried_base: s.catchUp.base, ...(raise ? { raise } : {}), cap: cause });
   }
   // The bot's cap may be what stopped the step: the question then raises past the bot's rounds, with the bot.
   const botRounds = Number.isInteger(extra?.bot?.codex_rounds) ? extra.bot.codex_rounds : null;

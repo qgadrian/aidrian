@@ -267,11 +267,20 @@ export function baseMergeOf(root, head, { priorHead, base }) {
 // The most merges a catch-up walks back from its head to the reviewed head (baseCatchUp).
 const CATCH_UP_MERGES = 20;
 
-// The pull request's own diff at `tip`: from its merge base with `base`, the base branch tip, to `tip`, with what only
-// says where it sits (blob ids, hunk positions) left out, so the same change on a moved base reads the same.
+// A file entry of a diff whose patch is binary: git prints no lines of it, so its blob ids are all that tell two
+// payloads apart.
+const BINARY_ENTRY = /^(?:Binary files .* differ|GIT binary patch)$/mu;
+
+// The pull request's own diff at `tip`: from its merge base with `base`, the base branch tip, to `tip`, with git's
+// three lines of context, so an edit reads with the lines around it. What only says where the change sits on a moved
+// base is left out: a text file's blob ids, and the line numbers of each hunk header. A binary file keeps its blob ids.
 function ownDiff(root, tip, base) {
-  const text = git(root, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=0', mergeBase(root, base, tip), tip]);
-  return text.split('\n').filter((line) => !line.startsWith('index ')).map((line) => (line.startsWith('@@') ? '@@' : line)).join('\n');
+  const text = git(root, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', mergeBase(root, base, tip), tip]);
+  return text.split(/^(?=diff --git )/mu).map((entry) => {
+    const binary = BINARY_ENTRY.test(entry);
+    return entry.split('\n').filter((line) => binary || !line.startsWith('index '))
+      .map((line) => line.replace(/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/u, '@@')).join('\n');
+  }).join('');
 }
 
 // Whether `head` only caught up with the base branch since `reviewed`, the head the last round reviewed: every commit

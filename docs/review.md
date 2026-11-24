@@ -956,11 +956,14 @@ merge head keep that scope, through the `remerge` entry of the record.
 Every commit on its first-parent chain back to the last round's head is a two-parent merge.
 Each merge's other parent is an ancestor of the base branch tip.
 And the pull request's own diff, from its merge base with the base branch tip, is the same at both heads.
-Blob ids and hunk positions do not count in that diff.
+That diff keeps git's three lines of context around each change, so one edit moved to another occurrence of a line reads differently.
+A text file's blob ids and each hunk header's line numbers do not count in it.
+A binary file keeps its blob ids, since git prints none of its contents, so another payload is never the same diff.
+A change the base made within three lines of the pull request's own changes alters that context, and that head is reviewed.
 Such a head runs no reviewer, opens no round, and asks no extra-round question.
-The step returns `round_limit` on it, with `carried_from`, `carried_base`, and the last round's cause.
+The step returns `round_limit` on it, with `carried_from`, `carried_base`, the last round's cause, and the `raise` command, but no question.
 A merge whose resolution changes the pull request's own diff, or any git failure, is reviewed as any head at the cap is.
-The Human may still raise the cap with its `raise` command.
+The Human may still raise the cap with that command.
 
 Neither the carry, the catch-up, nor the resolution-only round applies when the base branch, from the merge base of the reviewed head
 and the merge's base parent to the base branch's current tip, changes how the project is reviewed: a rule that lands on
@@ -1302,6 +1305,7 @@ Among them, on exactly that head:
   each listed, each of `medium` severity or lower, and none a security finding, of a security pass, or of the
   `security-engineer`;
 - a review round stopped on the head: a cause judged past the cap by attested results alone (`past_cap`) is never waived;
+- the cause was not rebuilt from an older plugin's record (`reconstructed`), which keeps no flow check or bot result;
 - no sign-off of the Human's is owed on the head;
 - the review bot passed exactly the head on the forge: a verdict never stands in for it;
 - the host confirms the judge's dispatch in the dispatch log, which Codex cannot, and no judge has ruled on the head yet;
@@ -1534,8 +1538,11 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   A head past the cap that holds a result a pass uses, as one `aidrian pr attest` recorded there, is judged by its own results instead.
   That cause is `past_cap`: the step stopped before the flows' checks, so no waiver passes it until a review round, the Human's extra round, runs.
   It replaces the round's, so a later head no pass reviewed inherits no cause, and a waiver refuses that head too.
-  A round an older plugin kept no cause for gets one at the next cap, from the results its passes recorded on its head, by the same code, and keeps it.
-  A pass with no result there is one that never reviewed the head, which no waiver passes.
+  A round an older plugin kept no cause for, its `cap` missing altogether, gets one at the next cap, by the same code, and keeps it.
+  That cause reads only the results its passes recorded on its head, and a pass with no result there is one that never reviewed the head.
+  The record holds none of that round's flow checks, bot limit, or sign-offs, so every flow of the plan reads unsigned.
+  It is `reconstructed`, and no waiver passes it until a review round, the Human's extra round, runs.
+  A round whose `cap` is another head's, as a `past_cap` cause leaves, is never rebuilt.
   The posted copy keeps no `cap`,
   on the outcome or a round, and no waiver's `judge_id` and `session`. Each binds to one head and
   one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the

@@ -119,8 +119,8 @@ export function parseFindings(raw, settled = [], { round } = {}) {
     if (finding.line !== undefined && !(Number.isInteger(finding.line) && finding.line >= 1)) throw new Error(`${at}.line must be a line number`);
     const axes = { severity: finding.severity, likelihood: finding.likelihood, affects: finding.affects, cost: finding.cost };
     // The written project rule the finding cites, which turns a drop_unless_cited into fix_now; an empty or non-string
-    // value is no citation. Accepted residual: a `violated_rule` alone is never read as one, since a reviewer may put a
-    // lens label there, so a producer that names the rule only there leaves the finding dropped, as before `cites`.
+    // value is no citation. Reviewers return it as `cites` (knowledge skill's handoff reference); `violated_rule` is a
+    // rule or lens label, such as the critic's `simpler`, and is never read as one.
     const cites = text(finding.cites, 300);
     const decided = agentReading({ ...axes, cites }, round);
     if (decided.disposition === 'invalid') throw new Error(`${at}: ${decided.reason} (\`aidrian pr disposition --vocab\` lists the words)`);

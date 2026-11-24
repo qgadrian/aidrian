@@ -4,8 +4,9 @@ Add a field only when your role emits it or the dispatch asks for it. Use these 
 
 - `findings[]` (reviewers, developers in review mode, `security-engineer`, `product-manager`), or `[]` when none:
   `severity`, `likelihood`, `affects`, `cost` (`aidrian pr disposition --vocab` defines each word),
-  `file`, `line`, `violated_rule`, `cites` (only the written project rule it breaks, as `<doc>#<section>`, which `--cites`
-  passes), `summary` (the impact), and `next_step` (the fix direction).
+  `file`, `line`, `violated_rule` (the rule or lens the finding names, a label no table reads), `cites` (only the written
+  project rule it breaks, as `<doc>#<section>`, else `null`, which `--cites` passes), `summary` (the impact), and
+  `next_step` (the fix direction).
   A finding never carries its own disposition.
   `plan_change` (any reviewer, on a finding about a slice's closure criterion): `{kind, existing_tests, break}`.
   `kind` is `proof` when the same people, inputs, and observable result stay and only the test or slice proving them moves,

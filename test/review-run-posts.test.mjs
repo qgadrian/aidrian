@@ -60,7 +60,7 @@ test('a pass attested before its round opened is read again at that round: a lat
   const base = r.git('rev-parse', 'HEAD~1');
   state.rounds = Array.from({ length: N - 1 }, () => ({ head: base, at: new Date().toISOString() }));
   writeLocalState(r.project, state);
-  const late = filed({ severity: 'low', likelihood: 'routine', cost: 'trivial', state: 'accepted' });
+  const late = filed({ severity: 'low', likelihood: 'routine', cost: 'trivial', state: 'accepted', cites: 'docs/rules.md#errors', violated_rule: 'simpler' });
   const axisless = { title: 'Copy names no next step', file: 'src/booking/a.js', line: 3, severity: 'low', state: 'accepted' };
   attestFile(r, dispatched.pass, head, [late, axisless]);
   const attested = readLocalState(r.project, 7).passes[dispatched.pass];
@@ -72,6 +72,7 @@ test('a pass attested before its round opened is read again at that round: a lat
   const pass = after.passes[dispatched.pass];
   assert.deepEqual([pass.list.map((each) => each.disposition), pass.open], [['accepted_residual', 'accepted_residual'], 0], 'read again at round 5, lateRound with or without axes');
   assert.deepEqual(pass.list.map((each) => [after.index[each.id]?.state, after.index[each.id]?.disposition]), [['accepted', 'accepted_residual'], ['accepted', 'accepted_residual']], 'the index takes the new reading');
+  assert.deepEqual([pass.list[0].cites, after.index[pass.list[0].id]?.cites, pass.list[1].cites], ['docs/rules.md#errors', 'docs/rules.md#errors', undefined], 'attestation keeps the citation in the pass and the index');
 });
 
 test('the exec step keeps a finding`s id while it is reported again with its title and file', async (t) => {

@@ -62,8 +62,8 @@ function overlayProblem(folder, overlay, policyFiles) {
   if (merged === null) return null;
   const why = merged.conflict ? `${namedFiles([merged.conflict])} conflicts in that merge, which a session never resolves by hand`
     : merged.edited ? `${namedFiles([merged.edited])} differs from git's merge of the base` : merged.reason;
-  if (!count) return `it pushes a merge of the base into the branch in which ${why}, and this attempt runs on the base branch's copies of the host config and instruction files; record the result pr_open with that file in its stop`;
-  return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none but as git merges the base into the branch (${why}); take those changes out of the commits, or record the result pr_open with that file in its stop when the issue needs them`;
+  if (!count) return `it pushes a merge of the base into the branch in which ${why}, and this attempt runs on the base branch's copies of the host config and instruction files; record the result with that file in its stop: \`pr_open\` when the branch has a pull request, otherwise \`parked\` with a decision for the Human naming the file`;
+  return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none but as git merges the base into the branch (${why}); take those changes out of the commits, or, when the issue needs them, record the result with that file in its stop: \`pr_open\` when the branch has a pull request, otherwise \`parked\` with a decision for the Human naming the file`;
 }
 
 // Why HEAD in `folder` holds a file `guarded` names other than as git's clean merge of `overlay` with the base it holds,

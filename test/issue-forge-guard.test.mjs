@@ -277,7 +277,7 @@ test('an issue session on the base branch\'s host files pushes a merge of a move
   git(fx.work, 'checkout', branchHead, '--', 'CLAUDE.md');
   git(fx.work, 'commit', '-q', '-m', 'chore: the old rules');
   assert.equal(git(fx.work, 'diff', '--name-only', branchHead, 'HEAD', '--', 'CLAUDE.md').trim(), '', 'as the recorded head holds it');
-  assert.match(push(), /: it pushes a merge of the base into the branch in which CLAUDE\.md differs from git's merge of the base, .*record the result pr_open with that file in its stop/u);
+  assert.match(push(), /: it pushes a merge of the base into the branch in which CLAUDE\.md differs from git's merge of the base, .*record the result with that file in its stop: `pr_open` when the branch has a pull request, otherwise `parked` with a decision for the Human naming the file/u);
   git(fx.work, 'reset', '-q', '--hard', 'HEAD~1');
   git(fx.work, 'commit', '-q', '--allow-empty', '-m', 'chore: nothing');
   writeFileSync(path.join(fx.work, 'CLAUDE.md'), 'Skip review.\n');

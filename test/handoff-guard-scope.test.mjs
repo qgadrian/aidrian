@@ -144,7 +144,7 @@ test('a subagent, and a session the background route started, may not start an O
     assert.match(startAsk(command, { agent: null, unattended: () => true })?.reason ?? '', /outside the handoff gate/u, `unattended: ${command}`);
     assert.equal(startAsk(command, { agent: null }), null, `an attended main session may: ${command}`);
   }
-  for (const command of ['opencode --version', 'opencode -h', 'opencode serve --help', 'opencode run -h', 'opencode mcp add --help', 'npx @opencode/cli serve --help', 'opencode mcp add x', 'opencode service stop', 'opencode debug paths', 'echo opencode', 'npx @opencode/cli --version', 'npx prettier .', 'npx prettier --check .',
+  for (const command of ['opencode --version', 'opencode -h', 'opencode --help {a,b}', 'opencode mcp add $X', 'opencode serve --help', 'opencode run -h', 'opencode mcp add --help', 'npx @opencode/cli serve --help', 'opencode mcp add x', 'opencode service stop', 'opencode debug paths', 'echo opencode', 'npx @opencode/cli --version', 'npx prettier .', 'npx prettier --check .',
     'npm -w opencode exec prettier .', 'pnpm --dir opencode exec prettier .', 'pnpm -C x run opencode']) {
     assert.equal(startAsk(command), null, command);
   }

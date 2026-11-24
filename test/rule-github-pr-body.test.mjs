@@ -475,6 +475,18 @@ test('a write through a link or a hard link to a body file is a write to it', (t
   assert.match(run('gh pr create -t x -F b.md > link.md') ?? '', unread, 'bash empties b.md through the link before gh reads it');
   assert.match(run(`tee b.md > link.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F b.md`) ?? '', unread, 'tee races its own output through the link');
   assert.match(run(`cat > c.md <<'EOF'\n${GOOD}EOF\necho x > hard.md\ngh pr create -t x -F c.md`) ?? '', unread, 'the echo rewrites c.md through its hard link');
+  // A `..` after a link climbs from where the link leads, as the system opens the path: sub/up/../b.md is b.md here.
+  mkdirSync(path.join(dir, 'sub'));
+  mkdirSync(path.join(dir, 'deep', 'other'), { recursive: true });
+  symlinkSync('../deep/other', path.join(dir, 'sub', 'up'));
+  writeFileSync(path.join(dir, 'deep', 'b.md'), GOOD);
+  assert.match(run('gh pr create -t x -F deep/b.md > sub/up/../b.md') ?? '', unread, 'the redirect lands on deep/b.md');
+  assert.equal(run('gh pr create -t x -F b.md > sub/up/../other.md'), null, 'and only there');
+  // A disk that folds case reads two spellings of one name as one file, before the file is there too.
+  if (process.platform === 'darwin' || process.platform === 'win32') {
+    assert.equal(run(`cat > New.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`), null, 'the heredoc is the body gh reads');
+    assert.match(run(`cat > New.md <<'EOF'\n${GOOD}EOF\necho x > NEW.MD\ngh pr create -t x -F new.md`) ?? '', unread);
+  }
   // A heredoc written through a link whose target is not there yet is the body gh then reads by the target's name.
   assert.equal(run(`cat > ahead.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`), null);
   assert.match(run(`cat > ahead.md <<'EOF'\n## Summary\nEOF\ngh pr create -t x -F new.md`) ?? '', /^Blocked: the body has no `## Tests run` section/u);

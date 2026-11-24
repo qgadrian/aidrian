@@ -35,6 +35,7 @@ import { forgeFor } from '../../forges/index.mjs';
 import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../../check-runs.mjs';
 import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
+import { foldCase } from '../../fs.mjs';
 import { findProject, projectCheckouts, stateDir } from '../../project.mjs';
 import { sessionFolder } from '../../session-folder.mjs';
 import { remoteRepos, repoName } from '../../review-gate.mjs';
@@ -309,8 +310,10 @@ const joinedIn = (folder, file) => (path.isAbsolute(file) ? file : folder === nu
 
 // The identity of the file the absolute path `file` names, for telling two names of one file apart, or null when it
 // cannot be told: an existing file's device and inode, so a second hard link is the same file; else the real path of
-// the part of the path that exists, a link at the end of that part, even one whose target is not there yet, followed
-// in turn, with the rest joined on. A read that fails, or more links than LINK_HOPS, gives null.
+// the part of the path that exists, as the system resolves it, each link before a `..` after it (realpathSync.native,
+// never Node's own, which drops a `..` first), a link at the end of that part, even one whose target is not there yet,
+// followed in turn, with the rest joined on, the whole in the case a disk that folds case compares (foldCase). A read
+// that fails, or more links than LINK_HOPS, gives null.
 export function fileIdentity(file) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
   const gone = (error) => ['ENOENT', 'ENOTDIR'].includes(error?.code);
@@ -318,12 +321,12 @@ export function fileIdentity(file) {
   const rest = [];
   for (let hops = 0; hops <= LINK_HOPS; hops += 1) {
     try {
-      const real = realpathSync(head);
+      const real = realpathSync.native(head);
       if (rest.length === 0) {
         const stat = statSync(real);
         if (!stat.isDirectory()) return `inode:${stat.dev}:${stat.ino}`;
       }
-      return path.join(real, ...rest);
+      return foldCase(path.join(real, ...rest));
     } catch (error) {
       if (!gone(error)) return null;
     }
@@ -338,7 +341,7 @@ export function fileIdentity(file) {
       continue;
     }
     const parent = path.dirname(head);
-    if (parent === head) return path.join(head, ...rest);
+    if (parent === head) return foldCase(path.join(head, ...rest));
     rest.unshift(path.basename(head));
     head = parent;
   }

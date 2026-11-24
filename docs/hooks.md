@@ -269,8 +269,9 @@ What each rule matches:
   redirect writes, gh's own output on any descriptor included (`-F b.md {fd}>b.md`), a redirect's target read in the
   shell's own folder and a body file in the one `env -C` or `git -C` gives its program, as bash opens a redirect first,
   and the shell's folder known only as a `cd` joined by `&&` alone moves it, so after `cd x && true;` a relative
-  redirect is one the rule cannot place, two names of one file, through a link or a second hard link, counting as
-  one file, and a name whose file cannot be told counting as any; any
+  redirect is one the rule cannot place, two names of one file, through a link, a `..` after one, a second hard link,
+  or another letter case on a disk that folds it, counting as one file, and a name whose file cannot be told counting
+  as any; any
   command between the write and gh that is not a known reader (such as `sed -i`, a script, or a program fed code on
   stdin); and a variable a nested shell or substitution assigns, or one used inside it. Such a body is one the rule
   cannot read: gh then runs as its own command after it.

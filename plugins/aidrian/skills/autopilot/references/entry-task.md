@@ -80,8 +80,8 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
 - **Merges.** Only through the `pr-auto-merge` skill, never through a tracker tool. When the merge stops, follow
   `references/phases.md` § When the merge stops: run `aidrian project stop-action <run> <key>`, and do what its one line
   says, never acting on the bot, the checks, or the branch by hand.
-  - A `park` line for the Human's sign-off: record `parked` with exactly the one decision the line gives (question,
-    options, recommendation, class). Never sign off, and never wait for one.
+  - A `park` line that names one decision, as for the Human's sign-off or a merge the run cannot count: record `parked`
+    with exactly the one decision the line gives (question, options, recommendation, class). Never sign off, and never wait for one.
   - Any other `park` line: record `pr_open`, with the `stop` the line names: the line itself, or the merge steps' own
     stop line when it says so; but `environment` when the stop is this session's own broken environment, as below.
   - `done`: record `merged`.

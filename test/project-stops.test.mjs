@@ -157,7 +157,9 @@ function stopped(t, { merge = {}, checks = [checkRow('e2e', 'SUCCESS', 40)], for
     assert.equal(start.exitCode, 0, start.err.join('\n'));
   }
   const writes = [];
-  const gh = { view: { number: 12, url: 'https://github.com/acme/widgets/pull/12', state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: HEAD, headRefName: 'feat/eng-1-export', baseRefName: 'main', isCrossRepository: false, reviewDecision: '', latestReviews: [], ...merge }, checks, fail: new Set(fail) };
+  // The start the merge is checked against, and a merge a minute after it by default.
+  const startedAt = Date.parse(fx.rows().filter((row) => row.event === 'start' && row.outcome === 'started').at(-1).at);
+  const gh = { mergedAt: new Date(startedAt + 60_000).toISOString(), view: { number: 12, url: 'https://github.com/acme/widgets/pull/12', state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: HEAD, headRefName: 'feat/eng-1-export', baseRefName: 'main', isCrossRepository: false, reviewDecision: '', latestReviews: [], ...merge }, checks, fail: new Set(fail) };
   const call = (name, args, answer) => {
     writes.push([name, ...args]);
     if (gh.fail.has(name)) throw Object.assign(new Error('gh failed'), { stderr: `gh: ${name} failed (HTTP 502)\n` });
@@ -167,6 +169,7 @@ function stopped(t, { merge = {}, checks = [checkRow('e2e', 'SUCCESS', 40)], for
     ...fx.forge,
     repository: (...args) => call('repository', args, () => fx.forge.repository(...args)),
     mergeState: (...args) => call('mergeState', args, () => gh.view),
+    change: (...args) => call('change', args, () => ({ ...gh.view, mergedAt: gh.view.state === 'MERGED' ? gh.mergedAt : null })),
     checks: (...args) => call('checks', args, () => gh.checks),
     workflowRun: (repo, id, options) => call('workflowRun', [repo, id, options], () => workflowRun(runs[id])),
     rerunFailedChecks: (repo, ids, options) => call('rerunFailedChecks', [repo, ids, options], () => ids),
@@ -177,7 +180,7 @@ function stopped(t, { merge = {}, checks = [checkRow('e2e', 'SUCCESS', 40)], for
   const act = (autoMerge, session = CHILD) => fx.cmd(['stop-action', 'launch', 'ENG-1'], { session, forge, autoMerge: () => autoMerge });
   // The catch-up at an attempt's start, which reads no auto-merge answer.
   const catchUp = () => fx.cmd(['stop-action', 'launch', 'ENG-1', '--catch-up'], { session: CHILD, forge, autoMerge: () => assert.fail('the catch-up reads no auto-merge answer') });
-  return { ...fx, gh, writes, drop: dropOf(), dropOf, act, catchUp, forge };
+  return { ...fx, gh, writes, drop: dropOf(), dropOf, act, catchUp, forge, startedAt };
 }
 const called = (fx, name) => fx.writes.filter((each) => each[0] === name);
 
@@ -289,6 +292,49 @@ test('the catch-up gives a merged or closed pull request the answer stop-action 
   const closed = fx.act(on()).out;
   assert.match(closed[0], /^park ENG-1 #12 at aaaaaaa: the forge shows it closed; record the result pr_open with this line as its stop$/u);
   assert.deepEqual(fx.catchUp().out, closed);
+});
+
+// A result handed over through `aidrian project result`, then the driver's `wait` that takes it in, under `forge`.
+function handOver(t, fx, value, forge) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'stop-result-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'result.json');
+  writeFileSync(file, JSON.stringify(value));
+  const handed = fx.cmd(['result', 'launch', 'ENG-1', '--file', file], { session: CHILD });
+  assert.equal(handed.exitCode, 0, handed.err.join('\n'));
+  return fx.cmd(['wait', 'launch', '--max-wait', '0'], { forge }).out.filter((line) => line !== 'idle' && !line.startsWith('lingering '));
+}
+
+test('a merge the result command refuses as merged parks on one decision that names why, and the result command takes that decision in', (t) => {
+  // Into the default branch after the start: done, by the result command's own check, which then records it merged.
+  const done = stopped(t, { merge: { state: 'MERGED' } });
+  assert.match(done.act(on()).out[0], /^done ENG-1 #12 at aaaaaaa: the forge shows it merged; record the result merged/u);
+  assert.deepEqual(called(done, 'change')[0], ['change', '12', 'state,mergedAt,headRefName,baseRefName,url,isCrossRepository', { repo: 'github.com/acme/widgets' }]);
+  // A merge check the forge cannot answer waits under the retry cap, never done.
+  done.gh.fail.add('change');
+  assert.match(done.act(on()).out[0], /^wait ENG-1 #12 at aaaaaaa: the forge could not describe pull request #12 \(gh failed\) \(1 of 3 for this attempt\); wait 60 seconds, then run the pr-auto-merge skill again$/u);
+  done.gh.fail.delete('change');
+  assert.deepEqual(handOver(t, done, { status: 'merged', pr: 12 }, done.forge), ['result ENG-1 merged -> done']);
+  // Into another branch, at the start instant, or before the start: the park line names the result command's own reason.
+  const fx = stopped(t, { merge: { state: 'MERGED', baseRefName: 'release' } });
+  const refusals = [
+    ['into another branch', 'release', 60_000, 'pull request #12 merged into "release", not the default branch main'],
+    ['at the start instant', 'main', 0, 'pull request #12 merged before this attempt started'],
+    ['before the start', 'main', -60_000, 'pull request #12 merged before this attempt started'],
+  ];
+  let line;
+  for (const [name, base, offset, why] of refusals) {
+    fx.gh.view = { ...fx.gh.view, baseRefName: base };
+    fx.gh.mergedAt = new Date(fx.startedAt + offset).toISOString();
+    line = fx.act(on()).out[0];
+    assert.ok(line.startsWith(`park ENG-1 #12 at aaaaaaa: the forge shows it merged, and the result command cannot record it merged: ${why}; `), `${name}: ${line}`);
+    assert.ok(line.endsWith('; record the result parked with one decision of class other: whether the merge of #12 counts as the issue\'s work, options "leave the issue parked" and "count the issue done by hand once its work is on the default branch", recommended the first'), `${name}: ${line}`);
+    assert.deepEqual(fx.catchUp().out, [line], `${name}: the catch-up answers the same`);
+  }
+  assert.equal(existsSync(path.join(fx.drop, STOPS_FILE)), false, 'a park spends no cap');
+  // The outcome the line names is one the result command records, where merged is refused (project-result.test.mjs).
+  const decision = { question: 'Pull request #12 merged before this attempt started, so the run cannot count it as ENG-1\'s work. Does it count?', options: ['leave the issue parked', 'count the issue done by hand once its work is on the default branch'], recommended: 0, class: 'other' };
+  assert.deepEqual(handOver(t, fx, { status: 'parked', pr: 12, decisions: [decision], stop: line }, fx.forge), ['result ENG-1 parked -> parked decision-1']);
 });
 
 test('the catch-up at an attempt\'s start merges a base a draft conflicts with, under the base-update cap, and otherwise goes on', (t) => {

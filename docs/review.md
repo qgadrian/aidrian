@@ -1326,8 +1326,9 @@ After `land`, the session runs no review step on that head: a new step's outcome
 
 When the merge stops after the review, an issue's session of a project run runs
 `aidrian project stop-action <run> <issue>`, which prints exactly one action: done when the forge shows the pull request
-merged; merge, wait, update the branch from the base, run the failed checks again, ask the review bot, or run one more
-review round of a new head, each under its own cap; or park, which, like done, has no cap. The table of stops,
+merged as the result command records it, into the default branch after the attempt's start; merge, wait, update the
+branch from the base, run the failed checks again, ask the review bot, or run one more review round of a new head,
+each under its own cap; or park, which, like done, has no cap. The table of stops,
 actions, and caps is in [Project run](config.md#project-run). A sign-off the Human owes, or a policy refusal, parks
 before any update, since an update makes a new head and every sign-off and review of the old head no longer counts.
 

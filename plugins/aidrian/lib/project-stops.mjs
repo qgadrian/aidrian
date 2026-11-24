@@ -5,7 +5,8 @@
 //
 // The stop is read in this order, and the first that holds decides:
 //   1. the pull request on the forge (mergeState), found by the issue's branch in the repository init pinned, from no
-//      fork, into the default branch: merged is `done`; closed, or another base, parks.
+//      fork, into the default branch: merged is `done` when the result command records it merged (project-result.mjs
+//      mergeProblem), and else parks on one decision for the Human, naming why; closed, or another base, parks.
 //   2. `aidrian pr auto-merge --check --json` (runAutoMerge, in this process, as this session): a policy reason (POLICY_REASONS),
 //      a `review` whose reason is changes requested, and a reason this file does not know park with the reason; `trust`
 //      with `signoff` parks as a decision for the Human, who signs off from a session they attend, of class `security`
@@ -34,7 +35,7 @@ import { forgeFor } from './forges/index.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { changesRequested, defaultBranch, ghError, runAutoMerge } from './pr-auto-merge.mjs';
 import { computeVerdict, currentRows } from './pr-checks.mjs';
-import { CAPS, cleanText } from './project-result.mjs';
+import { CAPS, cleanText, mergeProblem } from './project-result.mjs';
 import { issueBranch, readRun, runPlace, RUN_ID } from './project-run.mjs';
 import { latestStart, runStore, startsOf, stopActorProblem } from './project-run-guard.mjs';
 import { hostOf, repoName } from './remotes.mjs';
@@ -88,9 +89,11 @@ export function transientWait(history, attempt, why) {
 // request as readMergeState gives it, `autoMerge` { result, error }, the auto-merge JSON or why there is none, `checks` the
 // verdict of its checks with `runs`, the workflow runs a rerun takes, or null when one failing check is no Actions run
 // of the pinned repository (readChecks; read only when auto-merge is on), and `history` the recorded rows of the issue.
-export function classifyStop({ view, autoMerge, checks = null, history = [], attempt = null }) {
+// `refused` is why the result command refuses a merged pull request as merged (project-result.mjs mergeProblem), or null.
+export function classifyStop({ view, autoMerge, checks = null, history = [], attempt = null, refused = null }) {
   const park = (why, more = {}) => ({ action: 'park', why, ...more });
   const act = (action, scope, why, extra) => capped(history, view.head, action, scope, why, extra);
+  if (view.state === 'MERGED' && refused) return park(`the forge shows it merged, and the result command cannot record it merged: ${refused}`, { parkAs: 'merge_refused' });
   if (view.state === 'MERGED') return { action: 'done', why: 'the forge shows it merged' };
   if (view.state !== 'OPEN') return park(`the forge shows it ${String(view.state).toLowerCase()}`);
   const result = autoMerge?.result;
@@ -157,6 +160,7 @@ function nextStep(decision, { view, branch, method, catchUp = false }) {
     case 'merge': return 'run the pr-auto-merge skill again';
     case 'park':
       if (decision.parkAs === 'signoff') return `record the result parked with one decision of class ${decision.decisionClass ?? 'product'}: the Human's sign-off of the flows of #${view.number} at head ${short(view.head)}, options "leave the pull request unmerged" and "sign off from an attended session", recommended the first`;
+      if (decision.parkAs === 'merge_refused') return `record the result parked with one decision of class other: whether the merge of #${view.number} counts as the issue's work, options "leave the issue parked" and "count the issue done by hand once its work is on the default branch", recommended the first`;
       if (decision.parkAs === 'merge_steps') return 'record the result pr_open with the merge steps\' own stop line as its stop';
       return 'record the result pr_open with this line as its stop';
     case 'wait': return decision.awaitBot
@@ -318,10 +322,13 @@ export function stopAction({ project, config, run, key, env = process.env, home,
   if (view.state === 'OPEN' && view.base !== main) return answer({ action: 'park', why: `it targets ${view.base}, not the default branch ${main}, which a project run's issue merges into` }, view);
   // A merged or closed pull request gets the answer the command gives without --catch-up.
   if (catchUp && view.state === 'OPEN') return answer(catchUpStop({ view, history: rows }), view);
+  // A merged pull request is `done` only when the result command records it merged: its own check, against this start.
+  const landed = view.state === 'MERGED' ? mergeProblem({ forge, repository, pr: view.number, branch, since: Date.parse(start.at) }) : null;
+  if (landed?.retry) return answer(transientWait(rows, start.attempt, landed.why), view);
   const merged = view.state === 'OPEN' ? (autoMerge ?? ((url) => autoMergeOf(project, url, { forge, session, home })))(view.url) : null;
   const checks = merged?.result?.effective === true && merged.result.head === view.head ? readChecks(forge, repository, view, config.github) : null;
   if (checks?.error) return answer(transientWait(rows, start.attempt, checks.error), view);
-  const decision = classifyStop({ view, autoMerge: merged, checks, history: rows, attempt: start.attempt });
+  const decision = classifyStop({ view, autoMerge: merged, checks, history: rows, attempt: start.attempt, refused: landed });
   if (decision.action === 'rerun_checks') {
     const refused = rerunProblem(forge, repository, view, branch, decision.runs);
     if (refused?.error) return answer(transientWait(rows, start.attempt, refused.error), view);

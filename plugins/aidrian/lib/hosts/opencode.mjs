@@ -66,10 +66,10 @@ function credentialStores({ env = {}, home }) {
 }
 const starts = (args) => {
   const words = args.map((token) => (token.dynamic || token.expands ? null : token.text));
-  if (words.length === 0 || words[0] === null) return true;
+  if (words.length === 0 || words.includes(null)) return true;
   if (INFO.has(words[0])) return false;
   const options = words.includes('--') ? words.slice(0, words.indexOf('--')) : words;
-  if (!words.includes(null) && options.some((word) => HELP.has(word))) return false;
+  if (options.some((word) => HELP.has(word))) return false;
   return !NO_SESSION.some((entry) => entry.every((word, at) => words[at] === word));
 };
 

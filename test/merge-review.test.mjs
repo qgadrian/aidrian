@@ -140,6 +140,10 @@ test('the deny quotes record text clipped, so a long reason keeps the message sh
   const text = r.run('gh pr merge 5') ?? '';
   assert.match(text, /pull request #5 at abcdef1, and the review of head abcdef1 is `error` \(boom x{295}\): run `aidrian pr review 5`/u);
   assert.doesNotMatch(text, /x{301}/u);
+  r.record(6, (state) => (state.outcome = { status: 'error', head: HEAD, at: '2026-11-03T14:00:00.000Z', reason: '<!--'.repeat(200) }));
+  const reason = /is `error` \((.*?)\): run/u.exec(r.run('gh pr merge 6') ?? '')?.[1] ?? '';
+  assert.equal(reason.length, 300, 'the bound holds after a marker is escaped');
+  assert.doesNotMatch(reason, /<!--/u);
 });
 
 test('a head the guard cannot read refuses the merge, and --match-head-commit needs no gh', (t) => {

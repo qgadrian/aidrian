@@ -2133,8 +2133,10 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   issue counts as done for the plan, so its dependents may start, `init` prints `landed: <n> started issues whose pull
   request an earlier run left open merged since, which this run records done: <issue> (#<n>)`, and writes a `landed` row
   and the issue done after its init row. That owes the report a merge owes, the done status, which also takes the
-  decision label the earlier run's report set off (Linear `removeLabels`), so the driver's first `report` moves it,
-  within its tracker guard. When the check fails, or the forge cannot answer, the issue is a `blocker snapshot` line
+  decision label the earlier run's report set off (Linear `removeLabels`), as that report's `recorded` row names it, or
+  the base branch's label for a ledger from before, so the driver's first `report` moves it, within its tracker guard.
+  A run that ends before that report is recorded leaves the issue started in the tracker: the next run's `init` takes
+  it in as landed again, with no second forge read. When the check fails, or the forge cannot answer, the issue is a `blocker snapshot` line
   naming why, and `init` refuses.
   A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none;
   a `pr_open` result records the head its pull request's check read, with no second read. A `pr_open` result whose

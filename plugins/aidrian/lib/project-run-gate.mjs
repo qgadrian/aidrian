@@ -1170,7 +1170,7 @@ function limitLine({ state, run, store, cap, env, home, spawn, key, start, found
     return { rows: closed.rows };
   }));
   if (!written?.rows?.length) return {};
-  const after = closed.rows.at(-1);
+  const after = closed.rows.find((row) => row.event === 'issue');
   return { line: `limit ${key} ${limit.kind} ${when(closed.until)} -> ${after.state}${after.decision ? ` ${after.decision}` : ''}` };
 }
 

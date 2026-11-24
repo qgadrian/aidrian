@@ -164,9 +164,9 @@ test('a pause lasts from 1 minute to 6 hours, backs off 15, 30, then 60 minutes,
   assert.equal(pausedTime({ rows: [row(1, -60, -30), row(2, -40, -20), row(3, 10, 20)] }, NOW - 50 * MINUTE, NOW), 30 * MINUTE, 'overlapping pauses count once, and only within the span');
   const capped = limitEndRows({ found: { rows: Array.from({ length: LIMIT_WAITS }, (_, i) => row(i + 1, -100, -99)) }, key: 'ENG-1', attempt: 2, limit: rate, now: NOW });
   assert.equal(capped.until, null);
-  assert.deepEqual(capped.rows.map((each) => each.event), ['ended', 'halt', 'issue']);
+  assert.deepEqual(capped.rows.map((each) => each.event), ['ended', 'issue', 'halt'], 'the issue row follows ended at once, as a settle\'s does');
   const many = limitEndRows({ found: { rows: Array.from({ length: LIMIT_WAITS }, () => row(1, -100, -99)) }, key: 'ENG-1', attempt: 2, limit: rate, now: NOW });
-  assert.deepEqual(many.rows.map((each) => each.event), ['ended', 'limit', 'issue'], 'rows of one pause count once');
+  assert.deepEqual(many.rows.map((each) => each.event), ['ended', 'issue', 'limit'], 'rows of one pause count once');
   const again = limitEndRows({ found: { rows: [row(1, -10, 30)] }, key: 'ENG-1', attempt: 1, limit: rate, now: NOW });
   assert.deepEqual(again.rows.map((each) => each.event), ['ended', 'issue'], 'a record already paused on writes no second pause');
 });
@@ -504,6 +504,12 @@ test('an issue that used its 27th attempt number after a limit halt and resume i
   const out = limited.cmd(['wait', 'launch', '--max-wait', '0']).out;
   assert.match(out[0], /^limit ENG-1 usage (?:until \S+|halt) -> parked attempts$/u, out.join('\n'));
   assert.deepEqual([limited.run().states.get('ENG-1').state, limited.run().states.get('ENG-1').decision], ['parked', 'attempts']);
+  // The park owes its report, as every settle's does.
+  for (const fx of [failed, limited]) {
+    const [owed] = JSON.parse(fx.cmd(['report', 'launch', '--json']).out[0]).owed;
+    assert.deepEqual([owed?.key, owed?.attempt, owed?.label], ['ENG-1', 27, 'needs-decision']);
+    assert.match(owed.body, /The run started this issue as many times as it may/u);
+  }
 });
 
 test('an attempt that ends with numbers left opens the issue again, on a limit or a failure', () => {
@@ -511,9 +517,13 @@ test('an attempt that ends with numbers left opens the issue again, on a limit o
   const rows = Array.from({ length: 26 }, (_, i) => start(i + 1));
   const ended = Array.from({ length: 26 }, (_, i) => ({ event: 'ended', key: 'ENG-1', attempt: i + 1, reason: 'limit', at: iso(NOW) }));
   const rate = { kind: 'rate', until: null, at: NOW, after: null };
-  assert.equal(limitEndRows({ found: { rows: [...rows, ...ended.slice(0, 25)] }, key: 'ENG-1', attempt: 26, limit: rate, now: NOW }).rows.at(-1).state, 'open', 'attempt 26: number 27 is left');
-  const last = limitEndRows({ found: { rows: [...rows, start(27), ...ended] }, key: 'ENG-1', attempt: 27, limit: rate, now: NOW }).rows.at(-1);
+  const issueRow = (answer) => answer.rows.find((each) => each.event === 'issue');
+  assert.equal(issueRow(limitEndRows({ found: { rows: [...rows, ...ended.slice(0, 25)] }, key: 'ENG-1', attempt: 26, limit: rate, now: NOW })).state, 'open', 'attempt 26: number 27 is left');
+  const last = issueRow(limitEndRows({ found: { rows: [...rows, start(27), ...ended] }, key: 'ENG-1', attempt: 27, limit: rate, now: NOW }));
   assert.deepEqual([last.state, last.decision], ['parked', 'attempts'], 'attempt 27: no number is left');
+  // Two failures, then a limit on attempt 3: the limited attempt counts toward none of the 3, so one is left.
+  const failed = [1, 2].map((attempt) => ({ event: 'ended', key: 'ENG-1', attempt, reason: 'no_result', at: iso(NOW) }));
+  assert.equal(issueRow(limitEndRows({ found: { rows: [start(1), start(2), start(3), ...failed] }, key: 'ENG-1', attempt: 3, limit: rate, now: NOW })).state, 'open', 'a limit after two failures leaves the third attempt');
 });
 
 test('an idle wait waits out the pause with the driver and returns once it is over', (t) => {

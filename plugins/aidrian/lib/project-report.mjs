@@ -43,6 +43,7 @@ const ENDED = {
   no_result: 'ended with no result recorded',
   timeout: 'ran past the run\'s time limit for an issue and was stopped',
   bad_result: 'handed over a result the run could not confirm',
+  limit: 'ended on a usage or rate limit',
 };
 const LABEL_CAP = 64;
 const STATUS_CAP = 64;
@@ -120,8 +121,9 @@ function buildReport({ state, run, key, cause, after, policy }) {
   if (after.state === 'done' && facts.outcome !== 'merged') facts.outcome = 'unknown';
   const status = facts.outcome === 'merged' ? policy.done : facts.outcome === 'blocked' ? policy.blockedStatus : null;
   const label = facts.outcome === 'merged' ? null : policy.label;
-  // The earlier run's report labeled the issue for a decision on its open pull request: the merge takes that label off.
-  const unlabel = cause.event === 'landed' ? policy.label : null;
+  // The earlier run's report labeled the issue for a decision on its open pull request: the merge takes that label off,
+  // as that run's `recorded` row names it, or the base branch's label for a ledger from before rows named one.
+  const unlabel = cause.event === 'landed' ? (cleanText(cause.label, LABEL_CAP) || policy.label) : null;
   const body = reportBody(run, facts, after.decision === 'attempts');
   return { key, attempt: facts.attempt, outcome: facts.outcome, pr: facts.pr, status, label, unlabel, body, sha256: bodyHash(body) };
 }
@@ -239,7 +241,7 @@ export function recordedCommand({ project, config, run, key, env = process.env, 
   const written = appendToRun(opened.state, run, (fresh) => {
     const report = owedReports({ state: opened.state, run, found: fresh, policy: opened.policy }).find((each) => each.key === key);
     if (!report) return { problem: `the run ${run} owes no report on ${typeof key === 'string' ? key.slice(0, 40) : 'that issue'}; \`aidrian project report ${run}\` lists what it owes` };
-    return { rows: [{ event: 'recorded', key, attempt: report.attempt, sha256: report.sha256, session: opened.session, at: iso(now) }] };
+    return { rows: [{ event: 'recorded', key, attempt: report.attempt, sha256: report.sha256, ...(report.label ? { label: report.label } : {}), session: opened.session, at: iso(now) }] };
   });
   if (written.problem) return refuse(written.problem);
   return { exitCode: 0, out: [`recorded ${key}`], err: [] };

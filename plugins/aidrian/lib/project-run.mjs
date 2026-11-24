@@ -594,7 +594,8 @@ function resumedOf(value, issues) {
 // An issue whose latest result in that run is `pr_open`, parked on it, may have merged since that run ended:
 // `landed({ pr, branch, repository, since })` (project-result.mjs landedPull), with `since` that attempt's start, says
 // so. One that merged as the run's work comes back with `landed: { run, attempt, pr }`, never to be resumed but taken in
-// as done (splitLanded); one the forge cannot clear comes back with `problem`, a line naming why.
+// as done (splitLanded); one the forge cannot clear comes back with `problem`, a line naming why. A run that took one in
+// as landed, and whose report on it no `recorded` row closed, carries it on the same way, with no second forge read.
 export function resumedIssues(state, snapshot, { except, repository, pullHead = () => null, landed = () => null } = {}) {
   const started = snapshot.issues.filter((issue) => issue.status === 'started');
   if (!started.length || !repository) return [];
@@ -628,13 +629,22 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
         continue;
       }
       const held = found.states.get(issue.key);
+      // The label the run's report on the issue set, as its `recorded` row names it; none in a ledger from before.
+      const reported = found.rows.findLast((row) => row.event === 'recorded' && row.key === issue.key && row.kind !== 'started');
+      const label = typeof reported?.label === 'string' ? { label: reported.label } : {};
       const open = held.state === 'parked' && held.decision === 'pr-open' && result?.status === 'pr_open' && Number.isInteger(result.pr) && result.pr > 0
-        ? { pr: result.pr, attempt: result.attempt, since: Date.parse(found.rows.findLast((row) => row.event === 'start' && row.key === issue.key && row.attempt === result.attempt)?.at) }
+        ? { pr: result.pr, attempt: result.attempt, since: Date.parse(found.rows.findLast((row) => row.event === 'start' && row.key === issue.key && row.attempt === result.attempt)?.at), ...label }
+        : null;
+      // A run that took the issue in as landed and ended before its report was recorded: the next run carries it on.
+      const landedRow = held.state === 'done' ? found.rows.findLast((row) => row.event === 'landed' && row.key === issue.key) : null;
+      const carried = landedRow && !reported && Number.isInteger(landedRow.pr) && Number.isInteger(landedRow.attempt) && typeof landedRow.run === 'string' && RUN_ID.test(landedRow.run)
+        ? { run: landedRow.run, attempt: landedRow.attempt, pr: landedRow.pr, ...(typeof landedRow.label === 'string' ? { label: landedRow.label } : {}) }
         : null;
       latest.set(issue.key, {
         at,
         run: name,
         open,
+        carried,
         parked: held.state === 'parked',
         branch: issueBranch(found, issue.key),
         // The branch that run's own snapshot named for the issue, which an attempt branch it cut must be cut from.
@@ -648,13 +658,14 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
     }
   }
   const worked = ({ parked, branch, from, cut }, issue) => parked && (branch === issue.branch || (cut && from === issue.branch && ownBranch(branch, issue.branch)));
-  return started.filter((issue) => latest.has(issue.key) && worked(latest.get(issue.key), issue))
+  return started.filter((issue) => latest.has(issue.key) && (latest.get(issue.key).carried || worked(latest.get(issue.key), issue)))
     .map((issue) => {
-      const { run, pr, head, legacy, branch, open } = latest.get(issue.key);
+      const { run, pr, head, legacy, branch, open, carried } = latest.get(issue.key);
+      if (carried) return { key: issue.key, landed: carried };
       if (open) {
         // With no start row to date the attempt, as a ledger of an older version, the merge cannot be checked: it resumes.
         const merged = Number.isFinite(open.since) ? landed({ pr: open.pr, branch, repository, since: open.since }) : null;
-        if (merged?.merged === true) return { key: issue.key, landed: { run, attempt: open.attempt, pr: open.pr } };
+        if (merged?.merged === true) return { key: issue.key, landed: { run, attempt: open.attempt, pr: open.pr, ...(open.label ? { label: open.label } : {}) } };
         if (merged?.problem) return { key: issue.key, problem: `${issue.key} left pull request #${open.pr} open in the run ${run}, which merged since, and it cannot be taken in: ${merged.problem}` };
       }
       const read = legacy === null ? head : pullHead({ pr: legacy, branch, repository });
@@ -677,9 +688,10 @@ export function splitLanded(entries) {
 export const landedLine = (landed) => `landed: ${landed.length} started ${landed.length === 1 ? 'issue' : 'issues'} whose pull request an earlier run left open merged since, which this run records done: ${landed.map(({ key, pr }) => `${key} (#${pr})`).join(', ')}`;
 
 // The ledger rows init writes after its init row for the issues `landed` (splitLanded), at `at`: for each, a `landed`
-// row naming the earlier run, its attempt, and the pull request, then the issue done, which owes the report that moves
-// it to done in the tracker and clears the decision label (project-report.mjs owedReports).
-export const landedRows = (landed, at) => landed.flatMap(({ key, run, attempt, pr }) => [{ event: 'landed', key, run, attempt, pr, at }, { event: 'issue', key, state: 'done', at }]);
+// row naming the earlier run, its attempt, the pull request, and the label that run's report set, when its ledger names
+// it, then the issue done, which owes the report that moves it to done in the tracker and takes that label off
+// (project-report.mjs owedReports).
+export const landedRows = (landed, at) => landed.flatMap(({ key, run, attempt, pr, label }) => [{ event: 'landed', key, run, attempt, pr, ...(label ? { label } : {}), at }, { event: 'issue', key, state: 'done', at }]);
 
 // The start rows of issue `key` that ran in the run `found`, as [{ row, at }]: each attempt's latest start row, at its
 // index in the rows, unless that row gives the attempt back (`void`), so a write-ahead row whose launch failed counts

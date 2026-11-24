@@ -820,6 +820,11 @@ test('an attempt clone reads its machine switches and decisions from the run\'s 
 // outside the sandbox: a local file that sets none and that git does not track follows a team default of "on", as the
 // main checkout's own read does, while any other reader inside reads it off.
 test('a clone denied the main checkout reads the auto-merge switch its start recorded, only as its own session', (t) => {
+  // A mode the test sets denies nothing to root, which reads every folder.
+  if (process.getuid?.() === 0) {
+    t.skip('root reads a folder whatever its mode');
+    return;
+  }
   const fx = codexRun(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() }).exitCode, 0);
   const start = fx.rows().findLast((row) => row.event === 'start');

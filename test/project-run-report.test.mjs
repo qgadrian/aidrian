@@ -1367,6 +1367,8 @@ test('init takes in an issue whose pull request an earlier run left open and tha
     { event: 'start', key: 'ENG-1', attempt: 1, branch: 'feat/eng-1-export', outcome: 'started', at },
     { event: 'result', key: 'ENG-1', attempt: 1, status: 'pr_open', pr: 12, head: 'a'.repeat(40), at },
     { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'pr-open', at },
+    // That run's report labeled it under the label the team named then.
+    { event: 'recorded', key: 'ENG-1', attempt: 1, sha256: 'a'.repeat(64), label: 'old-decision', at },
   ] }));
   let view = merged();
   fx.forge.change = (ref, fields, more) => {
@@ -1399,13 +1401,22 @@ test('init takes in an issue whose pull request an earlier run left open and tha
   assert.equal(found.snapshot.resumed, undefined);
   assert.deepEqual(planRun(found.snapshot, found.states).next.map(({ key }) => key), ['ENG-2']);
   const [owed] = JSON.parse(fx.cmd(['report', 'second', '--json']).out[0]).owed;
-  assert.deepEqual([owed.key, owed.attempt, owed.outcome, owed.pr, owed.status, owed.label, owed.unlabel], ['ENG-1', 1, 'merged', 12, 'completed', null, 'needs-decision']);
-  assert.deepEqual(owed.calls[0], { tool: 'save_issue', input: { id: 'ENG-1', state: 'completed', removeLabels: ['needs-decision'] } });
+  assert.deepEqual([owed.key, owed.attempt, owed.outcome, owed.pr, owed.status, owed.label, owed.unlabel], ['ENG-1', 1, 'merged', 12, 'completed', null, 'old-decision'], 'the label the earlier report set');
+  assert.deepEqual(owed.calls[0], { tool: 'save_issue', input: { id: 'ENG-1', state: 'completed', removeLabels: ['old-decision'] } });
   assert.match(owed.body, /The run first left this pull request open, and it merged after that run ended/u);
   assert.equal((await hook(fx, DRIVER, 'mcp__linear__save_issue', owed.calls[0].input)).status, 0, 'the guard lets the owed write through');
   assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', { id: 'ENG-1', state: 'completed', removeLabels: ['other'] })).stderr, /sets removeLabels to \["other"\] on ENG-1/u);
   assert.equal((await hook(fx, DRIVER, 'mcp__linear__save_comment', owed.calls[1].input)).status, 0);
-  assert.deepEqual(fx.cmd(['recorded', 'second', 'ENG-1']).out, ['recorded ENG-1']);
+  // The run ends before the report is recorded, so the tracker still shows ENG-1 started: the next run carries it on,
+  // with no second forge read.
+  appendToRun(fx.state, 'second', () => ({ rows: [{ event: 'issue', key: 'ENG-2', state: 'done', at: new Date().toISOString() }] }));
+  view = { ...merged(), state: 'OPEN' };
+  const carried = fx.cmd(['init', 'third', '--file', input([{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }], 'third')]);
+  assert.equal(carried.exitCode, 0, carried.err.join('\n'));
+  assert.ok(carried.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), carried.out.join('\n'));
+  const [again] = JSON.parse(fx.cmd(['report', 'third', '--json']).out[0]).owed;
+  assert.deepEqual([again.key, again.unlabel], ['ENG-1', 'old-decision']);
+  assert.deepEqual(fx.cmd(['recorded', 'third', 'ENG-1']).out, ['recorded ENG-1']);
 });
 
 test('the driver\'s first turn writes every team key of the tracker workspace into the snapshot as `teams`', () => {

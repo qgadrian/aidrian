@@ -113,14 +113,15 @@ export function testCommand(root, testing = {}) {
 // followed at most 5 deep. Both read a file argument as a pattern: jest as a regular expression, node as a glob.
 // Jest given `--runTestsByPath`, as its own word on the way and not `=false`, reads exact paths, so it is none.
 export function testRunner(root, command, depth = 0, scripts = null) {
-  const [program, ...rest] = lastCommandWords(command);
-  // After `--`, jest reads every word as a pattern, an option's spelling included.
-  const options = rest.includes('--') ? rest.slice(0, rest.indexOf('--')) : rest;
-  if (options.some((word) => /^--runTestsByPath(?:=(?!false$).*)?$/u.test(word))) return null;
-  if (program === 'jest') return 'jest';
-  if (program === 'node') return nodeRunner(rest);
-  const name = scriptName([program, ...rest]);
-  if (name === null || depth >= 5) return null;
+  const words = lastCommandWords(command);
+  const [program, ...rest] = words;
+  if (program === 'jest') return jestMode(rest);
+  if (program === 'node') {
+    const runner = nodeRunner(rest);
+    return runner === 'jest' ? jestMode(rest) : runner;
+  }
+  const script = scriptName(words);
+  if (script === null || depth >= 5) return null;
   if (scripts === null) {
     try {
       scripts = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))?.scripts ?? {};
@@ -128,7 +129,18 @@ export function testRunner(root, command, depth = 0, scripts = null) {
       return null;
     }
   }
-  return typeof scripts[name] === 'string' ? testRunner(root, scripts[name], depth + 1, scripts) : null;
+  // The words after the script's name, past one `--`, go to the script's own command, as the package manager passes them.
+  const forwarded = words.slice(script.at);
+  if (forwarded[0] === '--') forwarded.shift();
+  const body = scripts[script.name];
+  return typeof body === 'string' ? testRunner(root, [body, ...forwarded.map(quote)].join(' '), depth + 1, scripts) : null;
+}
+
+// Jest's path mode for the words it is given: exact paths with `--runTestsByPath`, not `=false`, before any `--`, after
+// which jest reads every word as a pattern; else patterns.
+function jestMode(words) {
+  const options = words.includes('--') ? words.slice(0, words.indexOf('--')) : words;
+  return options.some((word) => /^--runTestsByPath(?:=(?!false$).*)?$/u.test(word)) ? null : 'jest';
 }
 
 // Node's options that take the next word as their value.
@@ -175,13 +187,14 @@ function dropOptions(words) {
   return words.slice(i);
 }
 
-// The package.json script a command's words run, or null: `npm test`, `npm run <name>`, `pnpm|yarn [run] <name>`, `bun run <name>`.
+// The package.json script a command's words run, as { name, at }, `at` the index of the first word after its name, or
+// null: `npm test`, `npm run <name>`, `pnpm|yarn [run] <name>`, `bun run <name>`.
 function scriptName([manager, verb, next]) {
   if (!['npm', 'pnpm', 'yarn', 'bun'].includes(manager) || verb === undefined || verb.startsWith('-')) return null;
-  if (['run', 'run-script'].includes(verb)) return next && !next.startsWith('-') ? next : null;
+  if (['run', 'run-script'].includes(verb)) return next && !next.startsWith('-') ? { name: next, at: 3 } : null;
   if (manager === 'bun') return null;
-  if (['test', 't', 'tst'].includes(verb)) return 'test';
-  return manager === 'npm' ? null : verb;
+  if (['test', 't', 'tst'].includes(verb)) return { name: 'test', at: 2 };
+  return manager === 'npm' ? null : { name: verb, at: 2 };
 }
 
 // A file as the runner `runner` (testRunner) reads it as itself: a Next.js segment such as `[id]` or `(group)` is

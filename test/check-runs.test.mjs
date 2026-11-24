@@ -493,6 +493,10 @@ test('a run after a cd is recorded when the call\'s own folder holds no project'
   // A run in no project still counts among the line's runs: its summary is not the project's run's count.
   await call(`node --test && env -C ${smoke} make smoke`, 'moved-6');
   assert.deepEqual(recorded('moved-6').map(({ command, pass }) => [command, pass]), [['make smoke', null]]);
+  // Nor does a run only another project's config reads, in a folder of none: each config sees one run, the line holds two.
+  const { dir: integration } = repo({ config: { version: 1, testing: { fullSuite: ['make integration'] } } });
+  await call(`make integration && env -C ${smoke} make smoke && env -C ${integration} true`, 'moved-7');
+  assert.deepEqual(recorded('moved-7').map(({ command, pass }) => [command, pass]), [['make smoke', null]]);
 });
 
 test('a call whose output Claude Code kept in a file is counted from that file\'s tail', () => {
@@ -830,6 +834,10 @@ test('aidrian test changed runs a test file whose path holds pattern characters,
   assert.deepEqual(['npm test --', 'npx jest', 'pnpm run vt', 'yarn test', 'bun test', 'npm run missing'].map((command) => testRunner(scripts, command)),
     ['jest', 'jest', null, 'jest', null, null]);
   // The runner is the program the shell runs, not a word among its arguments, and `--runTestsByPath` reads exact paths.
+  // A flag the package manager forwards reaches the script's own command.
+  writeFileSync(path.join(scripts, 'package.json'), JSON.stringify({ scripts: { test: 'jest', unit: 'npm run inner --', inner: 'jest' } }));
+  assert.deepEqual(['npm test -- --runTestsByPath', 'npm test', 'yarn test --runTestsByPath', 'npm run unit -- --runTestsByPath', 'npm test -- -- --runTestsByPath']
+    .map((command) => testRunner(scripts, command)), [null, 'jest', null, null, 'jest']);
   writeFileSync(path.join(scripts, 'package.json'), JSON.stringify({ scripts: { test: 'jest --runTestsByPath' } }));
   assert.deepEqual(['vitest --project jest', "node --test --test-name-pattern='a;b'", 'jest --runTestsByPath', 'npm test --', 'npm test -- --runTestsByPath', 'FOO=1 rtk jest']
     .map((command) => testRunner(scripts, command)), [null, 'node', null, null, null, 'jest']);

@@ -101,11 +101,19 @@ async function recordCheckRuns(input, command) {
     if (project && !projects.has(project.root)) projects.set(project.root, project);
   }
   const keeps = [...projects.values()].map((project) => [project, (folder) => findProject(folder)?.root === project.root]);
-  // The runs of the whole line: each project's own, and at least as many as any one config, the defaults included, reads
-  // on it, so a run in no project counts too. The line's one count goes to a lone run only; a count too high withholds it.
-  const runsBy = (testing) => testRuns(command, input.cwd, testing);
-  const own = keeps.reduce((sum, [project, keep]) => sum + runsBy(loadConfig(project).config.testing).filter((each) => keep(each.folder ?? input.cwd)).length, 0);
-  const lineRuns = Math.max(own, runsBy(DEFAULTS.testing).length, ...keeps.map(([project]) => runsBy(loadConfig(project).config.testing).length));
+  // The runs of the whole line: every run any config of the line, the defaults included, reads on it, each once, by its
+  // command and folder, as often as the config that reads it most often does. So a run in no project, or one only another
+  // project reads, counts too: the line's one count goes to a lone run only, and a count too high only withholds it.
+  const most = new Map();
+  for (const testing of [DEFAULTS.testing, ...keeps.map(([project]) => loadConfig(project).config.testing)]) {
+    const seen = new Map();
+    for (const { key, folder } of testRuns(command, input.cwd, testing)) {
+      const id = `${key}\u0000${folder ?? input.cwd}`;
+      seen.set(id, (seen.get(id) ?? 0) + 1);
+    }
+    for (const [id, count] of seen) most.set(id, Math.max(most.get(id) ?? 0, count));
+  }
+  const lineRuns = [...most.values()].reduce((sum, count) => sum + count, 0);
   for (const [project, keep] of keeps) record(project, keep, lineRuns);
 }
 

@@ -2209,8 +2209,9 @@ The row goes to the session folder of the project the call's folder is in. When 
 session removed the worktree a session started in and the host sends the home folder as its cwd, each run goes to the
 project of the folder it runs in, such as the worktree of `cd <worktree> && node --test` or `env -C <worktree> npm test`,
 and is read with that project's `testing` config: another project's command on the line takes no run, and one project's
-test command is no run in another. The line's one count goes to a run only when it is the line's one run across them all,
-a run in no project and one only the defaults read included.
+test command is no run in another. The line's one count goes to a run only when it is the line's one run: every run any
+config of the line, the defaults included, reads on it counts once, by its command and folder, so a run in no project,
+or one only another project's config reads, withholds the count.
 
 Claude Code runs the hook only for a call that exited 0, so there a run passed unless its counts show a failure, when
 the line's status is the run's: no separator but `&&` before or after it. After `;` or `||` the run may not have run,
@@ -2332,7 +2333,8 @@ in a test folder as it is, with no search for the tests that name it, unless it 
 A project with `.ts` tests sets `testing.changedCommand`.
 When the command ends in jest or `node --test`, by the program its last command runs, as the shell lexer reads it with
 wrappers such as `npx` peeled, or the package.json script it runs, followed through `npm test`, `npm run <name>`, and
-their pnpm, yarn, and bun forms, each file goes with its pattern characters escaped:
+their pnpm, yarn, and bun forms, with the words after the script's name passed on to its command as the package
+manager passes them, each file goes with its pattern characters escaped:
 jest reads a file as a regular expression, so `[`, `]`, `(`, `)`, `{`, `}`, `*`, `?`, `+`, `|`, `^`, `$`, and `\` get a
 backslash, and node reads it as a glob, so `[`, `]`, `{`, `}`, `*`, and `?` each go inside a class, as `[[]`.
 A Next.js segment such as `[org]` or `(group)` found no test before, and the run exited 1. Any other runner gets the

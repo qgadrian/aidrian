@@ -4,7 +4,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { isLongOption, readShortOptions } from '../../shell-lex.mjs';
+import { assignsVariable, isLongOption, readShortOptions } from '../../shell-lex.mjs';
 
 // Programs whose every operand is written, and the options of each that take a value: the rest of a short option's
 // word (`-e's/a/b/'`), or else the next word. A long one also matches by a prefix, as getopt_long reads it:
@@ -69,15 +69,23 @@ const CHANGES_FOLDER = new Map([['perl', ['-x']], ['ruby', ['-C', '-x']]]);
 const COPIERS = new Set(['cp', 'ln', 'install']);
 // An rsync operand naming another host: `host:path`, `user@host:path`, `host::module`, or `rsync://host/module`.
 const REMOTE = /^[^/]*:/u;
-// A single-colon remote operand, `host:path` or `user@host:path`: a remote shell starts the other side, never a daemon.
-const SHELL_REMOTE = /^[^/:]*:(?!:)/u;
-// Whether an rsync call names its remote shell: `-e`, `--rsh`, or `--rsh=`, or an RSYNC_RSH the call itself sets,
-// as a prefix assignment or `env` does (shell-lex.mjs readInvocation `environment`). Such a shell may be a shim that
-// runs the other side here, so a single-colon destination's path part is a local one.
-const namesRemoteShell = (flags, environment) => flags.some((flag) => flag === '-e' || isLongOption(flag, '--rsh', '--rsh'))
-  || environment.some((change) => change.name === 'RSYNC_RSH' && change.value !== null);
+// A single-colon remote operand, `host:path`, `user@host:path`, or a bracketed IPv6 host, `[::1]:path`: a remote shell
+// starts the other side, never a daemon, as for `host::module` and `rsync://host/module`.
+const SHELL_REMOTE = /^(?!rsync:\/\/)(?:[^/:]*|(?:[^/:@[]*@)?\[[^\]/]*\]):(?!:)/u;
+// The remote shells that reach another machine. Any other program the call names, such as `./sh`, may be a shim that
+// runs the other side here, so a single-colon destination's path part is then a local one. Accepted residual: ssh or
+// rsh to this machine, as `-e ssh localhost:<path>`, writes here unseen.
+const REMOTE_SHELLS = new Set(['ssh', 'rsh']);
+// Whether the remote shell the call names may run the other side here: its program word, the first word of the last
+// `-e`, `--rsh`, or `--rsh=` value, or else of an RSYNC_RSH the call itself sets (assignsVariable), as a prefix
+// assignment or `env` does, is not plain ssh or rsh by its basename. One built at run time may be anything.
+function shellMayBeLocal(rsh, invocation) {
+  const value = rsh ?? (assignsVariable(invocation, 'RSYNC_RSH') ? invocation.environment.findLast((change) => change.name === 'RSYNC_RSH')?.value : null);
+  if (!value) return false;
+  return value.dynamic === true || !REMOTE_SHELLS.has(path.basename(value.text.trim().split(/\s+/u)[0]));
+}
 // The path part of a remote operand, `.` when it names none, as `host:` lands in the folder the other side starts in.
-const remotePart = (token) => ({ ...token, text: token.text.slice(token.text.indexOf(':') + 1) || '.' });
+const remotePart = (token) => ({ ...token, text: token.text.slice(SHELL_REMOTE.exec(token.text)[0].length) || '.' });
 
 // A write target as the shell reads a leading `~`: `~` and `~/x` are in the home folder, not in the shell's folder.
 // `~user` stays as written, and so does a token marked `literal`, cut from inside a word or built by this rule: the shell
@@ -87,10 +95,11 @@ export const expandHome = (token) => (isHomeWord(token) ? path.join(homedir(), t
 
 // The operands a writer writes: all of them, every path of mv, the destination of cp and rsync (and rsync's sources
 // under --remove-source-files), and the files of sed -i, never its script; for cp, ln, install, mv, and rsync, also the
-// name each makes inside a destination folder (joinedNames). `environment` is the call's own changes to its
-// environment (shell-lex.mjs readInvocation), which rsync's remote shell is read from.
-export function written(program, args, valueFlags = WRITERS.get(program), { environment = [] } = {}) {
+// name each makes inside a destination folder (joinedNames). `invocation` is the call as shell-lex.mjs readInvocation
+// reads it, whose own changes to its environment may name rsync's remote shell.
+export function written(program, args, valueFlags = WRITERS.get(program), invocation = { environment: [] }) {
   const flags = [];
+  let rsh = null;
   const operands = [];
   let folder = null;
   let suffix = null;
@@ -100,12 +109,14 @@ export function written(program, args, valueFlags = WRITERS.get(program), { envi
     if (!ended && text === '--') ended = true;
     else if (!ended && text.startsWith('--')) {
       flags.push(text);
+      if (program === 'rsync' && isLongOption(text, '--rsh', '--rsh')) rsh = text.includes('=') ? { text: text.slice(text.indexOf('=') + 1), dynamic: args[i].dynamic } : args[i + 1] ?? null;
       if (valueFlags.has(text) || (/^--[^=]+$/u.test(text) && [...valueFlags].some((option) => option.startsWith(text)))) i += 1;
     } else if (!ended && text.startsWith('-') && text.length > 1) {
       // Drop the values of fixed-shape options, up to the first option that takes the rest of the word.
       const cluster = SHORT_VALUES.has(program) ? withoutShortValues(text, program) : text;
       const { options, value } = readShortOptions(cluster, valueFlags, REST_VALUES.get(program));
       flags.push(...options);
+      if (program === 'rsync' && value?.option === '-e') rsh = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic };
       if (SCRIPT_OPTIONS.has(program) && value?.option === '-i') suffix = { text: value.attached ?? '', dynamic: args[i].dynamic };
       if (CHANGES_FOLDER.get(program)?.includes(value?.option)) {
         // ruby changes folder at each option, so `ruby -C one -C two` runs in one/two; perl keeps only its last -x.
@@ -135,9 +146,9 @@ export function written(program, args, valueFlags = WRITERS.get(program), { envi
     const removesSources = flags.some((flag) => isLongOption(flag, '--remove-source-files', '--remov') || isLongOption(flag, '--remove-sent-files', '--remov'));
     // -R keeps the source's relative path, and the last of it and --no-R wins.
     const relative = flags.findLastIndex((flag) => flag === '-R' || isLongOption(flag, '--relative', '--rel')) > flags.findLastIndex((flag) => flag === '--no-R' || isLongOption(flag, '--no-relative', '--no-rel'));
-    // Under a named remote shell, a single-colon destination is judged by its path part, as a local one.
+    // Under a remote shell that may run here, a single-colon destination is judged by its path part, as a local one.
     const into = operands.at(-1);
-    const synced = namesRemoteShell(flags, environment) && SHELL_REMOTE.test(into.text) ? [...operands.slice(0, -1), remotePart(into)] : operands;
+    const synced = shellMayBeLocal(rsh, invocation) && SHELL_REMOTE.test(into.text) ? [...operands.slice(0, -1), remotePart(into)] : operands;
     return [...(removesSources ? synced : synced.slice(-1)).filter((token) => !REMOTE.test(token.text)), ...syncJoined(synced, relative)];
   }
   if (SCRIPT_OPTIONS.has(program)) {

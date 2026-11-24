@@ -217,7 +217,8 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at('mkdir -p -m 755 src/new'), ['src/new']);
   assert.deepEqual(at('mkdir -pm 755 src/new'), ['src/new'], 'a cluster that ends in a value option takes the next word');
   assert.deepEqual(at('touch -cd yesterday src/a.ts'), ['src/a.ts']);
-  assert.deepEqual(at('rsync -ae ssh --remove-source-files src/a.ts host:/srv/'), ['src/a.ts', '../srv', '../srv/a.ts'], 'under a named remote shell, a single-colon destination is judged by its path part');
+  assert.deepEqual(at('rsync -ae ./sh --remove-source-files src/a.ts host:/srv/'), ['src/a.ts', '../srv', '../srv/a.ts'], 'under a remote shell that may run here, a single-colon destination is judged by its path part');
+  assert.deepEqual(at('rsync -ae ssh --remove-source-files src/a.ts host:/srv/'), ['src/a.ts'], 'ssh reaches another machine');
   assert.deepEqual(at("cat > /tmp/out.md <<'EOF'\nrm -rf src\nEOF\ngit status"), ['../tmp/out.md'], 'a heredoc body is data');
   assert.deepEqual(at('sudo rm src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('env -C src rm ../package.json'), ['package.json'], 'a wrapper`s directory moves its operands');
@@ -273,6 +274,9 @@ test('Bash commands are judged like tool writes', (t) => {
   assert.match(bash("sed -i -e's/x/y/' src/app.js"), /'src\/app\.js'/, 'a script attached to its option');
   assert.match(bash('rsync --remove-source-files src/app.js build/app.js'), /'src\/app\.js'/);
   assert.equal(bash('rsync src/app.js build/app.js'), null, 'a copy out of the main checkout writes nothing in it');
+  // ssh or rsh reaches another machine, so a single-colon destination names no file here.
+  assert.equal(bash('rsync -avz -e ssh notes.txt deploy@server:'), null, 'a deploy over ssh');
+  assert.equal(bash('rsync -avz -e "ssh -p 2222" notes.txt deploy@server:site/'), null, 'an ssh with its own options');
   assert.equal(bash('cp src/app.js build/app.js'), null);
   assert.equal(bash('echo x > build/out.js'), null);
   assert.equal(bash('echo x > src/app.js', path.join(repo, 'wt/task')), null);
@@ -355,6 +359,19 @@ test('a copy, move, or link into a folder names the file it makes there: by the 
   }
   assert.deepEqual(at('rsync -a -e ./sh a x:'), ['', 'a'], 'an empty path part: the folder the other side starts in');
   assert.deepEqual(at('rsync -a -e ./sh a x::module/d/'), [], 'a daemon module is no path of the remote shell');
+  assert.deepEqual(at('rsync -a -e ./sh a rsync://x/module/d/'), [], 'nor is a daemon URL');
+  assert.deepEqual(at('rsync -a -e ./sh a [::1]:/repo/d/'), ['d', 'd/a'], 'a bracketed IPv6 host');
+  assert.deepEqual(at('rsync -a -e ./sh a user@[::1]:/repo/d/'), ['d', 'd/a'], 'and a user at one');
+  // ssh and rsh, by their basename and first word, reach another machine; any other program may be a shim.
+  for (const command of ['rsync -a -e ssh a x:/repo/d/', 'rsync -a -e "ssh -p 2222" a x:/repo/d/', 'rsync -a -e /usr/bin/ssh a x:/repo/d/',
+    'rsync -a --rsh=rsh a x:/repo/d/', 'rsync -a --rsh "ssh -i key" a x:/repo/d/', 'RSYNC_RSH=ssh rsync -a a x:/repo/d/', 'env RSYNC_RSH="ssh -q" rsync -a a x:/repo/d/',
+    'RSYNC_RSH=./sh rsync -a -e ssh a x:/repo/d/']) {
+    assert.deepEqual(at(command), [], command);
+  }
+  for (const command of ['rsync -a -e ./bin/ssh-shim a x:/repo/d/', 'rsync -a -e "sh -c" a x:/repo/d/', 'rsync -a -essh2 a x:/repo/d/', 'RSYNC_RSH=ssh rsync -a -e ./sh a x:/repo/d/',
+    'rsync -a -e "$RSH" a x:/repo/d/']) {
+    assert.deepEqual(at(command), ['d', 'd/a'], command);
+  }
   // As today: no folder by the text, and none on the disk.
   assert.deepEqual(at('cp a b'), ['b']);
   assert.deepEqual(at('mv a.txt b.txt'), ['a.txt', 'b.txt']);

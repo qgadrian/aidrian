@@ -24,6 +24,7 @@ import { protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { runGit } from '../plugins/aidrian/lib/git.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../plugins/aidrian/lib/unattended-write.mjs';
+import { shellWrites } from '../plugins/aidrian/lib/unattended-shell.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { placeHolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { markPending, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -883,6 +884,14 @@ test('a copy, move, or link into a folder is judged by the name it makes there, 
     `rsync -a notes.md ${x}/`, `rsync -a pkg/ ${path.join(fx.temp, 'w')}/`, `rsync -a pkg/notes.md ${path.join(fx.temp, 'new.md')}`,
     `rsync -aR --no-R p/.opencode/plugins/x.js ${x}/`]) {
     assert.equal(fx.ask(bash(command)), null, command);
+  }
+  // Read by the writes the command makes, with no git call: a bracketed IPv6 host makes the same writes as the
+  // `x:` destination refused above, and ssh, which reaches another machine, or a daemon URL makes none.
+  const writes = (command) => shellWrites(command, wt, fx.env).manifests.map(({ text }) => text);
+  assert.deepEqual(writes(`rsync -a -e ./sh notes.md [::1]:${wt}/.claude/settings.json`), writes(`rsync -a -e ./sh notes.md x:${wt}/.claude/settings.json`));
+  assert.ok(writes(`rsync -a -e ./sh notes.md [::1]:${wt}/.claude/settings.json`).includes(`${wt}/.claude/settings.json`));
+  for (const command of ['rsync -a -e ssh dist/ host:/var/www/', 'rsync -avz -e "ssh -p 2222" notes.md deploy@server:site/', 'rsync -a -e ./sh a rsync://x/module/d/']) {
+    assert.deepEqual(writes(command), [], command);
   }
   // The review manifest's rename keeps its verdict, with the manifest there and without it.
   const reviews = path.join(fx.state, 'reviews');

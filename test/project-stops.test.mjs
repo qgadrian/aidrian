@@ -328,7 +328,7 @@ test('a merge the result command refuses as merged parks on one decision that na
     rmSync(archive);
   }
   assert.ok(unkept.startsWith('park ENG-1 #12 at aaaaaaa: the stop history cannot be kept: '), unkept);
-  assert.match(unkept, /stops\.jsonl` cannot be opened to write \(EISDIR\)/u, 'the append failed, not the read');
+  assert.doesNotMatch(unkept, /the stop history of /u, 'the append failed, not the read, whose refusal names the history it read');
   assert.ok(unkept.endsWith('; record the result parked with one decision of class other: whether the merge of #12 counts as the issue\'s work, options "leave the issue parked" and "count the issue done by hand once its work is on the default branch", recommended the first'), unkept);
   assert.match(done.act(on()).out[0], /^wait ENG-1 #12 at aaaaaaa: the forge shows it merged, and the merge check could not be read: the forge could not describe pull request #12 \(gh failed\) \(1 of 3 for this attempt\); wait 60 seconds, then run the pr-auto-merge skill again$/u);
   done.gh.fail.delete('change');

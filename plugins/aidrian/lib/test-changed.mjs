@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { CODE_FILE, commandKey, TEST_FILE } from './check-runs.mjs';
+import { CODE_FILE, TEST_FILE } from './check-runs.mjs';
 import { commandConfig } from './config.mjs';
 import { isFile } from './fs.mjs';
 import { currentRoot, runGit } from './git.mjs';
@@ -107,21 +107,17 @@ export function testCommand(root, testing = {}) {
   }
 }
 
-// The runner a test command ends in, `jest` or `node` (`node --test`), or null for any other: its last command, read by
-// the shell lexer with wrappers such as `npx` peeled (check-runs.mjs commandKey), else the package.json script that
-// command runs (`npm test`, `npm run <name>`, and their pnpm, yarn, and bun forms), followed at most 5 deep. Both read a
-// file argument as a pattern: jest as a regular expression, node as a glob. Jest given `--runTestsByPath` anywhere on the
-// way reads exact paths, so it is none.
+// The runner a test command ends in, `jest` or `node` (`node --test`), or null for any other: the program its last
+// command runs, read by the shell lexer, after `npx`, `bunx`, `pnpx` and their options, or `pnpm exec` and `yarn exec`;
+// else the package.json script that command runs (`npm test`, `npm run <name>`, and their pnpm, yarn, and bun forms),
+// followed at most 5 deep. Both read a file argument as a pattern: jest as a regular expression, node as a glob.
+// Jest given `--runTestsByPath`, as its own word on the way and not `=false`, reads exact paths, so it is none.
 export function testRunner(root, command, depth = 0, scripts = null) {
-  const words = lastCommandWords(command);
-  const [program, ...rest] = words;
-  if (rest.includes('--runTestsByPath')) return null;
+  const [program, ...rest] = lastCommandWords(command);
+  if (rest.some((word) => /^--runTestsByPath(?:=(?!false$).*)?$/u.test(word))) return null;
   if (program === 'jest') return 'jest';
-  if (program === 'node') {
-    if (rest.some((word) => /(?:^|\/)(?:jest\/bin\/jest\.js|\.bin\/jest)$/u.test(word))) return 'jest';
-    return rest.includes('--test') ? 'node' : null;
-  }
-  const name = scriptName(words);
+  if (program === 'node') return nodeRunner(rest);
+  const name = scriptName([program, ...rest]);
   if (name === null || depth >= 5) return null;
   if (scripts === null) {
     try {
@@ -133,12 +129,44 @@ export function testRunner(root, command, depth = 0, scripts = null) {
   return typeof scripts[name] === 'string' ? testRunner(root, scripts[name], depth + 1, scripts) : null;
 }
 
-// The words of the last command of `text`, as the test-run key spells them, or none for one the shell fills in.
+// Node's options that take the next word as their value.
+const NODE_VALUE_OPTIONS = new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '--conditions', '-C', '--env-file',
+  '--test-reporter', '--test-reporter-destination', '--test-name-pattern', '--test-skip-pattern', '--test-concurrency', '--test-shard', '--test-timeout']);
+
+// What `node <words>` runs: jest when its script is jest's entry point, the node runner when `--test` comes before the
+// script, else none.
+function nodeRunner(words) {
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i];
+    if (word === '--test') return 'node';
+    if (!word.startsWith('-')) return /(?:^|\/)(?:jest\/bin\/jest\.js|\.bin\/jest)$/u.test(word) ? 'jest' : null;
+    if (NODE_VALUE_OPTIONS.has(word)) i += 1;
+  }
+  return null;
+}
+
+// The words of the last command of `text`, its program's base name first, after a package runner's own words; none for
+// one the shell fills in.
 function lastCommandWords(text) {
   const last = lexPipeline(String(text)).segments.filter((segment) => segment.length > 0).at(-1);
   if (!last) return [];
   const invocation = readInvocation(last);
-  return invocation.dynamic ? [] : commandKey(invocation).split(' ');
+  if (invocation.dynamic || typeof invocation.program !== 'string') return [];
+  let words = [invocation.program, ...invocation.args.map((token) => token.text)].filter((word) => typeof word === 'string');
+  for (let peeled = 0; peeled < 3; peeled += 1) {
+    const head = path.basename(words[0] ?? '');
+    if (['npx', 'bunx', 'pnpx'].includes(head)) words = dropOptions(words.slice(1));
+    else if (['pnpm', 'yarn'].includes(head) && words[1] === 'exec') words = dropOptions(words.slice(2));
+    else break;
+  }
+  return words.length ? [path.basename(words[0]), ...words.slice(1)] : [];
+}
+
+// `words` from its first word that is not an option, as a package runner reads its own options; `-p` and `--package` take a value.
+function dropOptions(words) {
+  let i = 0;
+  while (i < words.length && words[i].startsWith('-')) i += ['-p', '--package', '-c', '--call'].includes(words[i]) ? 2 : 1;
+  return words.slice(i);
 }
 
 // The package.json script a command's words run, or null: `npm test`, `npm run <name>`, `pnpm|yarn [run] <name>`, `bun run <name>`.

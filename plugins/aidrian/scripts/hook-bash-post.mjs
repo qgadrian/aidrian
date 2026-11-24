@@ -10,7 +10,7 @@
 // adapter's `shellRun`, and from the tail of the file the host kept a long output in; a call stopped, or started in or moved to the background, records none. The hook writes nothing
 // outside the session folders, always exits 0, and prints nothing, so no record or output text reaches the model. It
 // writes nothing for a call the host stopped, a session id that fails SESSION_ID, or a folder with no project; a test run is
-// filed in the project of the call's folder, else in that of the folder the line's first test run runs in after a `cd`.
+// filed in the project of the call's folder, else in that of the folder it runs in, after a `cd` or with `env -C`.
 
 import path from 'node:path';
 
@@ -68,42 +68,39 @@ export async function handle(input) {
 
 if (isMain(import.meta.url)) await runHook(handle);
 
-// The check-run rows of a finished call, appended to the session's record.
+// The check-run rows of a finished call, appended to the session's record: all of them in the project of the call's
+// folder; with none there, each run in the project of the folder it runs in, as that project's config reads the line.
 async function recordCheckRuns(input, command) {
   const run = detectHost({ input }).shellRun?.(input.tool_response);
   if (!run?.finished) return;
-  const [{ checkRows, appendCheckRuns, testRuns }, { findProject, projectCheckouts, stateDir }, { loadConfig }, { sessionFolder }, { walkCommands }] = await Promise.all([
+  const [{ checkRows, appendCheckRuns }, { findProject, projectCheckouts, stateDir }, { loadConfig }, { sessionFolder }, { walkCommands }] = await Promise.all([
     import('../lib/check-runs.mjs'),
     import('../lib/project.mjs'),
     import('../lib/config.mjs'),
     import('../lib/session-folder.mjs'),
     import('../lib/shell-lex.mjs'),
   ]);
-  // A session whose starting folder another session removed gets the home folder as its cwd from the host, and runs its
-  // tests after a `cd` into a worktree: the project is then the one of the folder its first test run runs in.
-  const project = findProject(input.cwd) ?? runProject(command, input.cwd, { findProject, loadConfig, testRuns, walkCommands });
-  if (!project) return;
-  const { config } = loadConfig(project);
   const agentId = typeof input.agent_id === 'string' ? input.agent_id : null;
-  const rows = checkRows({ command, cwd: input.cwd, output: run.output, persisted: run.persisted ?? null, exitZero: run.exitZero, testing: config.testing, agentId });
-  if (rows.length === 0) return;
-  const folder = sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) });
-  if (folder) appendCheckRuns(folder, rows);
-}
-
-// The project of the folder the line's first test run runs in, or null. Which commands are test runs is that project's
-// config (`testing`), so each project a folder of the line is in is asked in turn, and the first whose config reads a
-// top-level test run there names the run's own folder, whose project it is.
-function runProject(command, cwd, { findProject, loadConfig, testRuns, walkCommands }) {
-  const folders = walkCommands(command, cwd).map((entry) => entry.folder).filter((folder) => typeof folder === 'string' && path.isAbsolute(folder));
-  for (const folder of new Set(folders)) {
-    const asked = findProject(folder);
-    if (!asked) continue;
-    const run = testRuns(command, cwd, loadConfig(asked).config.testing).find((each) => typeof each.folder === 'string' && path.isAbsolute(each.folder));
-    const project = run ? findProject(run.folder) : null;
-    if (project) return project;
+  const record = (project, keep) => {
+    const { config } = loadConfig(project);
+    const rows = checkRows({ command, cwd: input.cwd, output: run.output, persisted: run.persisted ?? null, exitZero: run.exitZero, testing: config.testing, agentId, keep });
+    const folder = rows.length ? sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) }) : null;
+    if (folder) appendCheckRuns(folder, rows);
+  };
+  const own = findProject(input.cwd);
+  if (own) {
+    record(own);
+    return;
   }
-  return null;
+  // A session whose starting folder another session removed gets the home folder as its cwd from the host, and runs its
+  // tests after a `cd` into a worktree, or with `env -C`.
+  const folders = walkCommands(command, input.cwd).map((entry) => entry.folder).filter((folder) => typeof folder === 'string' && path.isAbsolute(folder));
+  const projects = new Map();
+  for (const folder of new Set(folders)) {
+    const project = findProject(folder);
+    if (project && !projects.has(project.root)) projects.set(project.root, project);
+  }
+  for (const project of projects.values()) record(project, (folder) => findProject(folder)?.root === project.root);
 }
 
 // Records the links of `command`, run from `cwd`, whose output was `output`: for each `aidrian worktree new` of the line

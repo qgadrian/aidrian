@@ -893,13 +893,14 @@ ready in one call, it is `aidrian pr ready-wait <n>`: right after the change, `g
 before and returns at once, and sessions sent `gh pr ready` again after it, refused each time.
 A check that finished and failed does not hold the draft; the review reads it.
 
-`aidrian pr ready-wait <PR> [-R OWNER/REPO] [--timeout-sec N] [--interval-sec N]` reads the view this rule reads every
+`aidrian pr ready-wait <PR> [-R [HOST/]OWNER/REPO] [--timeout-sec N] [--interval-sec N]` reads the view this rule reads every
 5 seconds, by default, until the rule would hold nothing: no check pending, and a check started since the last change or
 the 30 seconds past. It marks nothing ready. It exits 0 when the draft may be marked ready, or is not a draft; 2 when it is
 still held at the timeout, 840 seconds by default, naming the hold, so the session runs it again; and 3 on a usage error or a
-view gh cannot read. A failed edit-time read lets it end, as it lets the rule's command run. Each poll's gh calls stop at
-the time left, never below 5 seconds, so a run ends at most a few seconds past its timeout. The repository a call names,
-by `-R` or a pull request URL, goes into each command its output and every deny of this rule name, as `<n> -R <repo>`.
+view gh cannot read. A failed edit-time read lets it end, as it lets the rule's command run. Each gh call stops at the
+time left of the one deadline, and no poll starts that its sleep would leave no time to read, so a run ends by its timeout.
+A call that names another repository, by `-R` or a pull request URL, gets the pull request's URL, as gh gives it, in each
+command its output and every deny of this rule name, so a follow-up from another checkout or an Enterprise host reaches it.
 
 Its gh calls share one deadline, as the ready hold's do: 3.5 seconds from its first call, and never later than 4 seconds
 after the hook started, so a ready hold that spent the time leaves this one none, and the command runs.
@@ -2204,9 +2205,10 @@ A configured command is still matched as a prefix of the whole command, so a lon
 A call stopped, started in the background, or moved there at its timeout records nothing: no hook sees it end.
 A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
 The row goes to the session folder of the project the call's folder is in. When that folder holds none, as when another
-session removed the worktree a session started in and the host sends the home folder as its cwd, it goes to the project
-of the folder the line's first test run runs in, such as the worktree of `cd <worktree> && node --test`, read with that
-project's `testing` config, never to the project of another command on the line.
+session removed the worktree a session started in and the host sends the home folder as its cwd, each run goes to the
+project of the folder it runs in, such as the worktree of `cd <worktree> && node --test` or `env -C <worktree> npm test`,
+and is read with that project's `testing` config: another project's command on the line takes no run, and one project's
+test command is no run in another.
 
 Claude Code runs the hook only for a call that exited 0, so there a run passed unless its counts show a failure, when
 the line's status is the run's: no separator but `&&` before or after it. After `;` or `||` the run may not have run,

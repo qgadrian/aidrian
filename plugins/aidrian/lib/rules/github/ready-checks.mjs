@@ -61,7 +61,7 @@ function pendingChecks(rollup) {
 // The latest start among the checks of `rollup`, in ms, or -Infinity with none.
 const lastStart = (rollup) => Math.max(-Infinity, ...rollup.map((row) => millis(row?.startedAt)).filter(Number.isFinite));
 
-// `ref` is how the commands it names take the pull request: its number, with `-R <repo>` when the call named one.
+// `ref` is how the commands it names take the pull request (pullRef).
 const pendingReason = (n, names, ref = n) =>
   `Blocked: pull request #${n} has checks that have not finished on its head: ${[...new Set(names)].join(', ')}. ` +
   'A check an edit or a push re-queued can still fail after the draft is marked ready. ' +
@@ -99,12 +99,19 @@ function editsOf(forge, view) {
   }
 }
 
+// How a command takes the pull request `view` names: its number, or with `elsewhere`, a call that named another
+// repository or a URL, the URL gh gave, which names the host, the repository, and the number alike.
+export const pullRef = (view, elsewhere) => {
+  const n = Number.isInteger(view?.number) ? view.number : '<n>';
+  return elsewhere && typeof view?.url === 'string' && PULL_URL.test(view.url) ? view.url : n;
+};
+
 // The deny reason for one pull request, `view` as `pr view` gave it, or null. `aidrian pr ready-wait` waits on it.
-// `repo`, the repository the call named, goes into the commands the reason names, as `-R <repo>`.
-export function holdReason(view, forge, now, { repo = null } = {}) {
+// With `elsewhere`, the commands the reason names take the pull request by its URL (pullRef).
+export function holdReason(view, forge, now, { elsewhere = false } = {}) {
   if (view?.isDraft !== true || !Array.isArray(view.statusCheckRollup)) return null;
   const n = Number.isInteger(view.number) ? view.number : '<n>';
-  const ref = repo ? `${n} -R ${repo}` : n;
+  const ref = pullRef(view, elsewhere);
   const pending = pendingChecks(view.statusCheckRollup);
   if (pending.length) return pendingReason(n, pending, ref);
   const started = lastStart(view.statusCheckRollup);
@@ -113,15 +120,6 @@ export function holdReason(view, forge, now, { repo = null } = {}) {
   if (unseen(opened)) return missingReason(n, opened.what, opened.at, ref);
   const edited = recentChange(editsOf(forge, view), now());
   return unseen(edited) ? missingReason(n, edited.what, edited.at, ref) : null;
-}
-
-// The repository a ready call names, as `-R` takes it: its `-R`, else the one a pull request URL names, with the host
-// when it is not github.com, else null (this checkout's).
-export function repoOf(target, repo) {
-  if (repo) return repo;
-  const link = PULL_URL.exec(String(target ?? ''));
-  if (!link) return null;
-  return link[1].toLowerCase() === 'github.com' ? link[2] : `${link[1]}/${link[2]}`;
 }
 
 // The deny reason for each ready call, { target, repo } at `folder`, read in turn under one deadline, or null.
@@ -136,7 +134,7 @@ function judgeCalls(calls, seams) {
     } catch {
       continue;
     }
-    const reason = holdReason(view, forge, now, { repo: repoOf(target, repo) });
+    const reason = holdReason(view, forge, now, { elsewhere: Boolean(repo) || PULL_URL.test(String(target ?? '')) });
     if (reason) return reason;
   }
   return null;

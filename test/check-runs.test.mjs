@@ -472,15 +472,21 @@ test('a run after a cd is recorded when the call\'s own folder holds no project'
   // An earlier command of the line in another project does not take the run: it goes where the run ran.
   const { dir: other } = repo();
   await call(`git -C ${other} status && env -C ${dir} npm run check`, 'moved-3');
-  const holders = readdirSync(path.join(STATE, 'aidrian/projects')).filter((id) => {
+  // The projects whose session folder holds a record for `session`.
+  const holders = (session) => readdirSync(path.join(STATE, 'aidrian/projects')).filter((id) => {
     try {
-      return readdirSync(path.join(STATE, 'aidrian/projects', id, 'sessions')).includes('moved-3');
+      return readdirSync(path.join(STATE, 'aidrian/projects', id, 'sessions', session)).includes('checks.jsonl');
     } catch {
       return false;
     }
   });
-  assert.equal(holders.length, 1);
-  assert.deepEqual(readdirSync(path.join(STATE, 'aidrian/projects', holders[0], 'sessions')).sort(), ['moved-1', 'moved-3'], 'the run went to the project of the folder it ran in');
+  const [first] = holders('moved-1');
+  assert.deepEqual(holders('moved-3'), [first], 'the run went to the project of the folder it ran in');
+  // Each run is read with the config of the project it runs in: one project's test command is no run in another.
+  const { dir: smoke } = repo({ config: { version: 1, testing: { fullSuite: ['make smoke'] } } });
+  await call(`git -C ${smoke} status && env -C ${other} make smoke && env -C ${dir} npm run check`, 'moved-4');
+  assert.deepEqual(holders('moved-4'), [first]);
+  assert.deepEqual(recorded('moved-4').map(({ command }) => command), ['npm run check']);
 });
 
 test('a call whose output Claude Code kept in a file is counted from that file\'s tail', () => {
@@ -821,6 +827,11 @@ test('aidrian test changed runs a test file whose path holds pattern characters,
   writeFileSync(path.join(scripts, 'package.json'), JSON.stringify({ scripts: { test: 'jest --runTestsByPath' } }));
   assert.deepEqual(['vitest --project jest', "node --test --test-name-pattern='a;b'", 'jest --runTestsByPath', 'npm test --', 'npm test -- --runTestsByPath', 'FOO=1 rtk jest']
     .map((command) => testRunner(scripts, command)), [null, 'node', null, null, null, 'jest']);
+  // Words are the shell's: an option inside a quoted value, or a node script's own arguments, name no runner mode.
+  assert.deepEqual([
+    "jest --testNamePattern='use --runTestsByPath here'", 'jest --runTestsByPath=true', 'jest --runTestsByPath=false', `jest ${'--verbose '.repeat(40)}--runTestsByPath`,
+    'npx --yes jest', 'pnpm exec jest', 'node --import tsx node_modules/jest/bin/jest.js', 'node scripts/run.mjs --test', 'node --test-reporter spec --test',
+  ].map((command) => testRunner(path.join(ROOT, 'none'), command)), ['jest', null, 'jest', null, 'jest', 'jest', 'jest', null, 'node']);
   const pattern = literalPattern(file, 'jest');
   assert.equal(pattern, 'app/\\[org\\]/\\(group\\)/\\[...slug\\]/page.test.mjs');
   assert.ok(new RegExp(pattern).test(file) && !new RegExp(file).test(file), 'the escaped path matches itself, as the raw one does not');

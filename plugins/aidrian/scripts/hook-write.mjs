@@ -10,6 +10,7 @@ import { loadConfig } from '../lib/config.mjs';
 import { anchorClones } from '../lib/attempt-clone.mjs';
 import { block, isMain, print, runHook } from '../lib/hook-io.mjs';
 import { isIgnored } from '../lib/git.mjs';
+import { fileEditOf } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { checkTool } from '../lib/rules/main-checkout.mjs';
 
@@ -41,11 +42,12 @@ export async function handle(input) {
 
 if (isMain(import.meta.url)) await runHook(handle);
 
-// The review-disposition refusal for this write, or null. Only a write whose target is a review manifest reads further.
+// The review-disposition refusal for this write, or null. Only a write with a review manifest among its targets, in any
+// host's file tool (lib/hosts/index.mjs fileEditOf), reads further.
 async function manifestDrift(input) {
-  const target = input.tool_input?.file_path;
+  const targets = fileEditOf(input)?.targets ?? [];
   const { isManifestPath, manifestWriteProblem } = await import('../lib/finding-disposition.mjs');
-  if (typeof target !== 'string' || !isManifestPath(target)) return null;
+  if (!targets.some((target) => typeof target === 'string' && isManifestPath(target))) return null;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const { addedLines } = await import('../lib/terms.mjs');
   try {

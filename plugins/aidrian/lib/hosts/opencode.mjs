@@ -119,7 +119,7 @@ export default {
   fileEdit(tool, given) {
     if (tool === 'write') return { shape: 'write', file: given.path, content: given.content, targets: [given.path] };
     if (tool === 'edit') {
-      return { shape: 'edit', file: given.path, edits: [{ old_string: given.oldString, new_string: given.newString }], newText: given.newString, replaceAll: given.replaceAll === true, targets: [given.path] };
+      return { shape: 'edit', file: given.path, edits: [{ old_string: given.oldString, new_string: given.newString, replace_all: given.replaceAll === true }], newText: given.newString, replaceAll: given.replaceAll === true, targets: [given.path] };
     }
     return patchEdit(String(given.patchText ?? ''));
   },

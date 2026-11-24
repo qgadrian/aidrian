@@ -241,22 +241,22 @@ function editedLines(file, edits) {
 
 // The lines an agent's write adds, per file, as { file, lines, text, before, reliable } (see scanLines): the whole lines
 // an Edit writes (editedLines), a Write's content without the lines the file already has, and the `+` lines of an
-// apply_patch, whose numbers count within the patch, so its file text is never known.
+// apply_patch, whose numbers count within the patch, so its file text is never known. Every host's tool is read through
+// fileEditOf, so `file` is the path as the host resolves it.
 export function addedLines(input, cwd) {
-  const tool = input.tool_input ?? {};
   const edit = fileEditOf(input);
-  if (edit?.shape === 'write' && typeof tool.file_path === 'string' && typeof tool.content === 'string') {
+  if (edit?.shape === 'write' && typeof edit.file === 'string' && typeof edit.content === 'string') {
     let before = null;
     try {
-      before = readFileSync(path.resolve(cwd, tool.file_path), 'utf8');
+      before = readFileSync(path.resolve(cwd, edit.file), 'utf8');
     } catch {
       // A new file: every line is added.
     }
     const old = new Set(before?.split(/\r?\n/u) ?? []);
-    return [{ file: tool.file_path, lines: numbered(tool.content).filter(({ text }) => !old.has(text)), text: tool.content, before, reliable: true }];
+    return [{ file: edit.file, lines: numbered(edit.content).filter(({ text }) => !old.has(text)), text: edit.content, before, reliable: true }];
   }
-  if (edit?.shape === 'edit' && typeof tool.file_path === 'string') {
-    return [{ file: tool.file_path, ...editedLines(path.resolve(cwd, tool.file_path), edit.edits) }];
+  if (edit?.shape === 'edit' && typeof edit.file === 'string') {
+    return [{ file: edit.file, ...editedLines(path.resolve(cwd, edit.file), edit.edits) }];
   }
   if (edit?.shape === 'patch') {
     return edit.files.map(({ file, added }) => ({ file, lines: added.map((text, index) => ({ number: index + 1, text })), text: null, before: null, reliable: false }));

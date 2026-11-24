@@ -13,6 +13,7 @@ import { continuedIn } from '../plugins/aidrian/lib/hosts/claude-code-continuati
 import { transcriptFolders } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { projectRunActive } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { transcriptWriteDenial } from '../plugins/aidrian/lib/transcript-guard.mjs';
+import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { hookCall } from './hook-call.mjs';
 import { DRIVER, ISSUES, OTHER, recordIssue, runFixture } from './project-start-fixture.mjs';
 
@@ -53,6 +54,11 @@ test('a run whose issues are all done stays guarded until its ledger records its
   const transcript = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'), `${DRIVER}.jsonl`);
   assert.equal((await hook(OTHER, `printf x >> ${transcript}`)).status, 2);
   assert.equal(fx.cmd(['end', 'launch']).exitCode, 0);
+  // A mark left by a custody move that failed names the checkout, and still counts for the main checkout's guard, but
+  // the transcript guard reads the ledgers alone.
+  markUnattended(NEXT, { root: fx.dir, cwd: fx.dir, env: fx.env });
+  assert.equal(projectRunActive(fx.project, fx.config, { home: fx.home }), true, 'the mark counts there');
+  assert.equal(projectRunActive(fx.project, fx.config, { home: fx.home, untilEnd: true }), false, 'the ledgers alone');
   assert.equal((await hook(OTHER, `printf x >> ${transcript}`)).status, 0);
 });
 

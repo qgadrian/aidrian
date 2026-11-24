@@ -1334,7 +1334,7 @@ function resumeRows({ fresh, run, session, named, continued, stranded, waiver, l
 
 // Why `session` may not run the resume on the run `found` it reads, or null: under the fullAuto waiver (`waived`), what
 // custodyWaiverProblem refuses; else what a plain resume refuses, the attended check and resumerProblem.
-function resumerEligibility({ found, session, waived, project, config, opened, env, home, now }) {
+export function resumerEligibility({ found, session, waived, project, config, opened, env, home, now }) {
   if (waived) return custodyWaiverProblem({ found, store: opened.store, session, env, now, ...(home ? { home } : {}) });
   const attended = attendedProblem({ session, project, config, state: opened.state, env, ...(home ? { home } : {}), now });
   if (attended) return `a halt is lifted by a person, and ${attended}`;

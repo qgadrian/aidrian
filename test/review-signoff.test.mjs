@@ -224,6 +224,9 @@ test('a refusal after an approval under a plain-words question denies, whichever
       'the Human picked "Keep it open", not the option that starts with "Approve"', `${id} refused later`);
     const elsewhere = ['Approve pay/fit', 'Keep it open'];
     assert.equal(signoffMiss(words(command), [approve, { question: q, answer: 'Keep it open', options: elsewhere }], { repo: 'o/r' }), null, `${id}: a refusal offered for another id`);
+    // An approval names its target by its own label or the question, never through an option the Human did not pick.
+    const generic = ['Approve (Recommended)', `Approve ${id}`, 'Keep it open'];
+    assert.notEqual(signoffMiss(words(command), [{ question: q, answer: generic[0], options: generic }], { repo: 'o/r' }), null, `${id}: an unchosen option names it`);
   }
   // With the options as the host writes them to the transcript, read in the test's process: the hook reads them so.
   const asked = [{ question: q, options: [{ label: 'Approve ui/fit (Recommended)' }, { label: 'Keep it open' }] }];

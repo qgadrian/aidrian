@@ -367,14 +367,15 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
 
 // Why the call in `input` may not run because it reaches a host's local service that starts a session no guard holds,
 // as an adapter's `localService` declares one, or null: { match, reason }. It holds for a session `unattended()` says no
-// Human attends, asked only for a shell command whose text, unquoted, with each `$NAME` and `${NAME}` that `env` gives
-// an absolute path and each leading `~` expanded, names one of the service's credential stores, which hold its
-// password, or one of its ports after a host, as `127.0.0.1:<port>` (hosts/index.mjs localServices). Read as text, so
-// a command in any shell or interpreter counts; a path or port the command builds at run time does not (the residuals
-// in docs/hooks.md, Agent gates).
+// Human attends, asked last, only for a shell command whose text, unquoted, with each `$NAME` and `${NAME}` that `env`
+// gives an absolute path and each leading `~` expanded, names one of the service's credential stores, which hold its
+// password, or one of its ports after a host, as `127.0.0.1:<port>` (hosts/index.mjs localServices): the hook's
+// `unattended()` reads the state folders, which runs git, so every other shell command runs none for this guard. Read as
+// text, so a command in any shell or interpreter counts; a path or port the command builds at run time does not (the
+// residuals in docs/hooks.md, Agent gates).
 export function hostServiceDenial(input, { names: { human } }, { unattended = () => false, env = process.env, home = env.HOME || homedir() } = {}) {
   const command = opaqueShellCommand(input) ?? (bashCall(input) ? input.tool_input?.command : null);
-  if (typeof command !== 'string' || !unattended()) return null;
+  if (typeof command !== 'string') return null;
   const text = unquoted(command)
     .replace(/\$\{(\w+)\}|\$(\w+)/gu, (whole, braced, bare) => (path.isAbsolute(env[braced ?? bare] ?? '') ? env[braced ?? bare] : whole))
     .replace(/(^|[\s=:(])~(?=\/|\s|$)/gu, (_, before) => `${before}${home}`);
@@ -383,6 +384,7 @@ export function hostServiceDenial(input, { names: { human } }, { unattended = ()
     const store = service.stores.find((each) => new RegExp(`(?<![\\w.-])${escape(each)}(?![\\w.-])`, 'iu').test(text));
     const port = service.ports.find((each) => new RegExp(String.raw`[\w\]]:${each}(?!\d)`, 'u').test(text));
     if (store === undefined && port === undefined) continue;
+    if (!unattended()) return null;
     const named = store === undefined ? `its port ${port}` : `its credential store ${store}`;
     const why = `it names ${named}: ${service.name}'s local service starts a session no guard holds for any caller with the password its state folder keeps, ${UNATTENDED}`;
     return { match: `reaches the local service of ${service.name}`, reason: projectRuleReason(input, why, human, 'to reach that service') };

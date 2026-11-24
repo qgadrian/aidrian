@@ -164,6 +164,17 @@ test('a session no Human attends may not read OpenCode\'s service password or re
   }
 });
 
+test('the service guard asks whether a Human attends only for a command that names the service, since the hook\'s answer runs git', () => {
+  const env = { HOME: '/home/user', XDG_STATE_HOME: '/xs' };
+  let asked = 0;
+  const unattended = () => (asked += 1) > 0;
+  const ask = (command) => hostServiceDenial(bash(command, { session_id: OTHER, cwd: '/x' }), { names: { human: 'the Human' } }, { unattended, env, home: '/home/user' });
+  for (const command of ['git status', 'npm test', 'curl http://localhost:3000', 'cat notes.md']) assert.equal(ask(command), null, command);
+  assert.equal(asked, 0, 'no command that names neither a store nor a port asks');
+  assert.match(ask('curl localhost:49374/api/info')?.reason ?? '', /local service starts a session no guard holds/u);
+  assert.equal(asked, 1, 'a command that names the port asks once');
+});
+
 test('a live unattended mark that names the project is a run under way', (t) => {
   const fx = plainProject(t);
   assert.equal(projectRunActive(fx.project, fx.config, { home: fx.home }), false);

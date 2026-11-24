@@ -74,7 +74,8 @@ diff. `depth: "split"` cuts the change into slices that run in parallel, then on
   severity, in `findings_merged`.
 - **Failures**: a slice that times out runs as two halves on the next step, and a half that times out splits again,
   down to one file; every slice that times out in a step splits on the next. A slice that fails for another reason
-  splits after its second failure. A one-file slice or the cross pass that keeps failing is `stuck` on its third attempt.
+  splits after its second failure. A one-file slice or the cross pass that keeps failing is `stuck` on its third attempt,
+  and so is a plan command's own slice pass, which is never cut: its failure reason never says it runs as two halves.
   A review with a slice or the cross pass missing is never `received`.
 - **Steps**: at most `review.split.parallel` (4) slices run per step, so a step fits one shell call; `running` asks
   for the next. After a fix, only the slices the fix touches run again, and the cross pass.
@@ -712,7 +713,7 @@ A project adds its own in `review.reviewers`:
   git variables in its environment, in its own process group, with a time limit: SIGTERM, then SIGKILL.
   Output that does not parse is a failure, never a pass; malformed findings are dropped and named.
   A failure is `incomplete` and retried; the third is `stuck`; a split slice that times out splits instead ([Split](#split)).
-  A finished pass's record entry holds `seconds`, the whole seconds it ran, and a failure's reason ends `after <seconds> s`.
+  A finished pass's record entry holds `seconds`, the whole seconds it ran, and a failure's reason holds `after <seconds> s`.
 - Settled findings: an exec pass's `priorFindings` add every finding the record holds as accepted that no longer
   blocks, with the pass that accepted it as `settled_by`, and the pass's own last rulings on such a finding; only an
   entry with a file and a severity the disposition table knows can settle a repeat. A pass's own last findings and a
@@ -788,7 +789,10 @@ A project adds its own in `review.reviewers`:
   through git: a pull request that edits its script cannot run its own version, and the edit triggers
   `harness-config`. The checkout's installed dependency folders (`node_modules`, `vendor`, `.venv`) are linked in, so
   the base code runs with this machine's packages. A reviewer the pull request adds runs once it is merged.
-  `codex-local` reads the checkout at the head.
+  `codex-local` reads the checkout at the head. Before a step runs any exec reviewer, it checks the checkout it was run
+  from: at a commit other than the head, or with changes to tracked files (untracked files do not count), it runs none
+  and returns `incomplete` with `checkout_head`, the head to check out, and `retry_recommended: true`; when the hold
+  would refuse that head, it returns `retry_recommended: false` with the hold's reason and no `checkout_head`.
 - `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result with
   `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <the file the step's record names> --verdicts -`, its
   findings one by one in the file, which the dispatching session writes from the `findings` array of the agent's final

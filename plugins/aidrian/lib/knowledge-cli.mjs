@@ -9,7 +9,8 @@ const USAGE = `usage: aidrian-knowledge <command> [--project DIR] [args]
 
   route TAG...     print the docs to read for these tags, "always" docs first, the plugin's defaults last
   tags             print each tag and how many docs it loads
-  search WORD...   print the best 8 docs whose tags, path, or summary hold these words; --all prints every match
+  search WORD...   print the best 8 docs whose tags, path, or summary hold these words; --all prints every match;
+                   words after -- may start with -, such as -- --wrap
   index            print every doc: path, tags, and summary, separated by tabs
   init FOLDER      draft a knowledge index for FOLDER, a folder of docs, in the project folder
 
@@ -34,6 +35,9 @@ while (args.length) {
     if (!start || start.startsWith('-')) fail(`${USAGE}\n\n--project needs a folder.`);
   } else if (arg === '--all' && command === 'search') {
     all = true;
+  } else if (arg === '--') {
+    // Every word after `--` is a word, so a search can look for an option's name, such as `-- --wrap`.
+    rest.push(...args.splice(0));
   } else if (arg.startsWith('-')) {
     fail(`${USAGE}\n\nunknown option: ${arg}`);
   } else {

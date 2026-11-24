@@ -61,8 +61,8 @@ const defaultRead = () => undefined;
 // project-run-cli.mjs, project-run-gate.mjs, project-run-guard.mjs, project-recheck.mjs, and project-stops.mjs: they decide
 // which session may start a project run, which issue it starts, which session records its result, when a halt lifts,
 // and what an issue whose merge stopped does, so a pull request that auto-merged itself cannot change them.
-// At the repository root: the marketplace manifests that install the plugin, and the optional `aidrian-claude-mod`
-// plugin's folder, whole, since it picks and runs the aidrian binary.
+// At the repository root: the marketplace manifests that install the plugin, and the optional `aidrian-mod`
+// plugin's folder, `plugins/aidrian-claude-mod/`, whole, since it picks and runs the aidrian binary.
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attempt-clone', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'check-runs',
   'child-send-backs', 'clean-text', 'cli', 'closing-words', 'code-words', 'config', 'config-committed', 'config-defaults', 'config-guard',

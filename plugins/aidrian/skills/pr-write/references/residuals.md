@@ -5,11 +5,16 @@ Read this when the body has a `## Accepted residuals` section, or the section co
 An accepted residual that contradicts a decision on record never ships.
 
 1. Run `aidrian decisions residuals --body <file> --json`, with `--adr <folder>` only when the project's `docs` knowledge
-   names an ADR folder other than `docs/adr/`. It pairs each residual with every decision on record and every
-   `## Consequences` line of the ADRs; an ADR whose Status starts `Superseded` is skipped, and a note names it.
+   names an ADR folder other than `docs/adr/`. It lists each decision on record and each `## Consequences` line of the
+   ADRs once, in `decisions` and `adrs`, and each residual by its number `n` with the ADR lines it is set against, by
+   `path:line`; every residual is set against every decision. Past 40 ADR lines a residual keeps the lines of an ADR it
+   names and the 40 that share the most words with it, and `dropped` counts the rest. An ADR whose Status starts
+   `Superseded` is skipped, and a note names it.
    When it says `nothing` is true (`nothing to check`, or `nothing on record: no judgment owed`), it exited 0 and no
    dispatch is owed: the body ships.
-2. Dispatch `product-manager` with that output as its brief and the knowledge tag `product_sensitive`. It returns the rows
+2. Dispatch `product-manager` with that output as its brief and the knowledge tag `product_sensitive`.
+   When the output is still too long for one brief, dispatch it once per residual with `--residual <n>`, and merge the rows;
+   `--path <doc or folder>` lists only the record there, and `--all-adrs` every ADR line beside every residual. It returns the rows
    in its handoff's `residual_rows` field, one row per residual, `{ residual, contradicts, evidence }`: `residual` the text
    exactly as printed, `contradicts` a decision id or ADR `path:line` from the pairing, or `null`, and `evidence` the quoted
    wording it contradicts. The pairing lists only `confirmed` and `unconfirmed` decisions: a `rejected` one is no rule,

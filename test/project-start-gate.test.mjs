@@ -42,10 +42,13 @@ test('the caps in code', () => {
 
 // A finding the session cannot fix because its fix lies in a host file goes to the Human's merge as a stated residual,
 // in the prompt of an attempt on base copies and in the skill's rules for every attempt alike, never as a decision.
-test('a low or medium finding in a host file is a stated residual and a pr_open result, never a parked decision', () => {
-  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file is a stated residual, never a decision: /u);
-  assert.match(HOST_FILE_RESIDUAL, /Accepted residuals with the finding's exact title, a colon, the reason, and the file's path/u);
-  assert.match(HOST_FILE_RESIDUAL, /record the result pr_open with that file in its stop and no decisions, and run no merge/u);
+test('a low or medium finding review may post in a host file is a stated residual, and pr_open once it is the last stop', () => {
+  // Only a finding review may post: no security finding, and no record kept local; those park as before.
+  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file, that is no security finding, under a review\.record other than "local", is a stated residual, never a decision: /u);
+  assert.match(HOST_FILE_RESIDUAL, /Accepted residuals with the finding's exact title, a colon, the reason, and the file's path\./u);
+  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file, and any host-file finding under review\.record "local", parks as before\.$/u);
+  // A mixed round: every other finding takes its own route first, and a decision it raises decides the result.
+  assert.match(HOST_FILE_RESIDUAL, /Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result\. Only when such residuals are the one stop left, record the result pr_open with that file in its stop and no decisions, and run no merge/u);
   const given = { run: 'launch', key: 'ENG-1', attempt: 2, branch: 'feat/eng-1', clone: '/c' };
   const copies = projectPrompt({ ...given, baseCopies: '/a/base-copies.txt' });
   assert.ok(copies.includes(HOST_FILE_RESIDUAL), copies);
@@ -55,7 +58,8 @@ test('a low or medium finding in a host file is a stated residual and a pr_open 
   const bullet = task.slice(task.indexOf('**A finding in a host file.**'), task.indexOf('- **The issue.**'));
   assert.ok(bullet.includes(HOST_FILE_RESIDUAL), 'the skill states the same route');
   assert.match(bullet, /never writes a host file, whatever `github\.autoMerge\.includeGuardedPaths` says/u);
-  assert.match(bullet, /A high or critical finding in a host file, and any finding outside host files, keep their route\./u);
+  assert.match(bullet, /A security finding is one the review step marks `security`, every high or critical finding among them\./u);
+  assert.match(bullet, /A finding outside host files keeps its route\./u);
 });
 
 test('the driver starts the issue next lists in a fresh clone cut from the base tip, under the host sandbox, held to a floor and a tagged mark, and the ledger records it', (t) => {

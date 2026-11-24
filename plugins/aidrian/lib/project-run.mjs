@@ -639,8 +639,9 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
       // A run that took the issue in as landed and ended before its report was recorded: the next run carries it on.
       const landedRow = held.state === 'done' ? found.rows.findLast((row) => row.event === 'landed' && row.key === issue.key) : null;
       // Only on the branch the take-in checked the merge for: a snapshot that names another branch is other work. A row
-      // that names none took the merge in on that run's own snapshot branch.
-      const landedBranch = typeof landedRow?.branch === 'string' ? landedRow.branch : found.snapshot.issues.find((each) => each.key === issue.key)?.branch;
+      // that names none is read against the run whose pull request merged, which the row names: the merge was checked for
+      // the branch that run's snapshot named; a run that cannot be read carries nothing.
+      const landedBranch = typeof landedRow?.branch === 'string' ? landedRow.branch : landedRow && originBranch(state, landedRow, issue.key);
       const carried = landedRow && !reported && landedBranch === issue.branch && Number.isInteger(landedRow.pr) && Number.isInteger(landedRow.attempt) && typeof landedRow.run === 'string' && RUN_ID.test(landedRow.run)
         ? { run: landedRow.run, attempt: landedRow.attempt, pr: landedRow.pr, branch: landedBranch, ...(typeof landedRow.label === 'string' ? { label: landedRow.label } : {}) }
         : null;
@@ -675,6 +676,14 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
       const read = legacy === null ? head : pullHead({ pr: legacy, branch, repository });
       return { key: issue.key, run, pr, head: typeof read === 'string' && SHA.test(read) ? read : null, branch };
     });
+}
+
+// The branch the snapshot of the run a branchless `landed` row `row` names gave issue `key`, the branch that take-in
+// checked the merge for, or null when that run cannot be read or names none.
+function originBranch(state, row, key) {
+  if (typeof row.run !== 'string' || !RUN_ID.test(row.run)) return null;
+  const origin = readRun(state, row.run);
+  return origin.problem ? null : origin.snapshot.issues.find((each) => each.key === key)?.branch ?? null;
 }
 
 // resumedIssues' answer `entries` sorted: { resumed, landed, problems }, the issues a run starts again on their branch,

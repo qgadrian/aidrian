@@ -35,7 +35,14 @@ const recorded = (host) => JSON.parse(readFileSync(path.join(ROOT, 'test/fixture
 
 const DELIVERIES = new Set(['hooks-json', 'installer', 'bridge']);
 const script = (event, name) => HOOKS[event].find((group) => group.hooks.some(({ command }) => command.includes(name)));
-const fires = (matcher, name) => matcher === '*' || new RegExp(`^(?:${matcher})$`, 'u').test(name);
+// Whether a hooks.json matcher fires on the tool `name` as Claude Code reads it (code.claude.com/docs/en/hooks): "*", empty,
+// or none on every tool; only letters, digits, _, -, spaces, commas, and | a list of exact names split on | or ,; any
+// other a regular expression that may match anywhere in the name.
+const fires = (matcher, name) => {
+  if (matcher === undefined || matcher === '' || matcher === '*') return true;
+  if (/^[A-Za-z0-9_ ,|-]+$/u.test(matcher)) return matcher.split(/\s*[|,]\s*/u).includes(name);
+  return new RegExp(matcher, 'u').test(name);
+};
 
 // The routes a bridge host's plugin runs: of its generated routes, plugins/aidrian/<id>/routes.generated.json, each
 // { event, matcher, script, args, timeoutMs }, those whose event its plugins/aidrian/<id>/routes.mjs EVENTS maps to a

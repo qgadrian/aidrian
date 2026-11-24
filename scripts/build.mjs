@@ -314,21 +314,25 @@ const HOOK_COMMAND = /^node "\$CLAUDE_PLUGIN_ROOT\/scripts\/([a-z0-9-]+\.mjs)"((
 
 // The events whose matcher is tested on a tool name. Claude Code runs a group of one of these with no matcher on every
 // tool, which a null route matcher would never fire on, so such a group must say "*".
-const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']);
+const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied']);
 
-// A hooks.json matcher as a route matches it: null for a group with none, "*" for any tool, otherwise the anchored
-// full-match source, compiled with the u flag: the full match test/adapters.test.mjs `fires` applies. A matcher that
-// does not compile on its own throws, so an unbalanced one such as 'Edit)|(.*' cannot turn into a match-all once wrapped.
-// One with a comma or whitespace throws too: Claude Code reads "Edit, Write" as a list of names, and this as one pattern.
+// A matcher Claude Code reads as a list of exact names: only letters, digits, _, -, and |. It reads any other as a
+// regular expression that may match anywhere in the name (code.claude.com/docs/en/hooks, Matcher patterns).
+const NAME_LIST = /^[A-Za-z0-9_|-]+$/u;
+
+// A hooks.json matcher as a route matches it, which route-select.mjs tests unanchored with the u flag, so the route fires
+// where Claude Code fires the hook: null for a group with none, "*" for any tool, a list of names as the anchored
+// ^(?:A|B)$, since none of its characters means anything else in a pattern, and any other matcher as its own source,
+// once it compiles. One with a comma or whitespace throws: Claude Code reads "Edit, Write" as a list of names, and a
+// pattern as one name, so "|" separates names here.
 export function routeMatcher(matcher) {
   if (matcher === undefined || matcher === null) return null;
   if (matcher === '*') return '*';
   if (typeof matcher !== 'string' || matcher === '') throw new Error(`matcher ${JSON.stringify(matcher)} is not a pattern; use "*" for every tool`);
   if (/[\s,]/u.test(matcher)) throw new Error(`matcher ${JSON.stringify(matcher)} holds a comma or whitespace, which a host may read as a list; separate names with "|"`);
+  if (NAME_LIST.test(matcher)) return `^(?:${matcher})$`;
   new RegExp(matcher, 'u');
-  const source = `^(?:${matcher})$`;
-  new RegExp(source, 'u');
-  return source;
+  return matcher;
 }
 
 // The OpenCode route list as the text routes.generated.json holds. Any hook the bridge cannot run as a route fails the

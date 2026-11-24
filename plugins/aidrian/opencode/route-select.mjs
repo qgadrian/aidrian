@@ -25,8 +25,9 @@ export function readRoutes(file) {
 }
 
 // The routes of `routes` that run on the OpenCode tool hook `hook` for a call of the standard tool `name`: each whose
-// event `events` maps to `hook` and whose matcher fires on `name`, "*" on every tool and a pattern when it matches with
-// the u flag, in the list's order. A route with no matcher is of an event that names no tool, so it never fires on a
+// event `events` maps to `hook` and whose matcher fires on `name`, "*" on every tool and a pattern when it matches
+// anywhere in the name with the u flag, as Claude Code tests a hooks.json regular expression (a list of names comes
+// anchored from scripts/build.mjs), in the list's order. A route with no matcher is of an event that names no tool, so it never fires on a
 // tool hook, and neither does one whose pattern does not compile.
 export function selectRoutes(routes, events, hook, name) {
   if (!Array.isArray(routes) || typeof name !== 'string') return [];

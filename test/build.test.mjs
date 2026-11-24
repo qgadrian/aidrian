@@ -16,6 +16,7 @@ import {
   agentSettings, compareGenerated, compareRoutes, providerNames, readAgents, readProviders, renderAgents, renderRoutes, routeMatcher,
 } from '../scripts/build.mjs';
 import { STANDARD_NAMES } from '../plugins/aidrian/lib/hosts/opencode-names.mjs';
+import { selectRoutes } from '../plugins/aidrian/opencode/route-select.mjs';
 
 // A scratch plugin: agents-src/, providers/, agent-addons/, and a knowledge skill.
 // A source keyed by a bare name goes in the build group; a key such as review/reader names its group.
@@ -331,22 +332,20 @@ test('a route keeps hooks.json order, its script, its flags, and its timeout in 
   assert.equal(renderRoutes(file), text, 'deterministic');
 });
 
-test('a route matcher is null with no matcher, "*" for any tool, else the anchored full match the adapters suite applies', () => {
+test('a route matcher is null with no matcher, "*" for any tool, a list of names anchored, and a pattern as it is', () => {
   assert.equal(routeMatcher(undefined), null);
   assert.equal(routeMatcher('*'), '*');
-  const source = routeMatcher('Edit|Write');
-  assert.equal(source, '^(?:Edit|Write)$');
-  const matches = (name) => new RegExp(source, 'u').test(name);
-  assert.deepEqual(['Edit', 'Write', 'NotebookEdit', 'Writer'].map(matches), [true, true, false, false]);
-  assert.ok(new RegExp(routeMatcher('mcp__.*'), 'u').test('mcp__linear__save_issue'));
+  assert.equal(routeMatcher('Edit|Write'), '^(?:Edit|Write)$');
+  assert.equal(routeMatcher('code-reviewer'), '^(?:code-reviewer)$');
+  assert.equal(routeMatcher('mcp__.*'), 'mcp__.*');
+  assert.equal(routeMatcher('^Notebook'), '^Notebook');
   assert.throws(() => routeMatcher(''), /is not a pattern; use "\*" for every tool/);
   assert.throws(() => routeMatcher('mcp__(unclosed'), SyntaxError);
-  // Wrapped, this one compiles as ^(?:Edit)|(.*)$ and matches every tool; alone it does not compile.
   assert.throws(() => routeMatcher('Edit)|(.*'), SyntaxError);
 });
 
 test('a tool event group with no matcher fails the route build, naming its event, as Claude Code runs it on every tool', (t) => {
-  for (const event of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']) {
+  for (const event of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied']) {
     for (const group of [{ hooks: [hook(NODE('hook-x'))] }, { matcher: null, hooks: [hook(NODE('hook-x'))] }]) {
       const file = scratchHooks(t, { [event]: [group] });
       assert.throws(() => renderRoutes(file), new RegExp(`^Error: .*: ${event}: a group with no matcher .*say "\\*" to mean every tool$`), event);
@@ -368,27 +367,45 @@ test('a matcher with a comma or whitespace fails the route build, as a host may 
   }
 });
 
-// Claude Code reads a matcher of only letters, digits, _, - and | as a list of exact names, and any other as a regular
-// expression tested anywhere in the name. The routes anchor every matcher, so this holds that the anchored form picks
-// the same tools as the host's reading, on every name the leaf returns or a hooks.json matcher lists.
-test('anchoring a hooks.json tool matcher never changes which tool its route runs on', () => {
+// Whether a hooks.json matcher fires on the tool `name` as Claude Code reads it (code.claude.com/docs/en/hooks): "*", empty,
+// or none on every tool; only letters, digits, _, -, spaces, commas, and | a list of exact names split on | or ,; any
+// other a regular expression that may match anywhere in the name.
+const claudeFires = (matcher, name) => {
+  if (matcher === undefined || matcher === '' || matcher === '*') return true;
+  if (/^[A-Za-z0-9_ ,|-]+$/u.test(matcher)) return matcher.split(/\s*[|,]\s*/u).includes(name);
+  return new RegExp(matcher, 'u').test(name);
+};
+// The scripts the routes built from `hooks` run on the tool `name`, through the bridge's own selector.
+const routedScripts = (t, hooks, name) => {
+  const events = Object.fromEntries(Object.keys(hooks).map((event) => [event, 'tool.hook']));
+  return selectRoutes(JSON.parse(renderRoutes(scratchHooks(t, hooks))), events, 'tool.hook', name).map((route) => route.script);
+};
+
+test('a route fires where Claude Code fires its hook: a pattern anywhere in the name, a list of names on those alone', (t) => {
+  const hooks = { PostToolUse: [
+    { matcher: 'ash.*', hooks: [hook(NODE('hook-pattern'))] },
+    { matcher: 'Edit|Write', hooks: [hook(NODE('hook-list'))] },
+  ] };
+  assert.deepEqual(routedScripts(t, hooks, 'Bash'), ['hook-pattern.mjs']);
+  assert.deepEqual(routedScripts(t, hooks, 'NotebookEdit'), []);
+  assert.deepEqual(routedScripts(t, hooks, 'Edit'), ['hook-list.mjs']);
+  assert.equal(claudeFires('ash.*', 'Bash'), true);
+  assert.equal(claudeFires('Edit|Write', 'NotebookEdit'), false);
+});
+
+test('each hooks.json tool matcher, as a route, fires on the names Claude Code fires its hook on', (t) => {
   const hooks = JSON.parse(readFileSync(HOOKS_FILE, 'utf8')).hooks;
-  const matchers = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']
-    .flatMap((event) => (hooks[event] ?? []).map((group) => group.matcher))
-    .filter((matcher) => matcher !== '*');
-  const EXACT = /^[A-Za-z0-9_|-]+$/u;
-  const listed = matchers.filter((matcher) => EXACT.test(matcher)).flatMap((matcher) => matcher.split('|'));
-  const names = [...new Set([...STANDARD_NAMES, ...listed])];
-  assert.ok(matchers.some((matcher) => !EXACT.test(matcher)), 'hooks.json holds a regular-expression matcher');
+  const matchers = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied']
+    .flatMap((event) => (hooks[event] ?? []).map((group) => group.matcher));
+  const listed = matchers.filter((matcher) => /^[A-Za-z0-9_|-]+$/u.test(matcher)).flatMap((matcher) => matcher.split('|'));
+  const names = [...new Set([...STANDARD_NAMES, ...listed, 'mcp__linear__save_issue', 'mcp__plugin_github_github__merge_pull_request', 'xmcp__a__b'])];
   assert.ok(names.includes('NotebookEdit') && names.includes('Bash'));
-  for (const matcher of matchers) {
-    const anchored = new RegExp(routeMatcher(matcher), 'u');
-    const host = EXACT.test(matcher) ? (name) => matcher.split('|').includes(name) : (name) => new RegExp(matcher, 'u').test(name);
-    assert.deepEqual(names.filter((name) => anchored.test(name)), names.filter(host), matcher);
-    if (!EXACT.test(matcher)) {
-      const raw = new RegExp(matcher, 'u');
-      assert.deepEqual(names.filter((name) => anchored.test(name)), names.filter((name) => raw.test(name)), `${matcher} unanchored`);
-    }
+  const groups = matchers.map((matcher, index) => ({ matcher, hooks: [hook(NODE(`hook-${index}`))] }));
+  const routes = JSON.parse(renderRoutes(scratchHooks(t, { PostToolUse: groups })));
+  for (const name of names) {
+    const routed = selectRoutes(routes, { PostToolUse: 'tool.hook' }, 'tool.hook', name).map((route) => route.script);
+    const expected = matchers.flatMap((matcher, index) => (claudeFires(matcher, name) ? [`hook-${index}.mjs`] : []));
+    assert.deepEqual(routed, expected, name);
   }
 });
 

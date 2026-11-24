@@ -59,7 +59,7 @@
   },
   {
     "event": "PreToolUse",
-    "matcher": "^(?:mcp__.*)$",
+    "matcher": "mcp__.*",
     "script": "hook-tracker-pre.mjs",
     "args": [],
     "timeoutMs": 10000
@@ -80,7 +80,7 @@
   },
   {
     "event": "PreToolUse",
-    "matcher": "^(?:^mcp__plugin_(?:[A-Za-z0-9-]+_)*[A-Za-z0-9-]*[Gg][Ii][Tt][Hh][Uu][Bb][A-Za-z0-9-]*(?:_[A-Za-z0-9-]+)*__(?:merge_pull_request|update_pull_request|update_pull_request_draft_state|add_issue_comment|add_reply_to_pull_request_comment|pull_request_review_write)$)$",
+    "matcher": "^mcp__plugin_(?:[A-Za-z0-9-]+_)*[A-Za-z0-9-]*[Gg][Ii][Tt][Hh][Uu][Bb][A-Za-z0-9-]*(?:_[A-Za-z0-9-]+)*__(?:merge_pull_request|update_pull_request|update_pull_request_draft_state|add_issue_comment|add_reply_to_pull_request_comment|pull_request_review_write)$",
     "script": "hook-mcp-github.mjs",
     "args": [],
     "timeoutMs": 5000
@@ -108,7 +108,7 @@
   },
   {
     "event": "PostToolUse",
-    "matcher": "^(?:mcp__.*)$",
+    "matcher": "mcp__.*",
     "script": "hook-tracker-post.mjs",
     "args": [],
     "timeoutMs": 5000

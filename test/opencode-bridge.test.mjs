@@ -142,14 +142,15 @@ test('selectRoutes takes the routes of the hook`s events whose matcher fires on 
     { event: 'PostToolUse', matcher: '*', script: 'all.mjs' },
     { event: 'PostToolUse', matcher: '^(?:Bash|Edit)$', script: 'bash.mjs' },
     { event: 'PostToolUse', matcher: '^(?:Bas)$', script: 'prefix.mjs' },
+    { event: 'PostToolUse', matcher: 'ash.*', script: 'pattern.mjs' },
     { event: 'PostToolUse', matcher: null, script: 'none.mjs' },
     { event: 'PostToolUse', matcher: '(', script: 'broken.mjs' },
     { event: 'PreToolUse', matcher: '*', script: 'pre.mjs' },
     { event: 'toString', matcher: '*', script: 'proto.mjs' },
   ];
   const scripts = (hook, name, events = EVENTS) => selectRoutes(routes, events, hook, name).map((route) => route.script);
-  assert.deepEqual(scripts('execute.after', 'Bash'), ['all.mjs', 'bash.mjs']);
-  assert.deepEqual(scripts('execute.after', 'bash'), ['all.mjs'], 'a matcher is case-sensitive');
+  assert.deepEqual(scripts('execute.after', 'Bash'), ['all.mjs', 'bash.mjs', 'pattern.mjs'], 'a pattern matches anywhere in the name');
+  assert.deepEqual(scripts('execute.after', 'bash'), ['all.mjs', 'pattern.mjs'], 'a list of names is case-sensitive');
   assert.deepEqual(scripts('execute.before', 'Bash'), []);
   assert.deepEqual(scripts('execute.before', 'Bash', { PreToolUse: 'execute.before' }), ['pre.mjs']);
   assert.deepEqual(scripts('execute.after', null), []);
@@ -690,8 +691,14 @@ test('the ignore-file walk never lists a node_modules or evals results folder, o
 const DELIVERED = [...new Set(Object.values(EVENTS).flatMap((hook) => STANDARD_NAMES.flatMap((name) => selectRoutes(GENERATED, EVENTS, hook, name)))
   .map((route) => route.script))].sort();
 
-// Whether a hooks.json matcher fires on `name`, as Claude Code applies it: "*" or none on every tool, else a full match.
-const hooksJsonFires = (matcher, name) => matcher === undefined || matcher === '*' || new RegExp(`^(?:${matcher})$`, 'u').test(name);
+// Whether a hooks.json matcher fires on the tool `name` as Claude Code reads it (code.claude.com/docs/en/hooks): "*", empty,
+// or none on every tool; only letters, digits, _, -, spaces, commas, and | a list of exact names split on | or ,; any
+// other a regular expression that may match anywhere in the name.
+const hooksJsonFires = (matcher, name) => {
+  if (matcher === undefined || matcher === '' || matcher === '*') return true;
+  if (/^[A-Za-z0-9_ ,|-]+$/u.test(matcher)) return matcher.split(/\s*[|,]\s*/u).includes(name);
+  return new RegExp(matcher, 'u').test(name);
+};
 
 // Conformance: each OpenCode call the tests hold a payload of runs the scripts hooks.json fires on the name the adapter
 // reads from the payload the bridge sends, and a call whose name the leaf cannot read, as an MCP tool's with no info,

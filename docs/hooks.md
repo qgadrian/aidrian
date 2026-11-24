@@ -609,10 +609,10 @@ Two kinds of call are refused outright inside a project, for every session, with
   counts for nothing. With `--input`, `gh api` sends the last one's file as the body and its fields in the URL, so that
   file alone decides. A GraphQL query that only reads runs as before.
 - Any `curl` call with a word whose URL path is a pull request's REST merge (`/repos/<owner>/<name>/pulls/<n>/merge`)
-  or GraphQL's endpoint (`/graphql`), never its host, query, or fragment, or with a word or a body file it can read
-  (`@file`, `-T file`) that names a merge mutation, as written or in a JSON body decoded, a read included.
-  The guard parses no curl call: which of its transfers writes depends on the arity of every curl option, so it reads
-  none, and the denial also says to read with `gh pr view` or `gh api`, which it does read.
+  or GraphQL's endpoint (`/graphql`), never its host, query, or fragment, a glued `--url=` included, or with a word that
+  names a merge mutation, as written or in a JSON body decoded, a read included. The guard parses no curl call: which of
+  its transfers writes, and which word is a file it sends, depend on the arity of every curl option, so it reads none,
+  and reads no file the call sends; the denial also says to read with `gh pr view` or `gh api`, which it does read.
 
 Before it reads the record, a merge of this repository, one that names none or one of this checkout's remotes, holds the
 working copy to [the base branch's config](review.md#the-record) from local git alone. A merge naming its number compares
@@ -816,8 +816,8 @@ for proof, protect the branch with a required review from a second account. [Lim
 Limits:
 
 - A record written on another machine is not read here.
-- A `curl` call whose URL the shell builds whole, with a body the shell builds or a file the guard cannot read, and curl
-  options from a config file (`-K`, `.curlrc`), are not read, like the other commands the shell lexer does not see through, such as `xargs`.
+- A `curl` call whose URL the shell builds whole, sending a merge mutation from a file (`@file`, `-T`) or a body the
+  shell builds, and curl options from a config file (`-K`, `.curlrc`), are not read: the guard reads no file curl sends, like the other commands the shell lexer does not see through, such as `xargs`.
 - Two sessions writing the same record at once can lose an update; the last write wins.
 - Two concurrent review steps on one pull request share one open mark: the first to finish clears the other's.
 - In a fork checkout with gh offline, `aidrian pr request`, `attest`, and `signoff` fall back to origin, and a merge

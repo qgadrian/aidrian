@@ -9,7 +9,9 @@
 // every changed file in a test folder that is a file on disk, outside a nested package, as it is, with no search for its users. With nothing to run it prints the
 // node runner's zero summary, so its row shows no test passed, and supports no claim.
 // The command is config.json `testing.changedCommand`, else `npm test --` when package.json has a test script, with the
-// files after it; its exit status is the command's.
+// files after it; its exit status is the command's. When that command ends in jest or `node --test` (testRunner), which
+// read a file as a pattern, each file goes with its pattern characters escaped as that runner reads them (literalPattern), so a path such as
+// `app/[org]/page.test.ts` runs its tests.
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -104,6 +106,48 @@ export function testCommand(root, testing = {}) {
   }
 }
 
+// The runner a test command ends in, `jest` or `node` (`node --test`), or null for any other: its last command's words,
+// else the package.json script that command runs (`npm test`, `npm run <name>`, and their pnpm, yarn, and bun forms),
+// followed at most 5 deep. Both read a file argument as a pattern: jest as a regular expression, node as a glob.
+export function testRunner(root, command, depth = 0, scripts = null) {
+  const last = String(command).split(/&&|\|\||;/u).at(-1) ?? '';
+  const words = last.split(/\s+/u).filter((word) => word !== '' && !/^\w+=/u.test(word));
+  if (words.some((word) => /(?:^|\/)jest(?:\.js)?$/u.test(word))) return 'jest';
+  if (words.some((word) => /(?:^|\/)node$/u.test(word)) && words.includes('--test')) return 'node';
+  const name = scriptName(words);
+  if (name === null || depth >= 5) return null;
+  if (scripts === null) {
+    try {
+      scripts = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))?.scripts ?? {};
+    } catch {
+      return null;
+    }
+  }
+  return typeof scripts[name] === 'string' ? testRunner(root, scripts[name], depth + 1, scripts) : null;
+}
+
+// The package.json script a command's words run, or null: `npm test`, `npm run <name>`, `pnpm|yarn [run] <name>`, `bun run <name>`.
+function scriptName(words) {
+  const at = words.findIndex((word) => ['npm', 'pnpm', 'yarn', 'bun'].includes(path.basename(word)));
+  if (at < 0) return null;
+  const [manager, verb, next] = [path.basename(words[at]), words[at + 1], words[at + 2]];
+  if (verb === undefined || verb.startsWith('-')) return null;
+  if (['run', 'run-script'].includes(verb)) return next && !next.startsWith('-') ? next : null;
+  if (manager === 'bun') return null;
+  if (['test', 't', 'tst'].includes(verb)) return 'test';
+  return manager === 'npm' ? null : verb;
+}
+
+// A file as the runner `runner` (testRunner) reads it as itself: a Next.js segment such as `[id]` or `(group)` is
+// otherwise a character class or a group, and the runner finds no test in it. Jest's regular expression takes a
+// backslash before each such character. Node's glob takes none, so each glob character goes inside a class, as `[[]`;
+// a parenthesis is no glob character there.
+export function literalPattern(file, runner) {
+  if (runner === 'jest') return file.replace(/[[\](){}*?+|^$\\]/gu, '\\$&');
+  if (runner === 'node') return file.replace(/[[\]{}*?]/gu, '[$&]');
+  return file;
+}
+
 const quote = (word) => (/^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`);
 
 export const commands = {
@@ -143,7 +187,8 @@ export const commands = {
         console.error(`aidrian test changed: no command runs test files here; set config.json testing.changedCommand. The files:\n${tests.join('\n')}`);
         return 2;
       }
-      const line = `${command} ${tests.map(quote).join(' ')}`;
+      const runner = testRunner(root, command);
+      const line = `${command} ${tests.map((file) => quote(literalPattern(file, runner))).join(' ')}`;
       console.log(`aidrian test changed: ${tests.length} test file(s) against ${base}: ${line}`);
       const ran = spawnSync(line, { cwd: root, shell: true, stdio: 'inherit' });
       return ran.status ?? 1;

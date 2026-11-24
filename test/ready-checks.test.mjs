@@ -13,6 +13,7 @@ import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
+import { runReadyWait } from '../plugins/aidrian/lib/pr-ready-wait.mjs';
 import { check, checkMcp, EDIT_WINDOW_MS, SAME_COMMAND_REASON } from '../plugins/aidrian/lib/rules/github/ready-checks.mjs';
 import { OVERRIDE } from '../plugins/aidrian/lib/rules/github/ready-hold.mjs';
 import { answer, URL7 } from './fixtures/ready-checks/gh.mjs';
@@ -97,7 +98,9 @@ test('a draft whose last edit no check has started since is held for the window,
   // The body was edited five seconds ago, and every check started before it: the re-queued title check has not shown.
   const edited = judge(dir, { view: draft(GREEN), edits: { lastEditedAt: at(-5_000) } });
   assert.match(edited.reason ?? '', /^Blocked: pull request #7 had its body edited at 2026-11-11T11:59:55Z, and no check has started since/u);
-  assert.match(edited.reason, /`gh pr checks 7 --watch`/u);
+  // The route is a wait that ends once the new run shows: `gh pr checks --watch` reads the old run and returns at once.
+  assert.match(edited.reason, /`gh pr checks 7 --watch` returns at once and a ready sent after it is refused again/u);
+  assert.match(edited.reason, /Wait with `aidrian pr ready-wait 7`/u);
   assert.match(edited.reason, /`gh pr ready 7` in a separate call/u);
   assert.ok(edited.reason.includes(at(-5_000 + EDIT_WINDOW_MS)), 'the deny says when the hold lifts with no check to wait for');
   assert.equal(edited.calls.length, 2);
@@ -172,6 +175,44 @@ test('the MCP form holds draft false while a check is pending, and refuses a bod
   const both = mcp({ ...given, draft: false, body: 'new body' }, {});
   assert.deepEqual([both.reason, both.calls.length], [SAME_COMMAND_REASON, 0]);
   assert.equal(mcp({ ...given, draft: false }, { view: draft(GREEN), edits: {} }).reason, null);
+});
+
+// `aidrian pr ready-wait`, the route the edit hold names: it polls the view the hold reads until the hold lifts.
+test('ready-wait waits until the run an edit re-queues has shown and finished, and times out while held', async (t) => {
+  const dir = repo(t);
+  const wait = async (argv, steps, { start = NOW } = {}) => {
+    let clock = start;
+    let step = 0;
+    const spec = { ...steps[0] };
+    const { calls, forge } = seam(spec);
+    const out = [];
+    const sleep = async (ms) => {
+      clock += ms;
+      step = Math.min(step + 1, steps.length - 1);
+      Object.assign(spec, steps[step]);
+    };
+    const code = await runReadyWait(argv, { forge: forge(dir, { killSignal: 'SIGKILL' }), now: () => clock, sleep, log: (line) => out.push(line), error: (line) => out.push(line) });
+    return { code, out, calls, polls: step + 1 };
+  };
+  const edits = { lastEditedAt: at(-2_000) };
+  // Edited two seconds ago with only the old run: held; the re-queued title check shows, runs, and passes.
+  const shown = await wait(['7'], [
+    { view: draft(GREEN), edits },
+    { view: draft(GREEN), edits },
+    { view: draft([...GREEN, run('Conventional Commit title', at(1_000), 'IN_PROGRESS')]), edits },
+    { view: draft([...GREEN, run('Conventional Commit title', at(1_000))]), edits },
+  ]);
+  assert.equal(shown.code, 0, shown.out.join('\n'));
+  assert.equal(shown.polls, 4);
+  assert.match(shown.out.at(-1), /^clear: .*`gh pr ready 7`/u);
+  // Still held when the timeout ends: exit 2, naming the hold.
+  const held = await wait(['7', '--timeout-sec', '10'], [{ view: draft([run('CI', at(-1_000), 'IN_PROGRESS')]), edits }]);
+  assert.equal(held.code, 2);
+  assert.match(held.out.at(-1), /^held after 10 s: pull request #7 has checks that have not finished on its head: CI/u);
+  // Not a draft: clear at once. A view gh cannot read, or a bad argument: exit 3.
+  assert.equal((await wait(['7'], [{ view: { ...draft(GREEN), isDraft: false } }])).code, 0);
+  assert.equal((await wait(['7'], [{ view: null }])).code, 3);
+  for (const argv of [[], ['seven'], ['7', '--timeout-sec', '0'], ['7', '-R', '--json']]) assert.equal((await wait(argv, [{}])).code, 3, argv.join(' '));
 });
 
 // One hook run with the fake gh first on PATH, its calls logged.

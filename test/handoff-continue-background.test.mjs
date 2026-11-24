@@ -1966,7 +1966,7 @@ test('the old session\'s prompt names the last session of a chain of handoffs, w
   assert.equal(chainOwner(store, 'no-such-session'), null);
 });
 
-test('a chain walk ends at a session met twice, at a project run\'s start, and at a record with no full id', (t) => {
+test('a chain walk ends at a session met twice, before a project run\'s start, and at a record with no full id', (t) => {
   const { store } = setup(t);
   const full = chainStarts(store, ['bb0a9173', 'f5fa4566']);
   // The second session's start names the first again: the walk stops instead of going round.
@@ -1974,7 +1974,8 @@ test('a chain walk ends at a session met twice, at a project run\'s start, and a
   assert.equal(chainOwner(store, SESSION).hops, 3);
   const other = setup(t).store;
   chainStarts(other, ['aaaa1111', 'bbbb2222'], { project: { run: 'r1', issue: '1', attempt: 1 } });
-  assert.equal(chainOwner(other, SESSION).record.id, 'bbbb2222', 'the project start is the last walked');
+  assert.equal(chainOwner(other, SESSION).record.id, 'aaaa1111', 'a project run start is other work: the session that made it owns the brief still');
+  assert.equal(ownerLines(other, claudeCode, 'aaaa1111').out[0], 'owner: aaaa1111');
   const unnamed = setup(t).store;
   assert.ok(noteStarted(unnamed, SESSION, { sha256: 'a'.repeat(64), slug: 'widget', brief: BRIEF, chain: 1, id: 'cccc3333', session: null, name: null, cwd: '/w' }));
   assert.deepEqual(chainOwner(unnamed, SESSION).hops, 1);

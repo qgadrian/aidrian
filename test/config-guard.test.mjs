@@ -1476,6 +1476,18 @@ test('a subagent, and a session the background route started, may not write in t
   }
 });
 
+test('a placeholder path is prose only while no state folder holds an angle bracket: a state.dir with one keeps it guarded', async (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-bracketed-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const bracketed = path.join(root, '<team>', 'state');
+  mkdirSync(path.join(bracketed, 'sessions', 'abc-1'), { recursive: true });
+  const { dir } = project(t, { version: 1, state: { dir: bracketed } });
+  const command = `python3 -c "open('${bracketed}/sessions/abc-1/prs.jsonl', 'a')"`;
+  const refused = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
+  assert.equal(refused.status, 2, refused.stderr);
+  assert.match(refused.stderr, /the session folders/u);
+});
+
 // A session folder of `session` under the state folder of the project at `dir`, as the hooks make it.
 function sessionFolderOf(dir, session) {
   const found = findProject(dir);

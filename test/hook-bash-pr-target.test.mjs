@@ -129,18 +129,15 @@ test("another project's rules apply where the call runs: env -C and a leading cd
   await refuses(`env -C ${OTHER} gh pr edit 1 --body-file ${FOOTER}`, /carries the "Generated with \[Claude Code\]" footer/);
 });
 
-test("env -C with a folder the line set in a variable answers to that folder's project", async () => {
-  await passes(`W=${OTHER}; env -C $W gh pr edit 1 --body-file ${WHY}`);
-  await passes(`W=${OTHER}; env -C "$W" gh pr create --draft --title 'other: x' --body-file ${WHY}`);
-  await passes(`export W=${OTHER} && env --chdir="\${W}" gh pr edit 1 --body-file f`);
-  await refuses(`W=${OTHER}; env -C $W gh pr edit 1 --body-file ${SUMMARY}`, noWhy);
-  await refuses(`W=${OTHER}; env -C $W gh pr edit 1 --body-file ${FOOTER}`, /carries the "Generated with \[Claude Code\]" footer/);
-  // The attribution rule, which only the session's repository keeps, follows the folder too.
-  await passes(`W=${PLAIN}; env -C $W gh pr create --title 'feat: x' --body-file ${SUMMARY}`);
-  await refuses(`W=${OWN}; env -C $W gh pr create --title 'feat: x' --body-file ${SUMMARY}`, /^Blocked: the pull request body lacks its attribution/);
-  // A variable the line never set, or a relative value, stays unknown: the session's rules hold.
-  await refuses(`env -C "$W" gh pr edit 1 --body-file ${WHY}`, noSummary);
-  await refuses(`W=other; cd ${path.dirname(OTHER)} && env -C "$W" gh pr edit 1 --body-file ${WHY}`, noSummary);
+test("a deny under the session's rules for gh in a folder a variable holds says so, and how to name the folder", async () => {
+  // A variable's value at run time is not read: an assignment may sit in a branch that never ran, or be unset since.
+  for (const line of [`W=${OTHER}; env -C "$W" gh`, `env -C $W gh`, `cd "$W" && gh`]) {
+    const { status, stderr } = await hook(`${line} pr edit 1 --body-file ${WHY}`);
+    assert.equal(status, 2, line);
+    assert.match(stderr, noSummary, line);
+    assert.ok(stderr.includes(`These are the rules of ${OWN}, the session's project: the folder gh runs in is one this rule cannot read`), stderr);
+    assert.ok(stderr.includes('run `env -C <the folder, written out> gh …`'), stderr);
+  }
 });
 
 test("a deny under the session's rules after a cd into another project says whose rules they are and how to reach the other's", async () => {

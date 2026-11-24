@@ -506,8 +506,9 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
    work, so the old session does not take up the same work unasked. When that session handed off in turn, the line
-   names the one it started, and so on to the last of the chain, which owns the work now. The walk ends at a project
-   run's start, at a start record that names no full session id, and at a session met twice.
+   names the one it started, and so on to the last of the chain, which owns the work now. The walk ends at a start
+   record that names no full session id and at a session met twice, and never takes a project run's start, which is
+   other work: the session that made it owns the brief still.
 
 When the host cannot start the session, such as with no host command on an absolute folder of PATH, a folder the
 listing does not name, a folder the host does not trust, or a start that fails, the gate falls back to the clear route

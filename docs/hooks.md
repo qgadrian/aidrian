@@ -247,10 +247,9 @@ What each rule matches:
   So gh on a new line after `cd /other && cat > b.md <<'EOF'` answers to the session's rules, since a failed `cd` would leave
   it in the session's folder. To be judged by the other project, join gh on the heredoc's first line
   (`cd /other && cat > b.md <<'EOF' && gh pr edit 1 --body-file b.md`, then the body) or use `env -C /other gh …`.
-  A deny under the session's rules after a leading `cd` into another project, joined to gh by a `;` or a newline,
-  says whose rules they are and gives the `env -C` form for the other's. `env -C "$W"` names the folder `W` holds when the
-  line set `W` to an absolute literal before it (`W=/other; env -C "$W" gh …`): `env -C` moves only gh, which runs there
-  or not at all.
+  A deny under the session's rules where the folder gh runs in names no project, as after such a `cd` or in a folder a
+  variable holds (`env -C "$W" gh …`, whose value the rule never guesses), says whose rules they are, names the folder
+  a leading `cd` went into when it is another project's, and gives the `env -C <folder> gh …` form for another's rules.
   Naming the repository with `-R` gets none of these rules, as the next lines say.
   A call that names a repository other than that checkout's remotes, through `-R`, a pull request URL, or `GH_REPO`,
   gets none of these rules: that repository's config cannot be found from there, so its rules go unchecked.

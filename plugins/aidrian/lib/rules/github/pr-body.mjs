@@ -82,17 +82,21 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   return null;
 }
 
-// A deny under the session's rules for a call whose line opens with a `cd` into another project, joined to gh by a `;`
-// or a newline rather than `&&` alone: gh runs in the session's folder when that `cd` fails, so the session's rules
-// hold, and the reason says so, with the form that answers to that project's rules, so a refusal never reads as
-// that project's config.
+// A deny under the session's rules for a call whose project this rule cannot read from the folder gh runs in: after a
+// `cd` joined to gh by a `;` or a newline rather than `&&` alone, which gh runs past when the `cd` fails, or a folder a
+// variable holds, as in `env -C "$W"` or `cd "$W" &&`. The reason says whose rules they are, and the form that answers
+// to another project's, a folder written out, so a refusal never reads as that project's config. A leading `cd` into
+// another project is named.
 function withFolderNote(reason, { folder, chained }, cwd) {
-  if (chained !== null || folder === null) return reason;
-  const [own, there] = [findProject(cwd), findProject(folder)];
-  if (!own || !there || own.root === there.root) return reason;
-  const note = ` These are the rules of ${own.root}, the session's project: a \`;\` or a newline, not \`&&\` alone, joins gh to the ` +
-    `\`cd\` into ${folder}, so gh runs in the session's folder when that \`cd\` fails. For the rules of ${there.root}, run ` +
-    `\`env -C ${shellWord({ text: folder, dynamic: false })} gh …\`, or join gh to that \`cd\` with \`&&\`.`;
+  if (chained !== null) return reason;
+  const own = findProject(cwd);
+  if (!own) return reason;
+  const there = folder === null ? null : findProject(folder);
+  if (there?.root === own.root) return reason;
+  const into = there ? `the \`cd\` into ${folder} is joined to gh by a \`;\` or a newline, not \`&&\` alone, so gh runs in the session's folder when it fails`
+    : 'the folder gh runs in is one this rule cannot read, such as one a variable holds, or one after a `cd` joined to gh by a `;` or a newline';
+  const word = there ? shellWord({ text: folder, dynamic: false }) : '<the folder, written out>';
+  const note = ` These are the rules of ${own.root}, the session's project: ${into}. For another project's rules, run \`env -C ${word} gh …\`.`;
   const at = reason.indexOf('\nTo override');
   return at < 0 ? `${reason}${note}` : `${reason.slice(0, at)}${note}${reason.slice(at)}`;
 }
@@ -115,30 +119,12 @@ export function* bodyCalls(command, cwd, read = readPrCall, heredocs = BODY_HERE
         call.stdin = stdinBody(entry);
         call.bodyFile = writes.token(call.bodyFile, entry);
         call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
-        yield { call, entry: withLineChdir(entry, writes), written: writes.files };
+        yield { call, entry, written: writes.files };
       }
     }
     // A gh call's own output can rewrite a body file a later gh call reads: `gh pr create … > b.md`.
     writes.note(entry);
   }
-}
-
-// `entry` with the folder its wrapper moves to, as in `W=/repo; env -C "$W" gh …`, when that folder is a variable the top
-// line set to an absolute literal (`writes.token`): the wrapper moves its own command only, so gh runs there or not at
-// all, and both `folder` and `chained` name it. Any other entry as it is; a relative value needs the folder before the
-// wrapper, which the entry no longer holds.
-export function withLineChdir(entry, writes) {
-  const { chdir } = entry.invocation;
-  if (!chdir?.dynamic) return entry;
-  const known = writes.token(chdir, entry);
-  if (!known || known.dynamic || !path.isAbsolute(known.text)) return entry;
-  let folder = path.resolve(known.text);
-  try {
-    folder = realpathSync(folder);
-  } catch {
-    // A folder not there yet: gh would fail to start in it, and the path as written names it.
-  }
-  return { ...entry, folder, chained: folder };
 }
 
 // What the command line `top` sets up before a later command on it runs, as { files, token, note }. `files` maps each

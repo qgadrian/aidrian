@@ -1634,6 +1634,13 @@ test('a script whose text names a home dot path is refused with the file tool as
   const unplaced = fx.ask(bash(`cd "$X" && echo x > a/${quoted}`))?.reason ?? '';
   assert.match(unplaced, /a dot file or folder of the user's home folder/u, unplaced);
   assert.doesNotMatch(unplaced, /in the text of code it runs/u);
+  // An interpreter's other words, such as a destination its script takes from `sys.argv`, and a whole line read for
+  // want of its code, are no code of its own either: the refusal says the call writes the path.
+  for (const shape of [`python3 - ${quoted} <<'EOF'\nimport sys\nopen(sys.argv[1], 'w').write('x')\nEOF`, `printf 'print(1)' | python3 - && cd "$X" && echo x > a/${quoted}`]) {
+    const reason = fx.ask(bash(shape))?.reason ?? '';
+    assert.match(reason, /a dot file or folder of the user's home folder/u, `${shape}: ${reason}`);
+    assert.doesNotMatch(reason, /in the text of code it runs/u, shape);
+  }
   // The route it names: the file tool writes the brief, whatever path its text quotes.
   assert.equal(fx.ask(write(brief, { tool_input: { file_path: brief, content: `Run ${quoted} report --since 24h.\n` } })), null);
   assert.equal(fx.ask({ tool_name: 'Edit', tool_input: { file_path: brief, old_string: 'old', new_string: `run ${quoted} report` } }), null);

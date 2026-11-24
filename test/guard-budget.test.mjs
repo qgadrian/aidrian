@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import test, { after } from 'node:test';
 
 import { gateDenial } from '../plugins/aidrian/lib/agent-gates.mjs';
+import { callBudget } from '../plugins/aidrian/scripts/hook-agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, WRITE_TARGETS } from '../plugins/aidrian/lib/config-guard.mjs';
 import { GUARD_BUDGET_MS, HELD_BUDGET_MS } from '../plugins/aidrian/lib/deadline.mjs';
@@ -183,10 +184,20 @@ test('a call the guards start three seconds late, as on a loaded machine, still 
   // Past the held budget, the same calls are refused: the held budget is what let them run.
   const past = late(dir, HELD_BUDGET_MS + 200);
   assert.equal(run(subagent(dir, 'Bash', 'echo x > src/app.js'), past).status, 2);
-  // An attended main session's call, which runs past its budget anyway, keeps the short one, so it waits no longer:
-  // the test "a subagent's Bash call that writes more than ... targets" holds it, as its main session's 20,000-target
-  // call, which only the budget bounds, must end within WELL_INSIDE of processor time, short of the held budget.
-  assert.ok(WELL_INSIDE < HELD_BUDGET_MS && GUARD_BUDGET_MS < WELL_INSIDE);
+});
+
+// The budget the hook gives each call, as it reads its session: an attended main session's call, which runs past its
+// budget anyway, keeps the short one, so it waits no longer; a call the deadline refuses gets the held one.
+test('an attended main session\'s call gets the short budget, and a subagent\'s, a marked session\'s, or a driver\'s the held one', () => {
+  const quiet = {};
+  const attended = { session_id: 's1', tool_name: 'Bash', tool_input: { command: 'true' } };
+  assert.equal(callBudget(attended, {}, 100, quiet), 100 + GUARD_BUDGET_MS);
+  assert.equal(callBudget({ ...attended, agent_id: '' }, {}, 0, quiet), GUARD_BUDGET_MS, 'an empty agent id is the main session');
+  assert.equal(callBudget({ ...attended, agent_id: 'a1' }, {}, 100, quiet), 100 + HELD_BUDGET_MS);
+  assert.equal(callBudget(attended, { mark: { root: '/x' } }, 0, quiet), HELD_BUDGET_MS);
+  assert.equal(callBudget(attended, { driven: { run: 'r' } }, 0, quiet), HELD_BUDGET_MS);
+  // The variable lowers both.
+  assert.equal(callBudget({ ...attended, agent_id: 'a1' }, {}, 0, { AIDRIAN_GUARD_BUDGET_MS: '600' }), 600);
 });
 
 // Each hook that runs under the guards' budget answers before the host stops it, with room to record a refusal.

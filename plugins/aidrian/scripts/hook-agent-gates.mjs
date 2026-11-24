@@ -89,6 +89,15 @@ export async function handle(input, { start = 0 } = {}) {
 
 if (isMain(import.meta.url)) await runHook(handle);
 
+// The deadline of the call in `input`, which started at `start`: the held budget for a call the guards' deadline would
+// refuse, a subagent's, or a session's its unattended mark `mark` or its driver mark `driven` holds, and the short one
+// for an attended main session's, which runs past it anyway. A session the legacy chain floor alone holds
+// (startedUnattended) keeps the short one, as that floor is read only when a guard refuses.
+export function callBudget(input, { mark = null, driven = null } = {}, start = 0, env = process.env) {
+  const held = (typeof input.agent_id === 'string' && input.agent_id !== '') || mark !== null || driven !== null;
+  return start + guardBudget(env, { held });
+}
+
 async function gate(input) {
   // Every attempt clone this call reads is linked only for the session the payload names (lib/attempt-clone.mjs).
   anchorClones({ session: input.session_id });
@@ -125,10 +134,7 @@ async function gate(input) {
   // in, and the mark the one the gate ran in.
   // A project run's driver is held to its run's project wherever its call runs, as a marked session is (runDriver).
   const driven = readDriverMark(input.session_id);
-  // A call the guards' deadline would refuse gets the longer budget: a subagent's, or a marked session's or a driver's.
-  // A session the legacy chain floor alone holds (startedUnattended) keeps the short one, as that floor is read late.
-  const heldCall = (typeof input.agent_id === 'string' && input.agent_id !== '') || mark !== null || driven !== null;
-  budget = callStart + guardBudget(process.env, { held: heldCall });
+  budget = callBudget(input, { mark, driven }, callStart);
   // The driver's holds, asked once a call, here, so every guard and the time budget's answer share them: `drives()`, its
   // run under way, holds it from the continuation store and the runs folder, and `drove()`, any driver mark, from the
   // marks and the sign-off store after its run's end too (run-driver.mjs drivesRun, droveRun), and from a call the

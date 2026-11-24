@@ -6,7 +6,7 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { appendFileSync, chmodSync, readdirSync } from 'node:fs';
+import { appendFileSync, chmodSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -49,16 +49,20 @@ function continued(t, { projectRun = ON, ...options } = {}) {
 }
 
 test('projectRun.fullAuto is a switch, false by default, and true in the team policy only when both reads set it', (t) => {
-  const plain = runFixture(t, { init: false });
-  assert.equal(loadConfig(plain.project).config.projectRun.fullAuto, false);
-  const bad = runFixture(t, { init: false, projectRun: { ...OFF, fullAuto: 'yes' } });
-  assert.match(loadConfig(bad.project).errors.join('\n'), /"projectRun\.fullAuto" must be true or false/u);
-  assert.equal(loadConfig(bad.project).config.projectRun.fullAuto, false);
-  const policyOf = (local, forge) => {
-    const fx = runFixture(t, { init: false, projectRun: { ...OFF, fullAuto: local }, forgeConfig: { version: 1, projectRun: { ...OFF, fullAuto: forge } } });
+  // Two fixtures, the local ref's switch on and off, and the forge's served both ways, keep the test's git calls few.
+  const off = runFixture(t, { init: false });
+  assert.equal(loadConfig(off.project).config.projectRun.fullAuto, false);
+  const on = runFixture(t, { init: false, projectRun: ON });
+  const policyOf = (fx, forge) => {
+    fx.serveConfig({ version: 1, projectRun: { ...OFF, ...(forge === undefined ? {} : { fullAuto: forge }) } });
     return teamPolicy(fx.project, REPOSITORY, fx.forge).fullAuto;
   };
-  assert.deepEqual([policyOf(true, true), policyOf(true, false), policyOf(false, true), policyOf(false, false)], [true, false, false, false]);
+  assert.deepEqual([policyOf(on, true), policyOf(on, false), policyOf(off, true), policyOf(off, undefined)], [true, false, false, false]);
+  // A working copy that sets a non-boolean is refused, and the default stands.
+  writeFileSync(path.join(off.dir, '.aidrian/config.json'), JSON.stringify({ ...off.committed, projectRun: { ...OFF, fullAuto: 'yes' } }));
+  const bad = loadConfig(off.project);
+  assert.match(bad.errors.join('\n'), /"projectRun\.fullAuto" must be true or false/u);
+  assert.equal(bad.config.projectRun.fullAuto, false);
 });
 
 test('resume --custody from the continuation the host names, unattended, under fullAuto: custody and marks move, and the halt stands', (t) => {
@@ -79,53 +83,23 @@ test('resume --custody from the continuation the host names, unattended, under f
   assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Export format', '--record'], { session: NEXT }).err.join('\n'), /background handoff route started this session/u);
 });
 
-test('resume --custody refuses, filing nothing, a session that holds the driver mark of another run', (t) => {
-  const fx = continued(t);
-  assert.ok(markDriver(NEXT, { run: 'other-run', root: fx.dir, state: fx.state, env: fx.env }));
-  const refused = fx.cmd(['resume', 'launch', '--custody'], { session: NEXT });
-  assert.equal(refused.exitCode, 1);
-  assert.match(refused.err[0], /this session holds the driver mark of the run other-run/u);
-  assert.deepEqual(fx.custodyRows(), []);
-  assert.equal(readDriverMark(NEXT, { env: fx.env, home: fx.home })?.run, 'other-run', 'its mark stays');
-  assert.equal(readUnattendedMark(NEXT, { env: fx.env, home: fx.home }), null, 'no unattended mark');
-});
-
-test('the custody waiver files an unattended mark beside the driver mark, which holds a session no Human attended before', (t) => {
-  const fx = continued(t);
-  assert.equal(readUnattendedMark(NEXT, { env: fx.env, home: fx.home }), null);
-  const taken = fx.cmd(['resume', 'launch', '--custody'], { session: NEXT });
-  assert.equal(taken.exitCode, 0, taken.err.join('\n'));
-  const mark = readUnattendedMark(NEXT, { env: fx.env, home: fx.home });
-  assert.deepEqual([mark?.root, mark?.issue, mark?.pending], [fx.dir, undefined, undefined], 'a plain mark, which the Human typing into the session lifts');
-  assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Export format', '--record'], { session: NEXT }).err.join('\n'), /background handoff route started this session/u);
-});
-
 test('resume --custody is refused, with no row, off fullAuto unattended, from a session the row does not name, an issue session, and on an ended run', (t) => {
-  const off = continued(t, { projectRun: OFF });
-  off.unattended();
-  assert.match(off.cmd(['resume', 'launch', '--custody'], { session: NEXT }).err[0], /background handoff route started this session/u, 'off: what resume asks');
-  assert.deepEqual(off.custodyRows(), []);
-  const forgeOff = continued(t, { forgeConfig: { version: 1, projectRun: OFF } });
-  forgeOff.unattended();
-  assert.equal(forgeOff.cmd(['resume', 'launch', '--custody'], { session: NEXT }).exitCode, 1, 'the forge alone does not set it');
-  assert.deepEqual(forgeOff.custodyRows(), []);
-
-  const other = continued(t);
-  other.unattended(OTHER);
-  assert.equal(other.cmd(['resume', 'launch', '--custody'], { session: OTHER }).exitCode, 1);
-  assert.deepEqual(other.custodyRows(), []);
-  assert.equal(readDriverMark(OTHER, { env: other.env, home: other.home }), null);
-
-  const issue = continued(t);
-  issue.unattended(NEXT, { project: 'launch', issue: 'ENG-1' });
-  assert.match(issue.cmd(['resume', 'launch', '--custody'], { session: NEXT }).err[0], /unattended mark names an issue of a project run/u);
-  assert.deepEqual(issue.custodyRows(), []);
-
-  const ended = continued(t);
-  assert.equal(ended.cmd(['end', 'launch']).exitCode, 0);
-  ended.unattended();
-  assert.match(ended.cmd(['resume', 'launch', '--custody'], { session: NEXT }).err[0], /the run launch ended/u);
-  assert.deepEqual(ended.custodyRows(), []);
+  // One run, each refusal writing nothing the next one reads, keeps the test's git calls few.
+  const fx = continued(t);
+  fx.unattended(OTHER);
+  assert.equal(fx.cmd(['resume', 'launch', '--custody'], { session: OTHER }).exitCode, 1, 'a session the row does not name');
+  assert.equal(readDriverMark(OTHER, { env: fx.env, home: fx.home }), null);
+  fx.unattended();
+  // The forge's copy off, as teamPolicy reads both: the command asks what a plain resume asks.
+  fx.serveConfig({ version: 1, projectRun: OFF });
+  assert.match(fx.cmd(['resume', 'launch', '--custody'], { session: NEXT }).err[0], /background handoff route started this session/u, 'off: what resume asks');
+  fx.serveConfig(fx.committed);
+  fx.unattended(NEXT, { project: 'launch', issue: 'ENG-1' });
+  assert.match(fx.cmd(['resume', 'launch', '--custody'], { session: NEXT }).err[0], /unattended mark names an issue of a project run/u);
+  fx.unattended();
+  assert.equal(fx.cmd(['end', 'launch']).exitCode, 0);
+  assert.match(fx.cmd(['resume', 'launch', '--custody'], { session: NEXT }).err[0], /the run launch ended/u);
+  assert.deepEqual(fx.custodyRows(), []);
 });
 
 test('off fullAuto, resume --custody asks what resume asks and takes custody only; a plain resume from the host-named session never lifts a halt', (t) => {
@@ -137,17 +111,16 @@ test('off fullAuto, resume --custody asks what resume asks and takes custody onl
   assert.equal(off.halted(), true);
   assert.equal(readUnattendedMark(NEXT, { env: off.env, home: off.home }), null, 'no waiver, no mark');
 
-  for (const projectRun of [ON, OFF]) {
-    const fx = continued(t, { projectRun });
-    fx.halt();
-    const plain = fx.cmd(['resume', 'launch'], { session: NEXT });
-    assert.equal(plain.exitCode, 0, plain.err.join('\n'));
-    assert.deepEqual(plain.out.slice(0, 2), ['custody: this session now drives the run launch; its last driver ended', 'note: the halt stands: this resume takes custody only, and another session a person attends, or the Human\'s own shell, lifts it with `aidrian project resume launch`']);
-    assert.equal(fx.halted(), true, 'the host-named session moves custody, and the halt stands');
-    // Another attended session lifts it as before, and takes no custody.
-    assert.deepEqual(fx.cmd(['resume', 'launch'], { session: OTHER }).out, ['resumed launch']);
-    assert.equal(fx.halted(), false);
-  }
+  // Under fullAuto too, which a plain resume does not read.
+  const fx = continued(t);
+  fx.halt();
+  const plain = fx.cmd(['resume', 'launch'], { session: NEXT });
+  assert.equal(plain.exitCode, 0, plain.err.join('\n'));
+  assert.deepEqual(plain.out.slice(0, 2), ['custody: this session now drives the run launch; its last driver ended', 'note: the halt stands: this resume takes custody only, and another session a person attends, or the Human\'s own shell, lifts it with `aidrian project resume launch`']);
+  assert.equal(fx.halted(), true, 'the host-named session moves custody, and the halt stands');
+  // Another attended session lifts it as before, and takes no custody.
+  assert.deepEqual(fx.cmd(['resume', 'launch'], { session: OTHER }).out, ['resumed launch']);
+  assert.equal(fx.halted(), false);
 });
 
 test('a resume rechecks under the ledger lock: a continuation the host records meanwhile lifts no halt', (t) => {
@@ -205,7 +178,7 @@ test('a resume rechecks the session under the ledger lock: a mark filed meanwhil
   assert.equal(fx.rows().some((row) => row.event === 'resume'), false, 'no halt lifted');
 });
 
-test('the command reads resume\'s words as the hook does: an option twice, a value on --custody, and --custody after -- are refused', (t) => {
+test('the command reads resume\'s words as the hook does, and --custody files its marks only in a session that holds no other run\'s driver mark', (t) => {
   const fx = continued(t);
   for (const words of [['launch', '--custody', '--custody'], ['launch', '--custody=false'], ['launch', '--', '--custody'], ['launch', '--force']]) {
     assert.equal(resumeWords(words), null, words.join(' '));
@@ -213,6 +186,22 @@ test('the command reads resume\'s words as the hook does: an option twice, a val
   }
   assert.deepEqual(resumeWords(['launch', '--custody']), { run: 'launch', custody: true, project: null });
   assert.deepEqual(fx.custodyRows(), []);
+  // A session that holds the driver mark of another run is refused, and nothing is filed.
+  const own = path.join(fx.env.XDG_STATE_HOME, 'aidrian', 'unattended', `driver.${NEXT}.json`);
+  assert.ok(markDriver(NEXT, { run: 'other-run', root: fx.dir, state: fx.state, env: fx.env }));
+  const refused = fx.cmd(['resume', 'launch', '--custody'], { session: NEXT });
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.err[0], /this session holds the driver mark of the run other-run/u);
+  assert.deepEqual(fx.custodyRows(), []);
+  assert.equal(readDriverMark(NEXT, { env: fx.env, home: fx.home })?.run, 'other-run', 'its mark stays');
+  assert.equal(readUnattendedMark(NEXT, { env: fx.env, home: fx.home }), null, 'no unattended mark');
+  rmSync(own);
+  // With none, the waiver files a plain unattended mark beside the driver mark, which holds a session no Human attended.
+  const taken = fx.cmd(['resume', 'launch', '--custody'], { session: NEXT });
+  assert.equal(taken.exitCode, 0, taken.err.join('\n'));
+  const mark = readUnattendedMark(NEXT, { env: fx.env, home: fx.home });
+  assert.deepEqual([mark?.root, mark?.issue, mark?.pending], [fx.dir, undefined, undefined], 'a plain mark, which the Human typing into the session lifts');
+  assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Export format', '--record'], { session: NEXT }).err.join('\n'), /background handoff route started this session/u);
 });
 
 test('the hook lets the exact resume --custody through from the host-named continuation under fullAuto, and holds every other form to the attended rules', async (t) => {
@@ -229,12 +218,12 @@ test('the hook lets the exact resume --custody through from the host-named conti
   assert.equal(await status(OTHER, 'aidrian project resume launch --custody'), 2, 'a session the row does not name');
   assert.equal(await status(NEXT, 'aidrian project resume launch --custody'), 0, 'the hook writes nothing');
 
+  fx.unattended(NEXT, { project: 'launch', issue: 'ENG-1' });
+  assert.equal(await status(NEXT, 'aidrian project resume launch --custody'), 2, 'an issue session');
+
   const off = continued(t, { projectRun: OFF });
   off.unattended();
   assert.equal((await off.hook(NEXT, 'aidrian project resume launch --custody')).status, 2, 'off fullAuto');
-  const issue = continued(t);
-  issue.unattended(NEXT, { project: 'launch', issue: 'ENG-1' });
-  assert.equal((await issue.hook(NEXT, 'aidrian project resume launch --custody')).status, 2, 'an issue session');
 });
 
 test('preflight lists what fullAuto changes and every thing that still waits on a person, and nothing with it off', (t) => {
@@ -248,10 +237,9 @@ test('preflight lists what fullAuto changes and every thing that still waits on 
   ]);
   assert.match(notes.join('\n'), /signoff "human"\): none;/u);
   assert.match(notes.join('\n'), /projectRun\.recordedDecisions is off, so no recorded answer is read/u);
-  const off = runFixture(t, { init: false, projectRun: OFF });
-  assert.ok(!off.cmd(['preflight']).out.some((line) => /^note (?:full-auto|human):/u.test(line)));
-  const forgeOff = runFixture(t, { init: false, projectRun: ON, forgeConfig: { version: 1, projectRun: OFF } });
-  assert.ok(!forgeOff.cmd(['preflight']).out.some((line) => /^note (?:full-auto|human):/u.test(line)), 'the forge alone');
+  // With the forge's copy off, as teamPolicy reads both reads, none: fullAutoLines prints nothing off fullAuto.
+  fx.serveConfig({ version: 1, projectRun: OFF });
+  assert.ok(!fx.cmd(['preflight']).out.some((line) => /^note (?:full-auto|human):/u.test(line)), 'the forge alone');
 });
 
 test('the full-auto lines name the human sign-off flows and drop each setting that no longer parks more than it must', () => {

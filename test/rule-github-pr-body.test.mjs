@@ -1,12 +1,14 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 
-import { check, OVERRIDE } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
+import { check, fileIdentity, OVERRIDE } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { appearsAfterFirstStat } from './fixtures/fs-faults.mjs';
 
 const GOOD = '## Summary\nShare links expire.\n\n## Tests run\n- `npm test`: pass\n';
@@ -490,6 +492,9 @@ test('a write through a link or a hard link to a body file is a write to it', (t
   assert.equal(run(`cat > a.md <<'EOF'\n${GOOD}EOF\nmkdir -p r && echo x > r/a.md\ngh pr create -t x -F a.md`), null, 'a name in another folder is another file');
   mkdirSync(path.join(dir, 'r'));
   assert.equal(run(`cat > r\uff0fa.md <<'EOF'\n${GOOD}EOF\necho x > r/a.md\ngh pr create -t x -F r\uff0fa.md`), null, 'a fullwidth slash in a name is no folder');
+  // A folder the line makes is reached through `.` and `..` as the shell reaches it.
+  assert.match(run(`mkdir -p new && cat > new/body.md <<'EOF'\n${GOOD}EOF\necho x > new/./body.md\ngh pr create -t x -F new/body.md`) ?? '', unread, 'new/./body.md is new/body.md');
+  assert.match(run(`mkdir -p new/in && cat > new/body.md <<'EOF'\n${GOOD}EOF\necho x > new/in/../body.md\ngh pr create -t x -F new/body.md`) ?? '', unread, 'and so is new/in/../body.md');
   // A folder that exists is one folder however it is spelled, and two folders that exist are never one.
   mkdirSync(path.join(dir, 'caf\u00e9'));
   assert.equal(run(`cat > caf\u00e9/n.md <<'EOF'\n${GOOD}EOF\necho x > r/n.md\ngh pr create -t x -F caf\u00e9/n.md`), null, 'n.md in two existing folders');
@@ -504,4 +509,23 @@ test('a write through a link or a hard link to a body file is a write to it', (t
   // A heredoc written through a link whose target is not there yet is the body gh then reads by the target's name.
   assert.equal(run(`cat > ahead.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`), null);
   assert.match(run(`cat > ahead.md <<'EOF'\n## Summary\nEOF\ngh pr create -t x -F new.md`) ?? '', /^Blocked: the body has no `## Tests run` section/u);
+});
+
+test('a folder identity keeps an inode past 2^53 exact, so two folders never share one', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const name of ['a', 'b']) mkdirSync(path.join(dir, name));
+  const big = { [path.join(dir, 'a')]: 2n ** 60n, [path.join(dir, 'b')]: 2n ** 60n + 1n };
+  const real = fs.statSync;
+  t.mock.method(fs, 'statSync', (file, options) => {
+    if (!(file in big)) return real(file, options);
+    // A plain number rounds both to one value, as on a disk with inodes that large.
+    return { isDirectory: () => true, dev: options?.bigint ? 1n : 1, ino: options?.bigint ? big[file] : Number(big[file]) };
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  assert.notEqual(fileIdentity(path.join(dir, 'a', 'x.md')), fileIdentity(path.join(dir, 'b', 'x.md')));
 });

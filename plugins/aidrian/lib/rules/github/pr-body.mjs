@@ -327,10 +327,15 @@ export function fileIdentity(file) {
   const rest = [];
   for (let hops = 0; hops <= LINK_HOPS; hops += 1) {
     try {
-      const stat = statSync(realpathSync.native(head));
+      // Exact numbers: an inode past 2^53 rounds in a plain number, and two folders could share a key.
+      const stat = statSync(realpathSync.native(head), { bigint: true });
       if (rest.length === 0 && !stat.isDirectory()) return `inode:${stat.dev}:${stat.ino}`;
-      // The deepest folder that exists, by its own identity, so two spellings of it are one, and the names below it.
-      return [`folder:${stat.dev}:${stat.ino}`, ...rest].join('/');
+      // The names below the deepest folder that exists are folders the line makes, never links, so `.` and `..` fold
+      // as written; one that climbs above that folder cannot be told.
+      const below = rest.length ? path.posix.normalize(rest.join('/')) : '';
+      if (below === '..' || below.startsWith('../')) return null;
+      // That folder by its own identity, so two spellings of it are one, and the names below it.
+      return [`folder:${stat.dev}:${stat.ino}`, ...(below && below !== '.' ? below.split('/') : [])].join('/');
     } catch (error) {
       if (!gone(error)) return null;
     }

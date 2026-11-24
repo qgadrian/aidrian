@@ -368,7 +368,8 @@ The residuals, each with its reason:
   absolute path in a system program folder such as `/usr/bin`, so `./sh` and `./ssh` are judged;
   one exported in an earlier step or inherited, a shim on `PATH` named `ssh`, or an `ssh` or `rsh` that reaches this
   machine, as `-e ssh localhost:<path>`, writes there unjudged, with the reach of a program's own write. So does the
-  program `scp -S` or `sftp -S` runs in place of `ssh`, since neither is read as a writer.
+  program `scp -S` or `sftp -S` runs in place of `ssh`, since neither is read as a writer. A source spelled `host:path`
+  that `--remove-source-files` or `--remove-sent-files` deletes is not judged as a removal, even under such a shell.
 - A move into a folder the same command line makes first, by a name with no closing slash, as
   `mkdir <tmp>/a && mv pkg/.opencode <tmp>/a`, is judged as a rename, since the folder is read from the disk when the call
   is checked.

@@ -140,6 +140,7 @@ Then `route`, like `tags` with no tag in use, says so on stderr and still exits 
 Among those, it scores each word: 2 when it is part of a tag, 1 when it is part of the path, and 1 when it is part of the summary.
 Ties keep bucket order.
 It prints `path<TAB>summary`, best first, and exits 1 with `no match` when no doc scores.
+A word that starts with `-`, such as an option's name, goes after `--`: `aidrian-knowledge search -- --wrap`.
 
 Every command but `init` fails and lists the problems when an index, `config.json`, or `.aidrian.json` is broken,
 so agents never read a broken index.

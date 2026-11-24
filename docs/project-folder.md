@@ -178,6 +178,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
+- Agents write into the state folder by its absolute path, which the main-checkout guard lets through: [The state folder](hooks.md#the-state-folder).
 - Beside `projects/`, the state root `$XDG_STATE_HOME/aidrian/` holds what no config.json moves: `sessions/`, the gates
   each session started with ([hooks.md](hooks.md#agent-gates)), `unattended/`, the marks of the sessions the
   [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days, with each project run

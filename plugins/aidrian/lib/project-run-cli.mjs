@@ -103,6 +103,8 @@ export function projectCommand(args, options = {}) {
 export { RETRY_EXIT };
 
 function projectAction(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, clock, now, platform, autoMerge, exec } = {}) {
+  // When the command began, on wait's clock: wait's --max-wait counts from here, the command's own setup included.
+  const started = (clock ?? Date.now)();
   const [action, ...rest] = args;
   if (!ACTIONS.includes(action)) return fail(`project takes ${ACTIONS.slice(0, -1).join(', ')}, or ${ACTIONS.at(-1)}${action ? `, not "${action}"` : ''}`);
   // resume's words as the hook reads them too (project-run-guard.mjs resumeWords): an option twice is refused.
@@ -170,7 +172,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   if (action === 'wait') {
     const given = values['max-wait'] ?? String(WAIT_DEFAULT);
     if (!/^\d{1,4}$/u.test(given) || Number(given) > WAIT_CEILING) return fail(`project wait takes --max-wait as whole seconds from 0 to ${WAIT_CEILING}`);
-    return waitRun({ ...gate, maxWait: Number(given), spawn, ...(pause ? { pause } : {}), ...(clock ? { clock } : {}) });
+    return waitRun({ ...gate, maxWait: Number(given), spawn, started, ...(pause ? { pause } : {}), ...(clock ? { clock } : {}) });
   }
   const place = runPlace(project, config, { env, home });
   if (place.problem) return refused(action, place.problem);

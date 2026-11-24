@@ -84,8 +84,8 @@ started outside the run, a `blocker texts:` line for each issue whose text no re
 many as `projectRun.maxParallel` starts at once, and a
 `note teams` line when the snapshot names no `teams`: read the team list again and add them before init.
 
-For each issue that may still start whose `projectRun.recordedDecisions` entry the forge and the local ref pin alike, a
-decision the Human recorded before the run, it prints a `recorded-decision` line. On `blocker recorded-decision`, read
+While the forge and the local ref both set `projectRun.recordedDecisions`, it prints a `recorded-decision` line for
+each issue that may still start with a decision the Human recorded in this machine's store before the run. On `blocker recorded-decision`, read
 that issue in this session with the tracker's own full issue read, Linear's `get_issue`, and check again; one that
 names the team's policy clears as step 2's `policy` line does. Tell the Human each `note recorded-decision: <key> void`
 line: that issue's session runs without the recorded answer, and parks on that decision as before.

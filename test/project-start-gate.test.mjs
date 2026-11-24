@@ -7,7 +7,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -23,7 +23,9 @@ import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { mergeClosingContext } from '../plugins/aidrian/lib/closing-words.mjs';
 import { appendToRun, issueBranch, readRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
-import { attemptFolder, runLogFile, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
+import { decisionStoreFolder } from '../plugins/aidrian/lib/project-decision-store.mjs';
+import { projectId } from '../plugins/aidrian/lib/project.mjs';
+import { attemptFolder, guardedFolders, runLogFile, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { decidedEntry, decidedFixture, DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
@@ -128,7 +130,7 @@ test('start refuses a run the base branch has not switched on, by its local ref 
 test('the team policy is the lowest of the local ref, the forge, and the ceilings', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, maxStarts: 900, issueHours: 24 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 50, issueHours: 30 } } });
   const policy = teamPolicy(fx.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, fx.forge);
-  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, recordedDecisions: {}, reviewer: 'chatgpt-codex-connector[bot]', includeGuardedPaths: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
+  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, recordedDecisions: false, reviewer: 'chatgpt-codex-connector[bot]', includeGuardedPaths: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
   const ceiling = runFixture(t, { projectRun: { allow: true, maxStarts: 1000 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 1000 } } });
   assert.equal(teamPolicy(ceiling.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, ceiling.forge).maxStarts, 1000);
 });
@@ -191,18 +193,38 @@ test('a start voids a recorded decision on a kept description its cap cut off, t
   assert.doesNotMatch(cut.claude.starts()[0].args.at(-1), /a decision the Human recorded/u);
 });
 
-test('the team policy keeps a recorded decision only where the local ref and the forge pin it alike', (t) => {
-  const entry = decidedEntry();
+test('a recorded decision in the store stands only while the team switch is on, on the local ref and the forge alike', (t) => {
   const repository = { host: 'github.com', owner: 'acme', name: 'widgets' };
-  const policyOf = (forgeDecisions) => {
-    const fx = runFixture(t, { projectRun: { allow: true, recordedDecisions: { 'ENG-1': entry, 'ENG-2': entry } }, forgeConfig: { version: 1, projectRun: { allow: true, recordedDecisions: forgeDecisions } } });
+  const policyOf = (local, forge) => {
+    const fx = runFixture(t, { projectRun: { allow: true, recordedDecisions: local }, forgeConfig: { version: 1, projectRun: { allow: true, recordedDecisions: forge } } });
     return teamPolicy(fx.project, repository, fx.forge).recordedDecisions;
   };
-  assert.deepEqual(policyOf({ 'ENG-1': entry, 'ENG-2': entry }), { 'ENG-1': entry, 'ENG-2': entry });
-  assert.deepEqual(policyOf({ 'ENG-1': entry }), { 'ENG-1': entry }, 'one only the local ref defines');
-  assert.deepEqual(policyOf({ 'ENG-1': entry, 'ENG-2': { ...entry, sha256: 'f'.repeat(64) } }), { 'ENG-1': entry }, 'one the two define differently');
-  const forgeOnly = runFixture(t, { forgeConfig: { version: 1, projectRun: { allow: true, recordedDecisions: { 'ENG-1': entry } } } });
-  assert.deepEqual(teamPolicy(forgeOnly.project, repository, forgeOnly.forge).recordedDecisions, {}, 'one only the forge defines');
+  assert.deepEqual([policyOf(true, true), policyOf(true, false), policyOf(false, true), policyOf(false, false)], [true, false, false, false]);
+  // With the switch off, the store's entry is not read: no file, no line, no field.
+  const off = decidedFixture(t, { on: false });
+  const start = off.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(start.exitCode, 0, start.err.join('\n'));
+  assert.ok(!start.out.some((line) => line.includes('recorded-decision')), start.out.join('\n'));
+  assert.equal(existsSync(decisionFile(off)), false);
+  assert.equal(Object.hasOwn(off.rows().findLast((row) => row.event === 'start'), 'decision'), false);
+  // With it on and no entry in the store, the start is as with none.
+  const none = decidedFixture(t, { entry: null });
+  assert.ok(!none.cmd(['start', 'launch', 'ENG-1']).out.some((line) => line.includes('recorded-decision')));
+});
+
+test('a recorded-decision store an issue session could have planted is void, and the sandbox and hooks deny a confined session its folder', (t) => {
+  const fx = decidedFixture(t);
+  const file = path.join(decisionStoreFolder(fx.env), projectId(fx.project), 'ENG-1.json');
+  chmodSync(file, 0o666);
+  const start = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(start.exitCode, 0, start.err.join('\n'));
+  assert.match(start.out.at(-1), /^note recorded-decision: ENG-1 void: .*ENG-1\.json may be written another way than by the store$/u);
+  assert.equal(existsSync(decisionFile(fx)), false);
+  const settings = JSON.parse(fx.claude.starts()[0].args[8]);
+  const store = realpathSync(decisionStoreFolder(fx.env));
+  assert.ok(settings.sandbox.filesystem.denyWrite.includes(store), 'the sandbox denies its writes');
+  assert.ok(settings.permissions.deny.includes(`Edit(/${store}/**)`), 'and the file tools\' edits');
+  assert.ok(guardedFolders({ main: fx.dir, state: fx.state, env: fx.env, home: fx.home }).includes(store), 'no host access check lets a session write it');
 });
 
 test('start refuses an issue next does not list', (t) => {

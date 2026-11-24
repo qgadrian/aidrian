@@ -18,8 +18,10 @@
 //   aidrian project preflight [RUN]        # every check a start would refuse or halt on, before init (lib/project-preflight.mjs)
 //   aidrian project stop-action RUN ISSUE  # the one action for an issue whose auto-merge stopped (lib/project-stops.mjs)
 //   aidrian project confine RUN ISSUE      # the issue's own session, as its first call, proves its sandbox holds
-//   aidrian project decision ISSUE --heading TEXT  # an attended session: the projectRun.recordedDecisions entry that pins
-//                                          # the section of ISSUE's description under that heading (lib/project-decision.mjs)
+//   aidrian project decision ISSUE --heading TEXT [--record]  # an attended session: the section of ISSUE's description
+//                                          # under that heading and its sha256, and with --record its entry in this
+//                                          # machine's recorded-decision store (lib/project-decision.mjs)
+//   aidrian project decision ISSUE --forget # an attended session removes ISSUE's entry from that store
 //
 // The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder as lib/project-run.mjs
 // runPlace resolves and checks it. `--project` on init must name the project of the current folder's main checkout.
@@ -52,7 +54,7 @@ import { usageLines } from './usage.mjs';
 
 const USAGE = 'init RUN --file PATH [--check] [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
   'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--project DIR] | end RUN [--project DIR] | ' +
-  'report RUN [--json] [--project DIR] | recorded RUN ISSUE [--project DIR] | preflight [RUN] [--project DIR] | stop-action RUN ISSUE [--project DIR] | confine RUN ISSUE | decision ISSUE --heading TEXT [--project DIR]';
+  'report RUN [--json] [--project DIR] | recorded RUN ISSUE [--project DIR] | preflight [RUN] [--project DIR] | stop-action RUN ISSUE [--project DIR] | confine RUN ISSUE | decision ISSUE --heading TEXT [--record] [--project DIR] | decision ISSUE --forget [--project DIR]';
 // The actions the command takes; lib/project-run-guard.mjs holds a rule for each (test/project-start-guard.test.mjs).
 export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff', 'resume', 'end', 'report', 'recorded', 'preflight', 'stop-action', 'confine', 'decision'];
 // The positionals each action takes after its name.
@@ -67,7 +69,7 @@ export const commands = {
       'report, for the driver, prints the status, label, and comment the run owes each settled issue, and recorded closes one once written; preflight runs every check a start would refuse or halt on, before init; ' +
       'stop-action, for the issue\'s own session only, prints the one action for an issue whose pull request did not merge, takes the forge\'s part of it, and records it against its cap; ' +
       'confine, the first call of an issue\'s session on a host that proves its sandbox per start, tries from inside the sandbox what it must refuse, and hands the verdict to the start; ' +
-      'decision, from an attended session only, prints the section of an issue\'s description under a heading, from this session\'s recorded tracker read, and the projectRun.recordedDecisions entry that pins it, writing nothing',
+      'decision, from an attended session only, prints the section of an issue\'s description under a heading, from this session\'s recorded tracker read, and its sha256, and with --record writes it to this machine\'s recorded-decision store; --forget removes it',
     run: async (args) => print(await projectCommand(args)),
   },
 };
@@ -111,7 +113,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
       ...(action === 'init' ? { check: { type: 'boolean' } } : {}),
       ...(['next', 'report'].includes(action) ? { json: { type: 'boolean' } } : {}),
       ...(action === 'wait' ? { 'max-wait': word } : {}),
-      ...(action === 'decision' ? { heading: word } : {}),
+      ...(action === 'decision' ? { heading: word, record: { type: 'boolean' }, forget: { type: 'boolean' } } : {}),
     },
   });
   // preflight takes the run it checks for, once init has made it, or none before.
@@ -132,7 +134,15 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     const pullHead = ({ pr, branch, repository }) => openPullHead({ forge: forge ?? forgeFor(project.root), repository, pr, branch });
     return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, pullHead });
   }
-  if (action === 'decision') return decisionCommand({ project, config, key: run, heading: values.heading, env, home });
+  if (action === 'decision') {
+    // A write goes only to the project --project names itself: a folder that is gone, or no project's root, such as a
+    // removed nested project or worktree, never falls through to the project above it.
+    const named = values.project === undefined ? null : resolvedPath(path.resolve(cwd, values.project));
+    if ((values.record || values.forget) && values.project !== undefined && (named === null || named !== resolvedPath(project.root))) {
+      return refused('decision', `--project names ${path.resolve(cwd, values.project)}, which is not the root of a project here (it resolves to ${project.root}); record or forget the decision from the project the preview named`);
+    }
+    return decisionCommand({ project, config, key: run, heading: values.heading, record: values.record === true, forget: values.forget === true, env, home });
+  }
   if (action === 'preflight') return preflightCommand({ project, config, run: run ?? null, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
   if (action === 'report') return reportCommand({ project, config, run, json: values.json === true, env, home });
   if (action === 'recorded') return recordedCommand({ project, config, run, key: second, env, home, ...(now === undefined ? {} : { now }) });

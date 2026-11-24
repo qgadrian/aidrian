@@ -127,7 +127,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   },
   "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null },
-  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "workflowSecretsAccepted": false, "forgeProtectionAccepted": false, "outsideSandbox": [], "mcpServers": {}, "nonTrackerServers": [], "registries": [], "localBinding": false, "recordedDecisions": {} }
+  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "workflowSecretsAccepted": false, "forgeProtectionAccepted": false, "outsideSandbox": [], "mcpServers": {}, "nonTrackerServers": [], "registries": [], "localBinding": false, "recordedDecisions": false }
 }
 ```
 
@@ -1870,7 +1870,7 @@ the machine's local file, the forge, and the host; each `aidrian project preflig
 | `projectRun.nonTrackerServers` | `[]` | The servers of `projectRun.mcpServers` that reach no tracker, by name, such as a docs server. The [project run rule](#tracker) holds an issue's session and the driver, on every server that list names and no tracker adapter maps, to calls whose name says they read, since it cannot tell a write there from a tracker write; a server named here is free of that. A server an adapter maps by its name or endpoint stays held whatever this lists. Read from the base branch. |
 | `projectRun.registries` | `[]` | The package registries a confined session may reach to install the project's dependencies, by ecosystem name, each once: `npm` (`registry.npmjs.org`, and `registry.yarnpkg.com`, yarn's default), `pypi` (`pypi.org` and `files.pythonhosted.org`), `crates` (`index.crates.io` and `static.crates.io`), `go` (`proxy.golang.org` and `sum.golang.org`), and `rubygems` (`index.rubygems.org` and `rubygems.org`). The hosts are fixed in `lib/project-registries.mjs`: no name of a host, and no other domain, is ever accepted. A team opts in; a project with no code yet lists the ecosystems of the stack it will scaffold. Install scripts a package runs, such as npm's `postinstall`, run inside the session's sandbox, under its write and network limits, which is why letting a session install is acceptable. Every listed registry but `pypi` and `crates` gives a channel a sandboxed command can send data out on that an attacker can read, `go` the widest, since its proxy fetches from any host a module path names; each is accepted because the forge channel gives one already, and narrowing the forge token reopens that ruling ([Dependency installs](providers/claude-code.md#dependency-installs) names each one's path). With `npm` listed, corepack downloads pnpm and yarn from it too. Every session, whatever this lists, keeps its package managers' caches in its attempt's `cache` folder, and the home folder stays as it is. Codex holds a session to the same hosts through its network proxy, which no live run has checked yet ([Codex](providers/codex.md#project-start)). Only the names both the default branch on the forge and the local ref list count. |
 | `projectRun.localBinding` | `false` | Whether an issue's session may bind local ports, so the services its checks need, such as a database, an API server, a worker, or a browser, run on this machine. On Claude Code the session's sandbox then starts with `allowLocalBinding: true`, and an organization's managed `allowLocalBinding` passes at `true` or `false`. On macOS that lets a sandboxed command bind, and take inbound connections, on every interface of this machine, not only the loopback, so a server bound to `0.0.0.0` takes connections from other machines the firewall lets through, and lets it reach every service listening on this machine's loopback, outside the network allowlist; there the [sandbox proof](providers/claude-code.md#the-sandbox-proof) runs no localhost listener, so it does not check the loopback. On Linux the host gives a sandboxed command a network namespace of its own, so the key changes nothing there, and the proof keeps its listener. On Codex the start adds `-c features.network_proxy.allow_local_binding=true`, which in Codex 0.171.0 also turns off the proxy's refusal of private and link-local addresses, so an allowed host name that resolves to one is reached too; no live run has checked it ([Codex](providers/codex.md#project-start)). Bind each test server to `127.0.0.1`, never `0.0.0.0`. `aidrian project preflight` prints a `note local-binding` line naming the host's risk while it is on ([residual risks](providers/claude-code.md#project-start)). Read from the default branch on the forge and the local ref; both must set it, and no working copy or local file turns it on. Never set by a recipe. |
-| `projectRun.recordedDecisions` | `{}` | The decisions the Human recorded on issues before a run, each issue key to `{ "heading": ..., "sha256": ... }`: the heading of one section of the issue's description in the tracker, one line of 1 to 200 characters, and that section's sha256, as `aidrian project decision` prints them ([Recorded decisions](#recorded-decisions)). A start hands a section that still hashes so to the issue's session as the Human's answer to the decision it names, and nothing more. Only the entries both the default branch on the forge and the local ref define alike count. Remove an entry once the issue's pull request merges. Never set by a recipe. |
+| `projectRun.recordedDecisions` | `false` | Whether a run's starts read the decisions the Human recorded on issues in this machine's recorded-decision store, each pinning one section of the issue's description by its heading and sha256 ([Recorded decisions](#recorded-decisions)). A start hands a section that still hashes so to the issue's session as the Human's answer to the decision it names, and nothing more. Read from the default branch on the forge and the local ref; both must set it. It took an object of entries until it became a switch: a config that still sets one is refused, and its entries are recorded with `aidrian project decision ISSUE --heading TEXT --record`. Never set by a recipe. |
 | `projectRun.forgeTokenKeychain` in `.aidrian.local.json` | unset | This machine's keychain entry for the forge token of this project's issue sessions, `{ "service": "<name>", "account": "<name>" }`, such as a fine-grained token limited to the run's repository. The driver reads the token outside the sandbox, which hides the system keyring from the session, from the first of three sources that gives one: (1) this entry, on macOS; (2) the machine's default entry, service `aidrian-project-run` with any account, which every project on the machine shares, on macOS, and for a github.com run alone; (3) the forge CLI's own login, `gh auth token --hostname <host>`. Each keychain read is `security find-generic-password -s <service> [-a <account>] -w`, an argument list with no shell, with the `security` first on PATH. An entry that is not there passes to the next source; on another platform the key is a preflight `note` that it is unsupported. No source with a token blocks the preflight (`access`) and halts a start, and `note token:` names the source the preflight used, never the token. Read only from the main checkout's file, and only while git tracks no `.aidrian.local.json` there; any other shape is a config error and reads unset. The team's `config.json` cannot set it, and a subagent or a session no Human attends may not write it. How the token reaches the session: [Project start](providers/claude-code.md#project-start). |
 
 On a host whose start proves its sandbox ([Claude Code](providers/claude-code.md#the-sandbox-proof)), a start refuses
@@ -2309,8 +2309,10 @@ a read that fails refuses it.
 
 ### Recorded decisions
 
-`projectRun.recordedDecisions` lets the Human answer one decision of an issue before the run, so its session does not
-park on it.
+The team's `projectRun.recordedDecisions` switch lets the Human answer one decision of an issue before the run, so its
+session does not park on it.
+The answers live on the machine that runs the run, never in the repository: one team pull request turns the switch on,
+and no issue needs one of its own.
 The answer is one section of the issue's description in the tracker: an ATX heading of any level, outside code fences,
 through the line before the next heading of the same or a higher level.
 Write it so it stands alone, naming the question and the chosen path in full: a reference to text outside it, such as
@@ -2320,38 +2322,56 @@ any `<!--`, any `<details` in any case, or a `+++` line: `+++` after optional sp
 The run keeps a description's first 20,000 characters, and a description cut off there voids every grant on the issue,
 wherever the section sits: keep a pinned issue's description under the cap.
 
-`aidrian project decision ISSUE --heading TEXT` prints that section, then the entry to add, from the attended session's
-recorded tracker read of the issue, the bytes `init` keeps.
-It runs only from an attended main session and writes nothing.
-It exits 1 when the session recorded no read of the issue, the description was cut off or holds hidden markup, or no
-single section has that heading.
+The store is `<state root>/recorded-decisions/<project key>/<ISSUE>.json`, `{ heading, sha256, by: "human", at }`, where
+the state root is `$XDG_STATE_HOME/aidrian` or `~/.local/state/aidrian` and the project key names the project's state
+folder under `projects/`.
+It sits under the state root the environment names, as the [sign-off store](review.md#merge-trust) does, for its
+writer and its readers alike, and is kept apart from the state folder's `decisions/`, the decision-review records.
+Each folder is the user's alone, mode 0700, each file 0600, written whole and moved into place, as the sign-off store's.
+Both stores are checked from the real path of the state root's parent down: a link from the state root on, a folder
+another user owns or may write, or such a file voids the grant, and nothing is made, by a write or by a start's sandbox
+denies, before those pass.
+The [agent gates](hooks.md#agent-gates) refuse a write there by a subagent, a session no Human attends, or a run's
+driver, and a confined session's sandbox denies the folder.
+
+`aidrian project decision ISSUE --heading TEXT` prints that section and its sha256, from the attended session's recorded
+tracker read of the issue, the bytes `init` keeps, and writes nothing.
+Its last line prints the `--record` command to run, which writes the store's entry and prints where;
+`aidrian project decision ISSUE --forget` removes it.
+Either replaces or removes an entry whose content is malformed, once its place, owner, type, and links pass, and makes
+no folder before the ones already there pass.
+The printed `--record` command attaches the heading and the project's real path, each one single-quoted shell word,
+`--heading='<heading>'` and `--project='<path>'`, so a heading that starts with `-` stays the option's value, nothing in
+either expands, and the decision lands in the project the preview read, wherever the command is pasted.
+With `--record` or `--forget`, a `--project` that is not the root of the project it resolves to, such as a removed
+nested project or worktree, is refused, never written to the project above it.
+It runs only from an attended main session that never drove a project run, in every form.
+It exits 1 when the session recorded no read of the issue, the description was cut off or holds hidden markup, no
+single section has that heading, or the store cannot be written.
 The hash is the sha256 of the section's UTF-8, its heading line included, with CRLF read as LF, each line's trailing
 blanks dropped, and blank lines at both ends dropped.
-The team merges the entry to the default branch; a working copy, a local ref alone, or a branch an issue session
-pushes pins nothing.
 
-`init --check` reads the entries as `start` does, those the forge and the local ref define alike.
-For each issue that may still start, now or once its blockers are done, that they pin, it prints
+`init --check` reads the store as `start` does, only while the switch is on on the forge and the local ref alike.
+For each issue that may still start, now or once its blockers are done, with an entry, it prints
 `note recorded-decision: KEY stands: <heading>` or `note recorded-decision: KEY void: <why>`; a canceled issue, or one
 skipped below it, gets none.
-When that policy cannot be read and the base branch pins a decision of such an issue, a `blocker recorded-decision`
-names the read that failed.
+When that policy cannot be read, the base branch sets the switch, and the store holds an entry of such an issue, a
+`blocker recorded-decision` names the read that failed.
 An issue whose description no read of this session recorded is `blocker recorded-decision`: read it with the tracker's
 own full issue read, then check again.
-With `projectRun.forgeProtectionAccepted` set, a note says the grant is as strong as the hooks, which alone keep a
-script an issue session runs from pushing one to the default branch.
 
-Each start checks the entry against the text the run kept at `init`.
+Each start reads the issue's entry and checks it against the text the run kept at `init`.
 When it stands, the start writes the section to the attempt's `decision.md`, read-only beside `issue.md`, names it in
 the first message, adds `decision: <sha256>` to the start row, and prints `recorded-decision: KEY stands`.
 When it does not, the start prints `note recorded-decision: KEY void: <why>`, and the session starts as it would with no entry.
-A section edited in the tracker after `init` changes nothing until the next run's `init`.
+An entry recorded or forgotten during a run counts from the issue's next start; a section edited in the tracker after
+`init` changes nothing until the next run's `init`.
 The first message and the file say what the answer never does: change a step of the skills, waive a review, test,
 check, hook, or gate, or allow a merge or ready.
 It allows no real or personal data, no secret, and no new access, and it is no `security-engineer` verdict and no
 sign-off of a pull request, so those park as before.
 A result that still carries a decision parks as on any other issue, and a flow's sign-off at merge stays the Human's.
-Remove the entry once the issue's pull request merges.
+Forget the entry once the issue's pull request merges.
 
 ## Testing
 

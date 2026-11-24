@@ -40,6 +40,7 @@ import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
 import { pinnedRepository, runFolder, runsFolder } from './project-run.mjs';
 import { commitFiles, commitGitlinks, isGuarded, namedFiles, overlayGuarded } from './project-trust.mjs';
 import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
+import { decisionStoreFolders } from './project-decision-store.mjs';
 import { signoffFolders } from './review/signoff-store.mjs';
 import { archiveStops } from './stop-history.mjs';
 import { safely } from './session-start-gate.mjs';
@@ -172,10 +173,11 @@ function pushAccess({ cap, forge, repository, env, home, guarded, main, platform
 }
 
 // The folders no session no Human attends may be let write, as real paths: the main checkout's git folder, the state
-// root, the mark folders, the sign-off store's (review/merge-trust.mjs), and the runs folder of `state`.
+// root, the mark folders, the sign-off store's (review/merge-trust.mjs), the recorded-decision store's
+// (project-decision-store.mjs), and the runs folder of `state`.
 export function guardedFolders({ main, state, env, home }) {
   const common = gateGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], main, { timeout: 30_000 });
-  const folders = [common.status === 0 ? common.stdout.trim() : path.join(main, '.git'), stateRoot(env), ...markFolders({ env, home }), ...signoffFolders({ env, home }), runsFolder(state)];
+  const folders = [common.status === 0 ? common.stdout.trim() : path.join(main, '.git'), stateRoot(env), ...markFolders({ env, home }), ...signoffFolders({ env, home }), ...decisionStoreFolders({ env, home }), runsFolder(state)];
   return [...new Set(folders.map((each) => resolvedPath(each) ?? path.resolve(each)))];
 }
 
@@ -222,12 +224,12 @@ export const attemptFolder = (state, run, key, attempt) => path.join(runFolder(s
 
 // The state work folders a confined session may write, each made owner-only when absent: { folders }, their real paths,
 // or { problem } when one is not a plain folder of this user directly in the state folder's real path under its own
-// name, or holds, or lies in, the runs folder, the handoffs folder, the decisions folder, a mark folder, or a sign-off store folder, as a link
+// name, or holds, or lies in, the runs folder, the handoffs folder, the decisions folder, a mark folder, a sign-off store folder, or a recorded-decision store folder, as a link
 // `tmp -> runs` would.
 export function stateWorkFolders(state, { env, home }) {
   const base = resolvedPath(state);
   if (!base) return { problem: `the state folder ${state} cannot be resolved` };
-  const guarded = [runsFolder(state), path.join(state, 'handoffs'), path.join(state, 'decisions'), ...markFolders({ env, home }), ...signoffFolders({ env, home })].map((each) => resolvedPath(each) ?? path.resolve(each));
+  const guarded = [runsFolder(state), path.join(state, 'handoffs'), path.join(state, 'decisions'), ...markFolders({ env, home }), ...signoffFolders({ env, home }), ...decisionStoreFolders({ env, home })].map((each) => resolvedPath(each) ?? path.resolve(each));
   const folders = [];
   for (const name of WORK_FOLDERS) {
     const dir = path.join(base, name);

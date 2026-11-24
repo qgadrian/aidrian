@@ -19,7 +19,7 @@ The keys are in [Project run](config.md#project-run); how a start confines its s
 | [Trust the runs folder](#trust-the-runs-folder) | machine and project | Claude Code | `trust` |
 | [Forge token in the keychain](#forge-token-in-the-keychain) | machine and project | Claude Code | `access`, `note token` |
 | [The decision label](#the-decision-label) | tracker team | both | `ask labels` |
-| [Recorded decisions](#recorded-decisions) | issue, before the run | both | `recorded-decision` of `init --check` |
+| [Recorded decisions](#recorded-decisions) | team once, then each issue before the run | both | `recorded-decision` of `init --check` |
 | [Local binding](#local-binding) | team | both | `note local-binding` |
 | [Keep the user-scope plugin current](#keep-the-user-scope-plugin-current) | machine, after each release | Claude Code | `access` when it is not installed |
 | [Team config](#team-config) | team | both | `policy`, `tracker`, `handoff` |
@@ -200,22 +200,28 @@ own label read; a missing label is a blocker.
 ## Recorded decisions
 
 An issue whose session would park on a decision the Human can answer now gets that answer before the run, in the
-issue's description, and the team pins it ([Recorded decisions](config.md#recorded-decisions)).
+issue's description, recorded on the machine that runs the run ([Recorded decisions](config.md#recorded-decisions)).
+
+Once per team, by pull request: set `"projectRun": { "recordedDecisions": true }` in `.aidrian/config.json` and merge
+it to the default branch, so the forge and the local ref both say it. No issue needs a pull request of its own.
+
+Then per issue, in the attended driver session before `init`:
 
 1. Write the answer under a heading of its own in the issue's description in the tracker, such as `## Export format`.
-   The section stands alone: it names the question and the chosen path in full, never an option's number or "as above",
+   The section stands alone: it names the question and the chosen path in full, never an option's number or "as above".
    The whole description holds no HTML comment, `<details>` block, or `+++` line, fenced or not, and stays under
    20,000 characters: either voids every grant on the issue.
-2. In the attended driver session, read the issue with the tracker's own full issue read, Linear's `get_issue`, so the
-   run records its description.
-3. Run `aidrian project decision <issue> --heading "<heading>"` there. Read the section it prints, then add its last
-   line, the entry, to `projectRun.recordedDecisions` in `.aidrian/config.json`.
-4. Merge that change to the default branch before `init`: the forge and the local ref must pin it alike.
-5. `aidrian project init <run> --file <snapshot> --check` prints `note recorded-decision: <issue> stands: <heading>`.
+2. Read the issue with the tracker's own full issue read, Linear's `get_issue`, so the run records its description.
+3. Run `aidrian project decision <issue> --heading "<heading>"`, read the section it prints, then run the `--record`
+   command its last line prints, which carries the heading and the project's path attached, `--heading='<heading>'`
+   and `--project='<path>'`: it writes the entry to this machine's store and prints where.
+4. `aidrian project init <run> --file <snapshot> --check` prints `note recorded-decision: <issue> stands: <heading>`.
    A `void` note says why the run goes on without it; a `blocker recorded-decision` asks for step 2 in this session, or
    names the policy read that failed.
-6. Remove the entry once the issue's pull request merges.
+5. Once the issue's pull request merges, `aidrian project decision <issue> --forget` removes the entry.
 
+Only a main session the Human attends, which never drove a project run, records or forgets one: once `init` makes a
+session the driver, use another attended session for a later issue.
 The answer settles that one decision and nothing else: the session still parks on anything it does not settle, and on
 a `security-engineer` verdict or a pull request's sign-off.
 

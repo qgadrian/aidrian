@@ -14,7 +14,9 @@ import { DEFAULTS } from '../plugins/aidrian/lib/config-defaults.mjs';
 import { deadlineDenial, WRITE_TARGETS, writeLimitDenial } from '../plugins/aidrian/lib/config-guard.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
-import { baseReader, continueStoreWriteDenial, handoffEnvDenial, mainCheckoutWriteDenial, PROJECT_SUB, PROJECT_WORD, projectRunWriteDenial, remoteChangeDenial, RUNS_FOLDER, stateFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
+import { baseReader, continueStoreWriteDenial, handoffEnvDenial, mainCheckoutWriteDenial, PROJECT_SUB, PROJECT_WORD, projectRunWriteDenial, remoteChangeDenial, RUNS_FOLDER, stateFolders, stateFoldersWriteDenial } from '../plugins/aidrian/lib/handoff-guard.mjs';
+import { decisionStoreFolders } from '../plugins/aidrian/lib/project-decision-store.mjs';
+import { stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { ISSUE_PART, RUN_PART } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
@@ -81,15 +83,41 @@ test('init through the hook is held to attendedProblem with the hook\'s own payl
   assert.match(ask(DRIVER).reason, /another session's handoff gate is starting a background session/u);
 });
 
-test('project decision through the hook is held to attendedProblem, as init: an unattended session and a subagent may not run it', (t) => {
+test('project decision through the hook is held to attendedProblem, as init, in every form: an unattended session, a subagent, and a run\'s driver may not run it', (t) => {
+  const forms = ['--heading "Export format"', '--heading "Export format" --record', '--forget'];
+  const asker = (fx) => (session, form, more = {}) => projectCommandDenial(bash(`aidrian project decision ENG-1 ${form}`, { session_id: session, cwd: fx.dir, ...more }), fx.config, { home: fx.home });
+  const before = runFixture(t, { init: false });
+  const ask = asker(before);
+  markUnattended(OTHER, { root: before.dir, env: before.env });
+  for (const form of forms) {
+    assert.equal(ask(DRIVER, form), null, `the attended main session: ${form}`);
+    assert.match(ask(OTHER, form).reason, /`aidrian project decision` records a decision the Human made, from an attended session only, and the background handoff route started this session/u, form);
+    assert.match(ask(DRIVER, form, { agent_id: 'agent-7' }).reason, /a subagent runs only `aidrian project next`/u, form);
+  }
+  // Once the session drives a run, which may run on with no Human, it records nothing, as the sign-off store's writer.
   const fx = runFixture(t);
-  const ask = (session, more = {}) => projectCommandDenial(bash('aidrian project decision ENG-1 --heading "Export format"', { session_id: session, cwd: fx.dir, ...more }), fx.config, { home: fx.home });
-  assert.equal(ask(DRIVER), null, 'the attended main session');
-  markUnattended(OTHER, { root: fx.dir, env: fx.env });
-  assert.match(ask(OTHER).reason, /`aidrian project decision` pins a decision the Human recorded, from an attended session only, and the background handoff route started this session/u);
-  assert.match(ask(DRIVER, { agent_id: 'agent-7' }).reason, /a subagent runs only `aidrian project next`/u);
+  const driven = asker(fx);
+  for (const form of forms) assert.match(driven(DRIVER, form)?.reason ?? '', /this session drove a project run, which may run on with no Human; run it from another session the Human attends/u, form);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  assert.match(ask(STARTED[0].session)?.reason ?? '', /from an attended session only/u, 'the issue session the run started');
+  for (const form of forms) assert.match(driven(STARTED[0].session, form)?.reason ?? '', /from an attended session only/u, `the issue session the run started: ${form}`);
+});
+
+test('the recorded-decision store is written by no subagent, unattended session, or run\'s driver; an attended main session may', (t) => {
+  const fx = runFixture(t, { init: false });
+  const folders = decisionStoreFolders({ env: fx.env, home: fx.home });
+  const file = path.join(folders[0], 'proj', 'ENG-1.json');
+  // `drove` stands for the agent gates hook's droveHeld, which holds a run's driver to the sign-off store and, by default, this one.
+  const deny = (input, held, drove = held) => stateFoldersWriteDenial({ cwd: fx.dir, session_id: DRIVER, ...input }, fx.config, { unattended: () => held, signoffsHeld: () => drove, marks: [], terminals: [], origins: [], signoffs: [], decisions: folders });
+  for (const call of [{ tool_name: 'Write', tool_input: { file_path: file, content: '{}' } }, bash(`printf '{}' > ${file}`), bash(`rm -rf ${folders[0]}`)]) {
+    assert.match(deny(call, true)?.reason ?? '', /the recorded-decision store, aidrian\/recorded-decisions, which holds the decisions the Human recorded that a project run's sessions act on, and which only `aidrian project decision --record` in a session the Human attends writes/u, JSON.stringify(call));
+    assert.match(deny({ ...call, agent_id: 'agent-7' }, false)?.reason ?? '', /only `aidrian project decision --record` in a main session the Human attends writes/u);
+    assert.match(deny(call, false, true)?.reason ?? '', /recorded-decision store/u, 'a run\'s driver, held as the sign-off store holds it');
+    assert.equal(deny(call, false), null, 'an attended main session');
+  }
+  assert.match(deny(bash('cd "$S" && rm -rf recorded-decisions'), true)?.reason ?? '', /recorded-decision store/u, 'by its folder name');
+  assert.ok(folders.includes(path.join(fx.home, '.local/state/aidrian/recorded-decisions')), 'the home folder\'s own too');
+  const works = stateWorkFolders(fx.state, { env: fx.env, home: fx.home });
+  assert.ok(works.folders, works.problem);
 });
 
 test('a dynamic subcommand word after project is refused to every session', (t) => {

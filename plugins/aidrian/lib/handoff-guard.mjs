@@ -35,6 +35,7 @@ import { DETECT_VARS, HOSTS, IDENTITY_VARS, localServices, mainCheckoutPaths, op
 import { unwrapped } from './package-runner.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir, stateRoot } from './project.mjs';
 import { GIT_VARS } from './review/env.mjs';
+import { DECISION_STORE_FOLDER, decisionStoreFolders } from './project-decision-store.mjs';
 import { SIGNOFF_FOLDER, signoffFolders } from './review/signoff-store.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { SESSION_FILES } from './session-folder.mjs';
@@ -1007,14 +1008,14 @@ function reaches({ files, known, placed, linksTo }, folder, shields, roots) {
 // in a folder no path gives, and a word of a command in a shell the lexer cannot read, count when a part of it is named
 // `unattended`, or, for a glob, may name it (globNamesFile). With `links` false it skips the link walk.
 export function unattendedMarkWriteDenial(input, config, { project = null, links = true, unattended = () => false, folders = markFolders() } = {}) {
-  return stateFoldersWriteDenial(input, config, { project, links, unattended, marks: folders, terminals: [], origins: [], signoffs: [] });
+  return stateFoldersWriteDenial(input, config, { project, links, unattended, marks: folders, terminals: [], origins: [], signoffs: [], decisions: [] });
 }
 
 // Why the call in `input` may not run because it changes the shell records of lib/terminal-replace.mjs, or null, read
 // as unattendedMarkWriteDenial reads the marks, in `folders` (terminalFolders), by the folder name `handoff-terminals`:
 // a record names the session a shell opens in its terminal next, which only a session's own Stop hook writes.
 export function terminalRecordWriteDenial(input, config, { project = null, links = true, unattended = () => false, folders = terminalFolders() } = {}) {
-  return stateFoldersWriteDenial(input, config, { project, links, unattended, marks: [], terminals: folders, origins: [], signoffs: [] });
+  return stateFoldersWriteDenial(input, config, { project, links, unattended, marks: [], terminals: folders, origins: [], signoffs: [], decisions: [] });
 }
 
 // Why the call in `input` may not run because it writes in the sign-off store (lib/review/merge-trust.mjs), or null:
@@ -1023,18 +1024,19 @@ export function terminalRecordWriteDenial(input, config, { project = null, links
 // subagent, and for a main session `unattended()` says no Human attends, and reads a call's targets as
 // unattendedMarkWriteDenial does, with `folders` (signoffFolders) and the part name `signoffs`.
 export function signoffWriteDenial(input, config, { project = null, links = true, unattended = () => false, folders = signoffFolders() } = {}) {
-  return stateFoldersWriteDenial(input, config, { project, links, unattended, signoffsHeld: unattended, marks: [], terminals: [], origins: [], signoffs: folders });
+  return stateFoldersWriteDenial(input, config, { project, links, unattended, signoffsHeld: unattended, marks: [], terminals: [], origins: [], signoffs: folders, decisions: [] });
 }
 
 // The guards above in one pass, which the agent gates hook runs, with the session origins of lib/session-origins.mjs,
 // which name the session folders the session-folder guard holds: the call's write targets, and its link walk, are read
-// once for the four folders. `marks`, `terminals`, `origins`, and `signoffs` are the folders of each. `unattended()`
-// holds a main session to the terminals and the origins; `marksHeld()` and `signoffsHeld()`, `unattended()` by default,
-// to the marks and the sign-off store, so a project run's driver, which a Human may not attend for hours, is held to them
-// too (scripts/hook-agent-gates.mjs).
+// once for the five folders. `marks`, `terminals`, `origins`, `signoffs`, and `decisions` (the recorded-decision store,
+// lib/project-decision-store.mjs) are the folders of each. `unattended()` holds a main session to the terminals and the
+// origins; `marksHeld()` and `signoffsHeld()`, `unattended()` by default, to the marks and the sign-off store, and
+// `decisionsHeld()`, `signoffsHeld()` by default, to the recorded-decision store, so a project run's driver, which a
+// Human may not attend for hours, is held to them too (scripts/hook-agent-gates.mjs).
 export function stateFoldersWriteDenial(input, { names: { human } }, {
-  project = null, links = true, unattended = () => false, marksHeld = unattended, signoffsHeld = unattended,
-  marks = markFolders(), terminals = terminalFolders(), origins = originFolders(), signoffs = signoffFolders(),
+  project = null, links = true, unattended = () => false, marksHeld = unattended, signoffsHeld = unattended, decisionsHeld = signoffsHeld,
+  marks = markFolders(), terminals = terminalFolders(), origins = originFolders(), signoffs = signoffFolders(), decisions = decisionStoreFolders(),
 } = {}) {
   const { files, names, globs } = writeTargets(input);
   const modes = modeTargets(input);
@@ -1058,6 +1060,10 @@ export function stateFoldersWriteDenial(input, { names: { human } }, {
     {
       name: SIGNOFF_FOLDER, folders: signoffs, held: signoffsHeld, what: 'the sign-off store', tells: 'which holds the Human\'s flow sign-offs a merge no Human asks for reads',
       writer: '`aidrian pr signoff` in a session the Human attends', subagentWriter: '`aidrian pr signoff` in a main session the Human attends',
+    },
+    {
+      name: DECISION_STORE_FOLDER, folders: decisions, held: decisionsHeld, what: 'the recorded-decision store', tells: 'which holds the decisions the Human recorded that a project run\'s sessions act on',
+      writer: '`aidrian project decision --record` in a session the Human attends', subagentWriter: '`aidrian project decision --record` in a main session the Human attends',
     },
   ];
   for (const spec of specs) {

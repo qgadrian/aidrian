@@ -1839,7 +1839,8 @@ test('project is a command with its forms, and init refuses a session the host n
   assert.ok(lines.includes('  aidrian project preflight [RUN] [--project DIR]'));
   assert.ok(lines.includes('  aidrian project stop-action RUN ISSUE [--project DIR]'));
   assert.ok(lines.includes('  aidrian project confine RUN ISSUE'));
-  assert.ok(lines.includes('  aidrian project decision ISSUE --heading TEXT [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project decision ISSUE --heading TEXT [--record] [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project decision ISSUE --forget [--project DIR]'));
   const { dir } = projectRun(t, [runIssue('ENG-1')]);
   writeFileSync(path.join(dir, 'other.json.input'), JSON.stringify({ issues: [runIssue('ENG-2')] }));
   const init = await run(['project', 'init', 'second', '--file', 'other.json.input'], dir);

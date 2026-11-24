@@ -1597,7 +1597,11 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     file (`GUARDED_PATHS`), nor a policy file the row's `policyFiles` names, the pinned base tip's, from that head
     (`git diff --name-only --no-renames --no-relative -z <overlay> HEAD`), or it is
     refused with "it pushes commits that change <count> host config or instruction files, and this attempt runs on the
-    base branch's copies of them, so it may change none", and a diff git cannot give refuses it too; its
+    base branch's copies of them, so it may change none but as git merges the base into the branch", and a diff git cannot give refuses it too.
+    The one exception is a merge of the base: each such file in HEAD equals git's clean merge of `<overlay>`
+    and HEAD's merge base with origin's default branch (`git merge-tree --write-tree`).
+    A file that merge conflicts in, or one HEAD holds otherwise, is named in the refusal.
+    Origin's remote-tracking ref is the session's own copy; the pull request's review of host files stands behind it. Its
     commits change no file of the forge's workflow folders (`forgeWorkflowFolders`), nor a folder that holds them, as a
     `.github` made a link, from their merge base with origin's default branch (`refs/remotes/origin/HEAD`, else
     `origin/main`), however the file got there, as by `git apply --cached`, `patch`, `tar -x`, `unzip`, or `git am`,

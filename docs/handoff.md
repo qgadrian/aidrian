@@ -660,6 +660,10 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   sign-off where [Project run](config.md#project-run) asks for one; otherwise its clone holds the base branch's copies,
   git leaves them out of its commits, and a push that changes one is refused.
   The branch's own changes stay in its commits for the pull request's review.
+  A later or resumed attempt whose pull request conflicts with its moved base catches up with `git merge origin/<base>`, a merge commit, never a rebase.
+  It parks on a conflict inside a host file, which `git merge-tree` names first, and resolves the others as ordinary work.
+  It never edits a host file: git merges the base copies in the index alone and leaves them on disk.
+  The push guard lets that merge's host files through only as git merges them ([agent gates](hooks.md#agent-gates)).
   A branch the run's ledger cannot account for, or base copies that cannot be made safely, park the issue as
   unreconciled, with the branch and pull request untouched ([Project run](config.md#project-run) lists each case).
   To start an issue over, a person deletes its branch on the forge; closing the pull request alone does not.

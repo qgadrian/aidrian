@@ -2015,6 +2015,14 @@ after the read is an accepted residual.
 The start row records that head as `overlay`, and `<attempt>/base-copies.txt` lists the files, cleaned and fenced as
 data from the branch.
 The branch's own changes stay in its commits for the pull request's review.
+The one change to those files a push may carry is a merge of a moved base, which a later or resumed attempt makes when its pull request conflicts with it.
+The session runs `git merge origin/<base>` with a merge commit, never a rebase or a force push.
+It resolves conflicts outside the host files as ordinary work.
+The push guard lets each host file through only as git's clean merge of `overlay` and that base gives it ([agent gates](hooks.md#agent-gates)).
+Before the merge, `git merge-tree --write-tree --name-only` names the files that would conflict, and one of the host files parks the issue, naming it.
+The start keeps each base copy out of the clone's sparse-checkout definition, with `sparse.expectFilesOutsideOfPatterns` set.
+So the merge writes git's merge of each to the index alone, the base copy stays on disk, and none needs a refresh.
+Without that, git refuses any merge that changes a base copy, as a local change it would overwrite.
 Each start row records the commit the branch was at as `head`, and every later attempt goes on only on a branch that
 holds the last head recorded, of a start that ran or a result: a start given back (`void`) records none.
 A later run resumes from the same latest head of the earlier run's rows; only a run whose rows carry no head at all

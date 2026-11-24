@@ -48,14 +48,43 @@ function ownCloneProblem(folder, root, pushUrl, fold) {
 // Why the commits a push from `folder` carries change a host config or instruction file (GUARDED_PATHS), or a policy
 // file (isPolicyPath, with `policyFiles`, the ones the gate resolved at the start), from `overlay`, the branch head its
 // attempt started from on the base branch's copies of them (lib/project-start.mjs prepareAttempt), or null, as for an
-// attempt with none. A git call that fails refuses the push.
+// attempt with none. The one change it lets through is a merge of the base (mergedProblem): each such file as git's
+// clean merge of `overlay` and the base gives it. A git call that fails refuses the push.
 function overlayProblem(folder, overlay, policyFiles) {
   if (!overlay) return null;
+  const guarded = (file) => file !== '' && (GUARDED_PATHS.test(file) || isPolicyPath(file, policyFiles));
   const diff = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', overlay, 'HEAD', '--'], folder);
   if (diff.status !== 0) return `it pushes, and ${SLOW} which files its commits change from ${overlay.slice(0, 7)}, the head its attempt started from on the base branch's copies of the host config and instruction files`;
-  const count = diff.stdout.split('\0').filter((file) => file !== '' && (GUARDED_PATHS.test(file) || isPolicyPath(file, policyFiles))).length;
+  const count = diff.stdout.split('\0').filter(guarded).length;
   if (!count) return null;
-  return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none; take those changes out of the commits, or record the result parked when the issue needs them`;
+  const merged = mergedProblem(folder, overlay, guarded);
+  if (merged === null) return null;
+  return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none but as git merges the base into the branch (${merged}); take those changes out of the commits, or record the result parked naming the file when the issue needs them`;
+}
+
+// Why HEAD in `folder` holds a file `guarded` names other than as git's clean merge of `overlay` with the base it holds,
+// or null when it holds every one as that merge gives it: what a session that merged origin's default branch in, and
+// edited none of them, pushes. The base is HEAD's merge base with the first of BASE_REFS git resolves, the commit such a
+// merge brought in; a file that merge cannot make cleanly, a conflict, is never git's merge. A short reason, never null,
+// when git cannot say.
+// SHORTCUT: origin's remote-tracking ref is the session's own copy, as committedProblem's is; the pull request's diff
+// against the forge's own base, which the merge gate holds for a review of these files, stands behind it.
+function mergedProblem(folder, overlay, guarded) {
+  for (const ref of BASE_REFS) {
+    const base = budgeted(['merge-base', 'HEAD', ref], folder);
+    if (base.status === null) return SLOW;
+    if (base.status !== 0) continue;
+    const merge = budgeted(['merge-tree', '--write-tree', '--no-messages', '--name-only', '-z', overlay, base.stdout.trim()], folder);
+    if (merge.status !== 0 && merge.status !== 1) return `${SLOW} how the base merges`;
+    const [tree, ...conflicted] = merge.stdout.split('\0').filter((each) => each !== '');
+    const conflict = conflicted.find(guarded);
+    if (conflict) return `${conflict.slice(0, 120)} conflicts in that merge, which a session never resolves by hand`;
+    const differ = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', tree, 'HEAD', '--'], folder);
+    if (differ.status !== 0) return `${SLOW} how the head differs from the merge`;
+    const edited = differ.stdout.split('\0').find(guarded);
+    return edited ? `${edited.slice(0, 120)} differs from git's merge of the base` : null;
+  }
+  return 'git names no merge base with origin\'s default branch';
 }
 
 // The forge's workflow folders and every folder that holds one, as `:(top,literal)` pathspecs: a holding folder, as

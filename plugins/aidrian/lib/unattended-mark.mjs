@@ -130,27 +130,6 @@ export function markUnattended(session, { root, cwd = null, env = process.env, n
   }
 }
 
-// Files the plain mark of `session` as markUnattended does, and gives { file, undo }: `undo()` puts back the mark file it
-// replaced, byte for byte, or removes the new one when there was none, for a caller whose next step fails, as a custody
-// move whose ledger row is never written (lib/project-run-gate.mjs resumeRun). { file: null } when it files none.
-// Never throws.
-export function markUnattendedUndoably(session, options = {}) {
-  let before = null;
-  try {
-    const own = path.join(markFolder(options.env ?? process.env), `${session}.json`);
-    before = lstatSync(own).isFile() ? readFileSync(own) : null;
-  } catch {}
-  const file = markUnattended(session, options);
-  if (!file) return { file: null, undo: () => {} };
-  const undo = () => {
-    try {
-      if (before === null) unlinkSync(file);
-      else writeFileSync(file, before, { mode: 0o600 });
-    } catch {}
-  };
-  return { file, undo };
-}
-
 // Files the driver mark of `session`, `driver.<session>.json`, { role: 'driver', run, root, state, at }, in
 // markFolder(env): the session drives the project run `run` of the main checkout `root`, whose ledger is in the state
 // folder `state`, by its real path. `aidrian project init` files it before its init row, and the current driver files it

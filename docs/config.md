@@ -359,8 +359,23 @@ An older plugin rejects the key as unknown, so set `requires.aidrian` as above.
 
 ### When it is on
 
-`aidrian pr auto-merge [PR] [--json]` reports it for one pull request: a number, `#number`, or URL, or by default the
+`aidrian pr auto-merge [PR] --check [--json]` reports it for one pull request: a number, `#number`, or URL, or by default the
 current branch's. It exits 0 when on, 1 when off, and 3 on an error, such as a bad argument or a failed gh read.
+Exit 0 merges nothing: its line reads `auto-merge allowed for #<PR> at <sha>, not merged yet: …`.
+
+Without `--check`, the command says whether the merge happened, so a session that reads it as the merge is never told
+it merged when nothing did. When the gate is off, it prints and exits as `--check` does. When it is on, it reads the
+pull request on GitHub once more, and its line says which of these holds; `--json` adds `merge`:
+
+| `merge` | Exit | What holds |
+| --- | --- | --- |
+| `merged` | 0 | GitHub merged the pull request. |
+| `requested` | 0 | GitHub holds an auto-merge request for it, which merges it once its required checks pass. |
+| `none` | 4 | Nothing merged it and GitHub holds no request. The line names the command to run once every check passes, `gh pr merge <PR> --repo <owner>/<name> --<strategy> --match-head-commit <sha>`, with `--delete-branch` when `deleteBranch` is true, and `--json` adds it as `command`. |
+| `closed` | 1 | It is closed with no merge. |
+
+It never merges itself: the session runs that merge, through the [merge guard](hooks.md#merge-guard),
+after the `pr-merge-when-green` steps waited for every check. A failed read of the pull request exits 3.
 
 It is on only when all of these hold, checked in this order; the last two, `closes` and `trust`, only in a session no Human attends.
 With `--json`, `reason` names the first that fails and `why` says it in a sentence; both are `null` when on.
@@ -384,7 +399,7 @@ So a checkout whose lists differ from the default branch's does not auto-merge, 
 ### What a run does
 
 The `pr-review-loop`, `orchestration`, and `autopilot` skills run the `pr-auto-merge` skill, only after that same run marked the draft ready.
-`pr-auto-merge` stops unless this run marked the pull request ready and the command exits 0,
+`pr-auto-merge` stops unless this run marked the pull request ready and the command, with `--check`, exits 0,
 and otherwise reads `pr-merge-when-green` and follows its steps as an unattended run.
 When the command refuses because the pull request changes a path it never merges, it has stopped before its author,
 comment, and review checks, so the run's final report hands the pull request to the Human for review and merge, rated,
@@ -1924,7 +1939,7 @@ a usage limit past the run's pauses, and any halt row an older plugin wrote wait
 When an issue's pull request does not merge, its session runs `aidrian project stop-action RUN ISSUE`, as the
 autopilot skill's phases say. Only the issue's own session runs it: the newest session of the chain of the issue's
 latest start, while the issue runs, whose mark names that run and issue; never the driver. It finds the pull request
-of the issue's branch in the repository init pinned, reads `aidrian pr auto-merge --json` in the same process, and
+of the issue's branch in the repository init pinned, reads `aidrian pr auto-merge --check --json` in the same process, and
 prints one line, `<action> <issue> #<n> at <head>: <why> (<used> of <cap> <scope>); <what to do next>`, for exactly
 one action. The `why` is cleaned and capped as a result's `stop` is, and a forge error in it is quoted.
 

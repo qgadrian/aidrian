@@ -22,7 +22,7 @@ Never add an entry on your own during a merge run.
 
 ## Auto-merge
 
-`aidrian pr auto-merge` exits 0 only when all seven hold; with `--json`, `reason` names the first that fails:
+`aidrian pr auto-merge --check` exits 0 only when all seven hold; with `--json`, `reason` names the first that fails:
 
 - `team`: config.json `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base.
   It reads them from GitHub as each branch commits them now, never from the checkout, so a branch cannot raise them.

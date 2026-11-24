@@ -8,7 +8,7 @@ import test from 'node:test';
 
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
-import { pathsProblem, reviewProblem, runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { pathsProblem, reviewProblem, runAutoMerge, runAutoMergeCommand } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { markOnce } from '../plugins/aidrian/lib/closing-words.mjs';
 import { configFromText, loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
@@ -184,7 +184,74 @@ test('both layers on, the Human\'s own pull request, and a finished review on it
   const human = run(t, r, ['7']);
   assert.equal(human.code, 0);
   assert.equal(human.out.length, 1);
-  assert.match(human.out[0], /^auto-merge on for #7 at abcdef1: squash, delete the branch, keep the worktree$/);
+  assert.match(human.out[0], /^auto-merge allowed for #7 at abcdef1, not merged yet: squash, delete the branch, keep the worktree$/);
+});
+
+// The command as `aidrian pr auto-merge` runs it: the gate, then, when it allows the merge, whether GitHub merged the
+// pull request or holds an auto-merge request for it. `pull` is what the forge's pull read gives, or a function for it.
+function runCommand(t, r, argv, pull, ghOptions = {}) {
+  const out = [];
+  const err = [];
+  const { forge, calls } = fakeForge({ ...ghOptions, pullHead: typeof pull === 'function' ? pull : () => pull });
+  const code = runAutoMergeCommand(argv, r.project, { forge, out: { log: (line) => out.push(line), error: (line) => err.push(line) } });
+  return { code, out, err, calls };
+}
+const OPEN_PULL = { state: 'open', merged: false, merged_at: null, auto_merge: null, head: { sha: HEAD } };
+
+test('aidrian pr auto-merge: a gate that allows a merge nothing ran exits 4, names the merge command, and never reads as done (#620, #622)', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const plain = runCommand(t, r, ['7'], OPEN_PULL);
+  assert.equal(plain.code, 4, 'allowed but not merged is not exit 0');
+  assert.deepEqual(plain.out, [
+    'auto-merge allowed for #7 at abcdef1, not merged: nothing merged it, and GitHub holds no auto-merge request. ' +
+    `Run the pr-auto-merge skill: it waits until \`aidrian pr checks 7 -R acme/notes\` exits 0, then runs \`gh pr merge 7 --repo acme/notes --squash --match-head-commit ${HEAD} --delete-branch\``,
+  ]);
+  assert.doesNotMatch(plain.out[0], /auto-merge on\b/u, 'no line that reads as GitHub\'s auto-merge turned on');
+  assert.deepEqual(plain.calls.at(-1), ['pull', 'acme/notes', 7, 'github.com'], 'the merge state is read last, after every gate check');
+  const asJson = runCommand(t, r, ['7', '--json'], OPEN_PULL);
+  assert.equal(asJson.code, 4);
+  assert.deepEqual(json(asJson), {
+    effective: true, reason: null, why: null, allow: true, local: 'on', strategy: 'squash', deleteBranch: true, deleteWorktree: false,
+    pr: 7, head: HEAD, repo: 'acme/notes', base: 'main', merge: 'none',
+    command: `gh pr merge 7 --repo acme/notes --squash --match-head-commit ${HEAD} --delete-branch`,
+  });
+  const ghe = runCommand(t, r, ['7'], OPEN_PULL, { view: { url: 'https://ghe.acme.io/acme/notes/pull/7' } });
+  assert.match(ghe.out[0], /`gh pr merge 7 --repo ghe\.acme\.io\/acme\/notes --squash /u, 'another host is named in --repo');
+  const keep = runCommand(t, r, ['7'], OPEN_PULL, { files: { 'acme/notes@main:.aidrian/config.json': configText({ ...TEAM, strategy: null, deleteBranch: false }) } });
+  assert.match(keep.out[0], new RegExp(`--repo acme/notes --<squash\\|merge\\|rebase> --match-head-commit ${HEAD}\`$`, 'u'), 'no strategy and a kept branch');
+});
+
+test('aidrian pr auto-merge exits 0 only when GitHub merged the pull request or holds an auto-merge request for it, and says which', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const merged = runCommand(t, r, ['7'], { ...OPEN_PULL, state: 'closed', merged: true, merged_at: '2026-11-24T10:45:06Z' });
+  assert.deepEqual([merged.code, merged.out], [0, ['auto-merge allowed for #7 at abcdef1, merged: GitHub merged it at 2026-11-24T10:45:06Z']]);
+  const mergedJson = runCommand(t, r, ['7', '--json'], { ...OPEN_PULL, state: 'closed', merged: true, merged_at: '2026-11-24T10:45:06Z' });
+  assert.deepEqual([mergedJson.code, json(mergedJson).merge, json(mergedJson).command], [0, 'merged', undefined]);
+  const requested = runCommand(t, r, ['7'], { ...OPEN_PULL, auto_merge: { merge_method: 'squash', enabled_by: { login: 'adrian' } } });
+  assert.deepEqual([requested.code, requested.out], [0, ['auto-merge allowed for #7 at abcdef1, merge requested: GitHub holds an auto-merge request (squash) for it, and merges it once its required checks pass']]);
+  assert.equal(json(runCommand(t, r, ['7', '--json'], { ...OPEN_PULL, auto_merge: { merge_method: 'squash' } })).merge, 'requested');
+  const closed = runCommand(t, r, ['7', '--json'], { ...OPEN_PULL, state: 'closed' });
+  assert.deepEqual([closed.code, json(closed).merge], [1, 'closed'], 'closed with no merge: nothing to merge, and not done');
+});
+
+test('aidrian pr auto-merge --check is the gate alone: exit 0 allows the merge, its line says nothing merged yet, and it reads no merge state', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const check = runCommand(t, r, ['7', '--check'], () => assert.fail('--check reads no merge state'));
+  assert.deepEqual([check.code, check.out], [0, ['auto-merge allowed for #7 at abcdef1, not merged yet: squash, delete the branch, keep the worktree']]);
+  const checkJson = runCommand(t, r, ['--check', '7', '--json'], () => assert.fail('--check reads no merge state'));
+  assert.deepEqual([checkJson.code, json(checkJson).effective, json(checkJson).merge], [0, true, undefined]);
+  r.record((state) => finished(state, OLD));
+  const off = runCommand(t, r, ['7'], () => assert.fail('a refusal reads no merge state'));
+  assert.equal(off.code, 1, 'off is off, without --check too');
+  assert.match(off.out[0], /^auto-merge off for #7: the last review covered 1234567, not head abcdef1$/u);
+  r.record((state) => finished(state));
+  const failed = runCommand(t, r, ['7'], () => { throw Object.assign(new Error('Command failed'), { stderr: 'gh: Bad credentials (HTTP 401)\n' }); });
+  assert.deepEqual([failed.code, failed.out, failed.err], [3, [], ['aidrian pr auto-merge: could not read whether #7 merged with gh (gh: Bad credentials (HTTP 401))']]);
+  const partial = runCommand(t, r, ['7'], { head: { sha: HEAD } });
+  assert.deepEqual([partial.code, partial.err], [3, ['aidrian pr auto-merge: gh returned no merged state for #7']]);
 });
 
 test('every forge call after the view names the host of the pull request\'s URL', (t) => {
@@ -360,7 +427,7 @@ test('review: none_needed on the current head, of files the team lists in github
   assert.deepEqual(reasonOf(t, r, listed(changing('README.md', 'guide/a.md', 'img/b.png', 'img/d.ico', 'img/e.webp', 'img/f.jpeg', 'img/g.gif'))), [0, null], 'listed prose and raster images');
   assert.deepEqual(reasonOf(t, r, { files: onMain(listing(), { nonBehaviour: ['**/*.md', '**/*.avif'] }), view: changing('README.md', 'img/c.avif') }), [0, null], 'an .avif the default branch\'s own list names');
   const human = run(t, r, ['7'], listed(changing('README.md')));
-  assert.deepEqual([human.code, human.out], [0, ['auto-merge on for #7 at abcdef1: squash, delete the branch, keep the worktree']]);
+  assert.deepEqual([human.code, human.out], [0, ['auto-merge allowed for #7 at abcdef1, not merged yet: squash, delete the branch, keep the worktree']]);
 });
 
 test('review: none_needed for an earlier head, a missing record, or an owed review is off, as for a received review', (t) => {

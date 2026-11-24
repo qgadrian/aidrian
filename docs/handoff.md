@@ -442,7 +442,7 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    keeps, such as merging, releasing, deleting, force pushing, posting outside the repository, changing config or
    permissions, and starting other sessions, still waits for the Human, and a brief that asks for one is reported.
    The one exception is the project's own setting, never the brief's: a pull request the continuation itself marked ready,
-   and for which `aidrian pr auto-merge <url>` then exits 0, is merged through the `pr-auto-merge` skill, as in any unattended run,
+   and for which `aidrian pr auto-merge <url> --check` then exits 0, is merged through the `pr-auto-merge` skill, as in any unattended run,
    so [auto-merge](config.md#auto-merge) holds across a handoff.
    One an earlier session marked ready may be waiting for a person's review, so it stays the Human's to merge.
 5. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds

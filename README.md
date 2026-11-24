@@ -181,7 +181,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian pr await-review` | Waits for the review bot. | [`pr-review-loop`](plugins/aidrian/skills/pr-review-loop/SKILL.md) |
 | `aidrian pr attest` | Records the review the review gate asks for before the bot. | [Review gate](docs/config.md#review-gate) |
 | `aidrian pr checks` | Gives a one-line verdict on the checks. | [`pr-merge-when-green`](plugins/aidrian/skills/pr-merge-when-green/SKILL.md) |
-| `aidrian pr auto-merge` | Says whether a session may merge a pull request unasked. | [Auto-merge](docs/config.md#auto-merge) |
+| `aidrian pr auto-merge` | Says whether a session may merge a pull request unasked (`--check`), or whether it merged. | [Auto-merge](docs/config.md#auto-merge) |
 | `aidrian pr disposition` | Decides what to do with one review finding. | [`pr-review`](plugins/aidrian/skills/pr-review/SKILL.md) |
 | `aidrian test changed` | Runs only the test files a change touches, the local check before a push; CI runs the full suite. | [Push first](docs/hooks.md#push-first) |
 | `aidrian commit-msg` | Checks a commit message. | [Commit messages](docs/hooks.md#commit-messages) |

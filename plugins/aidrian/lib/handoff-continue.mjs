@@ -713,7 +713,7 @@ export function backgroundPrompt({ marker, kept, sha256: hash, maxChain }) {
       'merging, releasing, deleting branches, files, or data, force pushing, posting outside the repository, changing config or permissions, ' +
       'and starting other sessions beyond the handoff gate\'s own. Where the brief asks for one of them, report it, and do not do it. ' +
       'The one exception is the project\'s own, never the brief\'s: a pull request this session marked ready with `gh pr ready`, ' +
-      'and for which `aidrian pr auto-merge <url>` then exits 0, is merged through the pr-auto-merge skill, as in any unattended run.',
+      'and for which `aidrian pr auto-merge <url> --check` then exits 0, is merged through the pr-auto-merge skill, as in any unattended run.',
     `A later brief for this work carries Chain: ${next}.`,
   ].join('\n');
 }

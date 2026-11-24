@@ -424,14 +424,15 @@ const printedReviews = (output, command) => [...withoutCommand(output, command).
 
 // The verdicts `aidrian pr auto-merge` printed in a call's output: [{ pr, path }], one per verdict, where `path` is the
 // changed file of a refusal that names one, else null (lib/pr-auto-merge.mjs runAutoMerge prints them). A verdict is a
-// line that starts `auto-merge on for #<n> ` or `auto-merge off for #<n>: `, or, under --json, a line that is one object
+// line that starts `auto-merge allowed for #<n> at <sha>`, then the merge state and a colon, or `auto-merge off for #<n>: `,
+// or `auto-merge on for #<n> at <sha>: `, an older plugin's pass, or, under --json, a line that is one object
 // with a boolean `effective` and a whole-number `pr`. A refusal names a path when its sentence, the `why` of the object
 // under `reason` "paths", opens `it changes "<path>",` as each refusal of pathsProblem that names a changed file does:
 // a guarded path, a policy file, a file the gate reads its policy from, the release script, a start-loaded knowledge doc,
 // and a file outside the project's folder. A refusal for a rename, a file count, or any other reason names none.
 // test/transcript.test.mjs builds those sentences from pathsProblem itself, so its wording and this reader stay in step.
 // The `s` flag lets the sentence hold a line separator, such as U+2028 in a path, which `.` would stop at.
-const GATE_LINE = /^auto-merge (on|off) for #(\d+)(?: at [0-9a-f]+: |: )(.*)$/su;
+const GATE_LINE = /^auto-merge (on|allowed|off) for #(\d+)(?: at [0-9a-f]+[^:]*: |: )(.*)$/su;
 const CHANGED_PATH = /^it changes ("(?:[^"\\]|\\.)*"),/u;
 const changedPath = (why) => {
   const quoted = typeof why === 'string' ? CHANGED_PATH.exec(why)?.[1] : undefined;

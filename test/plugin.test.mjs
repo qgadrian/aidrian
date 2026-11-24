@@ -368,7 +368,7 @@ test('each skill that marks a pull request ready merges only through pr-auto-mer
     assert.doesNotMatch(text, /Only the Human starts the `pr-merge-when-green`|which only the Human starts/, `${name} no longer reserves the merge to the Human`);
     assert.match(text, /pr-auto-merge|pr-merge-when-green/, `${name} names a merge skill`);
   }
-  assert.match(callerTexts.autopilot, /`aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill/, 'autopilot names the auto-merge condition');
+  assert.match(callerTexts.autopilot, /`aidrian pr auto-merge <n> --check` exits 0, through the `pr-auto-merge` skill/, 'autopilot names the auto-merge condition');
   assert.match(callerTexts.autopilot, /# autopilot Take one task from implementation to a reviewed pull request while the Human is away, then report\. It merges only when auto-merge is on\./, 'its first line matches its description');
   assert.match(callerTexts.orchestrator, /`pr-merge-when-green` skill, which the Human starts, or as the `orchestration` skill's § 3 step 8 says/, 'the orchestrator names both ways to merge');
   assert.match(callerTexts.autopilot, /^---[^]*?description:[^\n]*Merges only when auto-merge is on\./, 'the listing says so too');
@@ -387,7 +387,7 @@ test('pr-merge-when-green is the Human\'s to start; pr-auto-merge is the one way
   assert.doesNotMatch(text, /--unattended/u);
   const rule = text.slice(text.indexOf('\n1. Merge only'), text.indexOf('\n2. Never `gh pr merge --auto`')).replace(/\s+/g, ' ');
   assert.match(rule, /the Human's explicit request/u);
-  assert.match(rule, /a run through the `pr-auto-merge` skill after `aidrian pr auto-merge` exited 0/u);
+  assert.match(rule, /a run through the `pr-auto-merge` skill after `aidrian pr auto-merge --check` exited 0/u);
   assert.match(rule, /Anything else.*stops the run/u);
   const auto = readFileSync(path.join(PLUGIN, 'skills/pr-auto-merge/SKILL.md'), 'utf8');
   assert.doesNotMatch(auto.split(/^---$/mu)[1], /disable-model-invocation/u, 'skills run it, so the model must be able to');
@@ -555,14 +555,14 @@ test('a direct run of an implementing skill goes on into the review loop, and a 
   assert.match(phase8, /When no skill or agent above it runs the review loop, as on a direct run, the session owns what follows, and the run goes on after the report\./);
   assert.match(phase8, /config\.json `github\.reviewLoop` `"auto"`, the default, the session runs the `pr-review-loop` skill on the pull request right away/);
   assert.match(phase8, /as its own next step and not as a step of this skill/, 'the loop does not read itself as another skill\'s step');
-  assert.match(phase8, /marks the draft ready as `github\.markReady` says and, once it marked it ready, runs the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n>` exits 0/);
+  assert.match(phase8, /marks the draft ready as `github\.markReady` says and, once it marked it ready, runs the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n> --check` exits 0/);
   assert.match(phase8, /Under `"ask"`, the session offers the loop and runs it when the Human asks\./);
   assert.match(phase8, /A caller that runs its own review loop keeps it, so the loop runs once\./);
 
   // plan-implement runs phase 8 and never forks the engine, so it cites the continuation instead of copying it.
   const plan = read('skills/plan-implement/SKILL.md');
   assert.match(section(plan, '## After the draft'),
-    /Phase 8's end holds here, with this skill as the one run: on a direct run under `github\.reviewLoop` `"auto"` the session goes on into the `pr-review-loop` skill, its ready step, and the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n>` exits 0\./);
+    /Phase 8's end holds here, with this skill as the one run: on a direct run under `github\.reviewLoop` `"auto"` the session goes on into the `pr-review-loop` skill, its ready step, and the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n> --check` exits 0\./);
   assert.match(plan, /This skill writes to the pull request only through the `pr-write` step and phase 7's integration review/);
   assert.doesNotMatch(plan, /The run writes to the pull request only through/, 'plan-implement does not forbid the loop that follows');
 

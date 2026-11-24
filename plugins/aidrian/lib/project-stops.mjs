@@ -6,7 +6,7 @@
 // The stop is read in this order, and the first that holds decides:
 //   1. the pull request on the forge (mergeState), found by the issue's branch in the repository init pinned, from no
 //      fork, into the default branch: merged is `done`; closed, or another base, parks.
-//   2. `aidrian pr auto-merge --json` (runAutoMerge, in this process, as this session): a policy reason (POLICY_REASONS),
+//   2. `aidrian pr auto-merge --check --json` (runAutoMerge, in this process, as this session): a policy reason (POLICY_REASONS),
 //      a `review` whose reason is changes requested, and a reason this file does not know park with the reason; `trust`
 //      with `signoff` parks as a decision for the Human, who signs off from a session they attend, of class `security`
 //      or `product` as auto-merge's `signoffClass` names it.
@@ -230,7 +230,7 @@ function rerunProblem(forge, repository, view, branch, runs) {
   return null;
 }
 
-// `aidrian pr auto-merge --json` on `url`, in this process, as the session `session`: { result } or { error }.
+// `aidrian pr auto-merge --check --json` on `url`, in this process, as the session `session`: { result } or { error }.
 function autoMergeOf(project, url, { forge, session, home }) {
   const out = [];
   const err = [];

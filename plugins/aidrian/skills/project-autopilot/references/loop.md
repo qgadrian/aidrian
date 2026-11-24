@@ -114,11 +114,8 @@ id with a line that says `which the host continued as <id>`.
 1. Run `aidrian project resume <run> --custody` once.
 2. Exit 0 with a `custody:` line: this session drives the run now; drive on from step 1 of § Each pass. A
    `note: the halt stands:` line after it means the run is still halted, so that step's `halted` line comes next.
-3. Exit 75, `retry: <why>`: not § Retry, whose `wait` needs custody this session does not hold yet. Run
-   `aidrian project next <run>`, which reads without custody, then this resume again; after two such retries that still
-   exit 75: § Stop, with the line as the cause.
-4. Anything else, such as a refusal that a person must attend, where the team did not set `projectRun.fullAuto`:
-   § Stop, with its stderr line as the cause. Never run it again to see whether it passes.
+3. Any other answer, exit 75 included: § Stop, with its stderr line as the cause; a driver command it runs that is
+   refused again with `which the host continued as` is skipped, never § Continued again. Never run the resume again.
 
 ## Finish
 

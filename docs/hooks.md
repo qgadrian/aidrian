@@ -1479,7 +1479,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `yarn dlx`, `npm exec`, `npm x`, and `pnpm exec`, by a host's own package name too (an adapter's `packages`), so
     `npx opencode-ai plugin add x` reads as `opencode plugin add x`. The first word after the runner's own word that
     names a host's program or package is the program, wherever the runner's options stand, so `npm --cache /d exec
-    codex login` counts; a call that names none reads its first word past the runner's word and options. Its one false
+    codex login` counts. A call that names none is read through only when the runner's word is its first word that is
+    no option, as `npm exec -- lerna publish`, so `npm -w web exec lerna publish` reads as npm and passes. Its one false
     refusal: a runner call that names a host's program as a later argument of another program, such as `npx prettier claude`.
   - A review manifest takes the name of the review gate's old attest record, `pr-<n>.json`, so a write that may give it
     a top-level `reviewer` key is refused: a file tool's text that parses as JSON with that key, escapes read as JSON

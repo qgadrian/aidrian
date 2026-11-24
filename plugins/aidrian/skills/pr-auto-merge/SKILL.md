@@ -24,6 +24,6 @@ The pull request: a number (`12` or `#12`) or a URL. None: the current branch's.
    with how critical it is: blocking, high, medium, or low. A report that names the Human writes the name in place of "your",
    as in `needs <name>'s review and merge: …`. The Stop hook sends back a turn whose reports leave it out.
 3. Read `../pr-merge-when-green/SKILL.md`, in that skill's folder from this one, and follow its steps for this pull request
-   as an unattended run, to its confirm step. Its `references/` files are in that folder too.
-   Without `--check`, `aidrian pr auto-merge <n>` says whether the pull request merged: exit 0 when GitHub merged it or holds
-   an auto-merge request for it, and 4, with the `gh pr merge` command to run, when nothing has. Never report a merge on less.
+   as an unattended run, through its confirm and cleanup steps. Its `references/` files are in that folder too.
+   Without `--check`, `aidrian pr auto-merge <n>` says whether the pull request merged: exit 0 when GitHub merged it, queued it,
+   or holds an auto-merge request for it, and 4, with the `gh pr merge` command to run, when nothing has. Never report a merge on less.

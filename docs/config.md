@@ -370,12 +370,14 @@ pull request on GitHub once more, and its line says which of these holds; `--jso
 | `merge` | Exit | What holds |
 | --- | --- | --- |
 | `merged` | 0 | GitHub merged the pull request. |
+| `queued` | 0 | GitHub's merge queue holds it, and merges it once the queue's checks pass. |
 | `requested` | 0 | GitHub holds an auto-merge request for it, which merges it once its required checks pass. |
-| `none` | 4 | Nothing merged it and GitHub holds no request. The line names the command to run once every check passes, `gh pr merge <PR> --repo <owner>/<name> --<strategy> --match-head-commit <sha>`, with `--delete-branch` when `deleteBranch` is true, and `--json` adds it as `command`. |
+| `none` | 4 | Nothing merged it, and GitHub holds no request and no queue entry. The line names the command to run once every check passes, `gh pr merge <PR> --repo <host>/<owner>/<name> --<strategy> --match-head-commit <sha>`, with `--delete-branch` when `deleteBranch` is true, and `--json` adds it as `command`. With no `strategy` set, `command` is null and the line says to pick one, as the `pr-merge-when-green` skill does. |
 | `closed` | 1 | It is closed with no merge. |
 
 It never merges itself: the session runs that merge, through the [merge guard](hooks.md#merge-guard),
-after the `pr-merge-when-green` steps waited for every check. A failed read of the pull request exits 3.
+after the `pr-merge-when-green` steps waited for every check. The read must give the head the gate passed:
+a head pushed in between exits 3, as does a failed read of the pull request.
 
 It is on only when all of these hold, checked in this order; the last two, `closes` and `trust`, only in a session no Human attends.
 With `--json`, `reason` names the first that fails and `why` says it in a sentence; both are `null` when on.

@@ -502,34 +502,59 @@ export function runAutoMerge(argv, project, options = {}) {
   return verdict.code;
 }
 
-// The repository of `result`, gateVerdict's object, as gh's `--repo` takes it: with its host when it is not github.com.
-const repoArg = (result, host) => (host && host !== 'github.com' ? `${host}/${result.repo}` : result.repo);
+// The repository of `result`, gateVerdict's object, as gh's `--repo` takes it: always with its host, so gh never resolves
+// a bare owner/name against another host it is signed in to.
+const repoArg = (result, host) => `${host}/${result.repo}`;
 
-// The `gh pr merge` command that merges the pull request of `result` by the team's choices, at exactly its head.
+// The `gh pr merge` command that merges the pull request of `result` by the team's choices, at exactly its head, or null
+// when the team sets no strategy: the pr-merge-when-green skill picks one then, and no flag can stand in for it.
 export function mergeCommand(result, host) {
-  return `gh pr merge ${result.pr} --repo ${repoArg(result, host)} --${result.strategy ?? '<squash|merge|rebase>'} --match-head-commit ${result.head}${result.deleteBranch ? ' --delete-branch' : ''}`;
+  if (!result.strategy) return null;
+  return `gh pr merge ${result.pr} --repo ${repoArg(result, host)} --${result.strategy} --match-head-commit ${result.head}${result.deleteBranch ? ' --delete-branch' : ''}`;
 }
 
-// Where the REST pull request `pull` stands: `merged`, `closed` with no merge, `requested` with GitHub's auto-merge
-// request, or `none`.
-function mergeState(pull) {
-  if (pull.merged) return 'merged';
-  if (pull.state === 'closed') return 'closed';
-  return pull.auto_merge ? 'requested' : 'none';
+// Where the pull request stands, by the forge's mergeStatus: `merged`; `closed` with no merge; `queued` in GitHub's
+// merge queue; `requested` with GitHub's auto-merge request; or `none`.
+function mergeState(status) {
+  if (status.merged) return 'merged';
+  if (status.state === 'closed') return 'closed';
+  if (status.queued) return 'queued';
+  return status.autoMerge ? 'requested' : 'none';
+}
+
+// What the line says after the gate's lead, for each merge state.
+function mergeLine(merge, status, result, host, command) {
+  const checks = `\`aidrian pr checks ${result.pr} -R ${repoArg(result, host)}\` exits 0`;
+  const run = command ? `then runs \`${command}\``
+    : `picks a merge strategy, since the team sets none, then runs \`gh pr merge ${result.pr} --repo ${repoArg(result, host)} --match-head-commit ${result.head}\` with its flag`;
+  return {
+    merged: `merged: GitHub merged it at ${status.mergedAt ?? 'a time it does not give'}`,
+    queued: 'merge queued: GitHub\'s merge queue holds it, and merges it once the queue\'s checks pass',
+    requested: `merge requested: GitHub holds an auto-merge request (${status.autoMerge}) for it, and merges it once its required checks pass`,
+    closed: 'not merged: it is closed with no merge',
+    none: `not merged: nothing merged it, and GitHub holds no auto-merge request and no merge queue entry. Run the pr-auto-merge skill: it waits until ${checks}, ${run}`,
+  }[merge];
 }
 
 // `aidrian pr auto-merge [PR] [--json] [--check]`. With `--check`, the gate alone (runAutoMerge). Without it, a session
 // that reads the command as the merge is never told it merged when nothing did (#620 and #622 sat green until the Human
-// merged them): after a gate that allows it, one REST read of the pull request says whether GitHub merged it (exit 0,
-// `merge` "merged") or holds an auto-merge request for it (exit 0, "requested"); a pull request closed with no merge is
-// exit 1 ("closed"); otherwise exit 4 ("none"), with the `gh pr merge --match-head-commit` command a session runs once
-// every check passes, as the pr-auto-merge skill does. It never merges itself: a merge from this process would pass
-// the merge guard by, which reads the session's own command, and the skill's wait for every check and its confirm.
-// A refusal is the gate's (exit 1), and a failed read exit 3. `--json` adds `merge`, and `command` with "none".
+// merged them): after a gate that allows it, one read of the pull request (the forge's mergeStatus) says whether GitHub
+// merged it (exit 0, `merge` "merged"), its merge queue holds it (exit 0, "queued"), or it holds an auto-merge request
+// for it (exit 0, "requested"); a pull request closed with no merge is exit 1 ("closed"); otherwise exit 4 ("none"), with
+// the `gh pr merge --match-head-commit` command a session runs once every check passes, as the pr-auto-merge skill does,
+// or with no strategy set, what that skill does. It never merges itself: a merge from this process would pass the merge
+// guard by, which reads the session's own command, and the skill's wait for every check and its confirm.
+// The read must give the head the gate passed: one that moved is exit 3, since the verdict is of the old head.
+// A refusal is the gate's (exit 1), and a failed read exit 3. `--json` adds `merge`, and `command` with "none", null
+// with no strategy set.
 export function runAutoMergeCommand(argv, project, options = {}) {
   const { asJson, check } = parseArgs(argv);
   if (check) return runAutoMerge(argv, project, options);
   const out = options.out ?? console;
+  const fail = (message) => {
+    out.error(`aidrian pr auto-merge: ${message}`);
+    return 3;
+  };
   const forge = options.forge ?? forgeFor(project.root);
   const verdict = gateVerdict(argv, project, { ...options, forge });
   if (verdict.code === 3) return 3;
@@ -538,28 +563,19 @@ export function runAutoMergeCommand(argv, project, options = {}) {
     return verdict.code;
   }
   const { result, host } = verdict;
-  let pull;
+  let status;
   try {
-    pull = forge.pull(result.repo, result.pr, { host });
+    status = forge.mergeStatus(result.repo, result.pr, { host });
   } catch (error) {
-    out.error(`aidrian pr auto-merge: could not read whether #${result.pr} merged with gh (${ghError(error)})`);
-    return 3;
+    return fail(`could not read whether #${result.pr} merged with gh (${ghError(error)})`);
   }
-  if (typeof pull?.merged !== 'boolean') {
-    out.error(`aidrian pr auto-merge: gh returned no merged state for #${result.pr}`);
-    return 3;
+  if (status?.head !== result.head) {
+    return fail(`the head of #${result.pr} moved from ${result.head.slice(0, 7)} to ${String(status?.head ?? 'none').slice(0, 7)} after the gate passed it: run the command again`);
   }
-  const merge = mergeState(pull);
+  const merge = mergeState(status);
   const command = mergeCommand(result, host);
-  const lines = {
-    merged: `merged: GitHub merged it at ${pull.merged_at ?? 'a time it does not give'}`,
-    requested: `merge requested: GitHub holds an auto-merge request (${pull.auto_merge?.merge_method ?? 'no method given'}) for it, and merges it once its required checks pass`,
-    closed: 'not merged: it is closed with no merge',
-    none: 'not merged: nothing merged it, and GitHub holds no auto-merge request. ' +
-      `Run the pr-auto-merge skill: it waits until \`aidrian pr checks ${result.pr} -R ${repoArg(result, host)}\` exits 0, then runs \`${command}\``,
-  };
-  out.log(asJson ? JSON.stringify({ ...result, merge, ...(merge === 'none' ? { command } : {}) }) : `${allowedLead(result)}, ${lines[merge]}`);
-  return { merged: 0, requested: 0, closed: 1, none: 4 }[merge];
+  out.log(asJson ? JSON.stringify({ ...result, merge, ...(merge === 'none' ? { command } : {}) }) : `${allowedLead(result)}, ${mergeLine(merge, status, result, host, command)}`);
+  return { merged: 0, queued: 0, requested: 0, closed: 1, none: 4 }[merge];
 }
 
 // The gate's verdict: { code, result, host, localErrors }, `code` 0 on and 1 off, `result` the --json object, `host` the

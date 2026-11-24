@@ -334,6 +334,9 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   base on the forge, only while its head is `expectedHead`, by merging the base in or, with `method: 'rebase'`, by a
   rebase. `changeCommits(repo, n, { host })` lists its commits with their messages, for the auto-merge gate's
   closing-word check ([config.md](../config.md#when-it-is-on)).
+- The auto-merge command's merge state (`lib/pr-auto-merge.mjs`): `mergeStatus(repo, n, { host })`, in one read,
+  `{ state, merged, mergedAt, head, autoMerge, queued }`: whether the forge merged it, the merge method of an
+  auto-merge request or null, and whether a merge queue holds it ([config.md](../config.md#when-it-is-on)).
 - A project run's preflight (`lib/project-preflight.mjs`): `reviewerSeen(repo, login, { host, limit, counts })`, whether
   the reviewer reviewed, or left a comment whose body `counts` accepts on, any of the repository's last `limit` pull
   requests, as `{ changes, seen }`, a bot's login compared with or without its `[bot]` suffix (preflight's `counts`

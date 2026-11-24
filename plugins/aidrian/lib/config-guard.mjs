@@ -301,7 +301,7 @@ function switchIn(text, valueIn) {
 // What the call writes: { files, names, globs, code }. `files` are absolute paths; `names` are texts that may name a file
 // in a folder no path gives: a relative target written after a `cd` to an unknown folder, code an interpreter runs, and
 // the words of a command in a shell the lexer cannot read (opaqueWords); `globs` are bashWrites's glob targets; `code`,
-// for a Bash call only, says of each of `names`, by its index, whether it is an interpreter's own code.
+// for a Bash call only, says of each of `names`, by its index, whether it is an interpreter's code, input, or words.
 // lib/handoff-guard.mjs reads them too. A path with a bracket class is a file and a glob both. A command in a shell the
 // lexer cannot read writes, failing closed, to the path each of its first OPAQUE_WORDS words gives, from the call's folder
 // when it is relative and from the home folder after a leading `~`, and to the glob each such word with `*`, `?`, or `[`
@@ -339,9 +339,8 @@ function readTargets(input) {
   return {
     files,
     names: [...targets, ...interpreted.map(({ text }) => text)],
-    // Whether each of `names`, by its place, is an interpreter's own code, given on its command line or as its input,
-    // for a refusal that says it read the path there: not a target, an interpreter's other words, or a whole line read
-    // for want of its code.
+    // Whether each of `names`, by its place, is an interpreter's code, input, or words, for a refusal that says it read
+    // the path there: not a target, or a whole line read for want of its code.
     code: [...targets.map(() => false), ...interpreted.map((each) => each.code)],
     // The lexer reads a bracket class, as in `[.]continue`, as a plain word; the shell expands it as a glob.
     globs: [...writes.filter((write) => write.glob), ...files.filter((file) => BRACKET.test(file)).map((text) => ({ text, dirs: [], unsure: false }))],
@@ -595,7 +594,7 @@ const wholePart = (name, after) => new RegExp(`(?<![\\w.-])${name.replace(/[.*+?
 // its command line or its input: its code, unless that code only reads (READS), and the rest of its words, which may
 // name a file the code changes, as `sys.argv[1]` does. Its code is the rest of the word that gives it, as in `-c<code>`
 // or `--eval=<code>`, or the word after, or the heredocs and here-strings fed to it, or, when none is, the whole command
-// line, which a pipe may feed it from. `code` is true for the code given on its command line or as its input alone.
+// line, which a pipe may feed it from. `code` is false for that whole line alone, which holds the shell's own words.
 function interpretedCode(command) {
   const found = [];
   const read = (text, depth) => {
@@ -622,7 +621,7 @@ function interpretedCode(command) {
           given = inputs[i].length > 0;
           code = given ? inputs[i].join('\n') : line;
         } else continue;
-        if (rest.length) found.push({ text: rest.join(' '), code: false });
+        if (rest.length) found.push({ text: rest.join(' '), code: true });
         if (!(reads && onlyReads(code, reads))) found.push({ text: code, code: given });
       }
     }

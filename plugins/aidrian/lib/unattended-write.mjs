@@ -763,7 +763,7 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   // Accepted residual, tracked in #513: each write target is judged folded as text (writeTargets resolves it with
   // path.resolve), so a `..` after a link counts where the spelling folds, not where the system lands.
   const { files, names, globs, code = [] } = writeTargets(input);
-  // Each text the guard judges by name, with whether it is an interpreter's own code (config-guard.mjs writeTargets).
+  // Each text the guard judges by name, with whether an interpreter reads it (config-guard.mjs writeTargets).
   const named = names.map((text, i) => ({ text, code: code[i] === true }));
   const modes = modeTargets(input);
   const command = bashCall(input) && typeof input.tool_input?.command === 'string' ? input.tool_input.command : null;
@@ -821,10 +821,10 @@ function sayer(input, human, opaque, mark) {
     },
     unknown: () => deny('unattended write with no known places', `it ${verb} a file, and the places this session may write cannot be told: its unattended mark names no main checkout or project that can be read, and no Human attends this session, so it writes nothing until they can`),
     refused: (entry, shown) => deny(`unattended write to ${entry.what}`, refusedWhy(entry, shown)),
-    // A refused path read from the text of code the call runs (nameDenial), which the code may only put in a file: a
-    // session told only where scratch files go built the path at run time instead. It names the file tool, which
-    // writes only the file it names, whatever its text says.
-    named: (entry, shown) => deny(`unattended write to ${entry.what}`, `it names ${shown} in the text of code it runs, such as an interpreter's script, which may write it, and that is ${entry.what}, which a session no Human attends never changes; only ${human} does; when the code only puts that text in a file, write the file with the file tool instead, which writes only the file it names`),
+    // A refused path read from an interpreter's code, input, or words (nameDenial), which the code may only put in a
+    // file: a session told only where scratch files go built the path at run time instead. It names the file tool,
+    // which writes only the file it names, whatever its text says.
+    named: (entry, shown) => deny(`unattended write to ${entry.what}`, `it names ${shown} in an interpreter's code, input, or words, which may write it, and that is ${entry.what}, which a session no Human attends never changes; only ${human} does; when that text only goes in a file, write the file with the file tool instead, which writes only the file it names`),
     outside: (shown) => deny('unattended write outside its places', `it ${verb} ${shown}, outside the places a session no Human attends may write: ${list}`),
     meets(met, shown) {
       if (met?.refused) return deny(`unattended write to ${met.refused.what}`, refusedWhy(met.refused, shown));
@@ -977,8 +977,8 @@ function manifestDenial(input, shell, found, say) {
 
 // What no path places, judged by name: a startup file or a git config (REFUSED_NAME), a home dot entry (HOME_DOT), a
 // `.git` entry for a session its own mark holds (GIT_WORD), or a path in the text that meets a refused entry.
-// Each of `texts` is { text, code }: a path read from an interpreter's own code (`code`) gets the refusal that says so
-// (say.named).
+// Each of `texts` is { text, code }: a path read from an interpreter's code, input, or words (`code`) gets the refusal
+// that says so (say.named).
 function nameDenial(texts, found, say) {
   for (const { text, code } of texts) {
     checkDeadline();

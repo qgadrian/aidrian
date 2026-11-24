@@ -1521,7 +1521,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   | --- | --- | --- |
   | Literal targets of redirections and writing programs | placed by path | placed by the path the tool names |
   | A target built from a variable or a substitution | expanded where it can be, else judged by its names and the whole command | none: a file tool names a literal path |
-  | Code an interpreter runs, such as `python3 -c` | judged by the paths and names in its text; a refusal for a path read there says so and names the file tool, for code that only puts that text in a file | none: the text a file tool writes names no target |
+  | Code an interpreter runs, such as `python3 -c` | judged by the paths and names in its code, input, and words; a refusal for a path read there says so and names the file tool, for text that only goes in a file | none: the text a file tool writes names no target |
   | Links a command makes, and a program's own config | judged by what they point at or change | none |
   | Text written into a review manifest | the command must not name a `reviewer` key | the text must not give it one |
   | Where the host's sandbox stands | outside the guard: a confined session's Bash also runs in the host's sandbox | the file tools run outside the sandbox, held by this hook alone |

@@ -200,6 +200,19 @@ test('an attended main session\'s call gets the short budget, and a subagent\'s,
   assert.equal(callBudget({ ...attended, agent_id: 'a1' }, {}, 0, { AIDRIAN_GUARD_BUDGET_MS: '600' }), 600);
 });
 
+// The hook itself: an attended main session's `aidrian project record`, which the guards refuse when they finish, runs
+// once they start past the short budget, as a call whose guards ran out of time does, even short of the held one.
+test('the hook gives an attended main session\'s call the short budget: a refusal only finished guards give is not given past it', (t) => {
+  const dir = project(t);
+  const attended = main(subagent(dir, 'Bash', 'aidrian project record r1 x'));
+  const finished = run(attended);
+  assert.equal(finished.status, 2, 'the guards refuse it when they finish');
+  assert.match(finished.stderr, /the hooks hold no rule for `aidrian project record`/u);
+  assert.equal(run(attended, late(dir, GUARD_BUDGET_MS + 200)).status, 0, 'past the short budget, short of the held one');
+  // A subagent's same call, under its held budget, is still read whole and refused.
+  assert.equal(run(subagent(dir, 'Bash', 'aidrian project record r1 x'), late(dir, GUARD_BUDGET_MS + 200)).status, 2);
+});
+
 // Each hook that runs under the guards' budget answers before the host stops it, with room to record a refusal.
 test('the guards\' held budget ends at least 2.5 seconds before the timeout hooks.json gives each hook that runs under it', () => {
   for (const script of ['hook-agent-gates.mjs', 'hook-tracker-pre.mjs']) {

@@ -35,6 +35,7 @@ import { auditNudge } from '../lib/audits.mjs';
 import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { ageDays, parseDecisions } from '../lib/decisions.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
+import { gitFolders } from '../lib/git.mjs';
 import { isMain, print, runHook } from '../lib/hook-io.mjs';
 import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
@@ -196,8 +197,28 @@ function auditLine(project, config) {
 // time (lib/attribution.mjs currentAuthor), stays the authority, and names the real value when a dispatch changed it.
 function effortLine(input, project, config) {
   if (!config.attribution.commit.includes('effort')) return null;
-  const effort = detectHost({ input }).subagentEffort({ input, checkouts: project.checkouts, models: config.models, env: process.env });
+  const effort = detectHost({ input }).subagentEffort({ input, checkouts: agentCheckouts(project), models: config.models, env: process.env });
   return effort ? `Attribution: this agent's commits carry the trailer \`Agent-Effort: ${effort}\`, the effort it starts at; the commit check reads the effort it runs at and names it when they differ.` : null;
+}
+
+// The checkouts a subagent's definition may be read from: the project's own, then its main checkout only when this one
+// is a linked worktree of it, whose git common folder is the main checkout's git folder. A project run's attempt clone,
+// whose project names the driver's main checkout too (lib/project.mjs checkouts), is a clone of its own: a host loads
+// nothing of that checkout's for it.
+export function agentCheckouts(project) {
+  const [own, ...rest] = project.checkouts;
+  const main = rest.at(-1);
+  if (!main) return [own];
+  const real = (file) => {
+    try {
+      return realpathSync(file);
+    } catch {
+      return null;
+    }
+  };
+  const git = gitFolders(own);
+  const common = git && git.gitDir !== git.common ? real(git.common) : null;
+  return common !== null && common === real(path.join(main, '.git')) ? [own, main] : [own];
 }
 
 // Every session and subagent: disagree out loud instead of going along, ask questions the human can answer without the

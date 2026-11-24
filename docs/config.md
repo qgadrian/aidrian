@@ -1105,8 +1105,8 @@ and prints the exact lines to add. Both lists are empty by default, which turns 
 `commit` takes any of these fields. A commit carries a trailer as a `--trailer` option, or in its message's trailer
 block: the last paragraph, past the subject, with only `Key: value` lines, as git reads it.
 With `effort` listed, the subagent start hook tells a Claude Code subagent its `Agent-Effort:` trailer as a hint, from
-the effort its start payload carries, else `CLAUDE_CODE_EFFORT_LEVEL`, else the [`models`](#models) effort the dispatch
-takes, else its agent definition's `effort:`: the check still reads the transcript.
+the effort its start payload carries, else `CLAUDE_CODE_EFFORT_LEVEL`, where `auto` or `unset` gives no hint, else the
+[`models`](#models) effort the dispatch takes, else its agent definition's `effort:`: the check still reads the transcript.
 Each `git commit` in a command is checked on its own message, and a `-F` file is read where the commit runs.
 A message from stdin (`-F -`), an editor, or another commit (`-C`, `-c`) counts only its `--trailer` options. `-h`, `--help`, `--dry-run`, and the status formats, such as `--short`, pass.
 The rule also reads `sh -c` and `bash -c` command lines and a script fed to a shell, such as `bash <<'EOF'`.

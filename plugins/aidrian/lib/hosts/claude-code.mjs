@@ -26,9 +26,9 @@ const MAIN_CHECKOUT_PATHS = Object.freeze({
   folders: ['.claude/skills', '.claude/agents', '.claude/commands'],
   settings: [{ file: '.claude/settings.local.json' }],
 });
-// The folders a subagent's definition may be in, from the project's `checkouts` (lib/project.mjs: its own checkout, then
-// the main checkout's): its own agents folder, then, as Claude Code reads it from a linked worktree with none, the
-// main checkout's (MAIN_CHECKOUT_PATHS).
+// The folders a subagent's definition may be in, from `checkouts`, its own checkout and, for a linked worktree alone, the
+// main checkout (scripts/hook-session-start.mjs agentCheckouts): its own agents folder, then, as Claude Code reads it
+// from a linked worktree with none, the main checkout's (MAIN_CHECKOUT_PATHS).
 function agentFolders(checkouts) {
   const roots = Array.isArray(checkouts) ? checkouts.filter((each) => typeof each === 'string') : [];
   if (!roots.length) return [];

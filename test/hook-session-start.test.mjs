@@ -8,7 +8,9 @@ import test from 'node:test';
 
 import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { GIT_TIMEOUT_MS } from '../plugins/aidrian/lib/git.mjs';
-import { DEFINITION_CAP } from '../plugins/aidrian/lib/hosts/claude-code-agents.mjs';
+import { DEFINITION_CAP, SCAN_BUDGET } from '../plugins/aidrian/lib/hosts/claude-code-agents.mjs';
+import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
+import { agentCheckouts } from '../plugins/aidrian/scripts/hook-session-start.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { hookCall } from './hook-call.mjs';
 
@@ -207,6 +209,10 @@ test('CLAUDE_CODE_EFFORT_LEVEL, a level, sets the hint past the models effort an
   assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer', effort: { level: 'max' } }, level('low')), [EFFORT('max')], 'the payload first');
   assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }, level('turbo')), [EFFORT('medium')], 'a value the host names no level is no override');
   assert.deepEqual(await effortLineOf(project, { agent_type: 'Explore' }, level('low')), [EFFORT('low')], 'it sets a built-in agent\'s too');
+  for (const automatic of ['auto', 'unset']) {
+    assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }, level(automatic)), [], `${automatic}: no definition's effort`);
+    assert.deepEqual(await effortLineOf(project, { agent_type: 'aidrian:designer' }, level(automatic)), [], `${automatic}: no models effort`);
+  }
 });
 
 test('a definition is read only as a regular file under its cap: a FIFO, a link to one, or a large file is skipped and blocks nothing', { timeout: 20_000 }, async (t) => {
@@ -220,6 +226,47 @@ test('a definition is read only as a regular file under its cap: a FIFO, a link 
   symlinkSync(path.join(folder, 'd-review.md'), path.join(folder, 'e-linked.md'));
   assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }), [EFFORT('medium')], 'the scan goes past the FIFO and its link to a regular file');
   assert.deepEqual(await effortLineOf(project, { agent_type: 'large' }), [], 'a file past the cap');
+});
+
+test('a scan past its budget of folder entries, files, or bytes names no definition, and ends quickly', async (t) => {
+  const match = '---\nname: reviewer\neffort: medium\n---\n';
+  const fill = (folder, count, text = '---\nname: other\n---\n', extension = '.md') => {
+    for (let n = 0; n < count; n += 1) writeFileSync(path.join(folder, `a${String(n).padStart(4, '0')}${extension}`), text);
+  };
+  const entries = attributedProject(t, ['effort'], { 'z-review.md': match });
+  fill(path.join(entries, '.claude/agents'), SCAN_BUDGET.entries, 'not markdown', '.txt');
+  const started = Date.now();
+  assert.deepEqual(await effortLineOf(entries, { agent_type: 'reviewer' }), [], 'past the entries, whatever they hold');
+  assert.ok(Date.now() - started < 5000, 'quickly');
+  const within = attributedProject(t, ['effort'], { 'z-review.md': match });
+  fill(path.join(within, '.claude/agents'), SCAN_BUDGET.entries - 1, 'not markdown', '.txt');
+  assert.deepEqual(await effortLineOf(within, { agent_type: 'reviewer' }), [EFFORT('medium')], 'at the entry budget');
+  const files = attributedProject(t, ['effort'], { 'z-review.md': match });
+  fill(path.join(files, '.claude/agents'), SCAN_BUDGET.files);
+  assert.deepEqual(await effortLineOf(files, { agent_type: 'reviewer' }), [], 'the match sorts past the file budget');
+  const bytes = attributedProject(t, ['effort'], { 'z-review.md': match });
+  fill(path.join(bytes, '.claude/agents'), Math.ceil(SCAN_BUDGET.bytes / (DEFINITION_CAP - 64)), `---\nname: other\n---\n${'x'.repeat(DEFINITION_CAP - 64)}`);
+  assert.deepEqual(await effortLineOf(bytes, { agent_type: 'reviewer' }), [], 'the files before it spend the byte budget');
+});
+
+test('an attempt clone, whose project names the driver\'s main checkout, reads no agent of that checkout', async (t) => {
+  const main = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-driver-')));
+  t.after(() => rmSync(main, { recursive: true, force: true }));
+  const git = (cwd, ...args) => assert.equal(spawnSync('git', args, { cwd, encoding: 'utf8' }).status, 0, args.join(' '));
+  writeFileSync(path.join(main, 'README.md'), '# x\n');
+  git(main, 'init', '-q', '-b', 'main');
+  git(main, 'add', '.');
+  git(main, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'x');
+  mkdirSync(path.join(main, '.claude/agents'), { recursive: true });
+  writeFileSync(path.join(main, '.claude/agents/review.md'), '---\nname: reviewer\neffort: medium\n---\n');
+  const clone = `${main}-clone`;
+  t.after(() => rmSync(clone, { recursive: true, force: true }));
+  git(path.dirname(main), 'clone', '-q', main, clone);
+  // The clone's project names the driver's checkout as its main one, as lib/project.mjs does for an attempt clone.
+  const checkouts = agentCheckouts({ checkouts: [clone, main] });
+  assert.deepEqual(checkouts, [clone]);
+  assert.equal(claudeCode.subagentEffort({ input: { agent_type: 'reviewer' }, checkouts, env: {} }), null);
+  assert.equal(claudeCode.subagentEffort({ input: { agent_type: 'reviewer' }, checkouts: [clone, main], env: {} }), 'medium', 'the fallback this guards');
 });
 
 test('a linked worktree with no agents folder reads the main checkout\'s, as Claude Code does', async (t) => {
@@ -238,6 +285,7 @@ test('a linked worktree with no agents folder reads the main checkout\'s, as Cla
   t.after(() => rmSync(linked, { recursive: true, force: true }));
   git('worktree', 'add', '-q', linked, '-b', 'side');
   assert.equal(existsSync(path.join(linked, '.claude/agents')), false);
+  assert.deepEqual(agentCheckouts({ checkouts: [linked, main] }), [linked, main]);
   assert.deepEqual(await effortLineOf(linked, { agent_type: 'reviewer' }), [EFFORT('medium')], 'the main checkout\'s agents');
   // A worktree with an agents folder of its own reads only its own.
   mkdirSync(path.join(linked, '.claude/agents'), { recursive: true });

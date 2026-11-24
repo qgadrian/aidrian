@@ -22,7 +22,7 @@ import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
 import { isLongOption, lexCommand, readGit, walkCommands } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
-import { bodyRead, lineWrites, stdinBody, readPrCall, readPrCalls, targetsAnotherRepo, unchangedHeredoc } from './github/pr-body.mjs';
+import { bodyRead, lineWrites, stdinBody, readPrCall, readPrCalls, targetsAnotherRepo, unchangedHeredoc, unreadDestination } from './github/pr-body.mjs';
 import { invocationRepo } from './github/review-request.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
@@ -67,7 +67,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
   const { gitCommits, prCreates } = readCalls(command, cwd);
   if (!gitCommits.length && !prCreates.length) return null;
   // Each call answers to the project it runs in, as its own folder finds it (`at`, shell-lex `chained`); in a folder the
-  // rule cannot know, the session's.
+  // rule cannot know, a commit answers to the session's, and a pull request is refused (pr-body unreadDestination).
   const projects = new Map();
   const settings = (dir) => {
     const at = dir ?? cwd;
@@ -87,7 +87,10 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
     const missing = expected.filter((trailer) => !carried.has(trailer));
     if (missing.length) return commitReason(expected, missing, carried);
   }
-  for (const { call, dir, at, environment, written } of prCreates) {
+  for (const { call, entry, dir, at, environment, written } of prCreates) {
+    // A folder whose project cannot be read hides the attribution the repository the call posts to asks for.
+    const hidden = unreadDestination(call, entry, cwd, env);
+    if (hidden) return hint(hidden);
     const found = settings(at);
     const prFields = found?.config.attribution.pullRequest ?? [];
     if (!prFields.length || targetsAnotherRepo(call, found.project, invocationRepo(environment, env))) continue;
@@ -152,7 +155,7 @@ function readCalls(command, cwd) {
         call.stdin = stdinBody(entry);
         call.bodyFile = writes.token(call.bodyFile, entry);
         call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
-        prCreates.push({ call, dir: folder, at: chained, environment: entry.invocation.environment, written: new Map(writes.files) });
+        prCreates.push({ call, entry, dir: folder, at: chained, environment: entry.invocation.environment, written: new Map(writes.files) });
       }
     }
     // Every command, a gh call too, may write a body file a later gh call reads.

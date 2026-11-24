@@ -15,7 +15,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { lstatSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor, forgeGitHelper, forgeLoginStep, forgeTokenNote, forgeTokenVar } from './forges/index.mjs';
@@ -177,6 +177,57 @@ export function claimedSource(folder, env) {
 // Records in the attempt's folder `folder` whether the hook handed the token over (`handed`) and, when not, `why`:
 // nothing secret. Null, or why it could not.
 export const writeHandoff = (folder, { handed, why = null }) => writeJson(path.join(folder, HANDOFF_FILE), handed ? { handed: true } : { handed: false, why });
+
+// Where the SessionStart hook records the host's session environment files it hands the forge token to, beside the
+// claim, outside the sandbox's grants, so the driver's sweep removes them once the session ended (lib/project-start.mjs
+// sweepAttempts): the host keeps each file after its session, token and all.
+export const TOKEN_FILES = 'token-files.json';
+// The most files one record keeps: one a SessionStart, which a resume, a clear, or a compact runs again.
+const TOKEN_FILES_CAP = 64;
+
+// Adds `file`, a session environment file of the host session `session`, to the record in the attempt's folder
+// `folder`, before the token is written there: null, or why it could not.
+export function recordTokenFile(folder, { session, file }) {
+  if (typeof session !== 'string' || typeof file !== 'string' || !path.isAbsolute(file)) return 'the host named no session environment file it can remove once the session ends';
+  const read = tokenFiles(folder);
+  // A record that is there and cannot be read may name a file that still holds the token: it is never replaced.
+  if (!read && tokenRecordThere(folder)) return 'the record of the files the token went to cannot be read';
+  const files = read?.session === session ? read.files : [];
+  if (!files.includes(file)) files.push(file);
+  if (files.length > TOKEN_FILES_CAP) return 'the session has handed the token to too many files';
+  return writeJson(path.join(folder, TOKEN_FILES), { session, files });
+}
+
+// Whether the record of `folder` is there: false only when the system says it is not (ENOENT), so a look that fails
+// counts as one there, which keeps it.
+export function tokenRecordThere(folder) {
+  try {
+    lstatSync(path.join(folder, TOKEN_FILES));
+    return true;
+  } catch (error) {
+    return error?.code !== 'ENOENT';
+  }
+}
+
+// Keeps only `files` in the record of `folder`, the ones the host could not remove yet, or removes the record when none
+// is left: whether the record now says what is left.
+export function keepTokenFiles(folder, { session, files }) {
+  const file = path.join(folder, TOKEN_FILES);
+  if (files.length) return writeJson(file, { session, files }) === null;
+  try {
+    rmSync(file, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The record recordTokenFile keeps in `folder`: { session, files }, or null when there is none, or it is no record.
+export function tokenFiles(folder) {
+  const read = readSmallJson(path.join(folder, TOKEN_FILES), 64 * 1024);
+  if (!read || typeof read.session !== 'string' || !Array.isArray(read.files)) return null;
+  return { session: read.session, files: read.files.filter((each) => typeof each === 'string' && path.isAbsolute(each)) };
+}
 
 // Why the attempt in `folder` holds no forge token its session was handed, or null: only for a start that expected one,
 // whose claim is there; then a missing record, or one that says not handed, is the problem.

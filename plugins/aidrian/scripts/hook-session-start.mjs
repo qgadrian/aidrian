@@ -25,7 +25,8 @@
 // First of all, for the session of a confined attempt of a project run, it hands the host the environment its sandboxed
 // commands get (lib/project-start.mjs confinedShellVars), on a host that takes it (capabilities.projectStart.shellEnv),
 // and then, on a host that hands its session the forge token (`forgeTokenEnv`), that token, read for itself outside the
-// sandbox (confinedTokenVars), so no file carries it from the start, and last the attempt's marker, which the sandbox
+// sandbox (confinedTokenVars), so no file carries it from the start, once it recorded in the attempt's folder the host
+// file the token goes to (`shellEnvFile`), which the driver removes after the session (`forgetShellEnv`), and last the attempt's marker, which the sandbox
 // proof waits for (lib/project-confine.mjs runConfine).
 
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
@@ -44,7 +45,7 @@ import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs
 import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
 import { ATTEMPT_ENV } from '../lib/project-registries.mjs';
 import { confinedShellVars, confinedTokenVars } from '../lib/project-start.mjs';
-import { writeHandoff } from '../lib/project-token.mjs';
+import { recordTokenFile, writeHandoff } from '../lib/project-token.mjs';
 import { noteOrigin } from '../lib/session-origins.mjs';
 import { terminalLine } from '../lib/shell-init.mjs';
 
@@ -320,8 +321,13 @@ function shareToken(input) {
     const start = detectHost({ input }).capabilities.projectStart;
     const token = start?.forgeTokenEnv === true ? confinedTokenVars({ session: input.session_id, cwd: input.cwd, env: process.env }) : null;
     if (!token) return { line: null, recorded: true };
-    const handed = Boolean(token.vars) && start.shellEnv?.({ env: process.env, vars: token.vars }) === true;
-    const why = handed ? null : token.problem ?? 'the host\'s session environment file could not be written owner-only';
+    // The file the token goes to is recorded first, so the driver removes it once the session ended, whatever happens
+    // after (lib/project-start.mjs sweepAttempts): a token whose file the record cannot name is not handed over.
+    // A token always comes with its attempt's folder (confinedTokenVars).
+    const unrecorded = token.vars && start.forgetShellEnv
+      ? recordTokenFile(token.folder, { session: input.session_id, file: start.shellEnvFile?.({ env: process.env, session: input.session_id }) ?? null }) : null;
+    const handed = Boolean(token.vars) && !unrecorded && start.shellEnv?.({ env: process.env, vars: token.vars }) === true;
+    const why = handed ? null : token.problem ?? (unrecorded ? `the host's session environment file could not be recorded for removal once the session ends (${unrecorded})` : 'the host\'s session environment file could not be written owner-only');
     // The verdict the start's proof check reads (lib/project-confine.mjs confineCheck): nothing secret, and only from the
     // session that holds the start's claim, so no other session's hook overwrites it.
     const recorded = token.folder ? writeHandoff(token.folder, { handed, why }) === null : token.unclaimed === true;

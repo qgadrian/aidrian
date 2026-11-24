@@ -398,3 +398,13 @@ test('config rejects an unknown attribution field and keeps the default', (t) =>
   assert.match(errors.join('\n'), /attribution\.commit/);
   assert.ok(config.attribution.exclude.includes('explorer'));
 });
+
+test('a pull request from a folder whose project cannot be read is refused, though its body carries every line', (t) => {
+  const { run } = setup(t, { pullRequest: ['tool'] });
+  const signed = "## Summary\nx\n\nAuthored-with: Claude Code\n";
+  assert.equal(run(`gh pr create -t x --body-file - <<'EOF'\n${signed}EOF`), null, 'its own folder: judged, and it passes');
+  const reason = run(`cd "$W" && gh pr create -t x --body-file - <<'EOF'\n${signed}EOF`) ?? '';
+  assert.match(reason, /^Blocked: gh runs in a folder this hook cannot read/u);
+  assert.match(reason, /Write the folder out, as `env -C <the folder, written out> gh …`/u);
+  assert.equal(run(`cd "$W" && gh pr create -R acme/x -t x --body-file - <<'EOF'\n${signed}EOF`), null, 'a -R says where it posts');
+});

@@ -981,6 +981,30 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const sha = rest(`repos/${repo}/branches/${encodeURIComponent(branch)}`, { host })?.commit?.sha;
       return typeof sha === 'string' && /^[0-9a-f]{40}$/u.test(sha) ? sha : null;
     },
+    // Whether `repo` holds the commit `sha`, a full hex id, on any ref or none: true, false only when the forge confirms
+    // it has no such commit, or a throw when the answer is not conclusive. Read through the git database, whose answer
+    // is the commit alone, never its diff. GitHub answers 404 both for a commit it lacks and for one the token may not
+    // read, which needs Contents read where the repository's own read needs only Metadata, so a 404 counts as missing
+    // only once the same route reads the default branch's head commit; any other answer, such as an outage, a
+    // validation error, or one that names another commit, throws, and the caller asks again later.
+    hasCommit: (repo, sha, { host } = {}) => {
+      const full = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+      if (!full.test(String(sha))) throw new Error('a commit is a full hex id');
+      const read = (id) => rest(`repos/${repo}/git/commits/${id}`, { host });
+      let answer;
+      try {
+        answer = read(sha);
+      } catch (error) {
+        if (!notFound(error)) throw error;
+        // Each read below throws when it does not answer: then nothing is confirmed.
+        const main = rest(`repos/${repo}`, { host })?.default_branch;
+        const known = typeof main === 'string' ? rest(`repos/${repo}/branches/${encodeURIComponent(main)}`, { host })?.commit?.sha : null;
+        if (!full.test(String(known)) || known === sha || read(known)?.sha !== known) throw error;
+        return false;
+      }
+      if (answer?.sha !== sha) throw new Error(`the forge answered another commit than ${sha}`);
+      return true;
+    },
     // One file of `repo` at `ref`, such as `refs/heads/main`: `{ type, encoding, content }`, its content base64.
     contents: (repo, file, ref, { host } = {}) => rest(`repos/${repo}/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`, { host }),
     // One folder of a commit's tree, not recursive: `{ sha, tree: [{ path, mode, type, sha }], truncated }`, each entry's

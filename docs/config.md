@@ -1943,7 +1943,9 @@ on the issue's last attempt: the cause is fixed once for the whole run, not once
 a halt again under the ledger's lock. The attempt counts toward the issue's 3, as after `failed`: with attempts left,
 `aidrian project resume RUN` lets the next start take the same issue up again. The attempt's folder stays for the
 run's life, so work its clone holds that a failed push never sent can be recovered from
-`<state>/runs/RUN/attempts/ISSUE.ATTEMPT/work`.
+`<state>/runs/RUN/attempts/ISSUE.ATTEMPT/work`. So does any ended attempt whose clone holds a commit the forge does not
+have, whatever its result, with a `kept` row and a `kept` line from `wait` ([Handoff](handoff.md)): a usage limit or a
+crash that ends a session mid-work never loses what it committed and did not push.
 The driver lifts two kinds of halt by itself, once each, when the preflight's own checks of that cause pass
 (`lib/project-recheck.mjs`): an environment result's, re-checked by `commit`, `host`, `trust`, and `access` with its
 `token-reads`, and a failed proof's but the sandbox proof's, by `host`, `trust`, and `access`. When the driver's

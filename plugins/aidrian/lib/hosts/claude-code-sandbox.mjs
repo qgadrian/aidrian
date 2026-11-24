@@ -14,7 +14,7 @@
 // ignored. It reads no file when loaded: hooks load every adapter.
 
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, fchmodSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, unlinkSync, writeSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
@@ -281,6 +281,56 @@ export function writeEnvFile(file, vars) {
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+// The folder the host keeps the session environment files of `session` in, `<config>/session-env/<session>/`, each the
+// file one SessionStart hook's CLAUDE_ENV_FILE named, or null for an id that is no plain name.
+const sessionEnvFolder = (session, env, home) => (typeof session === 'string' && /^[\w-]{1,128}$/u.test(session)
+  ? path.join(configFolder(env, home), 'session-env', session) : null);
+
+// The real path of the folder `dir`, or null.
+const realFolder = (dir) => {
+  try {
+    return realpathSync(dir);
+  } catch {
+    return null;
+  }
+};
+
+// Whether `file` lies directly in the host's own session-env folder for `session`, the one place forgetEnvFiles removes
+// a file from.
+const inSessionFolder = (file, session, env, home) => {
+  const folder = sessionEnvFolder(session, env, home);
+  if (folder === null || typeof file !== 'string' || !path.isAbsolute(file) || CONTROL.test(file)) return false;
+  const own = realFolder(folder);
+  return own !== null && realFolder(path.dirname(file)) === own;
+};
+
+// The file the host named in CLAUDE_ENV_FILE for the SessionStart hook of `session`, or null when it does not lie
+// directly in that session's own session-env folder: the SessionStart hook then hands no forge token over, since
+// forgetEnvFiles could not remove the file once the session ended.
+export const sessionEnvFile = ({ env = process.env, session, home }) => (inSessionFolder(env.CLAUDE_ENV_FILE, session, env, home) ? env.CLAUDE_ENV_FILE : null);
+
+// Removes each of `files`, the session environment files the plugin's SessionStart hook handed the forge token to for
+// the host session `session`, once that session ended (lib/project-start.mjs sweepAttempts): only a regular file of this
+// user, not a link, directly in that session's own folder of the host's session-env tree, so no other session's file,
+// and no file elsewhere, is ever removed. The host reads that file only while the session runs. The files left: every
+// one still there that it did not remove, as one it could not place in that folder, such as under another config
+// folder, or whose removal failed, for the caller to keep recorded. Only a file removed, or gone already, is not left.
+export function forgetEnvFiles({ files, session, env = process.env, home }) {
+  if (!Array.isArray(files)) return [];
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  const left = [];
+  for (const file of files) {
+    try {
+      const stat = lstatSync(file);
+      if (!inSessionFolder(file, session, env, home) || !stat.isFile() || (Number.isInteger(uid) && stat.uid !== uid)) left.push(file);
+      else unlinkSync(file);
+    } catch (error) {
+      if (error.code !== 'ENOENT') left.push(file);
+    }
+  }
+  return left;
 }
 
 // The MCP configuration the session starts with under --strict-mcp-config: only `servers`, the base branch's

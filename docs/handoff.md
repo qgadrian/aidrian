@@ -640,7 +640,13 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   driver's `wait` takes it in: it reads the file without following a link, as a regular file of the user with one
   link, under 64 KiB, checks every field again, and holds a merged or open pull request to the issue's own on the forge;
   anything else ends the attempt `bad_result`. `wait` removes an attempt's folder once its session ended, but never
-  while its drop holds a result not yet taken in.
+  while its drop holds a result not yet taken in, and never while its clone holds work the forge does not have: when the
+  clone's HEAD or issue branch, read from its git folder as files, never through a link, is a commit the forge lacks, or
+  when those refs cannot be read, a missing HEAD included, the folder stays for the
+  run's life with a `kept` ledger row, and `wait` prints `kept ISSUE attempt N: …; recover the work from <clone>`.
+  A forge that cannot answer, or whose 404 the token's read of the default branch's head commit cannot confirm, leaves
+  the folder for the next `wait`.
+  `end` sweeps a last time.
 - **A halt, or a driver that ended, waits for `aidrian project resume <run>`.** A start whose proof failed, and a
   usage limit past the run's 24 pauses, write a `halt` row, and every later start refuses. The resume runs from the
   Human's own shell, or from another session a person attends that never drove the run: the hooks and the command

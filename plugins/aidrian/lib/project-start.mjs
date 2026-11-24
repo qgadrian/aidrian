@@ -665,13 +665,7 @@ export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge 
     if (path.dirname(row.drop) !== folder) continue;
     const current = found.states.get(row.key)?.state === 'running' && latestStart(found, row.key)?.attempt === row.attempt;
     if (current) continue;
-    const mine = (each) => each.key === row.key && each.attempt === row.attempt;
-    // An attempt whose result was `environment` keeps its folder for the run's life: its clone may hold the only copy of
-    // work a failed push never sent, for the Human to recover. So does one a `kept` row names.
-    const stays = found.rows.some((each) => mine(each) && ((each.event === 'result' && each.status === 'environment') || each.event === 'kept'));
-    // A handed-over result no row took in yet keeps its folder.
-    const taken = found.rows.some((each) => ['result', 'ended'].includes(each.event) && mine(each));
-    const waits = !taken && existsSync(path.join(row.drop, DROP_FILE));
+    const { stays, waits } = folderHolds(found, row);
     const token = existsSync(path.join(folder, TOKEN_FILES));
     if ((stays || waits) && !token) continue;
     const done = row.outcome === 'void' || settled.has(`${row.key}#${row.attempt}`)
@@ -699,6 +693,16 @@ export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge 
     if (archived === null) safely(() => rmSync(folder, { recursive: true, force: true }));
   }
   return lines;
+}
+
+// What keeps the folder of the attempt the start row `row` of `found` made: `stays`, for the run's life, after an
+// `environment` result, whose clone may hold the only copy of work a failed push never sent, or once a `kept` row names
+// it; `waits`, while its drop holds a handed-over result no row took in yet.
+function folderHolds(found, row) {
+  const mine = (each) => each.key === row.key && each.attempt === row.attempt;
+  const stays = found.rows.some((each) => mine(each) && ((each.event === 'result' && each.status === 'environment') || each.event === 'kept'));
+  const taken = found.rows.some((each) => ['result', 'ended'].includes(each.event) && mine(each));
+  return { stays, waits: !taken && existsSync(path.join(row.drop, DROP_FILE)) };
 }
 
 // The `kept` row of the attempt the start row `row` made, whose clone in `folder` holds `unpushed` (unpushedHead), once,

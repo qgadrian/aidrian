@@ -15,7 +15,7 @@ import path from 'node:path';
 
 import { isObject } from '../fs.mjs';
 import { showPrefix } from '../git.mjs';
-import { flagged } from './findings.mjs';
+import { securityKey } from './findings.mjs';
 import { RECEIPT_MARKER, REQUEST_COMMENT, REQUEST_TEXT } from './request-text.mjs';
 import { offeredCarried, settledBrief, settledEntries, splitRuled } from './settled.mjs';
 
@@ -166,13 +166,14 @@ export function cleanOutput(raw) {
       dropped.push(`findings[${i}] has no title`);
       return [];
     }
-    // A `security` value that is not a boolean counts as true: the flag only ever withholds more.
+    // A `security` value that is not a boolean counts as true: the flag only ever withholds more. A false is kept, so the
+    // plan's security pass does not mark the finding (findings.mjs recordResult).
     // A returned `id` is kept apart, as `returned_id`, for recordFindings to check: it never becomes the finding's id
     // unchecked. An empty one is a new finding's, and any value but a string breaks the schema: read as no id, noted.
     // A string recordFindings refuses is noted only when it reads like an id (findings.mjs idLike).
     if (finding.id !== undefined && typeof finding.id !== 'string') dropped.push(`findings[${i}].id is not a string: read as no id`);
     const returned = typeof finding.id === 'string' && finding.id !== '' ? { returned_id: finding.id } : {};
-    const kept = { file: finding.file, line: finding.line, title, ...(typeof finding.body === 'string' ? { body: finding.body } : {}), severity: finding.severity, ...(flagged(finding.security) ? { security: true } : {}), ...returned };
+    const kept = { file: finding.file, line: finding.line, title, ...(typeof finding.body === 'string' ? { body: finding.body } : {}), severity: finding.severity, ...securityKey(finding.security), ...returned };
     if (typeof finding.already_ruled === 'string') return [{ ...kept, already_ruled: finding.already_ruled }];
     // A bad `already_ruled` never loses the finding: it is read as a new one.
     if (finding.already_ruled !== undefined) dropped.push(`findings[${i}].already_ruled is not a string: kept as a new finding`);

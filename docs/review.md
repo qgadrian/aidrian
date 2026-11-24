@@ -643,8 +643,8 @@ accepted (`fix_now`, or no likelihood and affects yet): one the reviewer calls a
 stricter than the count it replaces, which took the reviewer's word for what it accepted. The counts form,
 `--findings <n> --fixed <n>`, is still accepted, for a pass an older release dispatched, and is read as before.
 A finding may add `"cites"`, the written project rule it breaks, which turns a `drop_unless_cited` into `fix_now`
-([Small gaps](#small-gaps)); the summary comment posts the disposition, not the citation. A finding may add `"security": true` for a security problem; any value but `false` counts as true
-([Reviewers](#reviewers)). A finding that reports a `priorFindings` entry again sets `id` to that entry's id; the engine
+([Small gaps](#small-gaps)); the summary comment posts the disposition, not the citation. A finding may add `"security": true` for a security problem; any value but `false` counts as true, and an explicit
+`false` keeps a security pass's mark off it ([Reviewers](#reviewers)). A finding that reports a `priorFindings` entry again sets `id` to that entry's id; the engine
 checks it ([Finding ids](#finding-ids)), and a mint mark in the file is never read.
 
 Each finding then has an outcome in the finding index: `open`; `fixed`, when a pass lists it as fixed; `accepted`, when
@@ -820,7 +820,8 @@ A project adds its own in `review.reviewers`:
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set
 `security` (Codex's schema requires the key, a project's exec reviewer and `--findings-file` may leave it out, and any
 value but `false` counts as true), or when the head's plan requires `agent:security-engineer` and the pass is in its
-`local` or `independent` stage. The engine stores that mark on the finding, and a finding that keeps its id keeps it.
+`local` or `independent` stage, unless its reviewer wrote `"security": false`, which the finding, its index entry, and
+the `pr review` output keep. The engine stores that mark on the finding, and a finding that keeps its id keeps it.
 The mark covers a twin: a finding at the same place (the same file and lines within 3), under the same title words
 where the record at hand holds both titles, or sharing its id, an alias, or the id a ruling names, whichever was recorded
 first. So a second

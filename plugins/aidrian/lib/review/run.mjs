@@ -196,7 +196,7 @@ function capCause(s, extra) {
   const securityPass = (id) => state.planNote?.passes?.[id]?.security === true || state.dispatched?.[id]?.security === true;
   const item = (finding, pass, stage, reviewer) => ({
     ...(isFindingId(finding?.id) ? { id: finding.id } : {}), severity: typeof finding?.severity === 'string' ? finding.severity : null,
-    ...(finding?.security === true || securityPass(pass) ? { security: true } : {}), pass, stage, reviewer: reviewer ?? null,
+    ...(finding?.security === true || (finding?.security !== false && securityPass(pass)) ? { security: true } : {}), pass, stage, reviewer: reviewer ?? null,
   });
   const open = passes.map(({ pass, stage }) => ({ pass, stage, result: resultFor(pass) })).filter(({ result }) => result?.open > 0);
   const listed = open.map(({ pass, stage, result }) => ({ open: result.open, list: Array.isArray(result.list) ? result.list.filter(blocks).map((finding) => item(finding, pass.id, stage, pass.reviewer)) : null }));

@@ -308,7 +308,8 @@ const noteOf = (state) => (isObject(state?.planNote) && isObject(state.planNote.
 
 // The findings of `state` read as security findings (G6, K1), as a Set of the finding objects: one with the mark, a
 // critical or high severity, its reviewer's flag (stored as the mark), no id yet, or a pass the plan note flags as
-// requiring the security reviewer or does not hold, with no note a pass of any kind; then every twin of one, to a fixed
+// requiring the security reviewer or does not hold, with no note a pass of any kind, unless its reviewer wrote
+// `security: false`; then every twin of one, to a fixed
 // point, over every finding the record holds. The posted copy and the residual rows take the reading from here.
 export function securityReading(state) {
   const note = noteOf(state);
@@ -320,6 +321,8 @@ export function securityReading(state) {
   const all = recordedFindings(state);
   const seed = (finding) => {
     if (finding.security === true || securitySeverity(finding.severity) || !isFindingId(finding.id)) return true;
+    // A reviewer that wrote `security: false` keeps the pass's mark off its finding (findings.mjs recordResult).
+    if (finding.security === false) return false;
     const pass = passOf.get(finding) ?? finding.pass;
     const entry = typeof pass === 'string' ? note?.passes?.[pass] : null;
     return !isObject(entry) || entry.security === true;

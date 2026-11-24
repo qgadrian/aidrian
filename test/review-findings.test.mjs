@@ -8,7 +8,7 @@ import test from 'node:test';
 
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, rereadAt, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
-import { gitPaths } from '../plugins/aidrian/lib/review/publish.mjs';
+import { gitPaths, securityReading } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
 import { cleanOutput, FINDINGS_SCHEMA, REQUEST_BRIEF, reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { isCleanReceipt, RECEIPT_MARKER, REQUEST_COMMENT, requestCommentBody } from '../plugins/aidrian/lib/pr-await-review.mjs';
@@ -389,9 +389,34 @@ test('recordFindings: the security mark by severity, by the reviewer`s flag (any
   assert.deepEqual(marks([exec({ title: 'h', severity: 'low', file: 'src/b.js', line: 35 })], { securityPass: true }), [true]);
   // The flag reaches the list through both writers.
   assert.equal(cleanOutput({ findings: [{ ...exec(), security: 'maybe' }] }).findings[0].security, true, 'an exec value that is not a boolean counts as true');
-  assert.equal(cleanOutput({ findings: [{ ...exec(), security: false }] }).findings[0].security, undefined);
+  assert.equal(cleanOutput({ findings: [{ ...exec(), security: false }] }).findings[0].security, false, 'an exec false is kept');
   assert.equal(parseFindings(JSON.stringify([finding({ security: 1 })])).list[0].security, true);
   assert.ok(FINDINGS_SCHEMA.properties.findings.items.required.includes('security'));
+});
+
+test('recordFindings: a finding attested with security false reads false through the plan`s security pass, the step that ids it, and the security reading', () => {
+  const state = recordWith();
+  const pass = 'agent:code-reviewer';
+  state.planNote = { head: 'h', passes: { [pass]: { stage: 'local', reviewer: 'code-reviewer', security: true } } };
+  const { list } = parseFindings(JSON.stringify([
+    finding({ title: 'Notification wording is vague', file: 'src/a.js', line: 3, severity: 'low', likelihood: 'routine', affects: 'users', security: false }),
+    finding({ title: 'Doc wording drifts', file: 'src/b.js', line: 30, severity: 'low', likelihood: 'routine', affects: 'users' }),
+  ]));
+  assert.deepEqual(list.map((each) => each.security), [false, undefined], 'the findings file`s false is kept, an omitted key stays omitted');
+  // Attest on a record no step floored stores the findings with no id; the step then gives them ids (step.mjs).
+  const attested = recordFindings(state, pass, { head: 'h', list }, { securityPass: true, paths: places() });
+  assert.deepEqual(attested.list.map((each) => each.security), [false, true], 'false wins over the security pass; an omitted key takes the pass`s mark');
+  const stepped = recordFindings(state, pass, state.passes[pass], { mint: true, securityPass: true, kept: true });
+  assert.deepEqual(stepped.list.map((each) => each.security), [false, true]);
+  const [quiet, marked] = stepped.list;
+  assert.equal(state.index[quiet.id].security, false, 'the index entry keeps the false');
+  assert.equal(state.index[marked.id].security, true);
+  const reading = new Set([...securityReading(state)].map((each) => each.id));
+  assert.ok(!reading.has(quiet.id), 'the security reading leaves it out');
+  assert.ok(reading.has(marked.id));
+  // A high severity or a twin of a security finding still marks it.
+  const high = recordFindings(state, 'agent:other', { head: 'h', list: [exec({ title: 'Token leaks', file: 'src/b.js', line: 1, severity: 'high', security: false })] }, { mint: true, securityPass: true, paths: places() });
+  assert.equal(high.list[0].security, true);
 });
 
 test('recordFindings: the mark spans twins, by id, place, or title, in every list, whichever is recorded first', () => {

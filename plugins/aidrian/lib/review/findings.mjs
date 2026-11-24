@@ -135,7 +135,7 @@ export function parseFindings(raw, settled = [], { round } = {}) {
       ...(text(finding.evidence, 300) ? { evidence: text(finding.evidence, 300) } : {}),
       ...(cites ? { cites } : {}),
       ...(ruled ? { already_ruled: ruled.title } : {}),
-      ...(flagged(finding.security) ? { security: true } : {}),
+      ...securityKey(finding.security),
       // The id of a priorFindings entry the reviewer reports again: recordFindings checks it, and never stores it.
       ...(finding.id !== undefined && finding.id !== '' ? { returned_id: finding.id } : {}),
       state: finding.state,
@@ -180,6 +180,9 @@ export function rereadAt(result, round) {
 // A reviewer's `security` flag (--findings-file, and an exec reviewer's key): absent or false is no flag, and any other
 // value, one that is not a boolean included, is one.
 export const flagged = (value) => value !== undefined && value !== false;
+// The flag as a finding keeps it: true for a flag, false when the reviewer wrote false, so the plan's security pass
+// does not mark the finding (recordResult), and nothing when it was left out.
+export const securityKey = (value) => (flagged(value) ? { security: true } : value === false ? { security: false } : {});
 
 // Finding identity (docs/review.md#the-record). Every finding a pass records gets an id, `R<round>-<n>`: the round it was
 // first recorded in and the record's one counter (`idCounter`), which is never reset and never reused, so an id is
@@ -347,6 +350,8 @@ function enter(index, finding, group, at) {
   if (at.stage) entry.stage = at.stage;
   if (at.reviewer) entry.reviewer = at.reviewer;
   if (finding.security === true || before?.security === true) entry.security = true;
+  else if (finding.security === false) entry.security = false;
+  else delete entry.security;
   // Every write sets the file and line together with the head they were checked at, in any state, fixed included:
   // the posted copy and the findings table check them there again. `seen` is only where a closing range starts.
   if (FULL_SHA.test(String(at.head ?? ''))) entry.placed = at.head;
@@ -464,8 +469,8 @@ function closeOmitted(state, plan, { head, complete, range }) {
 //     to no pass whose pass left the plan, so the first pass to claim it keeps it. Each id once. Else it takes a new id
 //     when `mint` allows it, else is stored without one. An id or a mark a reviewer printed is never read.
 //   - is a security finding (R5) when it is critical or high, its reviewer flagged it, `securityPass` says the head's
-//     plan requires the security reviewer and the pass is in its local or independent stage, or the finding or entry it
-//     takes its id from had the mark.
+//     plan requires the security reviewer and the pass is in its local or independent stage and the reviewer did not
+//     write `security: false`, which the finding then keeps, or the finding or entry it takes its id from had the mark.
 //   - keeps its `file` only as a path of at most MAX_PATH characters that `paths.tracked` says git tracks at the reviewed
 //     head, and its `line` only as a positive integer at most `paths.lines` of that file (H3). Otherwise neither is
 //     recorded, and the result's `dropped` notes name the finding's id, never the value. With no `paths`, the check
@@ -552,8 +557,8 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
       ?? null;
     if (match) taken.add(match.id);
     const identity = match ? { id: match.id, mint: match.mint, ...(Array.isArray(match.aliases) && match.aliases.length ? { aliases: match.aliases.filter(isFindingId) } : {}) } : mint ? fresh() : null;
-    const marked = flagged(security) || match?.security === true || securitySeverity(finding.severity) || securityPass;
-    const out = { ...(identity ?? {}), ...finding, ...(marked ? { security: true } : {}) };
+    const marked = flagged(security) || match?.security === true || securitySeverity(finding.severity) || (securityPass && security !== false);
+    const out = { ...(identity ?? {}), ...finding, ...(marked ? { security: true } : security === false ? { security: false } : {}) };
     const name = identity?.id ?? 'a finding with no id';
     if (asked && !named && idLike(returned)) dropped.push(`${name}: its returned id is not an open finding its input listed, so it was read as no id`);
     if (checked) return out;

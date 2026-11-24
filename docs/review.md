@@ -688,11 +688,13 @@ text to it: who posted a comment does not show in how it opens.
 The review bot's own receipt and status card carry stock text, such as a sign-off like "Another round soon, please!"
 or a footer that tells readers to comment "@codex address that feedback", which a reviewer read as a request and raised
 as the round's only finding on a clean head. The prompt leaves that stock text out of the review, in a comment whose
-author is the base branch's `github.reviewer` and whose first line is the receipt's marker,
-`<!-- codex-review-receipt:v1 -->`, or the card's, `<!-- codex-pull-request-review-summary -->`. The pass input names
-that login as `reviewBot`, read from the base branch so a pull request cannot rename it. Any other request in such a
-comment is still a finding, and so is a comment with either marker from another author or with the marker below its
-first line. With no review bot set, no comment is exempt this way.
+author is the bot account of the base branch's `github.reviewer` and whose first line is the receipt's marker,
+`<!-- codex-review-receipt:v1 -->`, or the card's, `<!-- codex-pull-request-review-summary -->`. The author must be the
+bot itself: its login with the `[bot]` suffix, or the bare login with the forge's author type Bot. A person's account
+with the bare login is not the bot. The pass input names that login as `reviewBot`, read from the base branch so a pull
+request cannot rename it. Any other request in a bot comment is still a finding. A comment that fails the author or
+first-line check, such as one that quotes a marker, is not exempt and reads like any other comment: a finding only when
+it asks to change the review. With no review bot set, no comment is exempt this way.
 
 `codex-local`'s Codex run also serves plans: the `quorum` skill runs it as a plan's adversary, and the `plan-review`
 skill runs the quorum on high-stakes plans ([quorum ledgers](project-folder.md#local-state)).

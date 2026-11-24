@@ -356,8 +356,11 @@ export function fileIdentity(file) {
 const LINK_HOPS = 40;
 
 // Whether two identities (fileIdentity) may be one file: the same, or, for names that are no file yet or below a
-// folder, the same but for letter case, which a disk that folds it reads as one name.
-const mayAlias = (a, b) => a !== null && b !== null && (a === b || (!a.startsWith('inode:') && !b.startsWith('inode:') && a.toLowerCase() === b.toLowerCase()));
+// folder, the same once folded as a disk that folds names may: letter case, and Unicode spellings that are equivalent,
+// canonically or by compatibility, as APFS and a casefold ext4 read them. Folding more than a disk does is safe here:
+// a possible alias only makes a write unknown.
+const nameFold = (name) => name.normalize('NFKC').toUpperCase().toLowerCase().normalize('NFKC');
+const mayAlias = (a, b) => a !== null && b !== null && (a === b || (!a.startsWith('inode:') && !b.startsWith('inode:') && nameFold(a) === nameFold(b)));
 
 // What the line wrote to the file of identity `key`, from `written` (lineWrites files): { text } when it holds that
 // file's text, { text: null } when a write it cannot read, or one to a name that may be the same file, came before,
@@ -868,7 +871,7 @@ const unread = (cause, fix = '') => ({ text: null, unread: { cause, fix } });
 // refuse with it, so the first deny names the form that passes.
 export function bodyRead(call, cwd, lineFiles = new Map()) {
   if (call.bodyOverwritten) {
-    return unread('a redirect on the gh call writes onto its own body file, which bash empties before gh reads it', 'Send that output to another file.');
+    return unread('a redirect on the gh call writes, or may write, onto its own body file, which bash would empty before gh reads it', 'Send that output to another file.');
   }
   if (call.body) {
     if (!call.body.dynamic) return { text: call.body.text };

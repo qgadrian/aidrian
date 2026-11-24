@@ -487,6 +487,10 @@ test('a write through a link or a hard link to a body file is a write to it', (t
   assert.match(run(`cat > New.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`) ?? '', unread, 'the heredoc may be another file');
   assert.match(run(`cat > a.md <<'EOF'\n${GOOD}EOF\ncat > A.md <<'EOF'\nno sections\nEOF\ngh pr create -t x -F a.md`) ?? '', unread, 'the second write may be the first file');
   assert.equal(run(`cat > a.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F a.md`), null, 'one spelling is read as written');
+  // So are two Unicode spellings a disk may read as one name: é composed and decomposed, and a ß against its SS.
+  for (const [first, second] of [['caf\u00e9.md', 'cafe\u0301.md'], ['stra\u00dfe.md', 'STRASSE.md']]) {
+    assert.match(run(`cat > ${first} <<'EOF'\n${GOOD}EOF\ncat > ${second} <<'EOF'\nno sections\nEOF\ngh pr create -t x -F ${first}`) ?? '', unread, `${first} and ${second}`);
+  }
   // A heredoc written through a link whose target is not there yet is the body gh then reads by the target's name.
   assert.equal(run(`cat > ahead.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`), null);
   assert.match(run(`cat > ahead.md <<'EOF'\n## Summary\nEOF\ngh pr create -t x -F new.md`) ?? '', /^Blocked: the body has no `## Tests run` section/u);

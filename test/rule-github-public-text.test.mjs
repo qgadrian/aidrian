@@ -159,7 +159,7 @@ test('a body the rule cannot read names its own cause first', (t) => {
     ['gh pr comment 3 --body-file /dev/null', 'the body is one this rule cannot read: the body file `/dev/null` is a device, a pipe, or a folder, not a regular file'],
     // A -R names where it posts, so its folder alone is unknown (pr-body unreadDestination): the checkout has no remote to tell it apart.
     ['cd .. || true; gh pr comment 3 -R acme/notes --body-file b.md', 'the body is one this rule cannot read: the body file `b.md` is a relative path, and the folder gh runs in is unknown after that directory change'],
-    ['gh pr comment 3 --body-file b.md > b.md', 'the body is one this rule cannot read: a redirect on the gh call writes onto its own body file, which bash empties before gh reads it'],
+    ['gh pr comment 3 --body-file b.md > b.md', 'the body is one this rule cannot read: a redirect on the gh call writes, or may write, onto its own body file, which bash would empty before gh reads it'],
   ]) {
     const reason = run(command) ?? '';
     assert.ok(reason.startsWith(`Blocked: ${cause}`), `${command}\n${reason}`);

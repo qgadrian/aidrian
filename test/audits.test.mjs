@@ -430,7 +430,7 @@ test('aidrian audits: list, import after review, pending, and record every decis
     '  - "the second language names the drop-in three ways": key F2',
     '  - "the second language mixes formal and informal address": key F3',
     'Move the key of each finding a finding of this run covers to --carried-forward, and keep the rest in --not-rechecked:',
-    `  aidrian audits import ${NEW} --not-rechecked F1,F2,F3 --carried-forward '' --write`,
+    `  aidrian audits import '${NEW}' --not-rechecked 'F1,F2,F3' --carried-forward '' --write`,
   ].map((line) => line.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('\n') + '\n$', 'u'), 'the plain import ends with the next step, each finding led by its title');
   noIds(result.stderr);
   const jsonWarnings = JSON.parse((await run('import', NEW, '--json')).stdout).warnings.join('\n');
@@ -693,8 +693,8 @@ test('record takes the audit_key pending prints, so a walk and the run it replac
   const items = JSON.parse((await run('pending', NEW, '--json')).stdout).groups.flatMap((g) => g.items);
   const older = items.find((i) => i.kind === 'not_rechecked' && i.id === 'F2');
   assert.equal(older.audit_key, `${OLD}#F2`);
-  assert.equal(older.record, `aidrian audits record ${NEW} '${OLD}#F2'`);
-  assert.equal(items.find((i) => i.kind === 'finding' && i.id === 'F2').record, `aidrian audits record ${NEW} '${NEW}#F2'`);
+  assert.equal(older.record, `aidrian audits record '${NEW}' '${OLD}#F2'`);
+  assert.equal(items.find((i) => i.kind === 'finding' && i.id === 'F2').record, `aidrian audits record '${NEW}' '${NEW}#F2'`);
 
   // Both reports hold an F2: the key through the walk lands on the replaced run's, a bare id on the walk's own.
   let result = await run('record', NEW, `${OLD}#F2`, 'defer');
@@ -735,6 +735,23 @@ test('record takes the audit_key pending prints, so a walk and the run it replac
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--doc names no section "Closing hours" in docs\/rules\.md; its sections are: rules, known-gaps--do-not-infer, opening-hours\. It takes a file of the project, then # and its section, as the heading is written \("docs\/rules\.md#Known gaps \/ Do not infer"\) or as its slug/u);
   assert.match((await run('record', NEW, 'F7', 'documented', '--doc', 'Known Gaps')).stderr, /documented needs --doc <path#section>: a file of the project, then # and its section/u);
+});
+
+
+test('the import and record commands audits prints keep a report name with a space, a quote, and $(...) as one shell argument', async (t) => {
+  const { audits, run } = project(t);
+  const odd = "it's a $(touch x) walk-2026-05-02.md";
+  copyFileSync(path.join(audits, OLD), path.join(audits, odd));
+  rmSync(path.join(audits, OLD));
+  rmSync(path.join(audits, NEW));
+  // POSIX single quotes, each embedded quote closed, escaped, and reopened: no word splits, and nothing expands.
+  const quoted = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+  assert.ok((await run('import', odd)).stderr.includes(`  aidrian audits import ${quoted(odd)} --write`), 'the draft\'s next step');
+  const imported = await run('import', odd, '--write');
+  assert.equal(imported.status, 0, imported.stderr + imported.stdout);
+  const [item] = JSON.parse((await run('pending', odd, '--json')).stdout).groups.flatMap((g) => g.items);
+  assert.equal(item.audit_key, `${odd}#${item.id}`);
+  assert.equal(item.record, `aidrian audits record ${quoted(odd)} ${quoted(item.audit_key)}`);
 });
 
 test('pending marks a line of an older report that names a task by its number, and leaves the stored line as it is', async (t) => {

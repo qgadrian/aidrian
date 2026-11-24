@@ -130,6 +130,8 @@ const OPENCODE_STARTS = ['opencode', 'opencode run x', 'opencode serve', 'openco
   'opencode auth list', 'opencode --standalone', '/opt/homebrew/bin/opencode run x', 'bash -c "opencode run x"', 'opencode $SUB',
   // A command that talks to the background service, which OpenCode discovers or starts, and one that may restart it.
   'opencode models', 'opencode session list', 'opencode mcp list', 'opencode upgrade',
+  // A help flag past a `--`, or beside a word the shell expands, is no help read; `-v` past the first word is no version read.
+  'opencode run -- --help', 'opencode run $PROMPT --help', 'opencode run {--,x} --help', 'opencode serve -v',
   // Through a package runner, by its packages' names.
   'npx @opencode/cli run x', 'npx -y @opencode/cli@2.4.0 run x', 'pnpm dlx @opencode/cli run x', 'bunx opencode-ai serve', 'npx opencode-ai', 'npm exec opencode-ai run x',
   // Past a runner's global option that takes the next word, before the runner's own word.
@@ -142,7 +144,7 @@ test('a subagent, and a session the background route started, may not start an O
     assert.match(startAsk(command, { agent: null, unattended: () => true })?.reason ?? '', /outside the handoff gate/u, `unattended: ${command}`);
     assert.equal(startAsk(command, { agent: null }), null, `an attended main session may: ${command}`);
   }
-  for (const command of ['opencode --version', 'opencode -h', 'opencode mcp add x', 'opencode service stop', 'opencode debug paths', 'echo opencode', 'npx @opencode/cli --version', 'npx prettier .', 'npx prettier --check .',
+  for (const command of ['opencode --version', 'opencode -h', 'opencode --help {a,b}', 'opencode mcp add $X', 'opencode serve --help', 'opencode run -h', 'opencode mcp add --help', 'npx @opencode/cli serve --help', 'opencode mcp add x', 'opencode service stop', 'opencode debug paths', 'echo opencode', 'npx @opencode/cli --version', 'npx prettier .', 'npx prettier --check .',
     'npm -w opencode exec prettier .', 'pnpm --dir opencode exec prettier .', 'pnpm -C x run opencode']) {
     assert.equal(startAsk(command), null, command);
   }

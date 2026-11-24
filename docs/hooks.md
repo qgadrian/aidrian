@@ -662,7 +662,8 @@ It reads only this machine's [review record](review.md#the-record), and decides 
 2. No record from the review step, no outcome and no round, lets it run: the guard holds a review that is open or
    asked for, not that one happens. A review run outside `aidrian pr review` leaves no record and is not guarded.
 3. Otherwise the head needs an `outcome` of `received` or `none_needed` on that very head. An outcome on an earlier
-   head, or any other status, `running` and `error` included, refuses it.
+   head, or any other status, `running` and `error` included, refuses it. The reason quotes the record's status, its
+   reason, and the time of each entry owed, each on one line and clipped to its first 300 characters.
 
 It never reads pull request comments. Outside the unattended waiver below, its one network call is
 `gh pr view --json number,headRefOid,baseRefName,url`, made only when the

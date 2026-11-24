@@ -81,7 +81,7 @@ import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.m
 import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
 import { delegationFor, lowOnly } from '../../review/delegation.mjs';
 import { readHumanSignoffs, sameBot, trustProblem } from '../../review/merge-trust.mjs';
-import { CAPPED, emptyState, FINISHED, openCount, owed, owedElsewhere, pendingOf, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
+import { CAPPED, clip, emptyState, FINISHED, openCount, owed, owedElsewhere, pendingOf, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { budgetedForge, guardWaiver, READ_TIMEOUT_MS, runOf, trailKey, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
@@ -432,7 +432,8 @@ const withOpen = (count) => {
 };
 
 // The review step's outcome on head `sha7`, as the deny names it: its status, and its reason when it has one.
-const statusText = (outcome, sha7) => `the review of head ${sha7} is \`${outcome.status}\`${outcome.reason ? ` (${outcome.reason})` : ''}`;
+// Record text a deny quotes is clipped (review/state.mjs clip), so a long reason, such as an error's stack, keeps it short.
+const statusText = (outcome, sha7) => `the review of head ${sha7} is \`${clip(outcome.status)}\`${outcome.reason ? ` (${clip(outcome.reason)})` : ''}`;
 
 // The question the guard asks at a review of `pr` stopped at its round limit on `head`, with `count` findings open (null:
 // the record has no count). The review-delegate rule reads the Human's answer to this very text, so both build it here.
@@ -629,8 +630,8 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   let problem;
   if (owing.length) {
     problem = owing.map((entry) => {
-      if (entry.kind === 'review') return `a review dispatched at ${entry.at} has no result on record: wait for it, then record it with \`aidrian pr attest ${pr} --head <sha> --reviewer <who> --findings <n> --fixed <n>\``;
-      const ask = `the Human asked for a bot review (recorded ${entry.at}) `;
+      if (entry.kind === 'review') return `a review dispatched at ${clip(entry.at)} has no result on record: wait for it, then record it with \`aidrian pr attest ${pr} --head <sha> --reviewer <who> --findings <n> --fixed <n>\``;
+      const ask = `the Human asked for a bot review (recorded ${clip(entry.at)}) `;
       const cancel = '. A later instruction, such as a merge command, does not cancel it';
       return entry.sent
         ? `${ask}that was sent and has no answer yet: wait for it with \`aidrian pr await-review ${pr}\`${cancel}`

@@ -424,7 +424,8 @@ const printedReviews = (output, command) => [...withoutCommand(output, command).
 
 // The verdicts `aidrian pr auto-merge` printed in a call's output: [{ pr, path }], one per verdict, where `path` is the
 // changed file of a refusal that names one, else null (lib/pr-auto-merge.mjs runAutoMerge prints them). A verdict is a
-// line that starts `auto-merge allowed for #<n> at <sha>`, then the merge state and a colon, or `auto-merge off for #<n>: `,
+// line that starts `auto-merge allowed for #<n> at <sha>`, then a comma, what followed the verdict (with --check, that the
+// check merges nothing; without it, where GitHub holds the merge), and a colon, or `auto-merge off for #<n>: `,
 // or `auto-merge on for #<n> at <sha>: `, an older plugin's pass, or, under --json, a line that is one object
 // with a boolean `effective` and a whole-number `pr`. A refusal names a path when its sentence, the `why` of the object
 // under `reason` "paths", opens `it changes "<path>",` as each refusal of pathsProblem that names a changed file does:

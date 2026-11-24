@@ -495,8 +495,8 @@ export function checksProblem({ github: policy, state }, working, where) {
 
 const cleanup = (team) => `${team.deleteBranch ? 'delete' : 'keep'} the branch, ${team.deleteWorktree ? 'delete' : 'keep'} the worktree`;
 
-// The gate's verdict, as `aidrian pr auto-merge --check` prints it: the JSON object, or its line. A pass says nothing has
-// merged yet, so it never reads as GitHub's own auto-merge turned on.
+// The gate's verdict, as `aidrian pr auto-merge --check` prints it: the JSON object, or its line. A pass says the check
+// merges nothing, a verdict that reads no merge state, so it never reads as GitHub's own auto-merge turned on.
 const waivedNote = (result) => (result.waived ? ' on a judge\'s verdict at the round cap' : '');
 const allowedLead = (result) => `auto-merge allowed for #${result.pr} at ${result.head.slice(0, 7)}${waivedNote(result)}`;
 function verdictLine({ result }, asJson) {

@@ -12,9 +12,9 @@ import { configDir } from './claude-code-config.mjs';
 import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
-import { continuedIn } from './claude-code-continuation.mjs';
+import { continuedIn, transcriptRoot } from './claude-code-continuation.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
-import { accessProblem, cloneProblem, configFolder, confineDomains, confineReads, limitContinueProblem, localBindingRisk, loopbackReach, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
+import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, localBindingRisk, loopbackReach, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
 import { trustProblem } from './claude-code-trust.mjs';
 import { responseObjects } from './response.mjs';
 
@@ -258,8 +258,9 @@ export default {
   humanAnswer,
   humanPrompt,
   ownTranscript,
-  // Its config folder's, which CLAUDE_CONFIG_DIR moves, as claude-code-continuation.mjs reads a transcript there too.
-  transcriptFolders: (home, env = process.env) => [...new Set([path.join(home, '.claude', 'projects'), path.join(configFolder(env, home), 'projects')])],
+  // The account home's, and the folder continuedIn reads, from the environment alone, as the command reads it
+  // (claude-code-continuation.mjs transcriptRoot): a host whose HOME is not the account's home reads there.
+  transcriptFolders: (home, env = process.env) => [...new Set([path.join(home, '.claude', 'projects'), transcriptRoot(env, home), transcriptRoot(env)])],
   sessionStart: { programs: ['claude'], starts: startsSession },
   // The subcommands of its program that write its own user or project config: MCP servers, settings, and plugins, and
   // its global options that take the next word. The agent gate hook refuses them to a session no Human attends

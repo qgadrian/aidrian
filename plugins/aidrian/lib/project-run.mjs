@@ -720,7 +720,9 @@ export function appendToRun(state, run, build, { waitMs } = {}) {
 
 // The runs in `state` other than `except` that are still active, as [{ run }]: a run whose files cannot be read counts,
 // and a folder of runs that is there and cannot be listed gives [{ run: null }], a run whose driver cannot be told.
-export function activeRuns(state, { except } = {}) {
+// With `untilEnd`, a run whose issues are done counts until its ledger records its end, as custody reads a run
+// (project-run-gate.mjs resumeRun): its driver still reports, and the host's continuation may still take it.
+export function activeRuns(state, { except, untilEnd = false } = {}) {
   let names;
   try {
     names = readdirSync(runsFolder(state));
@@ -733,7 +735,7 @@ export function activeRuns(state, { except } = {}) {
     // A run whose ledger records its end (`aidrian project end`), by the driver of that moment, is over, whatever its
     // issues (run-driver.mjs endedIn).
     if (endedIn(found)) return false;
-    return planRun(found.snapshot, found.states).verdict !== 'done';
+    return untilEnd || planRun(found.snapshot, found.states).verdict !== 'done';
   }).map((run) => ({ run }));
 }
 

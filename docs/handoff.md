@@ -605,8 +605,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   continuation custody would move to, and on an ended run; with the switch off it asks what a plain resume asks.
   The waiver files a plain unattended mark beside the driver mark, so the session is held as a background continuation
   is, refused `init`, `resume`, and `aidrian project decision`, until the Human types into it.
-  While a project run is under way, the [agent gates](hooks.md#agent-gates) refuse every session and subagent a write to
-  the host's transcripts, so no session forges the row.
+  Until the run records its end, the [agent gates](hooks.md#agent-gates) refuse every session and subagent a write to
+  the host's transcripts, where the custody reader reads them, so no session forges the row.
   The host's record is read on Claude Code alone, so custody moves this way only there.
 - **`maxChain` binds the driver's chain alone.** The driver's hops count as any session's, up to the base branch's
   `session.handoff.maxChain`, at most 5 unless it is `"unlimited"`. At the limit the gate prints `continue: none`,

@@ -236,9 +236,12 @@ function guards(input, project, config, gated, snapshot, others, holds, base, ow
   const state = () => (dirs ??= stateFolders(project, config, { base }));
   const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
   // Whether this project has a project run under way, read only for a subagent's write that reaches the main
-  // checkout's host paths, and for any session's write that reaches a host's transcript.
+  // checkout's host paths.
   let active;
   const runSession = () => (active ??= projectRunActive(project, config, { base }));
+  // A run counts for the transcripts until its ledger records its end, as custody reads it.
+  let unended;
+  const custodyRun = () => (unended ??= projectRunActive(project, config, { base, untilEnd: true }));
   // A project run's driver is held as one no Human attends for the continuation store, the runs folder, the marks, and
   // the sign-off store: it may run for hours with no Human at hand, from its first call, before any unattended mark of its
   // own. Its driver mark names it (project-run-guard.mjs runDriver).
@@ -258,7 +261,7 @@ function guards(input, project, config, gated, snapshot, others, holds, base, ow
     ?? stateFoldersWriteDenial(input, config, { project, links: false, unattended, marksHeld: droveHeld, signoffsHeld: droveHeld })
     ?? projectRunWriteDenial(input, project, config, state, { links: false, unattended, drives, base, own })
     ?? mainCheckoutWriteDenial(input, project, config, { links: false, unattended, runSession })
-    ?? transcriptWriteDenial(input, config, { runSession })
+    ?? transcriptWriteDenial(input, config, { runSession: custodyRun })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
     ?? continueStoreWriteDenial(input, project, config, state, { unattended, drives, base })
@@ -295,10 +298,11 @@ function otherProject(input, marked, { unattended, drives }, own) {
   const base = baseReader(marked);
   const state = () => (dirs ??= stateFolders(marked, config, { base }));
   const runSession = () => projectRunActive(marked, config, { base });
+  const custodyRun = () => projectRunActive(marked, config, { base, untilEnd: true });
   return machineSwitchWriteDenial(input, marked, config, { unattended }) ?? continueStoreWriteDenial(input, marked, config, state, { unattended, drives, base })
     ?? sessionFoldersWriteDenial(input, marked, config, state, { unattended })
     ?? projectRunWriteDenial(input, marked, config, state, { unattended, drives, base, own }) ?? mainCheckoutWriteDenial(input, marked, config, { unattended, runSession })
-    ?? transcriptWriteDenial(input, config, { runSession });
+    ?? transcriptWriteDenial(input, config, { runSession: custodyRun });
 }
 
 // The denial of the continuation store and the runs folder in the state folder that `driven`, the session's driver

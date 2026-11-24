@@ -1,7 +1,7 @@
 // The host transcripts a project run reads custody from: a host records in the old session's transcript that it went on
 // as another session (`capabilities.continuedIn`), and under the team's projectRun.fullAuto that row alone lets the session
 // it names take the run's custody with no person (lib/project-run-gate.mjs resumeRun). No session needs to write a
-// transcript, so while the project has a run under way the agent gate hook refuses every session and subagent a write
+// transcript, so until the project's run records its end the agent gate hook refuses every session and subagent a write
 // that reaches one (scripts/hook-agent-gates.mjs): a host's transcript folder, a project folder in it, or a `.jsonl`
 // file in one of those. Deeper entries, such as a host's memory folder inside a project folder, stay writable.
 // Accepted residual: a script that writes the file, which the hooks never see, as for a forged typed turn.
@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { writeTargets } from './config-guard.mjs';
-import { foldCase, isWithin } from './fs.mjs';
+import { foldCase, globParts, isWithin, partsReach } from './fs.mjs';
 import { globPaths } from './handoff-guard.mjs';
 import { transcriptFolders } from './hosts/index.mjs';
 import { canonical } from './rules/main-checkout.mjs';
@@ -28,16 +28,36 @@ function transcriptPlace(folder, target) {
   return parts.length <= 1 || (parts.length === 2 && parts[1].toLowerCase().endsWith('.jsonl'));
 }
 
+// Stand-ins for the parts of a transcript path below the folder: a project folder of any name, and a `.jsonl` file.
+const ANY = Symbol('any');
+const JSONL = Symbol('jsonl');
+const GLOB = /[*?[]/u;
+const FOLD_FLAG = foldCase('A') === 'a' ? 'i' : '';
+
+// Whether the glob path part `part` may match a name that ends `.jsonl`: plainly, when it does; else when the text after
+// its last wildcard, which every match ends with, ends so or is the end of `.jsonl` itself.
+function mayEndJsonl(part) {
+  if (!GLOB.test(part)) return part.toLowerCase().endsWith('.jsonl');
+  const tail = part.slice(Math.max(part.lastIndexOf('*'), part.lastIndexOf('?'), part.lastIndexOf(']')) + 1).toLowerCase();
+  return tail.endsWith('.jsonl') || '.jsonl'.endsWith(tail);
+}
+
 // Whether a glob write from a known folder, { prefix, rest } (handoff-guard.mjs globPaths), may reach a transcript place
-// of `folder`: it starts at or above the folder, or in the folder or one of its project folders.
-function globReachesTranscript(folder, { prefix }) {
-  if (isWithin(prefix, folder)) return true;
-  if (!isWithin(folder, prefix)) return false;
-  return path.relative(folder, prefix).split(path.sep).filter(Boolean).length <= 1;
+// of `folder`: its parts may name the folder or a folder above it, a project folder in it, or a `.jsonl` file in one
+// (fs.mjs partsReach, where a part of only stars spans any number of parts). A glob that goes on deeper reaches none.
+function globReachesTranscript(folder, { prefix, rest }) {
+  const split = (file) => file.split(path.sep).filter((part, i) => i === 0 || part !== '');
+  const matches = (part, name) => {
+    if (name === ANY) return true;
+    if (name === JSONL) return mayEndJsonl(part);
+    return GLOB.test(part) ? globParts(part, [], FOLD_FLAG).pattern.test(name) : foldCase(part) === name;
+  };
+  return partsReach([...split(prefix), ...rest], [...split(folder), ANY, JSONL], matches, false);
 }
 
 // Why the call in `input` may not run because it writes a host's session transcript while `runSession()` says the
-// call's project has a project run under way (project-run-guard.mjs projectRunActive), or null: { match, reason }. It
+// call's project has a project run whose ledger records no end (project-run-guard.mjs projectRunActive with
+// `untilEnd`, the runs whose custody may still move), or null: { match, reason }. It
 // holds for every session and subagent, attended or not, and asks `runSession()` only for a call that reaches one.
 // `folders` are the host's transcript folders (hosts/index.mjs transcriptFolders), under this user's home and where the
 // hook's environment moves a host's config folder.

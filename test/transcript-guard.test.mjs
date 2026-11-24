@@ -4,22 +4,30 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { continuedIn } from '../plugins/aidrian/lib/hosts/claude-code-continuation.mjs';
+import { transcriptFolders } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { projectRunActive } from '../plugins/aidrian/lib/project-run-guard.mjs';
+import { transcriptWriteDenial } from '../plugins/aidrian/lib/transcript-guard.mjs';
 import { hookCall } from './hook-call.mjs';
-import { DRIVER, OTHER, runFixture } from './project-start-fixture.mjs';
+import { DRIVER, ISSUES, OTHER, recordIssue, runFixture } from './project-start-fixture.mjs';
 
 const AGENT_HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 const NEXT = 'abcd1234-0000-4000-8000-00000000c0a1';
+const SETTINGS = { names: { human: 'the Human' } };
+const bash = (command, cwd) => ({ session_id: OTHER, tool_name: 'Bash', tool_input: { command }, cwd });
+const hookOf = (fx) => (session, command, more = {}) => hookCall(AGENT_HOOK, {
+  input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd: fx.dir, ...more }),
+  cwd: fx.dir, env: { ...fx.as(session), HOME: fx.home }, encoding: 'utf8',
+});
 
 test('while a run is under way, no session or subagent writes a host transcript, and a project folder\'s deeper entries stay writable', async (t) => {
   const fx = runFixture(t);
-  const hook = (session, command, more = {}) => hookCall(AGENT_HOOK, {
-    input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd: fx.dir, ...more }),
-    cwd: fx.dir, env: { ...fx.as(session), HOME: fx.home }, encoding: 'utf8',
-  });
+  const hook = hookOf(fx);
   const folder = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'));
   const forged = `printf '{}\\n' >> ${path.join(folder, `${DRIVER}.jsonl`)}`;
   for (const [session, more] of [[OTHER, {}], [DRIVER, {}], [OTHER, { agent_id: 'a1' }]]) {
@@ -34,4 +42,49 @@ test('while a run is under way, no session or subagent writes a host transcript,
   assert.equal((await hook(OTHER, `printf x > ${path.join(folder, 'memory', 'note.md')}`)).status, 0, 'a host memory file');
   assert.equal(fx.cmd(['end', 'launch']).exitCode, 0);
   assert.equal((await hook(OTHER, forged)).status, 0, 'no run under way');
+});
+
+test('a run whose issues are all done stays guarded until its ledger records its end, as custody reads it', async (t) => {
+  const fx = runFixture(t);
+  const hook = hookOf(fx);
+  for (const { key } of ISSUES) recordIssue(fx.state, 'launch', { key, state: 'done' });
+  assert.equal(projectRunActive(fx.project, fx.config, { home: fx.home }), false, 'the plan is done');
+  assert.equal(projectRunActive(fx.project, fx.config, { home: fx.home, untilEnd: true }), true, 'no end row yet');
+  const transcript = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'), `${DRIVER}.jsonl`);
+  assert.equal((await hook(OTHER, `printf x >> ${transcript}`)).status, 2);
+  assert.equal(fx.cmd(['end', 'launch']).exitCode, 0);
+  assert.equal((await hook(OTHER, `printf x >> ${transcript}`)).status, 0);
+});
+
+test('the guard holds the folder the custody reader reads, under a host HOME that is not the account home', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-transcripts-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const account = path.join(root, 'account');
+  const host = path.join(root, 'host');
+  const env = { HOME: host };
+  const folder = path.join(host, '.claude', 'projects', '-work');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(path.join(folder, `${DRIVER}.jsonl`), `${JSON.stringify({ type: 'continued-in', timestamp: new Date().toISOString(), sessionId: DRIVER, continuedInSessionId: NEXT })}\n`);
+  assert.equal(continuedIn({ session: DRIVER, cwd: '/work', env })?.id, NEXT, 'the reader takes HOME');
+  const folders = transcriptFolders(account, { env });
+  assert.ok(folders.includes(path.join(host, '.claude', 'projects')), folders.join(', '));
+  assert.ok(folders.includes(path.join(account, '.claude', 'projects')));
+  const denied = transcriptWriteDenial(bash(`printf x >> ${path.join(folder, `${DRIVER}.jsonl`)}`, root), SETTINGS, { runSession: () => true, folders });
+  assert.match(denied?.match ?? '', /host's session transcript/u);
+});
+
+test('a glob counts only when it may reach a transcript place: a folder above, a project folder, or a .jsonl file in one', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-transcripts-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const projects = path.join(root, '.claude', 'projects');
+  const own = path.join(projects, '-work');
+  mkdirSync(path.join(own, 'memory'), { recursive: true });
+  const ask = (command) => transcriptWriteDenial(bash(command, root), SETTINGS, { runSession: () => true, folders: [projects] });
+  for (const command of [`rm -f ${root}/build-*.tmp`, `rm -f ${own}/memory-*.md`, `rm -f ${projects}/*/memory/*.md`, `rm -f ${own}/*.json`]) {
+    assert.equal(ask(command), null, command);
+  }
+  for (const command of [`rm -rf ${root}/.cl*`, `rm -rf ${projects}/*`, `rm -f ${projects}/*/x.jsonl`, `rm -f ${own}/*.json*`, `rm -f ${own}/*`, `rm -f ${root}/**/*.jsonl`]) {
+    assert.notEqual(ask(command), null, command);
+  }
+  assert.equal(transcriptWriteDenial(bash(`rm -f ${own}/*`, root), SETTINGS, { runSession: () => false, folders: [projects] }), null, 'no run under way');
 });

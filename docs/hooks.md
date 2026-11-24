@@ -1120,12 +1120,18 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   ended, while no pending or issue mark holds the session; the command reads the forge's copy of the switch too.
   Any other spelling, such as `-- --custody`, `--custody=false`, or `--custody` twice, meets the attended rules.
   Neither the command nor the rule lets that form, or a resume from the continuation the host names, lift a halt.
-- While the project has a run under way (`projectRunActive`), no session or subagent, attended or not, may write a
-  host's session transcript (`lib/transcript-guard.mjs`): a transcript folder the host adapter names
-  (`transcriptFolders`, Claude Code's `projects/` under `~/.claude` and under `CLAUDE_CONFIG_DIR`), a project folder in
-  it, or a `.jsonl` file in one of those, by a path, a glob that may reach one, or, where the folder is unknown, a
-  spelling `projects/<folder>/<file>.jsonl`. A project run reads the driver's continuation there, so no row is forged.
-  Deeper entries, such as a host's memory folder, stay writable. A script that writes the file is an accepted residual.
+- Until the project's run records its end, its issues all done included (`projectRunActive` with `untilEnd`), no
+  session or subagent, attended or not, may write a host's session transcript (`lib/transcript-guard.mjs`).
+  That is a transcript folder the host adapter names (`transcriptFolders`), a project folder in it, or a `.jsonl` file
+  in one of those, by a path, a glob whose parts may name one, or, where the folder is unknown, a spelling
+  `projects/<folder>/<file>.jsonl`.
+  On Claude Code the folders are `projects/` under `~/.claude` of the account's home and the folder the custody reader
+  reads (`transcriptRoot`: under `CLAUDE_CONFIG_DIR`, else under the host's `HOME`).
+  A project run reads the driver's continuation there, so no row is forged.
+  Deeper entries, such as a host's memory folder, stay writable, and so does a glob that cannot reach a transcript, as
+  `build-*.tmp` beside `.claude` or `memory-*.md` in a project folder; a glob with a part of only stars, as `**`, may
+  span any depth and counts.
+  A script that writes the file is an accepted residual.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds

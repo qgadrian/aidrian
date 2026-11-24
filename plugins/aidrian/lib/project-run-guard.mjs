@@ -25,7 +25,7 @@ import { detectHost, opaqueShellCommand } from './hosts/index.mjs';
 import { findProject } from './project.mjs';
 import { activeRuns, attemptBranches, attendedProblem, ISSUE_KEY, issueBranch, readRun, RUN_ID, runPlace } from './project-run.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
-import { driverAfter, endedIn, runDriver } from './run-driver.mjs';
+import { driverAfter, droveRun, endedIn, runDriver } from './run-driver.mjs';
 import { marksNaming, readUnattendedMark } from './unattended-mark.mjs';
 
 // The file a confined session hands its result over in, in its drop folder: project-result.mjs's DROP_FILE, which
@@ -441,11 +441,13 @@ const RULES = Object.freeze({
   recorded: driverOnly,
   // Reads every check a start would make, and starts nothing.
   preflight: readOnly,
-  // Prints the entry that pins a decision the Human recorded, which a person checks before the team commits it: only an
-  // attended main session, by attendedProblem with the hook's own payload, as init.
+  // Prints a decision the Human recorded and, with --record or --forget, writes this machine's recorded-decision store:
+  // only an attended main session, by attendedProblem with the hook's own payload, as init, and never one that drove a
+  // project run (droveRun), which may run on with no Human, as the sign-off store's writer is held. Every form alike.
   decision: ({ input, session, project, config, state, home }) => {
     const problem = attendedProblem({ input, session, project, config, state, ...(home ? { home } : {}) });
-    return problem && `\`aidrian project decision\` pins a decision the Human recorded, from an attended session only, and ${problem}`;
+    if (problem) return `\`aidrian project decision\` records a decision the Human made, from an attended session only, and ${problem}`;
+    return droveRun(session, home ? { home } : {}) ? '`aidrian project decision` records a decision the Human made, and this session drove a project run, which may run on with no Human; run it from another session the Human attends' : null;
   },
   // Proves the sandbox of the issue's own session from inside it (lib/project-confine.mjs): only the session the run
   // started for the issue, by its own mark, or, before the gate files that, by the pending mark that starts it in the

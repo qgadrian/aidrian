@@ -4,7 +4,7 @@
 // imports, so the hooks that guard the folder load nothing that runs gh.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import path from 'node:path';
 
@@ -50,7 +50,7 @@ export function signoffFile(repo, pr, { env = process.env } = {}) {
   return path.join(signoffFolder(env), ...parts, `${pr}.json`);
 }
 
-// Why `folder` is no folder of this user's alone that the store may use, or null: a link, not a folder, another user's,
+// Why `folder` is no folder of this user's alone that a store may use, or null: a link, not a folder, another user's,
 // or one another user may write.
 function folderProblem(folder, uid) {
   let stat;
@@ -65,17 +65,26 @@ function folderProblem(folder, uid) {
   return null;
 }
 
-// Why the folders from the store's folder down to `file`'s are not this user's alone, or null.
-const pathProblem = (file, env) => {
-  const top = signoffFolder(env);
+// Why a store file `file` under the state root `root` cannot be trusted, or null. Checked from a trusted ancestor: the
+// real path of the folder above `root`, where a link is resolved, must be a folder of this user's that no other user may
+// write; then `root` itself and every folder below it down to `file`'s must be a plain folder of this user's alone, no
+// link among them (folderProblem). A folder not there yet passes, as does an ancestor not there yet, which holds
+// nothing. The recorded-decision store (lib/project-decision-store.mjs) and the start's sandbox denies
+// (lib/project-run-gate.mjs guardedStore) hold their folders to this too.
+export const storePathProblem = (file, root) => {
   const uid = processUid();
-  let folder = path.dirname(file);
-  const chain = [];
-  while (folder.length >= top.length) {
-    chain.unshift(folder);
-    if (folder === top) break;
-    folder = path.dirname(folder);
+  let anchor;
+  try {
+    anchor = realpathSync(path.dirname(root));
+  } catch (error) {
+    return error.code === 'ENOENT' ? null : `${path.dirname(root)} cannot be resolved (${error.code ?? 'no code'})`;
   }
+  const above = folderProblem(anchor, uid);
+  if (above) return above;
+  const below = path.relative(root, path.dirname(file));
+  if (below.startsWith('..') || path.isAbsolute(below)) return `${file} is not under the state root ${root}`;
+  const chain = [path.join(anchor, path.basename(root))];
+  for (const part of below === '' ? [] : below.split(path.sep)) chain.push(path.join(chain.at(-1), part));
   for (const each of chain) {
     const problem = folderProblem(each, uid);
     if (problem) return problem;
@@ -92,14 +101,28 @@ const isEntry = (entry) => isObject(entry) && typeof entry.head === 'string' && 
 export function readHumanSignoffs({ repo, pr, env = process.env }) {
   const file = signoffFile(repo, pr, { env });
   if (!file) return { problem: `${JSON.stringify(String(repo))}#${pr} names no repository and pull request the sign-off store keeps` };
-  const above = pathProblem(file, env);
+  const above = storePathProblem(file, stateRoot(env));
   if (above) return { problem: `the sign-off store cannot be trusted: ${above}` };
+  const read = readStoreJson(file, 'a sign-off store file');
+  if (read.missing) return { flows: {} };
+  if (read.problem) return { problem: read.problem };
+  const { value } = read;
+  if (!isObject(value) || value.version !== 1 || value.pr !== pr || String(value.repo).toLowerCase() !== String(repo).toLowerCase() || !isObject(value.flows)) {
+    return { problem: `${file} is not a sign-off store file of ${repo}#${pr}` };
+  }
+  return { flows: Object.fromEntries(Object.entries(value.flows).filter(([, entry]) => isEntry(entry))) };
+}
+
+// The JSON of the store file `file`, read without following a link and only as a regular file of this user's alone with
+// one link, under STORE_CAP: { value }, { missing: true } when nothing is there, or { problem }, `kind` naming the file;
+// `malformed: true` marks a problem of the content alone, past STORE_CAP or no JSON, once those checks passed.
+export function readStoreJson(file, kind) {
   let fd;
   try {
     fd = openSync(file, NO_FOLLOW);
   } catch (error) {
-    if (error.code === 'ENOENT') return { flows: {} };
-    return { problem: `the sign-off store file ${file} cannot be read (${error.code ?? 'no code'})` };
+    if (error.code === 'ENOENT') return { missing: true };
+    return { problem: `the store file ${file} cannot be read (${error.code ?? 'no code'})` };
   }
   try {
     const stat = fstatSync(fd);
@@ -107,16 +130,17 @@ export function readHumanSignoffs({ repo, pr, env = process.env }) {
     if (!stat.isFile()) return { problem: `${file} is not a regular file` };
     if (uid !== null && stat.uid !== uid) return { problem: `${file} belongs to another user` };
     if ((stat.mode & 0o022) !== 0 || stat.nlink !== 1) return { problem: `${file} may be written another way than by the store` };
-    if (stat.size >= STORE_CAP) return { problem: `${file} is too large to be a sign-off store file` };
+    if (stat.size >= STORE_CAP) return { problem: `${file} is too large to be ${kind}`, malformed: true };
     const buffer = Buffer.alloc(stat.size);
     const read = readSync(fd, buffer, 0, stat.size, 0);
-    const value = JSON.parse(buffer.subarray(0, read).toString('utf8'));
-    if (!isObject(value) || value.version !== 1 || value.pr !== pr || String(value.repo).toLowerCase() !== String(repo).toLowerCase() || !isObject(value.flows)) {
-      return { problem: `${file} is not a sign-off store file of ${repo}#${pr}` };
+    const text = buffer.subarray(0, read).toString('utf8');
+    try {
+      return { value: JSON.parse(text) };
+    } catch (error) {
+      return { problem: `${file} cannot be read as ${kind} (${String(error?.message ?? error).split('\n')[0]})`, malformed: true };
     }
-    return { flows: Object.fromEntries(Object.entries(value.flows).filter(([, entry]) => isEntry(entry))) };
   } catch (error) {
-    return { problem: `${file} cannot be read as a sign-off store file (${String(error?.message ?? error).split('\n')[0]})` };
+    return { problem: `${file} cannot be read as ${kind} (${String(error?.message ?? error).split('\n')[0]})` };
   } finally {
     closeSync(fd);
   }
@@ -130,12 +154,30 @@ export function recordHumanSignoff({ repo, pr, flow, head, by, env = process.env
   if (typeof head !== 'string' || !FULL_SHA.test(head)) throw new Error(`the sign-off store takes a full commit SHA, not ${JSON.stringify(head)}`);
   const file = signoffFile(repo, pr, { env });
   if (!file) throw new Error(`${repo}#${pr} names no repository and pull request the sign-off store keeps`);
-  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  makeStoreFolder(file, stateRoot(env), 'the sign-off store');
   const current = readHumanSignoffs({ repo, pr, env });
   if (current.problem) throw new Error(current.problem);
   const entry = { head: head.toLowerCase(), by: String(by), at: new Date(now).toISOString() };
-  const text = `${JSON.stringify({ version: 1, repo: String(repo).toLowerCase(), pr, flows: { ...current.flows, [flow]: entry } }, null, 2)}\n`;
-  const temporary = path.join(path.dirname(file), `.${pr}.json.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+  writeStoreFile(file, `${JSON.stringify({ version: 1, repo: String(repo).toLowerCase(), pr, flows: { ...current.flows, [flow]: entry } }, null, 2)}\n`);
+  return entry;
+}
+
+// Makes the folders of a store from the state root `root` down to `file`'s, each this user's alone, mode 0700, only
+// once the trusted ancestor and every one already there passed storePathProblem: a link, the state root's among them,
+// another user's folder, or one another user may write throws before anything is made, so no folder lands where a link
+// points. Throws, too, when a folder it made fails the check; `what` names the store in the error.
+export function makeStoreFolder(file, root, what) {
+  const before = storePathProblem(file, root);
+  if (before) throw new Error(`${what} cannot be trusted: ${before}`);
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const after = storePathProblem(file, root);
+  if (after) throw new Error(`${what} cannot be trusted: ${after}`);
+}
+
+// Writes `text` to `file` of a store whole, owner-only, through a temporary file beside it moved into place, which a
+// write that fails removes. Throws what the write throws.
+export function writeStoreFile(file, text) {
+  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
   try {
     writeFileSync(temporary, text, { mode: 0o600, flag: 'wx' });
     renameSync(temporary, file);
@@ -145,5 +187,4 @@ export function recordHumanSignoff({ repo, pr, flow, head, by, env = process.env
     } catch {}
     throw error;
   }
-  return entry;
 }

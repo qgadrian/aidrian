@@ -164,6 +164,29 @@ export function effectiveRoute(configured, host, override, gateOf = () => NO_GAT
   return byClear(host, gate.why);
 }
 
+// The most continuations in a row `routed`, effectiveRoute's answer, allows: the base branch's maxChain on the
+// background route (backgroundGate), and the store's, the working config's, on every other route.
+const routeLimit = (routed, store) => (routed.route === 'background' ? routed.maxChain : store.maxChain);
+
+// Whether a brief of Chain `chain` is at the chain cap of `routed`: the gate continues it by no route, and a person
+// resumes it, which starts the count again.
+export const atChainCap = (chain, routed, store) => Number.isInteger(chain) && chain >= routeLimit(routed, store);
+
+// Whether the next handoff of `session` is at the chain cap of `routed`, effectiveRoute's answer for `project` and its
+// loaded `config`: the highest chain floor the session was given, 0 with none, is the least Chain its next brief may hold
+// (decide), and atChainCap holds for it. The session-length hooks read it so they ask for no handoff the gate would
+// refuse to continue (lib/session-length.mjs continuation). False for the route `none`, which reads no chain, an id
+// SESSION_ID refuses, a refused store, or a read that throws: then the hooks word the handoff as before.
+export function sessionAtChainCap(routed, project, config, session, { env = process.env, now = Date.now() } = {}) {
+  if (routed.route === 'none' || typeof session !== 'string' || !SESSION_ID.test(session)) return false;
+  try {
+    const store = projectStore(project, config, env);
+    return !store.refused && atChainCap(readFrom(store, session, { now })?.chain ?? 0, routed, store);
+  } catch {
+    return false;
+  }
+}
+
 // Why a session whose unattended mark `mark` names an issue of a project run starts no continuation, or null: every
 // host's project start is confined, so the issue's session runs in a clone under its host's sandbox, and a continuation
 // would start outside both. The session pushes its work and records its result instead. A mark that names an issue in a
@@ -277,8 +300,8 @@ function decide({ found, store, session, routed, host, chainOf, env, now, run, w
   // A second run on the bytes that already started a session says so again and starts nothing.
   const earlier = route === 'background' ? readStarted(store, session, { now }) : null;
   if (earlier?.sha256 === hash) return startedLines(host, earlier);
-  const limit = route === 'background' ? routed.maxChain : store.maxChain;
-  if (Number.isInteger(chain) && chain >= limit) {
+  if (atChainCap(chain, routed, store)) {
+    const limit = routeLimit(routed, store);
     const named = route === 'background' ? `the base branch's session.handoff.maxChain, at most ${BACKGROUND_HOPS} on the background route,` : 'session.handoff.maxChain';
     return none(`this brief has Chain ${chain}, and ${named} allows ${limit} continuations in a row; a person resumes it, which starts the count again`);
   }

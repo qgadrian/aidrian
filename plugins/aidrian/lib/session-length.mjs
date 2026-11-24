@@ -205,7 +205,8 @@ export function handoffStatus(usage, handoff, markerText) {
 // What the Stop hook does, or null: { reason, marker }. `handoff` is config.json `session.handoff`, `markerText` the
 // marker's text or null; handoffStatus decides whether a trigger fires. A firing changes only what the trigger that fired
 // holds: the cost one records its ratio, the ceiling raises its count past every doubling it reached. `continuation` is
-// the hooks' { route, how }.
+// the hooks' { route, how, capped }: at the chain cap the firing is recorded with a null `reason`, so the hook sends no
+// turn back to ask for a handoff the gate would not continue, and the reminder backs off as after a skipped firing.
 export function stopReminder(text, handoff, markerText, continuation = {}) {
   const usage = sessionUsage(text);
   if (!usage.calls) return null;
@@ -216,6 +217,7 @@ export function stopReminder(text, handoff, markerText, continuation = {}) {
     tokens: byTokens ? tokensPassed(usage.last, handoff.maxTokens, counts.tokens) : counts.tokens,
     compactions: usage.compactions,
   };
+  if (continuation.capped === true) return { reason: null, marker };
   const next = [];
   if (byTokens) next.push(`the context reaches ${Math.round(tokenCeiling(handoff.maxTokens, marker.tokens) / 1000)}k tokens`);
   if (byCost) next.push(`each call costs ${round(nextRatio(handoff.costRatio, marker.lastRatio, handoff.mode))} times what a fresh session's would`);
@@ -245,12 +247,19 @@ const notWorthIt = (cost, next, said) => 'Judge first whether a handoff is worth
 // background route reads `project`'s switches, and the state.dir of `working`, its loaded config, as the gate does, so a
 // handoff it would send by the clear route is worded so. A hook reads no forge: for a machine that follows the team's
 // `solo`, it words the reminder by the base branch's local ref alone, and the gate reads the forge before it starts
-// anything.
-export async function continuation(handoff, host, project, working) {
-  if ((handoff.continue ?? 'none') === 'none' || !continueRoutes(host).length) return { route: 'none', how: null };
-  const { backgroundGate, effectiveRoute } = await import('./handoff-continue.mjs');
-  const { route } = effectiveRoute(handoff.continue, host, undefined, () => backgroundGate(project, working, undefined, { forgeSolo: () => true }));
-  return { route, how: route === 'none' ? null : host.capabilities.handoffContinue.steps?.[route] ?? null };
+// anything. `capped` says the chain of `session`, the hook's session id, is at the cap of that route, the gate's own
+// check (handoff-continue.mjs sessionAtChainCap): the gate would continue its brief by no route, so neither hook asks
+// for a handoff then.
+export async function continuation(handoff, host, project, working, session = null) {
+  if ((handoff.continue ?? 'none') === 'none' || !continueRoutes(host).length) return { route: 'none', how: null, capped: false };
+  const { backgroundGate, effectiveRoute, sessionAtChainCap } = await import('./handoff-continue.mjs');
+  const routed = effectiveRoute(handoff.continue, host, undefined, () => backgroundGate(project, working, undefined, { forgeSolo: () => true }));
+  const { route } = routed;
+  return {
+    route,
+    how: route === 'none' ? null : host.capabilities.handoffContinue.steps?.[route] ?? null,
+    capped: sessionAtChainCap(routed, project, working, session),
+  };
 }
 
 // With the clear route, the session-handoff skill's continue step arms the continuation after the brief and prints the
@@ -284,10 +293,10 @@ export function handoffReason(mode, { cost = null, tokens = null, next, route = 
 // disk and nothing is in flight, so a handoff costs least at this moment, and the build would carry the whole planning
 // context. It fires at r ≥ 1 + (costRatio − 1) / 2, halfway from a fresh session's 1 to costRatio, or at half of
 // maxTokens when the ceiling is set (offerReached, which handoffStatus's `offer` reads too). `continuation` is the hooks'
-// { route, how }: with the clear route the build starts in the session the clear begins, and with the background route in
-// the session the gate starts, never here.
-export function planApprovedContext(handoff, usage, { route = 'none', how = null } = {}) {
-  if (handoff.mode === 'off' || !usage.calls) return null;
+// { route, how, capped }: with the clear route the build starts in the session the clear begins, and with the background
+// route in the session the gate starts, never here. At the chain cap it offers nothing: the gate would not continue it.
+export function planApprovedContext(handoff, usage, { route = 'none', how = null, capped = false } = {}) {
+  if (handoff.mode === 'off' || !usage.calls || capped) return null;
   const cost = handoffCost(usage, { resumeTokens: handoff.resumeTokens });
   const { byCost, byTokens } = offerReached(handoff, usage, cost);
   if (!byCost && !byTokens) return null;

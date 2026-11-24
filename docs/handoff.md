@@ -53,6 +53,13 @@ start the new session, so a Human who is not watching is no reason to stay. `ask
 The hooks word the route the gate would take: a background route this machine or the base branch has not turned on
 is worded as the clear route it falls back to ([the switches](#the-background-route)).
 
+**At the chain cap.** On a route other than `none`, a session whose [chain floor](#the-chain) is at that route's
+`maxChain` gets no reminder and no plan offer: the gate would continue its next brief by no route, and a background
+session nobody attends would end in a manual resume, with a message the host shows the Human as a problem.
+Both hooks read the gate's own check, `sessionAtChainCap` in `lib/handoff-continue.mjs`, so they never ask for a
+handoff the gate refuses. The Stop hook still records the firing in its marker, so the reminder backs off as after a
+skipped one. With `maxChain: "unlimited"`, or the `none` route, which reads no chain, the reminder is as before.
+
 **Once, then again.** The first firing is at `costRatio`, 2 by default. When it comes back depends on the mode:
 
 - `ask` comes back only once `r` reaches twice the ratio at its last firing: 2, 4, 8 by default, or 1.5, 3, 6 at a

@@ -334,8 +334,14 @@ export function fileIdentity(file) {
       // as written; one that climbs above that folder cannot be told.
       const below = rest.length ? path.posix.normalize(rest.join('/')) : '';
       if (below === '..' || below.startsWith('../')) return null;
+      const names = below && below !== '.' ? below.split('/') : [];
+      // A `..` that folded away may lead back to a file or folder that is there: its identity is that one's.
+      if (rest.includes('..') && names.length && hops < LINK_HOPS) {
+        const reached = `${realpathSync.native(head)}/${names.join('/')}`;
+        if (existsAt(reached)) return fileIdentity(reached);
+      }
       // That folder by its own identity, so two spellings of it are one, and the names below it.
-      return [`folder:${stat.dev}:${stat.ino}`, ...(below && below !== '.' ? below.split('/') : [])].join('/');
+      return [`folder:${stat.dev}:${stat.ino}`, ...names].join('/');
     } catch (error) {
       if (!gone(error)) return null;
     }
@@ -357,6 +363,15 @@ export function fileIdentity(file) {
   return null;
 }
 const LINK_HOPS = 40;
+// Whether something is at `file`, a link not followed: a look that fails counts as nothing there.
+const existsAt = (file) => {
+  try {
+    lstatSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 // Whether two identities (fileIdentity) may be one file: the same, or, for names that are no file yet, below the very
 // same existing folder, the names below it the same part by part, each pair equal, equal but for ASCII letter case, or

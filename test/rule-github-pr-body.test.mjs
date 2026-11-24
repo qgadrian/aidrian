@@ -495,6 +495,8 @@ test('a write through a link or a hard link to a body file is a write to it', (t
   // A folder the line makes is reached through `.` and `..` as the shell reaches it.
   assert.match(run(`mkdir -p new && cat > new/body.md <<'EOF'\n${GOOD}EOF\necho x > new/./body.md\ngh pr create -t x -F new/body.md`) ?? '', unread, 'new/./body.md is new/body.md');
   assert.match(run(`mkdir -p new/in && cat > new/body.md <<'EOF'\n${GOOD}EOF\necho x > new/in/../body.md\ngh pr create -t x -F new/body.md`) ?? '', unread, 'and so is new/in/../body.md');
+  // A `..` out of a folder the line makes may reach a file that is there already: it is that file.
+  assert.match(run(`cat > c.md <<'EOF'\n${GOOD}EOF\nmkdir -p made && echo x > made/../c.md\ngh pr create -t x -F c.md`) ?? '', unread, 'made/../c.md is the existing c.md');
   // A folder that exists is one folder however it is spelled, and two folders that exist are never one.
   mkdirSync(path.join(dir, 'caf\u00e9'));
   assert.equal(run(`cat > caf\u00e9/n.md <<'EOF'\n${GOOD}EOF\necho x > r/n.md\ngh pr create -t x -F caf\u00e9/n.md`), null, 'n.md in two existing folders');

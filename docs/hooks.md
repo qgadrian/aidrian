@@ -1199,6 +1199,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   names the file and writes to a word built from a variable or a bracket glob. A read, such as `cat`, or a plain copy
   from it, runs. Its known limits: a link already on disk under another name, and a program that deletes what it
   finds, such as `find -delete`.
+  An interpreter's code that names the file only in prose runs, as a Python docs edit or pull request body does: each
+  place it names it is a word of a quoted text or a comment of more than one word, the name alone or wrapped in
+  Markdown's backticks, emphasis, or brackets, in a text that interpolates nothing and that, read as a shell command,
+  writes no file of that name. Any other place names the file and is refused as above: `open('.aidrian.local.json', 'w')`,
+  a variable set to the name, a path that ends in it, an f-string or template that builds it, or `os.system('cp x .aidrian.local.json')`.
+  So is a path quoted inside a longer text, as a test fixture written from Python holds; write such a file with the
+  Write or Edit tool, or a shell heredoc, which the guard reads as a write to that file alone.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's. So does

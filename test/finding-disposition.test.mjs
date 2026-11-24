@@ -6,7 +6,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { decideDisposition, isManifestPath, loadTable, manifestDrift, splitFlagWords, vocabulary } from '../plugins/aidrian/lib/finding-disposition.mjs';
+import { VERSION } from '../plugins/aidrian/lib/config-schema.mjs';
+import { decideDisposition, fixSmallGapsAt, isManifestPath, loadTable, manifestDrift, splitFlagWords, statusDrift, vocabulary } from '../plugins/aidrian/lib/finding-disposition.mjs';
+import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
 import { isCommentLine, quietDelta } from '../plugins/aidrian/lib/review/diff.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -50,7 +52,37 @@ test('a trivial fix is taken even for a contrived finding; cost defaults to boun
 
 test('low severity is dropped before any residual rule can turn it into PR-body prose', () => {
   assert.equal(d({ severity: 'low', likelihood: 'contrived', affects: 'internal' }), 'drop_unless_cited');
-  assert.equal(d({ severity: 'nit', likelihood: 'routine', affects: 'users' }), 'drop_unless_cited');
+  assert.equal(d({ severity: 'nit', likelihood: 'routine', affects: 'internal' }), 'drop_unless_cited');
+});
+
+test('a low finding is fixed when its fix is trivial, or bounded for users or operators it is likely to reach', () => {
+  const t = loadTable();
+  const fixed = [];
+  for (const likelihood of t.likelihoods) for (const affects of t.affects) for (const cost of t.costs) {
+    const cell = `${likelihood}/${affects}/${cost}`;
+    const want = cost === 'trivial' || (cost === 'bounded' && ['users', 'operators'].includes(affects) && likelihood !== 'contrived') ? 'fix_now' : 'drop_unless_cited';
+    assert.equal(d({ severity: 'low', likelihood, affects, cost }), want, cell);
+    if (want === 'fix_now') fixed.push(cell);
+  }
+  assert.equal(fixed.length, 16, 'the 12 trivial cells and the 4 bounded ones for users or operators at routine or plausible');
+  assert.deepEqual(decideDisposition({ severity: 'low', likelihood: 'routine', affects: 'operators', cost: 'trivial' }).disposition, 'fix_now', 'the probe of the issue');
+  for (const [likelihood, affects, cost] of [['routine', 'internal', 'bounded'], ['contrived', 'users', 'bounded'], ['routine', 'users', 'structural'], ['plausible', 'revenue', 'bounded']]) {
+    assert.equal(d({ severity: 'low', likelihood, affects, cost }), 'drop_unless_cited', `internal, contrived, structural, and revenue stay dropped: ${likelihood}/${affects}/${cost}`);
+  }
+  assert.equal(d({ severity: 'nit', likelihood: 'plausible', affects: 'users' }), 'fix_now', 'a missing cost is bounded');
+});
+
+test('a low finding that cites a written project rule is fixed, but never past the late-round bound', () => {
+  const low = { severity: 'low', likelihood: 'contrived', affects: 'internal', cost: 'structural' };
+  assert.equal(d(low), 'drop_unless_cited');
+  assert.deepEqual(decideDisposition({ ...low, cites: 'docs/rules.md#errors' }), { disposition: 'fix_now', rule: 'cites', reason: 'a low finding that cites a written project rule (docs/rules.md#errors) is fixed' });
+  assert.equal(d({ ...low, cites: ' ' }), 'invalid', 'an empty citation is refused, never read as none');
+  assert.equal(d({ ...low, cites: null }), 'drop_unless_cited', 'a manifest\'s null is no citation');
+  assert.equal(d({ ...low, cites: 'docs/rules.md', source: 'bot', round: loadTable().lateRoundFrom }), 'accepted_residual', 'lateRound still bounds it');
+  assert.equal(d({ severity: 'medium', likelihood: 'contrived', affects: 'internal', cites: 'docs/rules.md' }), 'accepted_residual', 'only drop_unless_cited reads a citation');
+  const cited = { id: 'F1', ...low, disposition: 'drop_unless_cited', status: 'open', cites: 'docs/rules.md' };
+  assert.deepEqual(manifestDrift({ findings: [cited] }), [{ id: 'F1', disposition: 'drop_unless_cited', expected: ['fix_now'] }], 'a cited manifest finding is fix_now, which pr-review-fix selects');
+  assert.deepEqual(manifestDrift({ findings: [{ ...cited, cites: null }] }), [], 'one without a citation stays dropped');
 });
 
 test('the PR-feedback severity scale maps onto the reviewer scale', () => {
@@ -91,7 +123,8 @@ test('every reachable combination resolves to a defined disposition', () => {
 });
 
 test('low severity drops unless a rule is cited', () => {
-  assert.equal(d({ severity: 'low', likelihood: 'plausible', affects: 'users' }), 'drop_unless_cited');
+  assert.equal(d({ severity: 'low', likelihood: 'plausible', affects: 'internal' }), 'drop_unless_cited');
+  assert.equal(d({ severity: 'low', likelihood: 'plausible', affects: 'internal', cites: 'docs/rules.md' }), 'fix_now');
 });
 
 test('a bot finding with no axis is acceptable as-is; a human one needs the axis', () => {
@@ -151,7 +184,7 @@ test('the command prints the decision, exits 2 on an unknown word, and --vocab p
 test('from review round N, a low finding is a residual whatever its cost or citation; a bot low with no axes too', () => {
   const N = loadTable().lateRoundFrom;
   const low = { severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', source: 'bot' };
-  assert.equal(d({ ...low, round: N - 1 }), 'drop_unless_cited', 'before N a cited low is still a fix');
+  assert.equal(d({ ...low, round: N - 1 }), 'fix_now', 'before N a trivial low is still a fix');
   assert.equal(d({ ...low, round: N }), 'accepted_residual');
   assert.deepEqual([d({ ...low, round: 7 }), decideDisposition({ ...low, round: 7 }).rule], ['accepted_residual', 'lateRound']);
   assert.equal(d({ severity: 'nit', source: 'bot', round: 7 }), 'accepted_residual', 'an exec finding has no axes: the table decides it unaided');
@@ -227,7 +260,7 @@ test('manifestDrift accepts the late-round reading of a finding\'s round, and on
   const N = loadTable().lateRoundFrom;
   const late = finding({ severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', disposition: 'accepted_residual', raised_in: N });
   assert.deepEqual(manifestDrift({ findings: [late] }), [], 'run with --source bot --round, as pr-review-loop runs it');
-  assert.deepEqual(manifestDrift({ findings: [{ ...late, disposition: 'drop_unless_cited' }] }), [], 'run with no source, as pr-review runs it');
+  assert.deepEqual(manifestDrift({ findings: [{ ...late, disposition: 'fix_now' }] }), [], 'run with no source, as pr-review runs it');
   assert.equal(manifestDrift({ findings: [{ ...late, raised_in: 1 }] }).length, 1, 'round 1 has no late reading');
 });
 
@@ -238,7 +271,7 @@ test('aidrian pr disposition --manifest exits 0 on the tool\'s values, 1 on drif
   writeFileSync(file, JSON.stringify({ pr: 7, findings: [finding(), finding({ id: 'F2', disposition: 'fix_now' })] }));
   const drifted = run();
   assert.equal(drifted.status, 1);
-  assert.deepEqual(JSON.parse(drifted.stdout), { file, findings: 2, drift: [{ id: 'F2', disposition: 'fix_now', expected: ['accepted_residual'] }] });
+  assert.deepEqual(JSON.parse(drifted.stdout), { file, findings: 2, drift: [{ id: 'F2', disposition: 'fix_now', expected: ['accepted_residual'] }], status_drift: [] });
   writeFileSync(file, JSON.stringify({ pr: 7, findings: [finding()] }));
   assert.equal(run().status, 0);
   writeFileSync(file, '{');
@@ -293,4 +326,43 @@ test('the file-write hook refuses a Write or Edit that sets a disposition the ax
 
   const elsewhere = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: 'Write', cwd: dir, tool_input: { file_path: path.join(dir, 'pr-9.json'), content: text([finding({ disposition: 'fix_now' })]) } }), encoding: 'utf8' });
   assert.equal(elsewhere.status, 0, 'a file outside a reviews folder is no manifest');
+});
+
+// A project whose config.json sets `review` to `review`, in a fresh folder.
+function project(t, review) {
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian', 'config.json'), JSON.stringify({ version: VERSION, ...(review === undefined ? {} : { review }) }));
+  return dir;
+}
+
+test('review.fixSmallGaps is false unless the project sets it true, and a non-boolean is refused', async (t) => {
+  const errors = [];
+  assert.equal(checkReview({}, 'config.json', errors).fixSmallGaps, false);
+  assert.equal(checkReview({ fixSmallGaps: true }, 'config.json', errors).fixSmallGaps, true);
+  assert.deepEqual(errors, []);
+  assert.equal(checkReview({ fixSmallGaps: 'yes' }, 'config.json', errors).fixSmallGaps, false);
+  assert.deepEqual(errors, ['config.json: "review.fixSmallGaps" must be true or false']);
+  assert.equal(await fixSmallGapsAt(project(t)), false, 'absent');
+  assert.equal(await fixSmallGapsAt(project(t, { fixSmallGaps: 'yes' })), false, 'a bad value is left out');
+  assert.equal(await fixSmallGapsAt(path.join(project(t, { fixSmallGaps: true }), 'src')), true, 'read from the project above');
+});
+
+test('with review.fixSmallGaps on, a trivial pre-existing finding must stay open; off, it may be pre-existing', () => {
+  const gap = finding({ severity: 'low', cost: 'trivial', disposition: 'fix_now', status: 'pre_existing' });
+  const manifest = { findings: [gap, finding({ id: 'F2', status: 'pre_existing' }), finding({ id: 'F3', cost: undefined, status: 'pre_existing' }), null] };
+  assert.deepEqual(statusDrift(manifest, { fixSmallGaps: true }), [{ id: 'F1', status: 'pre_existing', expected: 'open' }], 'a bounded or missing cost stays pre-existing');
+  assert.deepEqual(statusDrift(manifest, { fixSmallGaps: false }), []);
+  assert.deepEqual(statusDrift(manifest), [], 'off by default');
+  assert.deepEqual(statusDrift({ findings: [{ ...gap, status: 'open' }] }, { fixSmallGaps: true }), [], 'open is what the opt-in wants');
+});
+
+test('aidrian pr disposition --manifest lists the status drift of the project it runs in', (t) => {
+  const on = project(t, { fixSmallGaps: true });
+  const file = path.join(on, 'pr-8.json');
+  writeFileSync(file, JSON.stringify({ pr: 8, findings: [finding({ severity: 'low', cost: 'trivial', disposition: 'fix_now', status: 'pre_existing' })] }));
+  const run = (cwd) => spawnSync(CLI, ['pr', 'disposition', '--manifest', file], { cwd, encoding: 'utf8' });
+  const drifted = run(on);
+  assert.deepEqual([drifted.status, JSON.parse(drifted.stdout).status_drift], [1, [{ id: 'F1', status: 'pre_existing', expected: 'open' }]]);
+  assert.deepEqual([run(project(t)).status, JSON.parse(run(project(t)).stdout).status_drift], [0, []], 'off: pre_existing stands');
 });

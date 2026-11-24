@@ -19,11 +19,11 @@ and the slice's commit carries them, as the `issue-implement` skill's phases 3 a
 
 Editing never happens in the main checkout, the parent folder of `git rev-parse --path-format=absolute --git-common-dir`.
 
-- When the current checkout is not the main checkout, it is the task worktree, on whatever branch it has. Use it.
+- When the current checkout is not the main checkout, it is the task worktree, on whatever branch. Use it.
 - Otherwise create one with the `worktree-new` skill, which runs `aidrian worktree new <branch>`.
   - First run `git status --porcelain` in the main checkout. When it prints anything, show it to the Human and ask once
     whether the task needs those changes: a new worktree starts without them.
-  - When the command reports that the branch is checked out in the main checkout, ask the Human whether to work there instead.
+  - When it reports the branch checked out in the main checkout, ask the Human whether to work there instead.
 - Give the worktree's absolute path to every editing dispatch.
 
 ## Dispatches that go quiet
@@ -91,4 +91,4 @@ requests land: the handoff file, decisions on record, pushes, logs, and landing 
   A fix no registry entry or skill default owns goes to `doc-updater` when it is docs only; otherwise ask the Human for its owner.
 - In one worktree, one fixing agent works at a time, so two commits never race for the index.
 - `accepted_residual` goes in the pull request body, through the `pr-write` skill.
-- Chase no rare edge case.
+- Chase no rare edge case: `references/review-rules.md` § Proportion.

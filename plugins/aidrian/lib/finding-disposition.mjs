@@ -12,7 +12,8 @@
 // review round the finding arrived in, for a bot finding only: `round` of `aidrian pr review`, or `codex_rounds` from
 // `aidrian pr await-review` for the bot's own comments. From `lateRoundFrom` on, a medium, plausible finding for users
 // or operators, unless its cost is trivial (still fix_now), and any low finding whatever its cost or citation
-// (`lateRound`), become residuals instead of fixes.
+// (`lateRound`), become residuals instead of fixes. `cites` names the written project rule a finding cites, such as
+// `docs/rules.md#errors`: it turns a drop_unless_cited into fix_now, but never a late-round residual.
 // Output: { disposition, rule, reason }, one of fix_now | accepted_residual | drop_unless_cited | acceptable_as_is.
 // A bot finding with no axis is acceptable_as_is until someone classifies it; a person's is needs_axis. Exit 2 when
 // a word is not in the vocabulary.
@@ -24,7 +25,9 @@
 // checks a pr-review manifest (skills/pr-review/references/manifest.md): every finding's `disposition` must be a value
 // this table gives its axes, and every finding's axes must be in the vocabulary (manifestDrift). Output: { file, findings, drift: [{ id, disposition, expected }] }. Exit 0
 // when none drifts, 1 when one does, 2 when the file does not read as a manifest. The file-write hook refuses a write
-// that sets a drifting disposition (docs/hooks.md#review-dispositions).
+// that sets a drifting disposition (docs/hooks.md#review-dispositions). With the project's config.json
+// `review.fixSmallGaps` true, read from the working directory, the check also lists in `status_drift` each finding set
+// `pre_existing` whose cost is trivial (statusDrift): the opt-in fixes such a gap here, so it stays `open`.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -60,12 +63,14 @@ export const decideDisposition = (input, table = loadTable()) => {
   const cost = norm(input.cost) ?? table.defaultCost;
   const source = norm(input.source) ?? 'human';
   const round = input.round === undefined ? undefined : Number(input.round);
+  const cited = typeof input.cites === 'string' && input.cites.trim() !== '';
   const bad = [];
   if (round !== undefined && !(Number.isInteger(round) && round >= 1 && source === 'bot')) bad.push('round (bot findings only)');
   if (!table.severities.includes(severity)) bad.push('severity');
   if (likelihood !== undefined && !table.likelihoods.includes(likelihood)) bad.push('likelihood');
   if (affects !== undefined && !table.affects.includes(affects)) bad.push('affects');
   if (!table.costs.includes(cost)) bad.push('cost');
+  if (input.cites !== undefined && input.cites !== null && !cited) bad.push('cites');
   if (bad.length > 0) return { disposition: 'invalid', rule: null, reason: `invalid ${bad.join(', ')}` };
   const late = lateRoundResidual({ severity, source, round }, table);
   if (late) return late;
@@ -78,7 +83,9 @@ export const decideDisposition = (input, table = loadTable()) => {
   const phase = isLate({ source, round }, table) ? 'late' : 'early';
   const facts = { severity, likelihood, affects, cost, phase };
   for (const [i, rule] of table.rules.entries()) {
-    if (Object.entries(rule.when).every(([k, vs]) => vs.includes(facts[k]))) return { disposition: rule.disposition, rule: i, reason: JSON.stringify(rule.when) };
+    if (!Object.entries(rule.when).every(([k, vs]) => vs.includes(facts[k]))) continue;
+    if (rule.disposition === 'drop_unless_cited' && cited) return { disposition: 'fix_now', rule: 'cites', reason: `a low finding that cites a written project rule (${input.cites.trim()}) is fixed` };
+    return { disposition: rule.disposition, rule: i, reason: JSON.stringify(rule.when) };
   }
   return { disposition: table.default, rule: 'default', reason: 'no rule matched' };
 };
@@ -87,7 +94,7 @@ export const decideDisposition = (input, table = loadTable()) => {
 // it, and, for a finding with a round, the reading of an agent's finding in that round (`--source bot --round`), which
 // the late-round rule can change. `['invalid']` when its axes are not in the vocabulary.
 export function toolValues(finding, table = loadTable()) {
-  const axes = { severity: finding.severity, likelihood: finding.likelihood ?? undefined, affects: finding.affects ?? undefined, cost: finding.cost ?? undefined };
+  const axes = { severity: finding.severity, likelihood: finding.likelihood ?? undefined, affects: finding.affects ?? undefined, cost: finding.cost ?? undefined, cites: finding.cites ?? undefined };
   const values = new Set([decideDisposition(axes, table).disposition]);
   if (Number.isInteger(finding.raised_in) && finding.raised_in >= 1) values.add(decideDisposition({ ...axes, source: 'bot', round: finding.raised_in }, table).disposition);
   return [...values];
@@ -107,6 +114,28 @@ export function manifestDrift(manifest, table = loadTable()) {
     if (!expected.includes(finding.disposition)) drift.push({ id: finding.id ?? null, disposition: finding.disposition, expected });
   }
   return drift;
+}
+
+// The findings of a review manifest set `pre_existing` that the project's `review.fixSmallGaps` opt-in keeps `open`, as
+// [{ id, status, expected }]: those whose cost is trivial. A missing cost is bounded, so it never counts. With the opt-in
+// off, none: `pre_existing` stays for every failure that also happens at the base.
+export function statusDrift(manifest, { fixSmallGaps = false } = {}) {
+  if (fixSmallGaps !== true) return [];
+  const findings = Array.isArray(manifest?.findings) ? manifest.findings : [];
+  return findings
+    .filter((finding) => finding !== null && typeof finding === 'object' && finding.status === 'pre_existing' && norm(finding.cost) === 'trivial')
+    .map((finding) => ({ id: finding.id ?? null, status: 'pre_existing', expected: 'open' }));
+}
+
+// Whether the project at or above `cwd` turns `review.fixSmallGaps` on; false outside a project. A config with errors
+// still reads: a bad key is left out, so it is the default, false. The config modules load only here: config-types.mjs
+// imports this module.
+export async function fixSmallGapsAt(cwd) {
+  const { findProject } = await import('./project.mjs');
+  const project = findProject(cwd);
+  if (!project) return false;
+  const { loadConfig } = await import('./config.mjs');
+  return loadConfig(project).config.review.fixSmallGaps === true;
 }
 
 // Whether `file` is a review manifest or a temporary copy of one, as the pr-review skill writes them: a file in a
@@ -174,9 +203,9 @@ function driftKey({ id, disposition }, manifest) {
 export const splitFlagWords = (args) => args.flatMap((arg) => (arg.startsWith('--') && /\s/u.test(arg) ? arg.trim().split(/\s+/u) : [arg]));
 
 // The CLI body.
-export function runDisposition(args) {
+export async function runDisposition(args) {
   const word = { type: 'string' };
-  const { values } = parseArgs({ args: splitFlagWords(args), options: { severity: word, likelihood: word, affects: word, source: word, cost: word, round: word, manifest: word, vocab: { type: 'boolean' } } });
+  const { values } = parseArgs({ args: splitFlagWords(args), options: { severity: word, likelihood: word, affects: word, source: word, cost: word, round: word, cites: word, manifest: word, vocab: { type: 'boolean' } } });
   if (values.vocab) {
     console.log(JSON.stringify(vocabulary(), null, 2));
     return 0;
@@ -187,8 +216,9 @@ export function runDisposition(args) {
   return out.disposition === 'invalid' ? 2 : 0;
 }
 
-// `--manifest FILE`: exit 0 when every disposition is the table's, 1 when one drifts, 2 when the file is no manifest.
-function checkManifest(file) {
+// `--manifest FILE`: exit 0 when every disposition is the table's and no status drifts, 1 when one does, 2 when the
+// file is no manifest.
+async function checkManifest(file) {
   let manifest;
   try {
     manifest = JSON.parse(readFileSync(file, 'utf8'));
@@ -201,6 +231,7 @@ function checkManifest(file) {
     return 2;
   }
   const drift = manifestDrift(manifest);
-  console.log(JSON.stringify({ file, findings: manifest.findings.length, drift }));
-  return drift.length ? 1 : 0;
+  const status = statusDrift(manifest, { fixSmallGaps: await fixSmallGapsAt(process.cwd()) });
+  console.log(JSON.stringify({ file, findings: manifest.findings.length, drift, status_drift: status }));
+  return drift.length || status.length ? 1 : 0;
 }

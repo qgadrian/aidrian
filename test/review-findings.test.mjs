@@ -53,7 +53,7 @@ test('parseFindings: already_ruled is kept only when it names a settled entry an
   const settled = [{ title: 'Button text overflows at 360px', file: 'src/app/x.tsx', severity: 'medium' }, { title: 'The retry has no cap' }];
   const raw = JSON.stringify([
     finding({ severity: 'medium', likelihood: 'contrived', already_ruled: '  Button text overflows at 360px ' }),
-    finding({ title: 'Retry again', file: 'src/y.ts', severity: 'low', already_ruled: 'The retry has no cap' }),
+    finding({ title: 'Retry again', file: 'src/y.ts', severity: 'low', affects: 'internal', already_ruled: 'The retry has no cap' }),
     finding({ title: 'Self-named', already_ruled: 'Self-named' }),
     finding({ file: 'src/other.tsx', severity: 'medium', likelihood: 'contrived', already_ruled: 'Button text overflows at 360px' }),
     finding({ already_ruled: '   ' }),
@@ -81,7 +81,8 @@ test('parseFindings: already_ruled is kept only when it names a settled entry an
 test('parseFindings: a finding more severe than the settled prior finding it names stays open, and is noted; a residual settles a low finding only', () => {
   const settled = [{ title: 'Low one', file: 'a.js', severity: 'low' }, { title: 'The retry has no cap' }];
   const residual = 'The retry has no cap';
-  const at = (severity, over) => finding({ title: `${severity} repeat`, file: 'a.js', severity, already_ruled: 'Low one', ...over });
+  // A low finding that reaches users is fixed now (finding-disposition.json), so the low repeats here reach only internal readers.
+  const at = (severity, over) => finding({ title: `${severity} repeat`, file: 'a.js', severity, already_ruled: 'Low one', ...(['low', 'nit', 'informational'].includes(severity) ? { affects: 'internal' } : {}), ...over });
   const result = parseFindings(JSON.stringify([
     at('critical'), at('blocker'), at('medium'), at('low'), at('nit'),
     at('critical', { already_ruled: residual }), at('medium', { already_ruled: residual }), at('low', { already_ruled: residual }), at('informational', { already_ruled: residual }),
@@ -98,8 +99,8 @@ test('parseFindings: a finding more severe than the settled prior finding it nam
 test('parseFindings: a prior finding takes precedence over a residual of the same text, which cannot lift its file or its cap', () => {
   const settled = [{ title: 'Shared', file: 'a.js', severity: 'low' }, { title: 'Shared' }];
   const result = parseFindings(JSON.stringify([
-    finding({ title: 'Elsewhere', file: 'b.js', severity: 'low', already_ruled: 'Shared' }),
-    finding({ title: 'Here', file: 'a.js', severity: 'low', already_ruled: 'Shared' }),
+    finding({ title: 'Elsewhere', file: 'b.js', severity: 'low', affects: 'internal', already_ruled: 'Shared' }),
+    finding({ title: 'Here', file: 'a.js', severity: 'low', affects: 'internal', already_ruled: 'Shared' }),
   ]), settled);
   assert.deepEqual(result.list.map((each) => each.already_ruled ?? null), [null, 'Shared'], 'the residual does not settle the repeat in another file');
   assert.deepEqual(result.notes, ['--findings-file[0].already_ruled names a settled finding in another file ("Shared"): read as it stands']);

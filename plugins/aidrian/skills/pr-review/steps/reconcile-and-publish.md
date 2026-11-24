@@ -12,6 +12,7 @@ Read this file when the first agent returns. Start merging once every agent of t
 - Decide `pre_existing` by behaviour, never by location. A failure in code the pull request did not change is still introduced here
   when the pull request's new caller or new input triggers it: it stays `open`, and its summary names that caller.
   Set `pre_existing` only when the same failure happens at `base_sha`: it is reported, and fixed in a later change.
+  With config.json `review.fixSmallGaps` true, such a finding whose cost is `trivial` stays `open` instead, and the table gives its disposition.
   When the agent's words do not settle which, ask that agent once, and keep the finding `open` until it answers.
 - Only `security-engineer` may drop or downgrade a security finding.
 - On a re-review, a finding its agent confirms fixed becomes `resolved`, and one it finds still there goes back to `open`.
@@ -22,11 +23,13 @@ Read this file when the first agent returns. Start merging once every agent of t
 For each new finding:
 
 ```bash
-aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>]
+aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>] [--cites <doc>#<section>]
 ```
 
-Pass each flag as its own word. Store its `disposition`, never a value of your own. The table behind it does the weighing: a critical finding is always fixed,
-a contrived one becomes an accepted residual, and a low one is reported only when it cites a project rule.
+Pass each flag as its own word. Pass `--cites`, and store it in the finding's `cites`, only when the finding names
+a written project rule or documented anti-pattern that the code breaks.
+Store its `disposition`, never a value of your own. The table behind it does the weighing: a critical finding is always fixed,
+a contrived one becomes an accepted residual, and a low one is fixed when its fix is small or it cites a project rule.
 
 ## 3. Order
 
@@ -39,6 +42,7 @@ Write the round as `references/manifest.md` says: new findings with status `open
 the changed statuses, `round` raised by one, and this round's `head_sha` and `base_sha`.
 Then run `aidrian pr disposition --manifest <file>`: exit 1 lists each finding whose `disposition` its axes do not give.
 Write the first of its `expected` values; an empty `expected`, or axes that are wrong, means asking the agent for its axes again.
+Each `status_drift` entry is a trivial finding set `pre_existing` under `review.fixSmallGaps`: set its status to `expected`, `open`.
 Run it again until it exits 0.
 
 ## 5. Report
@@ -63,7 +67,6 @@ Write the round's report for chat:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | F3 | fix_now | high | routine | users | `src/cart.js:42` | <summary> | code-reviewer |
 
-**Rule violations (low):** <id, location, the rule it cites, and summary>, each.
 **Accepted residuals:** <id, location, and in one line why a fix is not worth it now>, each.
 **Disputed, needs a decision:** <id and both positions>, each.
 **Not introduced here:** <id and summary>, each.
@@ -73,12 +76,11 @@ Reviewed by <agents>. Regression check clean on <n> files. Not reviewed: <each l
 ```
 
 - The table lists `fix_now` findings whose status is `open` or `blocked`.
-- Open `drop_unless_cited` findings whose summary cites a written project rule go under **Rule violations (low)**. They do not block.
-  Those that cite no project rule, and `acceptable_as_is` findings, are counted in one line under the table, not listed.
+- A low finding that cites a project rule is `fix_now`, in the table. Open `drop_unless_cited` and `acceptable_as_is`
+  findings are counted in one line under the table, not listed.
 - Leave out each bold line that would be empty.
 - The verdict line: `changes needed, <a> to fix now` while the table has a row;
   `decision needed, <d> disputed` while a disputed one exists (both parts when both hold); otherwise `no blocking findings`.
-  End it with `, <k> rule violations (low)` while that list has entries, so it never reads as "no findings" then.
   From round 2, start it with "<r> resolved, <o> still open, <n> new."
 
 ## 6. Close

@@ -1014,6 +1014,22 @@ A low finding recorded with
 into the body, and attests it `accepted`. Attestation decides from the finding's axes with no round, so a late medium
 the command calls a residual still reads `fix_now` there and blocks until it is fixed. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
 
+### Small gaps
+
+A low finding is fixed in the pull request when its fix is trivial, and when its fix is bounded and it reaches users or
+operators at routine or plausible likelihood. Every other low finding is `drop_unless_cited`: one that reaches only internal
+readers or revenue, needs a contrived setup, or costs a structural change. It is fixed only when it cites a written
+project rule or documented anti-pattern, which `aidrian pr disposition --cites <doc>#<section>` and a manifest finding's
+`cites` record: the table then gives `fix_now`. The late-round rule above is the bound: from round N a low bot
+finding is a residual, cited or not.
+
+Two routes still keep a small gap out of the pull request: the `pr-review` skill's `pre_existing`, for a failure that also
+happens at the base, and the `issue-implement` skill's new issue, for work found outside the issue's scope.
+With config.json `review.fixSmallGaps` true, a gap on either route whose fix is trivial on the table's cost axis is
+fixed in the same pull request instead: the finding stays `open` and the table gives its disposition.
+`aidrian pr disposition --manifest <file>`, run in the project, lists each finding set `pre_existing` with a trivial
+cost under `status_drift` and exits 1. Off, the default, both routes stay as they were.
+
 ### Product feedback in the rounds
 
 [Product feedback](config.md#product-feedback) is no stage of the plan: its walk needs the session's browser tool and a

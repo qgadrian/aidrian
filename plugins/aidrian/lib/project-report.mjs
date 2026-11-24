@@ -30,8 +30,10 @@ import { bodyHash } from './tracker-guard.mjs';
 import { trackerById, trackerOfTools } from './trackers/index.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
 
-// The ledger rows that settle an attempt, each followed at once, under the same lock, by the issue row it leads to.
-const SETTLES = new Set(['result', 'ended', 'orphan']);
+// The ledger rows that settle an attempt, each followed at once, under the same lock, by the issue row it leads to: a
+// `landed` row is init's, for an issue whose pull request an earlier run left open merged since (project-run.mjs
+// landedRows), and names that run's attempt.
+const SETTLES = new Set(['result', 'ended', 'orphan', 'landed']);
 // The issue states a report is owed on: an issue in either never starts again in its run.
 const FINAL = new Set(['done', 'parked']);
 // The snapshot status types before a started one: only an issue the run read in one may have its started status set.
@@ -41,6 +43,7 @@ const ENDED = {
   no_result: 'ended with no result recorded',
   timeout: 'ran past the run\'s time limit for an issue and was stopped',
   bad_result: 'handed over a result the run could not confirm',
+  limit: 'ended on a usage or rate limit',
 };
 const LABEL_CAP = 64;
 const STATUS_CAP = 64;
@@ -105,6 +108,10 @@ function buildReport({ state, run, key, cause, after, policy }) {
     const read = rereadResult(state, run, key, cause);
     if (read.result) Object.assign(facts, { pr: read.result.pr, decisions: read.result.decisions, stop: read.result.stop });
     else facts.note = `${read.problem}, so this report holds only what the run's ledger says.`;
+  } else if (cause.event === 'landed') {
+    facts.outcome = 'merged';
+    facts.pr = Number.isInteger(cause.pr) && cause.pr > 0 ? cause.pr : null;
+    facts.note = `The run ${cleanText(cause.run, 64)} left this pull request open, and it merged after that run ended; this run took the merge in.`;
   } else if (cause.event === 'ended' && Object.hasOwn(ENDED, cause.reason)) {
     facts.outcome = cause.reason;
     facts.stop = cleanText(cause.why, CAPS.stop) || null;
@@ -114,8 +121,12 @@ function buildReport({ state, run, key, cause, after, policy }) {
   if (after.state === 'done' && facts.outcome !== 'merged') facts.outcome = 'unknown';
   const status = facts.outcome === 'merged' ? policy.done : facts.outcome === 'blocked' ? policy.blockedStatus : null;
   const label = facts.outcome === 'merged' ? null : policy.label;
+  // The earlier run's report labeled the issue for a decision on its open pull request: the merge takes that label off,
+  // as that run's `recorded` row names it. A ledger that names none, from before rows named one, takes none off: the
+  // team's label may have changed since, and a label set for another reason stays.
+  const unlabel = cause.event === 'landed' ? cleanText(cause.label, LABEL_CAP) || null : null;
   const body = reportBody(run, facts, after.decision === 'attempts');
-  return { key, attempt: facts.attempt, outcome: facts.outcome, pr: facts.pr, status, label, body, sha256: bodyHash(body) };
+  return { key, attempt: facts.attempt, outcome: facts.outcome, pr: facts.pr, status, label, unlabel, body, sha256: bodyHash(body) };
 }
 
 // The started status writes the driver may make on run `found`, as [{ key, status }]: each issue that runs on a start
@@ -161,14 +172,16 @@ export function reportBody(run, facts, outOfAttempts = false) {
   return lines.join('\n');
 }
 
-// The tool calls that write `report` through `adapter`'s `run` tools: [{ tool, input }], the issue's status and label
-// first when it sets either, then its comment. None with no adapter, or one that names no run tools.
+// The tool calls that write `report` through `adapter`'s `run` tools: [{ tool, input }], the issue's status and labels
+// first when it sets any, then its comment. A label to take off needs the adapter's `unlabel` field; with none, the
+// report leaves it on. None with no adapter, or one that names no run tools.
 export function reportCalls(report, adapter) {
   const run = adapter?.run;
   if (!run) return [];
   const issue = {
     ...(report.status === null ? {} : { [run.issue.status]: report.status }),
     ...(report.label === null ? {} : { [run.issue.label]: [report.label] }),
+    ...(report.unlabel && run.issue.unlabel ? { [run.issue.unlabel]: [report.unlabel] } : {}),
   };
   return [
     ...(Object.keys(issue).length ? [{ tool: run.issue.tool, input: { [run.issue.key]: report.key, ...issue } }] : []),
@@ -213,6 +226,7 @@ export function reportCommand({ project, config, run, json = false, env = proces
     lines.push(`owed ${report.key} attempt ${report.attempt} ${report.outcome}`);
     if (report.status !== null) lines.push(`  status ${report.status}`);
     if (report.label !== null) lines.push(`  label ${report.label}`);
+    if (report.unlabel) lines.push(`  unlabel ${report.unlabel}`);
     lines.push(`  comment sha256 ${report.sha256}`, ...report.body.split('\n').map((line) => `  | ${line}`));
     for (const call of report.calls) lines.push(`  call ${call.tool} ${JSON.stringify(call.input)}`);
   }
@@ -228,7 +242,7 @@ export function recordedCommand({ project, config, run, key, env = process.env, 
   const written = appendToRun(opened.state, run, (fresh) => {
     const report = owedReports({ state: opened.state, run, found: fresh, policy: opened.policy }).find((each) => each.key === key);
     if (!report) return { problem: `the run ${run} owes no report on ${typeof key === 'string' ? key.slice(0, 40) : 'that issue'}; \`aidrian project report ${run}\` lists what it owes` };
-    return { rows: [{ event: 'recorded', key, attempt: report.attempt, sha256: report.sha256, session: opened.session, at: iso(now) }] };
+    return { rows: [{ event: 'recorded', key, attempt: report.attempt, sha256: report.sha256, ...(report.label ? { label: report.label } : {}), session: opened.session, at: iso(now) }] };
   });
   if (written.problem) return refuse(written.problem);
   return { exitCode: 0, out: [`recorded ${key}`], err: [] };
@@ -264,7 +278,7 @@ export function runWriter({ session, env = process.env, home, base }) {
     const policy = reportPolicy((base ?? baseReader(current.project))());
     const owed = policy.problem ? [] : owedReports({ state: current.state, run: current.run, found: current.found, policy });
     const started = policy.problem ? [] : startedWrites({ found: current.found, policy });
-    return { role: 'driver', run: current.run, owed: owed.map(({ key, status, label, sha256 }) => ({ key, status, label, sha256 })), started, project: current.project };
+    return { role: 'driver', run: current.run, owed: owed.map(({ key, status, label, unlabel, sha256 }) => ({ key, status, label, unlabel, sha256 })), started, project: current.project };
   }
   return mark ? { role: 'unattended', project: projectOf(mark.root) } : null;
 }

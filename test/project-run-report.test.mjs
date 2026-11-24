@@ -18,7 +18,7 @@ import { baseReader } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { SETUP_DOC, SETUP_SECTIONS, setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
 import { pluginRepository } from '../plugins/aidrian/lib/config-version.mjs';
 import { owedReports, reportBody, reportCalls, reportPolicy, runWriter, startedWrites } from '../plugins/aidrian/lib/project-report.mjs';
-import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, planRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { commitProblem } from '../plugins/aidrian/lib/project-start.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
@@ -1330,6 +1330,108 @@ test('init --check blocks an issue whose text no read recorded, only when no tra
   assert.equal(missing.out[0], 'ok snapshot 3 issues, 1 with text');
   const served = await check({ mcpServers: { linear: { type: 'http', url: 'https://mcp.linear.app/mcp' } } });
   assert.equal(served.exitCode, 0, served.out.join('\n'));
+});
+
+// The texts blocker covers the issues that may start, ready or waiting on a blocker, as the recorded-decision lines do
+// (#609): a canceled issue and one skipped below it never start, so a text they lack blocks nothing.
+test('init --check never blocks a canceled issue or one skipped below it for a missing text, and still blocks a waiting one', (t) => {
+  const fx = runFixture(t, { init: false, config: { tracker: { provider: 'linear' } }, projectRun: { allow: true, unverifiedHosts: true } });
+  const issues = [
+    { key: 'ENG-1', branch: 'feat/eng-1-export', status: 'canceled' },
+    { key: 'ENG-2', branch: 'feat/eng-2-import', status: 'unstarted', blockedBy: ['ENG-1'] },
+    { key: 'ENG-4', branch: 'fix/eng-4-typo', status: 'unstarted' },
+    { key: 'ENG-5', branch: 'fix/eng-5-copy', status: 'unstarted', blockedBy: ['ENG-4'] },
+  ];
+  const file = path.join(fx.dir, 'snapshot.input');
+  writeFileSync(file, JSON.stringify({ issues }));
+  const checked = fx.cmd(['init', 'launch', '--file', file, '--check']);
+  assert.equal(checked.exitCode, 1);
+  assert.ok(checked.out.includes('skipped ENG-2 blocked_by ENG-1'), checked.out.join('\n'));
+  assert.deepEqual(checked.out.filter((line) => line.startsWith('blocker texts')).map((line) => line.split(' ')[2]), ['ENG-4', 'ENG-5'], 'the ready and the waiting issue, never the canceled or the skipped one');
+});
+
+// An earlier run parked ENG-1 on its open pull request, and a person merged it after that run ended (#631): the next
+// init never resumes it, takes it in as done so ENG-2 may start, and owes the report that moves it to done and clears the
+// decision label, a write the driver's tracker guard lets through.
+test('init takes in an issue whose pull request an earlier run left open and that merged since, and owes its report', async (t) => {
+  const fx = runFixture(t, { init: false, config: { tracker: { provider: 'linear' } }, projectRun: READY.projectRun });
+  const input = (issues, name) => {
+    const file = path.join(fx.dir, `${name}.input`);
+    writeFileSync(file, JSON.stringify({ issues, teams: ['ENG'] }));
+    return file;
+  };
+  const issues = (status) => [{ key: 'ENG-1', branch: 'feat/eng-1-export', status }, { key: 'ENG-2', branch: 'feat/eng-2-import', status: 'unstarted', blockedBy: ['ENG-1'] }];
+  assert.equal(fx.cmd(['init', 'first', '--file', input(issues('unstarted'), 'first')]).exitCode, 0);
+  const at = new Date(Date.now() - 60_000).toISOString();
+  appendToRun(fx.state, 'first', () => ({ rows: [
+    { event: 'start', key: 'ENG-1', attempt: 1, branch: 'feat/eng-1-export', outcome: 'started', at },
+    { event: 'result', key: 'ENG-1', attempt: 1, status: 'pr_open', pr: 12, head: 'a'.repeat(40), at },
+    { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'pr-open', at },
+    // That run's report labeled it under the label the team named then.
+    { event: 'recorded', key: 'ENG-1', attempt: 1, sha256: 'a'.repeat(64), label: 'old-decision', at },
+  ] }));
+  let view = merged();
+  fx.forge.change = (ref, fields, more) => {
+    fx.forge.calls.push(['change', ref, fields, more]);
+    return view;
+  };
+  const later = input(issues('started'), 'second');
+  const check = fx.cmd(['init', 'second', '--file', later, '--check']);
+  assert.equal(check.exitCode, 0, check.out.join('\n'));
+  assert.ok(check.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), check.out.join('\n'));
+  assert.equal(check.out.some((line) => line.startsWith('resumed:')), false, 'never resumed');
+  assert.ok(check.out.includes('next ENG-2 feat/eng-2-import'), 'its dependent may start');
+
+  // A merge the run cannot take as its own work is a blocker, never a resume.
+  view = merged({ baseRefName: 'release' });
+  const elsewhere = fx.cmd(['init', 'second', '--file', later, '--check']);
+  assert.equal(elsewhere.exitCode, 1);
+  assert.ok(elsewhere.out.includes('blocker snapshot: ENG-1 left pull request #12 open in the run first, which merged since, and it cannot be taken in: pull request #12 merged into "release", not the default branch main'), elsewhere.out.join('\n'));
+  assert.match(fx.cmd(['init', 'second', '--file', later]).err.join('\n'), /ENG-1 left pull request #12 open in the run first/u, 'init refuses it too');
+  // A pull request still open resumes as before.
+  view = { ...merged(), state: 'OPEN' };
+  assert.ok(fx.cmd(['init', 'second', '--file', later, '--check']).out.includes('resumed: 1 started issue an earlier run parked on its branch, which this run starts again: ENG-1'));
+
+  view = merged();
+  const init = fx.cmd(['init', 'second', '--file', later]);
+  assert.equal(init.exitCode, 0, init.err.join('\n'));
+  assert.ok(init.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), init.out.join('\n'));
+  const found = readRun(fx.state, 'second');
+  assert.equal(found.states.get('ENG-1').state, 'done');
+  assert.equal(found.snapshot.resumed, undefined);
+  assert.deepEqual(planRun(found.snapshot, found.states).next.map(({ key }) => key), ['ENG-2']);
+  const [owed] = JSON.parse(fx.cmd(['report', 'second', '--json']).out[0]).owed;
+  assert.deepEqual([owed.key, owed.attempt, owed.outcome, owed.pr, owed.status, owed.label, owed.unlabel], ['ENG-1', 1, 'merged', 12, 'completed', null, 'old-decision'], 'the label the earlier report set');
+  assert.deepEqual(owed.calls[0], { tool: 'save_issue', input: { id: 'ENG-1', state: 'completed', removeLabels: ['old-decision'] } });
+  assert.match(owed.body, /The run first left this pull request open, and it merged after that run ended/u);
+  assert.equal((await hook(fx, DRIVER, 'mcp__linear__save_issue', owed.calls[0].input)).status, 0, 'the guard lets the owed write through');
+  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', { id: 'ENG-1', state: 'completed', removeLabels: ['other'] })).stderr, /sets removeLabels to \["other"\] on ENG-1/u);
+  assert.equal((await hook(fx, DRIVER, 'mcp__linear__save_comment', owed.calls[1].input)).status, 0);
+  // The run ends before the report is recorded, so the tracker still shows ENG-1 started: the next run carries it on,
+  // with no second forge read.
+  appendToRun(fx.state, 'second', () => ({ rows: [{ event: 'issue', key: 'ENG-2', state: 'done', at: new Date().toISOString() }] }));
+  view = { ...merged(), state: 'OPEN' };
+  // A snapshot that names another branch for ENG-1 is other work than the merge the take-in checked.
+  const moved = fx.cmd(['init', 'third', '--file', input([{ key: 'ENG-1', branch: 'feat/eng-1-other', status: 'started' }], 'moved'), '--check']);
+  assert.equal(moved.out.some((line) => line.startsWith('landed:')), false, moved.out.join('\n'));
+  assert.ok(moved.out.includes('blocker snapshot: ENG-1 is started in the tracker, which a run does not start from'), moved.out.join('\n'));
+  const carried = fx.cmd(['init', 'third', '--file', input([{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }], 'third')]);
+  assert.equal(carried.exitCode, 0, carried.err.join('\n'));
+  assert.ok(carried.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), carried.out.join('\n'));
+  const [again] = JSON.parse(fx.cmd(['report', 'third', '--json']).out[0]).owed;
+  assert.deepEqual([again.key, again.unlabel], ['ENG-1', 'old-decision']);
+  assert.deepEqual(fx.cmd(['recorded', 'third', 'ENG-1']).out, ['recorded ENG-1']);
+});
+
+test('a landed report whose earlier label the ledger does not name takes no label off', () => {
+  const at = new Date().toISOString();
+  const found = { snapshot: { issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }] }, states: new Map([['ENG-1', { state: 'done', decision: null }]]), rows: [
+    { event: 'landed', key: 'ENG-1', run: 'first', attempt: 1, pr: 12, branch: 'feat/eng-1-export', at },
+    { event: 'issue', key: 'ENG-1', state: 'done', at },
+  ] };
+  const [owed] = owedReports({ state: '/nonexistent', run: 'second', found, policy: { label: 'needs-decision', blockedStatus: null, done: 'completed' } });
+  assert.deepEqual([owed.outcome, owed.status, owed.label, owed.unlabel], ['merged', 'completed', null, null]);
+  assert.deepEqual(reportCalls(owed, linear)[0], { tool: 'save_issue', input: { id: 'ENG-1', state: 'completed' } });
 });
 
 test('the driver\'s first turn writes every team key of the tracker workspace into the snapshot as `teams`', () => {

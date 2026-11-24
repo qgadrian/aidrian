@@ -61,7 +61,7 @@ import { DEFAULTS } from './config-defaults.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { changeNotFound, forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
-import { configPathIn, isPolicyPath, projectId, stateRoot, trailPaths } from './project.mjs';
+import { configPathIn, isPolicyPath, mayFollowTeamDefault, projectId, stateRoot, trailPaths } from './project.mjs';
 import { botProblem, NO_BOT, readHumanSignoffs, signoffProblem } from './review/merge-trust.mjs';
 import { HARNESS_FLOW } from './review/plan.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
@@ -352,7 +352,7 @@ function settleOrphans({ state, run, store, cap, env, spawn, now }) {
     if (!stopped) continue;
     const written = safely(() => appendToRun(state, run, (fresh) => {
       if (fresh.rows.some((each) => each.event === 'orphan' && each.key === row.key && each.attempt === row.attempt)) return { rows: [] };
-      return { rows: [{ event: 'orphan', key: row.key, attempt: row.attempt, action: sessions.length ? 'stopped' : 'none', at: iso(now) }, afterFailure(row.key, spentAttempts(fresh, row.key))].map((each) => ({ at: iso(now), ...each })) };
+      return { rows: [{ event: 'orphan', key: row.key, attempt: row.attempt, action: sessions.length ? 'stopped' : 'none', at: iso(now) }, afterFailure(row.key, spentAttempts(fresh, row.key), row.attempt)].map((each) => ({ at: iso(now), ...each })) };
     }));
     if (!written || written.problem) continue;
     dropClaim(store, row.session);
@@ -800,7 +800,11 @@ function launchStart(context, place) {
   // tip names (`policyFiles`, policyFilesAt), both for the push guard. A recorded decision that stood is in the row for
   // the audit alone: nothing reads it back.
   const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20) } : {};
-  const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: policy.issueHours, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}), ...(head ? { head } : {}), ...overlaid, ...(decision?.sha256 ? { decision: decision.sha256 } : {}) };
+  // `machine`: this machine's auto-merge switch as the main checkout reads it, which a confined session, denied that
+  // checkout, reads in its place (attempt-clone.mjs confinedMachine): "unset" only for an untracked local file.
+  const local = context.project.localAutoMerge;
+  const machine = { autoMerge: local === 'unset' && !mayFollowTeamDefault(context.project) ? 'off' : local };
+  const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: policy.issueHours, machine, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}), ...(head ? { head } : {}), ...overlaid, ...(decision?.sha256 ? { decision: decision.sha256 } : {}) };
   let proof = null;
   // Why the write-ahead row was refused under the ledger's lock, when the order or the cap moved since the start read it.
   const ahead = {};
@@ -985,7 +989,8 @@ function startLines({ result, state, run, key, attempt, session, base, proof, pr
 // of sessions the host lists as ended with no result (`ended no_result`), and stops and records one that ran past
 // projectRun.issueHours (`ended timeout`), less the time the run was paused; and, for a session that met a usage or rate
 // limit, pauses the run (lib/project-limit.mjs): one the host continues keeps running (`paused KEY KIND until TIME: ...`),
-// any other ends its attempt (`limit KEY KIND until TIME -> open`, or `limit KEY KIND halt -> open` past LIMIT_WAITS); it
+// any other ends its attempt (`limit KEY KIND until TIME -> open`, or `limit KEY KIND halt -> open` past LIMIT_WAITS,
+// `-> parked attempts` once the issue's attempt numbers ran out); it
 // waits on a session that runs on after its issue settled, and stops it once LINGER_GRACE has passed (`lingered KEY
 // attempt N ended|stopped`, lib/project-linger.mjs); then it removes the folders of confined attempts whose session ended.
 // It returns once any issue settles, none runs, none runs on, and the run is not paused, or the time is up, with a line
@@ -1016,12 +1021,13 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   }
   markCustodian(session, opened.found, run, state, env);
   const before = new Map(opened.found.states);
-  // `now` dates the first read; `clock` moves it on, so a deadline is never measured against another clock.
+  // `now` dates the first read exactly, so a pause it writes ends where its own `now` says; `clock` moves later reads
+  // on, so a deadline is never measured against another clock.
   const offset = now - clock();
   const time = () => clock() + offset;
-  const until = time() + Math.min(Math.max(0, maxWait), WAIT_CEILING) * 1000;
-  for (;;) {
-    const at = time();
+  const until = now + Math.min(Math.max(0, maxWait), WAIT_CEILING) * 1000;
+  for (let pass = 0; ; pass += 1) {
+    const at = pass === 0 ? now : time();
     const { lines, lingering } = waitPass({ state, run, store, cap, env, home, spawn, policy, forge: facade, now: at });
     const found = readRun(state, run);
     if (found.problem) return refuse(found.problem);
@@ -1113,7 +1119,7 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
       reason = dropped ? 'bad_result' : 'timeout';
     }
     if (!reason) continue;
-    const next = afterFailure(key, spentAttempts(found, key));
+    const next = afterFailure(key, spentAttempts(found, key), start.attempt);
     const why = reason === 'bad_result' ? { why: `the forge did not confirm the handed-over result within ${hours} hours` } : {};
     const written = safely(() => appendToRun(state, run, (fresh) => (fresh.states.get(key)?.state === 'running' && latestStart(fresh, key)?.attempt === start.attempt
       ? { rows: [{ event: 'ended', key, attempt: start.attempt, reason, ...why, at: iso(now) }, { ...next, at: iso(now) }] }
@@ -1165,7 +1171,8 @@ function limitLine({ state, run, store, cap, env, home, spawn, key, start, found
     return { rows: closed.rows };
   }));
   if (!written?.rows?.length) return {};
-  return { line: `limit ${key} ${limit.kind} ${when(closed.until)} -> open` };
+  const after = closed.rows.find((row) => row.event === 'issue');
+  return { line: `limit ${key} ${limit.kind} ${when(closed.until)} -> ${after.state}${after.decision ? ` ${after.decision}` : ''}` };
 }
 
 // Records the result of issue `key` of run `run` from the file `file`, for the session the host names in `env`, and

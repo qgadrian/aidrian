@@ -418,7 +418,9 @@ the old run parked it on the branch the snapshot names, or on an attempt branch 
 repository: `init` prints a `resumed:` line for it, and its first attempt goes on from that branch as the forge holds it, its open pull request its own, when the branch
 still holds the commit the old run recorded at the park, or, for an old run from before commits were recorded, the head
 of the open pull request its result named ([Project run](config.md#project-run)). An old run that parked before any
-push gives a plain first attempt.
+push gives a plain first attempt. An issue the old run left on an open pull request that a person merged after that
+run ended is not resumed: `init` prints a `landed:` line for it, counts it done, and the driver's first report moves it
+to done in the tracker and takes the decision label off.
 Any other started issue is a blocker.
 A first attempt of any other issue cuts its branch from the base tip, so one whose branch is already on the forge parks
 as unreconciled at its start, with the branch and its pull request left as they are.

@@ -37,7 +37,8 @@ named and go on from that output as step 2 says.
    - `result <key> ...`, `ended <key> ...`, `settled <key> ...`, or `orphan ...`: an issue settled; step 4.
      `result <key> environment -> ...` halted the run on that session's environment; step 4, then step 1's `halted`.
    - `limit <key> <kind> until <time> -> open`, or `limit <key> <kind> halt -> open`: the issue's attempt ended on a
-     usage or rate limit; step 1, whose `next` says whether the run is paused or halted.
+     usage or rate limit; step 1, whose `next` says whether the run is paused or halted. Ending `-> parked attempts`
+     instead, the issue used every attempt number a run gives it: it settled, step 4.
    - `paused <key> ...`: that issue's session waits out a limit and goes on by itself; step 3 again.
    - `paused until <time>` with no running issue: § Pause.
    - `lingered <key> attempt <n> ended` or `... stopped`: a session that ran on after its issue settled runs no more;

@@ -1773,8 +1773,9 @@ a disposition that looks wrong means its axes are wrong.
 
 Text that does not parse as JSON, and an `apply_patch`, whose result the hook cannot see, are let through.
 A manifest written from the shell is not judged here: `aidrian pr disposition --manifest <file>` checks one, exiting 1
-with each drifting finding (`drift`: its `id`, `disposition`, and the `expected` values, empty for axes outside the vocabulary), and the `pr-review` and
-`pr-review-fix` skills run it after each write and before each fix.
+with each drifting finding (`drift`: its `id`, `disposition`, and the `expected` values, empty for axes outside the vocabulary),
+and, under `review.fixSmallGaps`, each trivial finding set `pre_existing` (`status_drift`, [Small gaps](review.md#small-gaps)).
+The hook judges no status. The `pr-review` and `pr-review-fix` skills run it after each write and before each fix.
 `aidrian pr disposition` splits an argument that starts with `--` and holds spaces into words, as zsh passes a variable
 of flags unsplit, so `aidrian pr disposition $flags` reads every flag.
 

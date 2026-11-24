@@ -8,7 +8,7 @@ import { sameCommit } from './state.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
 import { lateRoundResidual } from '../finding-disposition.mjs';
 import { isClean, resolve } from './diff.mjs';
-import { blocks, recordFindings } from './findings.mjs';
+import { blocks, recordFindings, rereadAt } from './findings.mjs';
 import { withEndedWaivers } from './settled.mjs';
 import { dedupe } from './split.mjs';
 import { approveLine } from './approvals.mjs';
@@ -101,8 +101,17 @@ export async function runStages(s) {
   // cap stops it. Only a result the step would use counts (resultFor), and it keeps the round, a quiet one too, when
   // another pass then fails.
   if (passes.some((pass) => sameCommit(resultFor(pass)?.head, head))) {
+    const wasOpen = opened;
     if (openRound() === 'round_limit') return capReached({ max_rounds: maxRounds });
     recorded = true;
+    // An attestation made before this round opened read its findings at the round before: read them again at this one.
+    // The index takes the new readings too, as the step's own call gives ids to findings attest stored without one.
+    if (!wasOpen) {
+      for (const pass of passes) {
+        const result = resultFor(pass);
+        if (sameCommit(result?.head, head) && rereadAt(result, state.rounds.length)) recordFindings(state, pass.id, result, { mint: state.floored === true, kept: true });
+      }
+    }
   }
 
   // The review bot's request: the gate's marker sums every code-reviewer pass that counts for this head (a

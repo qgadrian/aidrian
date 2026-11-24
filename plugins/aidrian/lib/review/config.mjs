@@ -43,6 +43,10 @@ export const REVIEW_DEFAULTS = Object.freeze({
   // (lib/review/approvals.mjs). The base branch's value is the one in force, and the machine must turn it on too.
   unattendedSignoff: Object.freeze({ allow: false }),
   productFeedback: Object.freeze({ auto: false, files: null, maxPersonas: 2, allWidths: null }),
+  // Whether a small gap the pull request did not bring, already in the base or outside the issue's scope, is fixed in the
+  // same pull request when its fix is trivial, instead of reported as pre-existing or filed as a new issue
+  // (lib/finding-disposition.mjs statusDrift, docs/review.md#small-gaps).
+  fixSmallGaps: false,
 });
 
 export const FEEDBACK_NO_LIST = '"review.productFeedback.auto" is true, and neither review.productFeedback.files nor review.visual.targets says which files are user-facing';
@@ -111,6 +115,10 @@ export function checkReview(value, file, errors) {
   if (Object.hasOwn(value, 'approvals')) {
     if (isObject(value.approvals) && Object.keys(value.approvals).every((key) => key === 'allow') && typeof (value.approvals.allow ?? false) === 'boolean') out.approvals = { allow: value.approvals.allow === true };
     else bad('"review.approvals" must be { "allow": true } or { "allow": false }');
+  }
+  if (Object.hasOwn(value, 'fixSmallGaps')) {
+    if (typeof value.fixSmallGaps === 'boolean') out.fixSmallGaps = value.fixSmallGaps;
+    else bad('"review.fixSmallGaps" must be true or false');
   }
   if (Object.hasOwn(value, 'unattendedSignoff')) {
     if (isObject(value.unattendedSignoff) && Object.keys(value.unattendedSignoff).every((key) => key === 'allow') && typeof (value.unattendedSignoff.allow ?? false) === 'boolean') out.unattendedSignoff = { allow: value.unattendedSignoff.allow === true };

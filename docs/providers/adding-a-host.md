@@ -157,12 +157,12 @@ the command's `status: "created"` result where the host's response holds the cal
 the payload's session id; a host added without that fixture fails it. The hook reads that output only through the
 host's `shellOutput`: a host whose adapter gives none records no worktree.
 
-Why the hook and not `aidrian worktree new` itself: the command would file its row under the session id its shell's
-environment names, and on Codex that id is not the hook's. Codex gives a shell call `CODEX_THREAD_ID`, the thread's own
-id, and its hooks `session_id`, the identity the root thread shares with every thread it starts, which equals the
-root thread's id ([Codex](codex.md#session-ids)): in a subagent's shell the two differ, so its row would land where no
-snapshot of the session reads. The hook files the row where the pull request ledger files its own, on Claude Code,
-Codex, and OpenCode alike.
+Why the hook and not `aidrian worktree new` itself: the command files its row under the session id its shell's
+environment names, and a host's adapter must make that id the hook's in a subagent's shell too. Codex gives a shell
+call `CODEX_THREAD_ID`, the thread's own id, which differs in a subagent's thread, and `CODEX_SESSION_ID`, the root
+session's id its hooks carry as `session_id` ([Codex](codex.md#session-ids)): its adapter reads the second, and a host
+whose shell names only a thread's own id would send a subagent's row where no snapshot of the session reads. The hook
+files the row where the pull request ledger files its own, on Claude Code, Codex, and OpenCode alike.
 
 ### What else a new host has to check by hand
 

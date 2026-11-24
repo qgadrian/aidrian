@@ -12,7 +12,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 
 import {
-  appendCheckRuns, checkRows, commandKey, fileTail, isFullSuite, mayRunTests, outputText, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims,
+  appendCheckRuns, checkRows, claimProblem, commandKey, fileTail, isFullSuite, mayRunTests, outputText, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims,
   workingTree,
 } from '../plugins/aidrian/lib/check-runs.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
@@ -21,7 +21,7 @@ import { detectHost, HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { check as prBody } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { check as pushFirst, unpushed } from '../plugins/aidrian/lib/rules/push-first.mjs';
 import { lexPipeline, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
-import { needlesOf, testCommand, touchedTests } from '../plugins/aidrian/lib/test-changed.mjs';
+import { changeBase, needlesOf, testCommand, touchedTests } from '../plugins/aidrian/lib/test-changed.mjs';
 
 const ROOT_DIR = path.resolve(import.meta.dirname, '..');
 const SCRIPTS = path.join(ROOT_DIR, 'plugins/aidrian/scripts');
@@ -83,6 +83,34 @@ test('a test run is read through wrappers and redirects, and keyed the same way 
   assert.ok(isFullSuite(invocation('npm run check'), TESTING));
   assert.ok(!isFullSuite(invocation('npm run check'), DEFAULTS.testing), 'not by default');
   assert.ok(!isFullSuite(invocation('npm test -- test/a.test.mjs'), TESTING), 'one file is no full suite');
+});
+
+// A jest run of named test files, plain or through xargs, as a body line quotes it (#548): the record and the claim read
+// the quoted command the same way, so only a run of those same files supports it.
+test('a jest run by test paths, plain or through xargs, supports a body line that quotes it', () => {
+  const output = 'PASS src/a.test.ts\nTest Suites: 3 passed, 3 total\nTests:       12 passed, 12 total\nSnapshots:   0 total\n';
+  const tree = () => ({ tree: 't', trackedTree: 't', untrackedCode: [] });
+  const rowOf = (command) => checkRows({ command, cwd: '/w', output, exitZero: true, tree });
+  const claimed = (line, rows) => unsupportedClaims(passClaims(`## Tests run\n\n- ${line}\n`), rows, { tree: 't' });
+  const plain = rowOf('npx jest --no-coverage --runTestsByPath a.test.ts b.test.ts c.test.ts');
+  assert.deepEqual(plain.map((row) => [row.command, row.status, row.pass]), [['jest --no-coverage --runTestsByPath a.test.ts b.test.ts c.test.ts', 'passed', 12]]);
+  assert.deepEqual(claimed('`npx jest --no-coverage --runTestsByPath a.test.ts b.test.ts c.test.ts`: 12 tests passed.', plain), []);
+  assert.equal(claimed('`npx jest --no-coverage --runTestsByPath a.test.ts d.test.ts`: 12 tests passed.', plain).length, 1, 'a run of other files');
+  const piped = 'printf \'%s\\n\' a.test.ts b.test.ts | xargs -r npx jest --no-coverage --runTestsByPath';
+  const fed = rowOf(piped);
+  assert.deepEqual(fed.map((row) => [row.command, row.status, row.pass]), [['jest --no-coverage --runTestsByPath < printf %s\\n a.test.ts b.test.ts', 'passed', 12]]);
+  assert.deepEqual(claimed(`\`${piped}\`: 12 tests passed.`, fed), []);
+  assert.equal(claimed('`npx jest --no-coverage --runTestsByPath`: 12 tests passed.', fed).length, 1, 'an xargs run is no run of the command with no files');
+  assert.equal(claimed('`printf \'%s\\n\' a.test.ts | xargs npx jest --no-coverage --runTestsByPath`: 12 tests passed.', fed).length, 1, 'nor of other input');
+  // A line of many files is keyed whole: two lists that differ past the key's head are two runs.
+  const files = (last) => [...Array.from({ length: 31 }, (_, i) => `src/features/booking/components/part-${i}.test.tsx`), last].join(' ');
+  const long = rowOf(`npx jest --no-coverage --runTestsByPath ${files('src/x.test.tsx')}`);
+  assert.deepEqual(claimed(`\`npx jest --no-coverage --runTestsByPath ${files('src/x.test.tsx')}\`: 12 tests passed.`, long), []);
+  assert.equal(claimed(`\`npx jest --no-coverage --runTestsByPath ${files('src/y.test.tsx')}\`: 12 tests passed.`, long).length, 1, 'another last file');
+  const missing = passClaims('## Tests run\n\n- `npx jest --no-coverage --runTestsByPath <31 files>`: 12 tests passed.\n');
+  assert.match(claimProblem(missing, plain, { where: 'The body' }), /Its runs of `jest` ran other words: `jest --no-coverage --runTestsByPath a\.test\.ts b\.test\.ts c\.test\.ts`; quote the command as it ran\./u);
+  assert.equal(mayRunTests('git diff --name-only | xargs npx jest', '/w'), true);
+  assert.equal(mayRunTests('git ls-files | xargs grep x', '/w'), false);
 });
 
 // Summaries as each runner prints them at its end.
@@ -726,6 +754,18 @@ test('aidrian test changed finds the changed test files and the ones that name a
   assert.equal(testCommand(dir, { changedCommand: 'node --test' }), 'node --test');
   const listed = spawnSync(process.execPath, [CLI, 'test', 'changed', '--list'], { cwd: dir, env: ENV, encoding: 'utf8' });
   assert.deepEqual([listed.status, listed.stdout], [0, 'test/a.test.mjs\ntest/c.test.mjs\n'], listed.stderr);
+});
+
+// A branch pushed to its remote copy holds the whole change there: the merge base with the default branch is the base.
+test('aidrian test changed on a branch whose remote copy is at HEAD lists the branch\'s changed tests', () => {
+  const { dir, git } = repo({ files: { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }), 'lib/a.mjs': 'export const a = 1;\n', 'test/a.test.mjs': "import '../lib/a.mjs';\n" } });
+  git('push', '-q', 'origin', 'feat/x:main');
+  writeFileSync(path.join(dir, 'lib/a.mjs'), 'export const a = 2;\n');
+  git('commit', '-q', '-am', 'change a');
+  git('push', '-q', 'origin', 'feat/x');
+  assert.equal(changeBase(dir), git('rev-parse', 'refs/remotes/origin/main'));
+  const listed = spawnSync(process.execPath, [CLI, 'test', 'changed', '--list'], { cwd: dir, env: ENV, encoding: 'utf8' });
+  assert.deepEqual([listed.status, listed.stdout], [0, 'test/a.test.mjs\n'], listed.stderr);
 });
 
 test('aidrian test changed with nothing to run says no test passed, and its row supports no claim', () => {

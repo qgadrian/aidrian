@@ -2169,6 +2169,8 @@ A test run is a command of config.json [`testing.fullSuite`](config.md#testing) 
 and its pnpm, yarn, and bun forms, `node --test`, vitest, jest, pytest, `go test`, `cargo test`, `mix test`, rspec,
 `make test`, `make check`, or `aidrian test changed`, read through wrappers such as `rtk`, `timeout`, and `npx`, with
 redirects dropped. A project's own script, such as `npm run check`, counts once `testing.fullSuite` names it.
+A run through `xargs` is keyed with what feeds it: `printf '%s\n' a b | xargs npx jest` is `jest < printf %s\n a b`.
+A command past 300 characters keeps its first 300 and a digest of the whole, so a run of other files is never its run.
 A call stopped, started in the background, or moved there at its timeout records nothing: no hook sees it end.
 A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
 
@@ -2205,7 +2207,8 @@ Two checks read it:
 
 - The [pull request body rule](#bash-rules) reads the `## Tests run` section outside fenced code, one list item or
   paragraph at a time with its wrapped lines joined, split at `;` and sentence ends. A clause that names a test command,
-  in backticks or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or
+  in backticks, read as the record reads that line (its first test run), or, for a `testing.fullSuite` command, as plain words,
+  and says it passed (a pass word, a check mark, or
   "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
   or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. An id of digits
   alone, as about one abbreviated id in 27 is, names a commit only after "at" or "commit", and only when git knows that
@@ -2278,7 +2281,9 @@ aidrian test changed --base origin/main
 ```
 
 `aidrian test changed` reads the change against `--base`, else the branch's remote copy, else its merge base with the
-default branch on `origin`, uncommitted and untracked files included. A test file is a changed one, a Go `_test.go`
+default branch on `origin`, uncommitted and untracked files included.
+A remote copy at HEAD, as on a branch just pushed, holds the whole change, so the merge base is the base there, else that copy.
+A test file is a changed one, a Go `_test.go`
 beside a changed `.go` file, or one that names a changed file: a code file by its name and by its name without the
 extension, `index.*` by its folder and name, any other file by its path. A test file in a nested package, a folder with
 its own package.json, is left out for that package's runner. It runs `testing.changedCommand` with the files after it,

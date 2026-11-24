@@ -15,6 +15,7 @@
 // and `unjudged` when it printed no count, since its exit status is unknown. A call whose output the host kept in a file,
 // as Claude Code does with one too long for the payload, is read from the tail of that file (outputText).
 
+import { createHash } from 'node:crypto';
 import { closeSync, constants, copyFileSync, fstatSync, mkdtempSync, openSync, readSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -34,6 +35,8 @@ const READ_FILE = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.
 const COMMAND_MAX = 300;
 
 // Programs that run a command given after them: `npx vitest`, `pnpm exec jest`, `python -m pytest`, `bundle exec rspec`.
+// `xargs` is one too, after its options (XARGS_VALUE those that take the next word): `xargs npx jest --runTestsByPath`.
+const XARGS_VALUE = new Set(['-a', '-d', '-E', '-I', '-J', '-L', '-n', '-P', '-R', '-s', '-S']);
 const RUNNER_WRAPPERS = new Map([['npx', 0], ['bunx', 0], ['pnpx', 0], ['pnpm', 'exec'], ['yarn', 'exec'], ['bundle', 'exec'], ['python', '-m'], ['python3', '-m']]);
 // Word lists that start a test run, after RUNNER_WRAPPERS are peeled.
 const TEST_PREFIXES = [
@@ -63,7 +66,8 @@ export function mayRunTests(command, cwd = null) {
       if (invocation.dynamic) return false;
       const own = aidrianArgs(invocation);
       if (own) return own[0]?.text === 'test';
-      return typeof invocation.program === 'string' && invocation.program !== '' && !NEVER_TESTS.has(invocation.program);
+      const [program] = invocation.program === 'xargs' ? afterXargs(['xargs', ...invocation.args.map((token) => token.text)]) : [invocation.program];
+      return typeof program === 'string' && program !== '' && !NEVER_TESTS.has(program);
     });
   } catch {
     return false;
@@ -73,20 +77,52 @@ export function mayRunTests(command, cwd = null) {
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 const startsWith = (key, prefix) => key === prefix || key.startsWith(`${prefix} `);
 
+// The words after `xargs` and its options: the command it runs, its input's words still to come.
+function afterXargs(words) {
+  let index = 1;
+  while (index < words.length && words[index].startsWith('-')) {
+    if (words[index] === '--') return words.slice(index + 1);
+    index += XARGS_VALUE.has(words[index]) ? 2 : 1;
+  }
+  return words.slice(index);
+}
+
+// A key past COMMAND_MAX keeps its head and a digest of the whole, so two runs of different long file lists stay two keys.
+const capped = (key) => (key.length <= COMMAND_MAX ? key : `${key.slice(0, COMMAND_MAX)} #${createHash('sha256').update(key).digest('hex').slice(0, 12)}`);
+
+// The commands a pipe feeds `segments[index]` of a lexPipeline result, each its words, joined by ` | `: '' for none.
+function pipedInto({ segments, separators }, index) {
+  const fed = [];
+  for (let at = index - 1; at >= 0 && separators[at] === '|'; at -= 1) {
+    const before = readInvocation(segments[at]);
+    fed.unshift([before.program, ...before.args.map((token) => token.text)].filter((word) => typeof word === 'string' && word !== '').join(' '));
+  }
+  return fed.join(' | ');
+}
+
 // The words of a readInvocation result, wrappers that run a test runner peeled, joined by spaces: the key a run and a
-// claim are matched by. `rtk npm run check 2>&1` and `npm run check` are one key.
-export function commandKey(invocation) {
+// claim are matched by. `rtk npm run check 2>&1` and `npm run check` are one key. A command `xargs` runs takes the
+// words of its input too, so its key ends in ` < ` and `input`, the commands a pipe feeds it (pipedInto), else `stdin`:
+// `printf '%s\n' a b | xargs npx jest` is `jest < printf %s\n a b`, never the key of `jest a b` or of other files.
+export function commandKey(invocation, input = '') {
   const own = aidrianArgs(invocation);
-  if (own) return ['aidrian', ...own.map((token) => token.text)].join(' ').slice(0, COMMAND_MAX);
+  if (own) return capped(['aidrian', ...own.map((token) => token.text)].join(' '));
   let words = [invocation.program, ...invocation.args.map((token) => token.text)].filter((word) => typeof word === 'string' && word !== '');
-  for (let peeled = 0; peeled < 3 && RUNNER_WRAPPERS.has(words[0]); peeled += 1) {
+  let fed = false;
+  for (let peeled = 0; peeled < 3; peeled += 1) {
+    if (words[0] === 'xargs') {
+      words = afterXargs(words);
+      fed = true;
+      continue;
+    }
+    if (!RUNNER_WRAPPERS.has(words[0])) break;
     const after = RUNNER_WRAPPERS.get(words[0]);
     if (after === 0) words = words.slice(1);
     else if (words[1] === after) words = words.slice(2);
     else break;
   }
   if (words[0] !== undefined) words[0] = path.basename(words[0]);
-  return words.join(' ').slice(0, COMMAND_MAX);
+  return capped(`${words.join(' ')}${fed ? ` < ${input || 'stdin'}` : ''}`);
 }
 
 // Whether the readInvocation result runs tests: a word list of TEST_PREFIXES, a configured full suite or changed-files
@@ -117,7 +153,8 @@ export const isFullSuite = (invocation, testing = {}) => !invocation.dynamic && 
 // A run the lexer marks `uncertain`, which the shell may never run, as behind `repeat 0`, is no run.
 // A run inside a substitution or a nested shell is not read.
 export function testRuns(command, cwd, testing = {}) {
-  const { segments, separators } = lexPipeline(command);
+  const line = lexPipeline(command);
+  const { segments, separators } = line;
   const entries = walkCommands(command, cwd).filter((entry) => entry.line === command);
   const runs = [];
   let next = 0;
@@ -129,7 +166,7 @@ export function testRuns(command, cwd, testing = {}) {
     next += 1;
     if (segment.length === 0 || invocation.uncertain || !isTestRun(invocation, testing)) return;
     const carries = separators.every((separator) => separator === '&&' || separator === null || separator === undefined);
-    runs.push({ key: commandKey(invocation), folder: entry?.folder ?? null, carries });
+    runs.push({ key: commandKey(invocation, pipedInto(line, index)), folder: entry?.folder ?? null, carries });
   });
   return runs;
 }
@@ -533,10 +570,12 @@ function textClaims(body, { section, testing, ownOnly, suites, own }) {
     for (const written of unit.split(/;\s+|\.\s+(?=[A-Z`])/u)) {
       const clause = ownOnly ? ownClause(written, own) : written;
       if (!PASS_WORD.test(clause) || FAIL_WORD.test(clause) || CI_WORD.test(clause)) continue;
+      // A quoted line's first test run, as the record reads the line: `git diff --name-only | xargs npx jest` is jest's.
       const keys = [...clause.matchAll(/`([^`\n]+)`/gu)].flatMap(([, code]) => {
-        const [segment] = lexPipeline(code).segments.filter((each) => !CHANGES_DIRECTORY.has(readInvocation(each).program));
-        const invocation = segment ? readInvocation(segment) : null;
-        return invocation && isTestRun(invocation, testing) ? [commandKey(invocation)] : [];
+        const quoted = lexPipeline(code);
+        const invocations = quoted.segments.map(readInvocation);
+        const index = invocations.findIndex((each) => !CHANGES_DIRECTORY.has(each.program) && isTestRun(each, testing));
+        return index === -1 ? [] : [commandKey(invocations[index], pipedInto(quoted, index))];
       });
       const bare = clause.replace(/`[^`\n]*`/gu, ' ');
       for (const suite of suites) if (new RegExp(`(?:^|[\\s(])${escape(suite)}(?=$|[\\s:,.)])`, 'u').test(bare)) keys.push(suite);
@@ -607,7 +646,12 @@ export function claimProblem(missing, runs, { where }) {
   const counted = (run) => (run.pass === null && run.fail === null ? '' : ` (pass ${run.pass ?? 'unknown'}, fail ${run.fail ?? 'unknown'})`);
   const at = (run) => (run.tree ? `at tree ${String(run.tree).slice(0, 12)}` : 'at a tree git could not read');
   const shown = held.slice(-3).map((run) => `${run.status}${counted(run)} ${at(run)}`);
-  const record = held.length ? `The record holds ${shown.join('; ')}.` : 'The record holds no finished run of it.';
+  // A run of the same program with other words, such as other test files, is named, since a claim quotes its run as it ran.
+  const runner = (key) => key.split(' ')[0];
+  const near = held.length ? [] : [...new Set(runs.filter((run) => missing.some(({ key }) => runner(run.command) === runner(key))).map((run) => run.command))].slice(-3);
+  const clip = (command) => (command.length > 120 ? `${command.slice(0, 120)}…` : command);
+  const others = near.length ? ` Its runs of \`${runner(missing[0].key)}\` ran other words: ${near.map((command) => `\`${clip(command)}\``).join(', ')}; quote the command as it ran.` : '';
+  const record = held.length ? `The record holds ${shown.join('; ')}.` : `The record holds no finished run of it.${others}`;
   const stated = missing.some((each) => each.counts.length) ? 'with the count it states, ' : '';
   const beside = [...new Set(held.flatMap((run) => run.untrackedCode ?? []))];
   const untracked = beside.length

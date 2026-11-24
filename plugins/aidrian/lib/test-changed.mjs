@@ -1,7 +1,7 @@
 // `aidrian test changed`: runs the test files a change touches, the local check the push-first rule
 // (lib/rules/push-first.mjs, docs/hooks.md#push-first) names instead of a full suite, which CI runs on the pushed head.
-// The change is the checkout's files against `--base`, else the branch's remote copy, else the merge base with the
-// default branch on `origin`: committed, uncommitted, and untracked files that git does not ignore. A test file it touches
+// The change is the checkout's files against `--base`, else the branch's remote copy while it is not at HEAD, else the
+// merge base with the default branch on `origin`: committed, uncommitted, and untracked files that git does not ignore. A test file it touches
 // is one the change itself adds or edits, one that names a changed file (needlesOf), or a Go `_test.go` beside a changed
 // `.go` file. A nested package's tests are left out, since its own runner runs them. With no `testing.changedCommand`, the
 // files go to `node --test`, so a test file must also be a module node loads with no flag (NODE_MODULE); any other file
@@ -30,13 +30,19 @@ export const NODE_MODULE = /\.[cm]?js$/u;
 
 const lines = (result) => (result.status === 0 ? result.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : null);
 
-// The base the change is read against, as a revision, or null when none can be found.
+// The base the change is read against, as a revision, or null when none can be found. A remote copy at HEAD, as on a
+// branch just pushed, holds the whole change already, so the base is then the merge base, as with no remote copy, and
+// the remote copy only when git finds no merge base.
 export function changeBase(root, { base = null, defaultBranch = 'main', git = runGit } = {}) {
   if (base) return base;
   const copy = remoteCopy(root, git);
-  if (copy) return copy.ref;
+  const commit = (ref) => {
+    const read = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], root);
+    return read.status === 0 ? read.stdout.trim() : null;
+  };
+  if (copy && commit(copy.ref) !== commit('HEAD')) return copy.ref;
   const merged = git(['merge-base', 'HEAD', `refs/remotes/origin/${defaultBranch}`], root);
-  return merged.status === 0 ? merged.stdout.trim() : null;
+  return merged.status === 0 ? merged.stdout.trim() : (copy?.ref ?? null);
 }
 
 // The files the change touches, from the checkout's top, or null when git cannot say.

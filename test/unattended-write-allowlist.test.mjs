@@ -596,7 +596,7 @@ test('a review or attest record, and the dispatch records, are refused by the wr
   assert.equal(fx.ask(bash(`rm -f ${reviews}/pr-7/captures/abc/*.png`)), null, 'a capture glob');
 });
 
-test('a review manifest is judged by every line a patch writes to it, and by a file a patch moves there, on each host', (t) => {
+test('a patch writes a review manifest only by adding it whole, on each host', (t) => {
   const fx = fixture(t);
   const ask = fx.steady();
   const reviews = path.join(fx.state, 'reviews');
@@ -614,6 +614,8 @@ test('a review manifest is judged by every line a patch writes to it, and by a f
   const clean = JSON.stringify({ pr: 7, findings: [{ specialist: 'code-reviewer' }] }, null, 2);
   symlinkSync(copy, link);
   writeFileSync(copy, clean);
+  const alias = path.join(fx.root, 'alias');
+  symlinkSync(fx.worktree, alias);
   for (const [host, call] of Object.entries(hosts)) {
     const said = (...lines) => ask(call(['*** Begin Patch', ...lines, '*** End Patch', ''].join('\n')))?.reason ?? '';
     const refused = (text, ...lines) => {
@@ -624,23 +626,27 @@ test('a review manifest is judged by every line a patch writes to it, and by a f
       writeFileSync(draft, text);
       assert.equal(said(...lines), '', `${host} ${JSON.stringify(lines)}`);
     };
-    // Every line it adds, up to the next header, and lines that make a key only together.
+    // A section that updates it, whatever its lines; an Add of an attest-shaped text.
     refused(null, `*** Update File: ${manifest}`, '@@', '+  "x": 1,', '*** End of File', '@@', '+  "reviewer": "me",');
     refused(null, `*** Update File: ${manifest}`, '@@', '+  "reviewer"', '+  : "me",');
     refused(null, `*** Add File: ${manifest}`, '+{ "pr": 7,', '+"reviewer": "me" }');
-    // A file it moves there: attest-shaped, not readable before the call, a link, or named more than once in the patch.
+    refused(clean, `*** Update File: ${manifest}`, '@@', '+  "x": 1,', '*** End of File', '@@', '+  "y": 2,');
+    // A move onto it, whatever the file moved and the lines changed on the way.
     refused(forged, ...move(draft));
     refused(forged, ...move(draft, ...change));
     refused(null, ...move(gone, ...change));
     refused(null, ...move(link, ...change));
     refused(clean, `*** Add File: ${draft}`, '+{}', ...move(draft, ...change));
-    // A key at any depth, only in a file the patch changes on the way.
     refused(nested, ...move(draft, ...change));
-    runs(nested, ...move(draft));
-    runs(clean, ...move(draft));
-    runs(clean, ...move(draft, ...change));
-    runs(clean, `*** Update File: ${manifest}`, '@@', '+  "x": 1,', '*** End of File', '@@', '+  "y": 2,');
+    refused(nested, ...move(draft));
+    refused(clean, ...move(draft));
+    refused(clean, ...move(draft, ...change));
+    refused(clean, `*** Add File: ${path.join(alias, 'draft.json')}`, '+{}', ...move(draft, ...change));
     runs(forged, `*** Update File: ${draft}`, `*** Move to: ${path.join(fx.worktree, 'elsewhere.json')}`, ...change);
+    // A whole Add, named once: a header with a blank after it is named once; a move that names no path keeps the lines
+    // it adds.
+    runs(clean, `*** Add File: ${manifest} `, ...clean.split('\n').map((line) => `+${line}`));
+    refused(clean, `*** Add File: ${manifest}`, '*** Move to:  ', '+{ "pr": 7, "reviewer": "me" }');
     // An attended session's call is never held.
     writeFileSync(draft, forged);
     assert.equal(fx.ask(call(['*** Begin Patch', ...move(draft), '*** End Patch', ''].join('\n')), { held: null }), null, `${host} attended`);
@@ -687,6 +693,120 @@ test('a review manifest, named as the review gate\'s old attest record, never ta
   assert.equal(fx.ask(write(manifest, { tool_input: { file_path: manifest, content: '{"pr":7,"findings":[{"reviewer":"code-reviewer"}]}' } })), null, 'a nested key');
   writeFileSync(copy, escaped);
   assert.match(fx.ask(bash(`mv ${copy} ${manifest}`))?.reason ?? '', /attest record/u, 'an escaped key on disk');
+  // A copy the same call writes by another spelling of its real path.
+  const alias = path.join(fx.worktree, 'rv');
+  symlinkSync(reviews, alias);
+  writeFileSync(copy, JSON.stringify({ pr: 7, rounds: [] }));
+  assert.equal(fx.ask(bash(`mv ${copy} ${manifest}`)), null, 'the rename alone');
+  assert.match(fx.ask(bash(`echo e30= | base64 -d > ${path.join(alias, '.pr-7.json.tmp')} && mv ${copy} ${manifest}`))?.reason ?? '', /attest record/u, 'a copy written by another spelling');
+});
+
+test('a file tool writes a review manifest only whole, judged as the review gate reads it, on each host', (t) => {
+  const fx = fixture(t);
+  const ask = fx.steady();
+  const reviews = path.join(fx.state, 'reviews');
+  mkdirSync(reviews, { recursive: true });
+  const manifest = path.join(reviews, 'pr-7.json');
+  const copy = path.join(reviews, '.pr-7.json.tmp');
+  const draft = path.join(fx.worktree, 'draft.json');
+  // A key whose name stands on a line of its own; a finding whose agent is named `reviewer`, a value, not a key.
+  writeFileSync(manifest, '{\n  "pr": 7,\n  "x"\n    : 1\n}\n');
+  const clean = JSON.stringify({ pr: 7, findings: [{ id: 'F1', specialist: 'reviewer', status: 'open' }] }, null, 2);
+  const forged = JSON.stringify({ pr: 7, head: 'a'.repeat(40), reviewer: 'me' });
+  writeFileSync(draft, clean);
+  const said = (input) => ask(input)?.reason ?? '';
+  const partial = (input, why) => assert.match(said(input), /other than as a whole file.*temporary copy in the same folder.*then rename it/u, why);
+  const opencode = (tool, input) => normalizeHookInput({ opencode: {}, hook_event_name: 'PreToolUse', cwd: fx.worktree, tool_name: tool, tool_input: input }, {});
+  const edits = {
+    'Claude Code': (from, to) => ({ tool_name: 'Edit', tool_input: { file_path: manifest, old_string: from, new_string: to } }),
+    OpenCode: (from, to) => opencode('edit', { path: manifest, oldString: from, newString: to }),
+  };
+  for (const [host, edit] of Object.entries(edits)) {
+    partial(edit('"x"', '"reviewer"'), `${host}: an edit of a key's name alone`);
+    partial(edit('"x"', '"y"'), `${host}: any other edit`);
+  }
+  partial({ tool_name: 'NotebookEdit', tool_input: { notebook_path: manifest, new_source: 'x' } }, 'a notebook edit');
+  const writes = {
+    'Claude Code': (file, content) => write(file, { tool_input: { file_path: file, content } }),
+    OpenCode: (file, content) => opencode('write', { path: file, content }),
+  };
+  for (const [host, put] of Object.entries(writes)) {
+    assert.equal(said(put(manifest, clean)), '', `${host}: a Write of a clean whole text`);
+    assert.match(said(put(manifest, forged)), /attest record/u, `${host}: a Write of an attest-shaped one`);
+    assert.equal(said(put(copy, clean)), '', `${host}: a copy that names the agent reviewer`);
+  }
+  const whole = (text) => text.split('\n').map((line) => `+${line}`);
+  const patches = {
+    Codex: (...body) => ({ tool_name: 'apply_patch', tool_input: { command: ['*** Begin Patch', ...body, '*** End Patch', ''].join('\n') } }),
+    OpenCode: (...body) => opencode('patch', { patchText: ['*** Begin Patch', ...body, '*** End Patch', ''].join('\n') }),
+  };
+  for (const [host, patch] of Object.entries(patches)) {
+    partial(patch(`*** Update File: ${manifest}`, '@@', '-  "x"', '+  "reviewer"'), `${host}: an update`);
+    partial(patch(`*** Update File: ${manifest}`, '@@', '   "pr": 7,'), `${host}: an update of unchanged lines alone`);
+    partial(patch(`*** Update File: ${draft}`, `*** Move to: ${manifest}`), `${host}: a move onto it`);
+    partial(patch(`*** Add File: ${manifest}`, ...whole(clean), `*** Update File: ${manifest}`, '@@', '-  "pr": 7,', '+  "pr": 8,'), `${host}: an add, then an update`);
+    partial(patch(`*** Update File: ${draft}`, `*** Move to: ${manifest}`, `*** Update File: ${manifest}`, '@@', '-  "pr": 7,', '+  "pr": 8,'), `${host}: a move onto it, then an update`);
+    partial(patch(`*** Delete File: ${manifest}`), `${host}: a delete`);
+    assert.equal(said(patch(`*** Add File: ${manifest}`, ...whole(clean))), '', `${host}: an add of a clean whole text`);
+    assert.match(said(patch(`*** Add File: ${manifest}`, ...whole(forged))), /attest record/u, `${host}: an add of an attest-shaped one`);
+    assert.equal(said(patch(`*** Add File: ${copy}`, ...whole(clean))), '', `${host}: a copy that names the agent reviewer`);
+    // Each Add is judged whole, so the file the last one leaves was judged.
+    assert.match(said(patch(`*** Add File: ${manifest}`, ...whole(clean), `*** Add File: ${manifest}`, ...whole(forged))), /attest record/u, `${host}: a clean add, then an attest-shaped one`);
+    assert.equal(said(patch(`*** Add File: ${manifest}`, ...whole(clean), `*** Add File: ${manifest}`, ...whole(clean))), '', `${host}: two clean adds`);
+  }
+  // The sanctioned rename and a delete, with the manifest there and without it.
+  writeFileSync(copy, clean);
+  assert.equal(said(bash(`mv ${copy} ${manifest}`)), '', 'the rename over the manifest');
+  assert.equal(said(bash(`rm -f ${manifest}`)), '', 'a delete');
+  writeFileSync(copy, clean);
+  assert.equal(said(bash(`mv ${copy} ${manifest}`)), '', 'the rename, no manifest there');
+  assert.equal(said(bash(`rm -f ${manifest}`)), '', 'a delete, no manifest there');
+});
+
+test('a review manifest is judged by any path that leads to it, and no link to a review record is made', (t) => {
+  const fx = fixture(t);
+  const ask = fx.steady();
+  const reviews = path.join(fx.state, 'reviews');
+  mkdirSync(reviews, { recursive: true });
+  const manifest = path.join(reviews, 'pr-7.json');
+  writeFileSync(manifest, '{ "pr": 7 }\n');
+  const alias = path.join(fx.worktree, 'rv');
+  symlinkSync(reviews, alias);
+  const through = path.join(alias, 'pr-7.json');
+  const forged = JSON.stringify({ pr: 7, head: 'a'.repeat(40), reviewer: 'me' });
+  const said = (input) => ask(input)?.reason ?? '';
+  assert.match(said(write(through, { tool_input: { file_path: through, content: forged } })), /attest record/u, 'a Write');
+  assert.match(said({ tool_name: 'Edit', tool_input: { file_path: through, old_string: '"pr": 7', new_string: '"pr": 8' } }), /attest record/u, 'an Edit');
+  assert.match(said({ tool_name: 'apply_patch', tool_input: { command: `*** Begin Patch\n*** Update File: ${through}\n@@\n-{ "pr": 7 }\n+{ "pr": 8 }\n*** End Patch\n` } }), /attest record/u, 'a patch');
+  assert.match(said(bash(`printf '%s' '{}' > ${through}`)), /attest record/u, 'a shell redirect');
+  assert.match(said(bash(`ln -s ${manifest} ${path.join(fx.worktree, 'm.json')}`)), /a file in a reviews folder/u, 'a symbolic link');
+  assert.match(said(bash(`link ${manifest} ${path.join(fx.worktree, 'm.json')}`)), /a file in a reviews folder/u, 'a hard link by link');
+  assert.match(said(bash(`ln ${manifest} ${path.join(fx.worktree, 'm.json')}`)), /a file in a reviews folder/u, 'a hard link');
+  assert.notEqual(said(bash(`ln -s ${reviews} ${path.join(fx.worktree, 'r')}`)), '', 'a link to the folder itself');
+  assert.equal(said(write(path.join(fx.worktree, 'notes.json'), { tool_input: { file_path: path.join(fx.worktree, 'notes.json'), content: forged } })), '', 'a file elsewhere');
+});
+
+test('interpreter code that names a review manifest is refused, and a plain reader still reads it', (t) => {
+  const fx = fixture(t);
+  const ask = fx.steady();
+  const reviews = path.join(fx.state, 'reviews');
+  mkdirSync(reviews, { recursive: true });
+  const manifest = path.join(reviews, 'pr-7.json');
+  const copy = path.join(reviews, '.pr-7.json.tmp');
+  const clean = JSON.stringify({ pr: 7, findings: [] });
+  writeFileSync(manifest, clean);
+  const said = (input) => ask(input)?.reason ?? '';
+  const named = /in an interpreter's code, input, or words.*temporary copy in the same folder.*rename it over the manifest with mv/u;
+  assert.match(said(bash(`python3 -c "open('${manifest}', 'w').write('{}')"`)), named, 'python writes it');
+  assert.match(said(bash(`node -e "require('fs').writeFileSync('${manifest}', '{}')"`)), named, 'node writes it');
+  assert.match(said(bash(`python3 -c "import os; os.rename('${copy}', '${manifest}')"`)), named, 'python renames a copy over it');
+  assert.equal(said(bash(`python3 -c "open('${copy}', 'w').write('{}')"`)), '', 'code that names only the copy');
+  assert.equal(said(write(copy, { tool_input: { file_path: copy, content: clean } })), '', 'the copy\'s Write');
+  writeFileSync(copy, clean);
+  assert.equal(said(bash(`mv ${copy} ${manifest}`)), '', 'the rename');
+  assert.equal(said(bash(`jq .findings ${manifest}`)), '', 'jq reads it');
+  assert.equal(said(bash(`cat ${manifest}`)), '', 'cat reads it');
+  assert.equal(said(bash(`rm -f ${manifest}`)), '', 'a delete');
 });
 
 test('the session\'s own worktree is the folder its mark says it started in, never the call\'s folder, and comes before the home folder\'s dot entries', (t) => {

@@ -35,12 +35,13 @@ function hostLines(text) {
   });
 }
 
-// The same of the plain reading.
+// The same of the plain reading. A section header's `line` is trimmed, as the hosts' is, so a blank after it gives no
+// second operation.
 const PLAIN = /^\*\*\* (?:(Add|Update|Delete) File|Move to): (.+)$/u;
 const plainLines = (text) => text.split(/\r?\n/u).map((line) => {
   const [, kind, file] = PLAIN.exec(line) ?? [];
   if (file === undefined) return { line, kind: null, file: null };
-  return { line, kind: kind ? kind.toLowerCase() : 'move', file: file.trim() };
+  return { line: kind ? trimmed(line) : line, kind: kind ? kind.toLowerCase() : 'move', file: file.trim() };
 });
 
 // `read(lines)`, a list, of the hosts' reading of a patch, and each entry of the plain one's that differs from them all.
@@ -51,14 +52,14 @@ function bothReadings([host, plain], read) {
 }
 
 // The files a patch adds to or updates, as [{ file, added }], each with the lines it adds, up to the next header; a
-// deleted file adds none.
+// deleted file adds none. A `*** Move to:` that names no path keeps the file it follows, and its lines.
 function filesOf(lines) {
   const files = [];
   for (const { line, kind, file } of lines) {
     if (kind === 'add' || kind === 'update') files.push({ file, added: [] });
     else if (kind === 'delete') files.push({ file: null, added: [] });
     else if (files.at(-1)?.file) {
-      if (kind === 'move') files.at(-1).file = file;
+      if (kind === 'move' && file) files.at(-1).file = file;
       else if (line.startsWith('+')) files.at(-1).added.push(line.slice(1));
     }
   }

@@ -132,6 +132,13 @@ test('its file tools say the shape of each edit, as the schemas in the 2.4.0 bin
   assert.deepEqual(opencode.fileEdit('patch', {}), { shape: 'patch', text: '', files: [], operations: [], targets: [] });
 });
 
+test('a patch header with a blank after it is one operation, and a move that names no path keeps its file and lines', () => {
+  const blank = '*** Begin Patch\n*** Update File: a.json \n*** Move to: b.json\n+x\n*** End Patch\n';
+  assert.deepEqual(opencode.fileEdit('patch', { patchText: blank }).operations, [{ kind: 'update', file: 'a.json', move: 'b.json', text: '*** Update File: a.json\n*** Move to: b.json\n+x\n\n' }]);
+  const nowhere = '*** Begin Patch\n*** Update File: a.json\n*** Move to:  \n+x\n*** End Patch\n';
+  assert.deepEqual(opencode.fileEdit('patch', { patchText: nowhere }).files, [{ file: 'a.json', added: ['x'] }]);
+});
+
 test('the registry finds its file edits by its tool names', () => {
   assert.deepEqual(fileEditOf({ tool_name: 'patch', tool_input: { patchText: PATCH } }).targets, ['docs/new.md', 'a.md', 'b.md', 'c.md']);
   assert.equal(fileEditOf({ tool_name: 'write', tool_input: { path: 'a.md', content: 'x' } }).file, 'a.md');

@@ -51,11 +51,15 @@ const RUN_ROWS = [
   ...['e1', 'e2', 'e3'].flatMap((task) => run('Explore', 's6', task, { docs: [B] })),
   ...['r1', 'r2', 'r3', 'r4', 'r5', 'r6'].flatMap((task) => run('code-reviewer', 's7', task)),
 ];
+// A session row that logged `usd` for Opus 5.5 input tokens that cost the same at today's $4 a million.
+const priced = (usd) => ({
+  models: ['claude-opus-5-5'], tokens_by_model: { 'claude-opus-5-5': { input: Math.round(usd * 250_000), output: 0, cache_read: 0, cache_write: 0 } }, cost_usd: usd,
+});
 // Twelve sessions in the order they ended: the older six at $1, the newer six at $2, but the last at $3. s1 ended twice.
 const SESSION_ROWS = [
-  { event: 'session', ts: at(300), session_id: 's1', cost_usd: 50, docs_read: [] },
+  { event: 'session', ts: at(300), session_id: 's1', ...priced(50), docs_read: [] },
   ...Array.from({ length: 12 }, (_, i) => ({
-    event: 'session', ts: at(240 - i * 10), session_id: `s${i + 1}`, cost_usd: i < 6 ? 1 : i === 11 ? 3 : 2,
+    event: 'session', ts: at(240 - i * 10), session_id: `s${i + 1}`, ...priced(i < 6 ? 1 : i === 11 ? 3 : 2),
     main: { cost_usd: 0.5 }, subagents: { cost_usd: 0.5 }, docs_read: [],
   })),
 ];
@@ -301,6 +305,13 @@ test('the session cost trend compares only sessions priced at today`s tables, an
   assert.deepEqual(health.problems.filter((item) => item.kind === 'cost-rise'), []);
   assert.match(formatHealth(health, { file: 'f', since: '30d' }),
     /\n {2}Session cost: ok \(n=5 sessions a half\); 16 sessions, \$4\.00, 6 of them at the price they logged and left out of the halves; /u);
+  // The oldest rows name no model and hold no tokens: a cost they logged is kept too, never compared with today's.
+  const legacy = [...rows.slice(0, 10), ...Array.from({ length: 6 }, (_, i) => session(10 + i, { cost_usd: 0.5 }))];
+  const old = summarizeHealth({ rows: legacy, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith() }).signals.cost;
+  assert.deepEqual([old.status, old.sample.n, old.kept_logged, old.change_percent, old.top.cost_usd], ['ok', 10, 6, 0, 0.1]);
+  // A row that logged $0 and names no model is priced at $0, not kept.
+  const free = summarizeHealth({ rows: [...rows.slice(0, 10), session(10, { cost_usd: 0 })], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith() });
+  assert.deepEqual([free.signals.cost.sample.n, free.signals.cost.kept_logged], [11, 0]);
 });
 
 // Every number a view prints as dollars, by its key, with the cost the rows logged left out.
@@ -371,7 +382,7 @@ test('no report module reads a row`s cost but through rowCostUsd: a source scan 
 
 test('summarizeHealth compares the session cost unrounded: $0.014 against $0.016 is up 14%, and $0.004 a session is judged', () => {
   const cost = (costs) => summarizeHealth({
-    rows: costs.map((usd, i) => ({ event: 'session', ts: at(200 - i * 10), session_id: `c${i + 1}`, cost_usd: usd, docs_read: [] })),
+    rows: costs.map((usd, i) => ({ event: 'session', ts: at(200 - i * 10), session_id: `c${i + 1}`, ...priced(usd), docs_read: [] })),
     sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: { error: 'gh: not found' }, config: configWith(),
   });
   // Rounded to the cent first, this read as $0.01 against $0.02: up 100%, over 50%.
@@ -578,7 +589,7 @@ test('formatHealth prints the problems worst first, then each signal with its sa
     '  Hook denies: problem (n=12 sessions); 7 blocks: git-amend 6, process-kill 1 (5 or more by one rule is a hot spot)',
     '  Decisions: not enough data (n=0, needs 5 reviewed); 0 made alone, 0 escalated (20% overridden or more is a problem)',
     '  Session cost: problem (n=6 sessions a half); 12 sessions, $19.00; $2.17 a session in the newer half against $1.00, up 117% (threshold 50%)',
-    '  Model prices: ok; 0 models in the window, 0 without a price row of its own; every table read within 60 days',
+    '  Model prices: ok; 1 model in the window, 0 without a price row of its own; every table read within 60 days',
     '  Lessons: problem; 3 open, 1 P1, the oldest 20 days; 1 fix in the window, 1 recurred',
   ].join('\n'));
 });

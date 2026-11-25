@@ -884,7 +884,8 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
   });
   assert.deepEqual([summary.agents[1].dispatches, summary.agents[1].runs, summary.agents[1].avg_docs_read, summary.agents[1].tool_calls_per_request], [0, 1, null, null]);
   assert.deepEqual([summary.sessions, summary.kept_logged, summary.unjoined_stops, summary.runs_without_tool_counts],
-    [{ count: 1, cost_usd: 4.5, cost_logged_usd: 4.5 }, { rows: 0, cost_usd: 0 }, 1, 1], 'rows that name no model keep the cost they logged');
+    [{ count: 1, cost_usd: 4.5, cost_logged_usd: 4.5 }, { rows: 3, cost_usd: 5.25 }, 1, 1],
+    'rows that name no model keep the cost they logged, counted as kept: a1 $0.50, a2 $0.25, the session $4.50; zz logged $0');
   assert.deepEqual(summary.hook_denies, {
     count: 6,
     sessions: 2,
@@ -900,6 +901,7 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
   assert.equal(text, [
     'Dispatch log /s/dispatch-log.jsonl, since 7d (2 unreadable rows skipped); costs at today\'s list prices',
     'Partial: 1 agent runs were logged before tool counts; tool calls per request leave them out.',
+    'Partial: 3 agent and session rows were logged without the tokens to price them again, and keep their logged cost, $5.25.',
     'Explore: 3 dispatches, 33% re-dispatched, median 2s and 2k tokens, $0.75, delivered 1 file / 1 chat / 0 missing',
     '  2 runs, $0.38 a run, 1.50 tool calls per request that made one; 100% sent back: 1 cause not recorded',
     '  docs read: 1.5 docs and 3.0 KB a run; a.md (2), b.md (1)',

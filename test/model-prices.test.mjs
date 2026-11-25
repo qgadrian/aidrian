@@ -94,6 +94,9 @@ test('rowCostUsd keeps the logged cost of a row it cannot price again, and says 
   assert.deepEqual(rowCostUsd({ models: ['x-m-1', 'x-m-2'], tokens: usage, cost_usd: 3, cost_by_model: { 'x-m-1': 2, 'x-m-2': 1 } }, now).by_model, { 'x-m-1': 2, 'x-m-2': 1 });
   assert.equal(rowCostUsd({ models: ['x-m-1'], cost_usd: 3 }, now).exact, false, 'one model and no tokens');
   assert.deepEqual(rowCostUsd({ models: [], cost_usd: 0 }, now), { usd: 0, logged: 0, exact: true, by_model: {} }, 'nothing was priced');
+  // A row that names no model, and logged a cost: the cost is its logged figure, never a price from today's tables.
+  assert.deepEqual(rowCostUsd({ cost_usd: 4.5 }, now), { usd: 4.5, logged: 4.5, exact: false, by_model: {} });
+  assert.deepEqual(rowCostUsd({ models: [], tokens: usage, cost_usd: 0.5 }, now), { usd: 0.5, logged: 0.5, exact: false, by_model: {} });
   // An empty `tokens_by_model`, as a session's side that made no request, is priced, at $0, whatever models the session names.
   assert.deepEqual(rowCostUsd({ models: ['x-m-1', 'x-m-2'], tokens_by_model: {}, cost_usd: 0 }, now), { usd: 0, logged: 0, exact: true, by_model: {} });
   // A model whose row has an `over` tier, from tokens written before rows split out the part over it.

@@ -549,7 +549,9 @@ Every report view prices each row again from its tokens, at the tables as they a
   token is unknown; so do a session's sides that have no `tokens_by_model` of their own when the session names several
   models. So does a row whose model's price row has an `over` tier, from tokens that do not say which part was over it,
   and a row that names models and holds no tokens. A `Partial:` line counts the rows that keep their logged cost, with their dollars.
-- A row that names no model costs what it logged.
+- A row that names no model, as the oldest rows, keeps the cost it logged, counted as such; one that logged $0 costs $0.
+
+A cost a row keeps is never mixed with today's prices where they are compared: the health view's cost trend leaves it out.
 
 The `over` part is split when the row is written, at the `over.prompt` its price row had then, which the row keeps as
 `over_prompt`. Tokens cannot be split again, so a model whose price row has a tier today is priced again only when its

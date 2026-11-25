@@ -6,7 +6,9 @@
 // folder, or an input of another shape, still sends the call, with the session's folder as its `cwd`. Only a call with no
 // session id, which OpenCode sets and the input cannot, sends nothing. A record-only route (execute.after) runs, as a
 // hook of a host that reads hooks.json does, only after a call that completed, on a Bash call only with a string
-// command, and only when it knows the folder the call ran in.
+// command, and only when it knows the folder the call ran in: the session's folder, read and on disk, or one an
+// absolute or `~` workdir names. A session folder that is gone or could not be read is never replaced there by the
+// plugin's folder or the service's, which may be another checkout.
 
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -46,14 +48,17 @@ export async function callOf(runner, { blocking, name, event, info }) {
   const base = [session.dir, own].find(isFolder) ?? process.cwd();
   const home = absolute(runner.env?.HOME) ? runner.env.HOME : homedir();
   const workdir = isObject(event.input) ? event.input.workdir : undefined;
-  let cwd = base;
-  if (workdir !== undefined && workdir !== null && workdir !== '') {
-    cwd = folderOf(workdir, absolute(session.dir) ? session.dir : base, home);
-    if (cwd === null && !blocking) return { skip: 'cwd' };
-    cwd ??= base;
-  }
-  return { base, cwd, event, root: session.root, agent: session.agent, info };
+  const given = workdir !== undefined && workdir !== null && workdir !== '';
+  const cwd = given ? folderOf(workdir, absolute(session.dir) ? session.dir : base, home) : base;
+  // The call's folder is known when the session's folder is one, or when the workdir names a folder by itself: a
+  // record-only route never records a call under the plugin's folder or the service's in its place.
+  const known = isFolder(session.dir) || (typeof workdir === 'string' && path.isAbsolute(expandedOf(workdir, home)));
+  if (!blocking && (cwd === null || !known)) return { skip: 'cwd' };
+  return { base, cwd: cwd ?? base, event, root: session.root, agent: session.agent, info };
 }
+
+// A workdir with `~` and `~/` taken from `home`, as OpenCode 2.4.1's shell tool expands them.
+const expandedOf = (workdir, home) => (workdir === '~' || workdir.startsWith('~/') ? path.join(home, workdir.slice(1)) : workdir);
 
 // The folder a shell call's `workdir` names, as OpenCode 2.4.1's shell tool resolves it: `~` and `~/` from `home`,
 // then the result resolved against `dir`, the session's folder, by path alone, an absolute one included, so its dot
@@ -61,8 +66,7 @@ export async function callOf(runner, { blocking, name, event, info }) {
 // here.
 export function folderOf(workdir, dir, home) {
   if (typeof workdir !== 'string') return null;
-  const expanded = workdir === '~' || workdir.startsWith('~/') ? path.join(home, workdir.slice(1)) : workdir;
-  const folder = path.resolve(dir, expanded);
+  const folder = path.resolve(dir, expandedOf(workdir, home));
   return isFolder(folder) ? folder : null;
 }
 

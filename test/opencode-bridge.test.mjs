@@ -411,7 +411,8 @@ test('cwd on execute.after: the script runs in the session`s folder, and the pay
   const at = (workdir) => shellEvent({ input: { command: 'gh pr create', workdir } });
   assert.deepEqual(await cwdOf(shellEvent()), [[SESSION_DIR, PROJECT_DIR]], 'an absolute workdir');
   assert.deepEqual(await cwdOf(shellEvent({ input: { command: 'gh pr create' } })), [[SESSION_DIR, SESSION_DIR]]);
-  assert.deepEqual(await cwdOf(shellEvent({ input: { command: 'gh pr create' } }), { sessions: { ses_root: new Error('gone') } }), [[OWN_DIR, OWN_DIR]], 'a failed read: the plugin`s own');
+  assert.deepEqual(await cwdOf(shellEvent(), { sessions: { ses_root: new Error('gone') } }), [[OWN_DIR, PROJECT_DIR]], 'a failed read: an absolute workdir is known, and the script runs in the plugin`s own');
+  assert.deepEqual(await cwdOf(at('~/home-work'), { sessions: { ses_root: new Error('gone') } }), [[OWN_DIR, path.join(ROOT, 'home-work')]], 'a failed read: a ~ workdir is known too');
   for (const workdir of ['work', './work', 'work/', '../session-folder/work', 'ab:x/../work']) assert.deepEqual(await cwdOf(at(workdir)), [[SESSION_DIR, path.join(SESSION_DIR, 'work')]], workdir);
   assert.deepEqual(await cwdOf(at('ab:x')), [[SESSION_DIR, path.join(SESSION_DIR, 'ab:x')]], 'a local folder named like name:part is that folder');
   assert.deepEqual(await cwdOf(at('..')), [[SESSION_DIR, ROOT]], 'a relative workdir may climb out of the session`s folder');
@@ -560,7 +561,7 @@ test(`session reads that never settle end at their own ${READ_MS} ms cap, and th
   const context = fakeContext({ sessions: { ses_child: stalled } });
   const spawn = fakeSpawn(() => {});
   const { calls, fire } = await bridge({ context, spawn, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
-  const event = shellEvent({ sessionID: 'ses_child', input: { command: 'gh pr create' } });
+  const event = shellEvent({ sessionID: 'ses_child', input: { command: 'gh pr create', workdir: PROJECT_DIR } });
   const before = structuredClone(event.result);
   const running = fire(event);
   while (context.reads.length === 0) await settle();
@@ -569,7 +570,7 @@ test(`session reads that never settle end at their own ${READ_MS} ms cap, and th
   assert.equal(calls.length, 0);
   t.mock.timers.tick(1);
   while (calls.length === 0) await settle();
-  assert.deepEqual([sent(calls[0]).session_id, sent(calls[0]).agent_id, calls[0].options.cwd, sent(calls[0]).cwd], ['ses_child', 'ses_child', OWN_DIR, OWN_DIR], 'a late read is no skip');
+  assert.deepEqual([sent(calls[0]).session_id, sent(calls[0]).agent_id, calls[0].options.cwd, sent(calls[0]).cwd], ['ses_child', 'ses_child', OWN_DIR, PROJECT_DIR], 'a late read is no skip');
   calls[0].child.emit('close', 0, null);
   await running;
   assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['setup', 1], ['run', 0]]);
@@ -678,6 +679,29 @@ test('a workdir that is gone skips a record-only call, and sends a blocking one 
   const blocking = await bridge({ scripts, routes: routesFile('gone.json', [preRoute({ script: 'hook-pre.mjs' })]), events: BLOCKING });
   await blocking.context.hooks['execute.before'](before);
   assert.deepEqual(blocking.calls.map((call) => [call.options.cwd, sent(call).cwd]), [[SESSION_DIR, SESSION_DIR]]);
+});
+
+test('a record-only call whose session folder is gone or could not be read, with no absolute workdir, is skipped, never recorded under the plugin`s folder', async () => {
+  const gone = path.join(ROOT, 'removed-session');
+  mkdirSync(path.join(gone, 'work'), { recursive: true });
+  rmSync(gone, { recursive: true });
+  const sessions = { ses_root: { location: { directory: gone } }, ses_main: { location: { directory: gone } }, ses_unread: new Error('read failed') };
+  const trace = path.join(ROOT, 'trace-session-gone.jsonl');
+  const recorded = await bridge({ context: fakeContext({ sessions }), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  const events = [
+    shellEvent({ input: { command: 'gh pr create' } }), shellEvent({ input: { command: 'gh pr create', workdir: 'work' } }),
+    shellEvent({ input: { command: 'gh pr create', workdir: '..' } }), shellEvent({ sessionID: 'ses_unread', input: { command: 'gh pr create' } }),
+    shellEvent({ sessionID: 'ses_unread', input: { command: 'gh pr create', workdir: '.' } }),
+  ];
+  for (const event of events) await recorded.fire(event);
+  assert.equal(recorded.calls.length, 0, 'nothing spawned');
+  assert.deepEqual(traceLines(trace).filter((line) => line.step === 'skip').map(({ script, status }) => [script, status]), Array(events.length).fill(['hook-bash-post.mjs', 'cwd']));
+  await recorded.fire(shellEvent());
+  assert.deepEqual(recorded.calls.map((call) => [call.options.cwd, sent(call).cwd]), [[OWN_DIR, PROJECT_DIR]], 'an absolute workdir is known: recorded');
+  const scripts = scriptsFolder('session-gone-scripts', ['hook-pre.mjs']);
+  const blocking = await bridge({ context: fakeContext({ sessions }), scripts, routes: routesFile('session-gone.json', [preRoute({ script: 'hook-pre.mjs' })]), events: BLOCKING });
+  for (const sessionID of ['ses_main', 'ses_unread']) await blocking.context.hooks['execute.before'](beforeEvent({ sessionID }));
+  assert.deepEqual(blocking.calls.map((call) => [call.options.cwd, sent(call).cwd]), [[OWN_DIR, OWN_DIR], [OWN_DIR, OWN_DIR]], 'a blocking route still sends both, from the plugin`s folder');
 });
 
 test('setup resolves when one registration rejects, still makes the other, and traces and keeps a notice naming the one lost', async () => {

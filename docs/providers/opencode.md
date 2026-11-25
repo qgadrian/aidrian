@@ -245,8 +245,11 @@ its place with its dot segments normalized, and a relative one, `ab:x/../..` amo
 session's folder. With no `workdir`, it sends the session's folder: the calling session's, read on every call since a
 session can move, else the plugin's own, else the folder the OpenCode service runs in. A `workdir` that names no
 folder here, as another machine's `name:/path` does, is sent with the session's folder on a blocking route, and skips
-the call on `execute.after`, so the ledger records nothing for it. The script itself runs in the session's folder,
-which exists whatever the call names.
+the call on `execute.after`, so the ledger records nothing for it. `execute.after` also skips a call whose folder is
+not known: the calling session's folder is gone, as a removed worktree's is, or could not be read, and its `workdir`
+is neither absolute nor `~`. That call never goes to the plugin's folder or the service's in its place, which may be
+another checkout, while a blocking route still sends it from there. The script itself runs in the session's folder,
+else the plugin's own, else the service's, which exists whatever the call names.
 
 ### Payload fields
 
@@ -268,7 +271,7 @@ pull request. None means no OpenCode hook or session read gives the field, and t
 | `session_id` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-bash-post.mjs`, `hook-write.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-post.mjs`, `hook-session-start.mjs`, `hook-prompt.mjs`, `hook-stop.mjs`, `hook-subagent-stop.mjs`, `hook-session-end.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `sessionID`, followed up its parents to the root session ([Session ids](#session-ids)) |
 | `agent_id` | `hook-agent-gates.mjs` and the guards it calls, `hook-bash.mjs` and its rules, `hook-bash-post.mjs`, `hook-agent-pre.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, `hook-session-start.mjs`, `hook-prompt.mjs`, `hook-subagent-stop.mjs`, `hook-session-end.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `sessionID`, when it is a child session's |
 | `agent_type` | `hook-agent-gates.mjs`, `hook-tracker-pre.mjs`, `hook-subagent-stop.mjs` (its delivery check and stop row), `hook-agent-post.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | None: a tool event's `agent` names the agent a session runs, OpenCode's own `build` or `plan` among them, and no agent of this plugin is installed there. A child session's call carries `agent_id` alone |
-| `cwd` | Every script but `hook-compact.mjs` | A tool event: the shell input's `workdir`, `~` from the home folder, resolved by path from the session's folder, else the session's folder from a session read, as [Hooks](#hooks) says. Any other hook: the root session's folder, from its session read (later) |
+| `cwd` | Every script but `hook-compact.mjs` | A tool event: the shell input's `workdir`, `~` from the home folder, resolved by path from the session's folder, else the session's folder from a session read; on `execute.after`, a call whose folder neither names is skipped, as [Hooks](#hooks) says. Any other hook: the root session's folder, from its session read (later) |
 | `tool_name`, `raw_tool_name` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-pre.mjs`, `hook-agent-post.mjs`, `hook-ask.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `tool`, mapped by the adapter's `hookInput` through the name table the bridge picks its routes by: `shell` as `Bash` today; the file tools, and an MCP tool's name from `info`, later |
 | `permission_tool_name` | `hook-agent-gates.mjs` | None: the adapter sets none, as no OpenCode tool is known to run under another tool's permission rules |
 | `sandbox_escape` | `hook-agent-gates.mjs`, through its sandbox escape guard (`lib/confine-guard.mjs`) | None: OpenCode's shell tool input asks for no sandbox escape, and the adapter maps none |
@@ -328,7 +331,7 @@ Set it as `AIDRIAN_NODE` is set: `opencode service set env AIDRIAN_OPENCODE_TRAC
 | `off` | Once, at setup, when it found no Node, before `setup` | `node` |
 | `unregistered` | At setup, for each OpenCode hook that failed to register, and each route whose script is not on disk, before `setup` | The OpenCode hook, such as `execute.after`, with `script`, one line for each script it would have run (`create.before` has no `script`), or `missing`, with the script not on disk |
 | `run` | Each time it ran a script | The exit code or signal, `timeout` when it killed the script at its time, or a start error's code, such as `ENOENT`, which ends that call alone, and on a blocking route refuses a subagent's call |
-| `skip` | A call it sent nothing for, and once at setup for a route list it could not read | `status` (after a call that did not complete), `command` (after a shell call whose `command` is no text), `session` (no session id), `cwd` (after a shell call whose `workdir` names no folder here, such as one on another machine), `unguarded` (a tool whose name the leaf does not read, such as an MCP tool, with `count`, how many such calls this process has met), `subagent` (a child session's idle, or one whose caller could not be read ([Session ids](#session-ids)), which runs no stop route), or `routes` (at setup: `routes.generated.json` is missing or no JSON list, so no tool hook is registered) |
+| `skip` | A call it sent nothing for, and once at setup for a route list it could not read | `status` (after a call that did not complete), `command` (after a shell call whose `command` is no text), `session` (no session id), `cwd` (after a shell call whose `workdir` names no folder here, such as one on another machine, or whose session's folder is gone or could not be read while its `workdir` is neither absolute nor `~`), `unguarded` (a tool whose name the leaf does not read, such as an MCP tool, with `count`, how many such calls this process has met), `subagent` (a child session's idle, or one whose caller could not be read ([Session ids](#session-ids)), which runs no stop route), or `routes` (at setup: `routes.generated.json` is missing or no JSON list, so no tool hook is registered) |
 | `refuse` | A call a blocking route refused, after its `run` lines | `hook` (a script's exit 2), `rewrite` (two rewrites of the input that differ), `spawn` (a subagent's call whose script did not start), or `codemode` (a subagent's call in code mode) |
 | `send-back` | A session a stop route sent back, once the session admitted the message | `stop` |
 
@@ -339,7 +342,8 @@ Set it as `AIDRIAN_NODE` is set: `opencode service set env AIDRIAN_OPENCODE_TRAC
 - An `unregistered` line: OpenCode refused that hook, or the script is `missing` from the installed package, so the
   scripts it names do not run in that process. The bridge keeps a notice for it, as for `off`, which no hook of this
   version shows; the trace is the only sign. A `routes` line keeps one too.
-- `skip` with `cwd`: the call's `workdir` names no folder on this machine.
+- `skip` with `cwd`: the call's `workdir` names no folder on this machine, or the session's folder is gone, as a
+  removed worktree's is, or could not be read, and no absolute `workdir` names the folder instead.
 - `run` with `0` and no row: the folder holds no project with `.aidrian/`, or the command made no pull request call
   the [session ledger](../hooks.md#session-ledger) records.
 
@@ -557,7 +561,8 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
 - No agents: no agent of this plugin is installed on OpenCode.
 - `models.opencode` is accepted in config.json and read by nothing ([Models](../config.md#models)).
 - A shell call whose `workdir` names no folder here, such as one on another machine, records nothing, since its folder
-  is not known here.
+  is not known here; so does one whose session's folder is gone or could not be read, unless an absolute or `~`
+  `workdir` names its folder.
 - No MCP tool call reaches a hook, so while `tracker.enabled` is true, `aidrian check` warns on a machine where
   OpenCode is set up: "on OpenCode, a write through any MCP tool passes unchecked".
 - The command guards do not read a package runner's command-string option, such as `npx -c` or `npm exec -c`, nor the

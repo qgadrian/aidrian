@@ -71,7 +71,7 @@ When a gate in step 3 ran, or the plan names a decision-record path or the `adr-
 and follow it, with the gate verdicts and the trigger. Its `references/ledger.md` § Under plan-review defines the
 triggers, its reruns under step 3's stop rule and cap, and the `blocked on quorum` stop that resumes here.
 Its accepted objections, the Human's answers, and its Report's revision-history line go into step 4's brief as authoritative.
-Skip it when it is not installed.
+Not installed: skip it.
 
 ## 4. Critique
 
@@ -108,7 +108,7 @@ A consult that returns a dispute stops the run: escalate both positions and the 
 
 ## Close
 
-The run is done only when each gate is cleared or not applicable, the Human answered step 4, an applied plan passed step 5.4,
+The run is done only when each gate is cleared or not applicable, the Human answered step 4, an applied plan passed steps 5.4 and 5.5,
 and no dispute or blocked consult was dropped. Otherwise report `blocked` or `needs_input` with the step to resume from.
 
 End with the next step: the `issue-implement` skill for an issue-anchored plan, and the `plan-implement` skill for any other,

@@ -414,6 +414,6 @@ Such a rerun follows the stop rule and cap of `plan-review`'s `steps/reruns.md`,
 objection is narrower than one the immediately preceding run accepted, and none is `blocking` or adds a required invariant,
 the quorum approves, and its accepted objections are carried to implementation review as notes, never applied as a revision.
 The quorum runs at most 3 times in one `plan-review` run, the first included, as that run counts them.
-A reused ledger is not a run, and it is the previous run the next one is compared with.
+A reused ledger counts no run; the stop rule applies to it as to a run, and it is the next one's previous run.
 Past that, accepted objections that are not `blocking` are carried as notes, and a `blocking` one escalates to the Human.
 The Human's answers and the settled answers bind as before: the stop rule decides only where accepted objections go.

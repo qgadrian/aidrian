@@ -11,5 +11,7 @@ Its items are steps 5.1 to 5.5, the numbers the skill's step 6 and Close name.
 4. Read the plan again: a schema plan passes the schema checks of `references/review-lens.md`, and `status` matches reality.
 5. When step 3 or 3b carried findings under `steps/reruns.md`, check whether the saved plan holds each one as an
    implementation note in its `## Risks`, under the line `Implementation notes from plan review:`.
-   The report names each carried finding, with its gate or the quorum and its run, and says `not recorded in the plan`
-   for one the plan does not hold: a note the Human edited out is the Human's decision.
+   A note the approved diff, with the Human's edits, held and the saved plan does not means the apply is incomplete:
+   the run reports `blocked` at step 5.2 and does not close.
+   The report names each carried finding, with its gate or the quorum and its run,
+   and says `not recorded in the plan` for a note the Human's edits removed: that is the Human's decision.

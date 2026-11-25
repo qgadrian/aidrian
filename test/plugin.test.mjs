@@ -1348,7 +1348,7 @@ test('plan-review gates stop re-running on minor findings, cap their runs, and c
   // A count written into the plan changed the hash the Human's apply is held to, so the session keeps it and writes nothing.
   assert.match(reruns, /Count the runs this review made, each gate's and the quorum's\. The session keeps the counts and each run's findings itself, and writes neither to the plan\./);
   assert.doesNotMatch(reruns, /revision.history/i);
-  assert.match(reruns, /A new `plan-review` run counts from one\. A reused quorum ledger is not a run, and it is the previous run the next one is compared with\./);
+  assert.match(reruns, /A new `plan-review` run counts from one\. A reused ledger counts no run; the stop rule applies to it as to a run, and it is the next one's previous run\./);
   assert.match(reruns, /in the `plan-review` skill's step 3, before the first gate or quorum dispatch\./);
   assert.match(reruns, /A plan changed after it, which a gate would have to judge again, escalates to the Human too: no gate is skipped\./);
   assert.match(reruns, /no authority covers that sign-off, and no stop rule clears it/);
@@ -1359,11 +1359,12 @@ test('plan-review gates stop re-running on minor findings, cap their runs, and c
   const apply = read('skills/plan-review/steps/apply.md');
   assert.match(apply, /5\. When step 3 or 3b carried findings .* check whether the saved plan holds each one as an implementation note in its `## Risks`, under the line `Implementation notes from plan review:`\./);
   // A repair loop would put back a note the Human edited out of the diff, so the step only reports.
-  assert.match(apply, /The report names each carried finding, .* says `not recorded in the plan` for one the plan does not hold: a note the Human edited out is the Human's decision\./);
+  assert.match(apply, /A note the approved diff, with the Human's edits, held and the saved plan does not means the apply is incomplete: the run reports `blocked` at step 5\.2 and does not close\. The report names each carried finding, .* says `not recorded in the plan` for a note the Human's edits removed: that is the Human's decision\./);
+  assert.match(section(skill, '## Close', '## Do not'), /an applied plan passed steps 5\.4 and 5\.5,/);
   assert.doesNotMatch(apply, /\bpatch\b/i);
   assert.match(read('skills/quorum/references/ledger.md'), /narrower than one the immediately preceding run accepted/);
   assert.match(read('skills/quorum/references/ledger.md'), /Such a rerun follows the stop rule and cap of `plan-review`'s `steps\/reruns\.md`, as its gates do\./);
-  assert.match(read('skills/quorum/references/ledger.md'), /The quorum runs at most 3 times in one `plan-review` run, the first included, as that run counts them\. A reused ledger is not a run, and it is the previous run the next one is compared with\./);
+  assert.match(read('skills/quorum/references/ledger.md'), /The quorum runs at most 3 times in one `plan-review` run, the first included, as that run counts them\. A reused ledger counts no run; the stop rule applies to it as to a run, and it is the next one's previous run\./);
   assert.match(read('skills/issue-implement/steps/phases-1-4-implement.md'), /When the plan's `## Risks` holds `Implementation notes from plan review:`, each reviewer's brief carries that list/);
 });
 

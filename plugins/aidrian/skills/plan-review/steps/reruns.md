@@ -9,7 +9,7 @@ It changes only what happens to a re-run's findings, never what a gate checks or
 Count the runs this review made, each gate's and the quorum's. The session keeps the counts and each run's findings itself,
 and writes neither to the plan. A restart from step 5.1 keeps the counts; only step 6's critique count starts again.
 A new `plan-review` run counts from one.
-A reused quorum ledger is not a run, and it is the previous run the next one is compared with.
+A reused ledger counts no run; the stop rule applies to it as to a run, and it is the next one's previous run.
 
 ## The stop rule
 
@@ -45,5 +45,5 @@ A gate runs at most 3 times in this review, the first run included, and so does 
 2. The proposed diff adds them to the plan's `## Risks`, under the line `Implementation notes from plan review:`,
    one item each: the gate or the quorum and its run number, the severity, the surface, and the finding in a few words.
 3. The report's Gates item names each carried finding, with the run, as `security gate run 3 of 3: approved by the stop rule`.
-4. Step 5.5 checks which of them the saved plan holds. The `issue-implement` skill, which `plan-implement` runs,
-   puts that list in the brief of each slice's `code-reviewer` and `security-engineer`.
+4. Step 5.5 checks that the saved plan holds each one the approved diff, with the Human's edits, held.
+   The `issue-implement` skill, which `plan-implement` runs, puts that list in the brief of each slice's `code-reviewer` and `security-engineer`.

@@ -1895,7 +1895,7 @@ test('a Write or an Edit through a link and a `..` that lands outside the places
     write(`${fx.worktree}/a/out/./../x.txt`), write(`${fx.worktree}/a/out//../x.txt`),
     bash(`python3 -c "open('${fx.worktree}/a/out/../x.txt', 'w').write('x')"`), bash(`python3 -c "open('a/out./../x.txt', 'w')"`),
     bash(`python3 -c "open('a/out /../x.txt', 'w')"`), bash(`python3 -c "open('../../x.txt', 'w')"`),
-  ]) assert.match(ask(input)?.reason ?? '', /a path that climbs with `\.\.` from a folder it names.*make the same call with each path it names spelled as the plain path it really has, with no `\.\.`, or/u, JSON.stringify(input));
+  ]) assert.match(ask(input)?.reason ?? '', /a path that climbs with `\.\.` from a folder it names.*only where this session may write, make the same call with each path it names spelled as the plain path it really has, with no `\.\.`, or/u, JSON.stringify(input));
   assert.equal(ask(write(path.join(fx.worktree, 'a', 'x.txt'))), null, 'the same file named without the link');
   // The refusal shows the path's end, where its `..` is, however long the folders before it are.
   const long = /names `([^`]*)`, a path/u.exec(ask(write(`${'d'.repeat(200)}/../x.txt`))?.reason ?? '')?.[1];
@@ -1925,7 +1925,7 @@ test('a script that writes an import of a parent folder is refused with the text
   assert.equal(match, 'unattended write through a climbing path');
   assert.equal(reason, 'aidrian: Bash is blocked for the main session in this project: it writes a file and names `./x/../y`, a path that climbs'
     + ' with `..` from a folder it names, which a link there would lead elsewhere than the text says, and no Human attends this session. This is a'
-    + ' project rule: make the same call with each path it names spelled as the plain path it really has, with no `..`, or, where a script only'
+    + ' project rule: only where this session may write, make the same call with each path it names spelled as the plain path it really has, with no `..`, or, where a script only'
     + ' writes the quoted text as a file\'s content, write that file through the host\'s file tool; reach the same result no other way, and otherwise stop and tell the Human to make that change, or where the work should go instead.');
   // The way it names: the file tool on that file, whatever its text holds.
   assert.equal(ask({ tool_name: 'Edit', tool_input: { file_path: path.join(fx.worktree, 'src', 'page.ts'), old_string: 'OLD', new_string: "import { a } from './x/../y';" } }), null);

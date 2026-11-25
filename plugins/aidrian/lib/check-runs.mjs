@@ -600,9 +600,9 @@ function ownClause(clause, { said, ends }) {
 }
 
 const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])\s/u;
-// A line that ends a table, beside a blank line and a heading: a block quote, a bullet or a `1.` with text or none after
-// it, or a thematic break. Any other number, as in `2.`, is a row.
-const TABLE_END = /^\s*(?:>|(?:[-*+]|1[.)])(?:\s|$)|([-*_])(?:\s*\1){2,}\s*$)/u;
+// A line that ends a table, beside a blank line and a heading: a block quote, a list marker with text or none after it,
+// or a thematic break.
+const TABLE_END = /^\s*(?:>|(?:[-*+]|\d+[.)])(?:\s|$)|([-*_])(?:\s*\1){2,}\s*$)/u;
 // The cells of a Markdown table row, split at each `|` but an escaped one, which reads as a plain `|`, and one inside
 // backticks.
 const cellsOf = (line) => line.trim().replace(/^\|/u, '').replace(/(?<!\\)\|$/u, '')

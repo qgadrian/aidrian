@@ -440,10 +440,10 @@ export function wordingProblems(text, { decisions, problems: parsed = [] } = par
   return problems;
 }
 
-// The words that say a rule is not built yet, so building it would make a wording that holds them wrong: a short fixed list.
-// Each says "yet", since "not implemented" alone can be what the rule is about, as in HTTP 501 Not Implemented. A state
-// worded another way passes.
-const BUILD_STATE = /\bnot\s+(?:yet\s+(?:built|implemented)|(?:built|implemented)\s+yet)\b/iu;
+// A wording that says the decision itself is not built, so building it would make the wording wrong: "decided", at most one
+// mark and a "but", and "not built" or "not implemented", with or without "yet". Those words without "decided" can be what a
+// rule is about, as in "if the index is not yet built, return 503". A state worded another way passes.
+const BUILD_STATE = /\bdecided(?:\s+|\s*[,;:(\[\u2013\u2014-]\s*)(?:but\s+)?not\s+(?:yet\s+)?(?:built|implemented)(?:\s+yet)?\b(?!-\w)/iu;
 
 // What is wrong with an unconfirmed decision's new wording when it holds its build state, or null. Only for a decision a
 // branch added: one already on record keeps its wording until the Human settles it.

@@ -748,13 +748,14 @@ function attestShaped(text) {
   }
 }
 
-// What the path `file` is by its real path, so a path that leads there by another name counts: 'manifest' for a review
-// manifest itself, pr-<n>.json, in a reviews folder of `places`; 'copy' for a temporary copy of one (finding-disposition.mjs
-// isManifestPath); or null.
+// What the path `file` is by its real path and by the name it gives in its folder's real path: 'manifest' for a review
+// manifest itself, pr-<n>.json, in a reviews folder of `places`, by either; 'copy' for a temporary copy of one
+// (finding-disposition.mjs isManifestPath); or null.
 function manifestKind(file, places) {
-  const at = real(file);
-  if (!isManifestPath(at) || !places.reviews.some((dir) => isWithin(dir, at))) return null;
-  return MANIFEST.test(path.basename(at)) ? 'manifest' : 'copy';
+  const found = [real(file), path.join(real(path.dirname(file)), foldCase(path.basename(file)))]
+    .filter((at) => isManifestPath(at) && places.reviews.some((dir) => isWithin(dir, at)));
+  if (!found.length) return null;
+  return found.some((at) => MANIFEST.test(path.basename(at))) ? 'manifest' : 'copy';
 }
 
 // Why a write to a review manifest name may make it an attest record, or null: { file, how }, `how` 'partial' when a file

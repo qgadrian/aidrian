@@ -1673,8 +1673,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     adds it, and that text is judged as the review gate reads it: JSON with that key, escapes read as JSON reads them,
     or, when it does not parse, the key or a quoted key with an escape in it. An Edit or notebook edit of it, or a patch
     that updates or deletes it or moves a file onto it, is refused, and the reason names the route the pr-review skill's
-    manifest reference gives: write the whole file to a temporary copy in the same folder, then rename it. A write
-    through another name of the manifest is judged by its real path, a shell command that makes a link to a file in a
+    manifest reference gives: write the whole file to a temporary copy in the same folder, then rename it. A write is
+    judged by the name it gives and by its real path, a shell command that makes a link to a file in a
     reviews folder is refused, and so is interpreter code that names the manifest. A shell write of a temporary copy is
     refused when its command names a `reviewer`, and any shell write to `pr-<n>.json` itself but a delete, or a rename
     or copy of a file on disk with no such key that the same call does not write. Interpreter code is judged as the

@@ -789,6 +789,35 @@ test('a review manifest is judged by any path that leads to it, and no link to a
   assert.match(said(bash(`ln ${manifest} ${path.join(fx.worktree, 'm.json')}`)), /a file in a reviews folder/u, 'a hard link');
   assert.notEqual(said(bash(`ln -s ${reviews} ${path.join(fx.worktree, 'r')}`)), '', 'a link to the folder itself');
   assert.equal(said(write(path.join(fx.worktree, 'notes.json'), { tool_input: { file_path: path.join(fx.worktree, 'notes.json'), content: forged } })), '', 'a file elsewhere');
+
+  const led = path.join(fx.worktree, 'led.json');
+  symlinkSync(manifest, led);
+  assert.match(said(write(led, { tool_input: { file_path: led, content: forged } })), /attest record/u, 'a Write by its real path');
+
+  const other = path.join(fx.worktree, 'other.json');
+  const copy = path.join(reviews, '.pr-9.json.tmp');
+  const named = path.join(reviews, 'pr-9.json');
+  const clean = JSON.stringify({ pr: 9, findings: [] }, null, 2);
+  const forgedDraft = path.join(fx.worktree, 'forged.json');
+  writeFileSync(other, clean);
+  writeFileSync(copy, clean);
+  writeFileSync(forgedDraft, forged);
+  symlinkSync(other, named);
+  const added = (text) => text.split('\n').map((line) => `+${line}`).join('\n');
+  const patch = (body) => ({ tool_name: 'apply_patch', tool_input: { command: `*** Begin Patch\n${body}\n*** End Patch\n` } });
+  const refusals = {
+    'a forged Write': write(named, { tool_input: { file_path: named, content: forged } }),
+    'a forged patch Add': patch(`*** Add File: ${named}\n${added(forged)}`),
+    'a redirect': bash(`printf '%s' '${forged}' > ${named}`),
+    'a forged mv onto it': bash(`mv ${forgedDraft} ${named}`),
+    'a forged cp onto it': bash(`cp ${forgedDraft} ${named}`),
+    'an Edit': { tool_name: 'Edit', tool_input: { file_path: named, old_string: '"pr": 9', new_string: '"pr": 8' } },
+    'a patch Update': patch(`*** Update File: ${named}\n@@\n-  "pr": 9,\n+  "pr": 8,`),
+  };
+  for (const [why, input] of Object.entries(refusals)) assert.match(said(input), /attest record/u, why);
+  assert.equal(said(write(named, { tool_input: { file_path: named, content: clean } })), '', 'a clean Write');
+  assert.equal(said(bash(`mv ${copy} ${named}`)), '', 'a mv of a clean copy');
+  assert.equal(said(bash(`rm -f ${named}`)), '', 'a delete');
 });
 
 test('interpreter code that names a review manifest is refused, and a plain reader still reads it', (t) => {

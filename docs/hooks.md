@@ -484,7 +484,8 @@ What each rule matches:
   `--disable-auto` exempt when on; `gh pr merge 7 --help=false`, `gh pr merge 7 "$X" --help`, and
   `gh pr merge 7 --help --body "$B"` are judged as `gh pr merge 7`; `gh pr merge 7 --auto --auto=false` merges at once; and
   `gh pr merge 7 "$X"` and `gh pr merge 7 --auto=false --body "$BODY"` count as `--auto`. To merge a body the shell builds,
-  write it to a file and pass `--body-file` with a literal path.
+  write it to a file and pass `--body-file` with a literal path. This is no unread input: the guard reads the command, and
+  a switch the shell may still fill in is a possible auto-merge, which it refuses on purpose.
 - Push first: a command of `testing.fullSuite` as written, through wrappers such as `rtk` and redirects, in the folder a leading
   `cd` names; `npm test -- <file>` runs no full suite. [Push first](#push-first) says when it refuses.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,

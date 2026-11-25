@@ -57,24 +57,22 @@ test('an unverified invariant the session can prove itself is gathered, never a 
   assert.ok(gather !== -1 && gather < settle && settle < ask, 'the gather route comes before the judge, and both before asking the Human');
   const route = fix.slice(gather, settle);
   for (const step of ['a draft', 'only once it is ready', 'visual reviewer opened the captures and reported an empty, logged-out, or data-less page',
-    'measured facts alone never say so', 'run locally, or against a deploy preview when one exists',
+    'measured facts alone never say so', 'Run locally, or against a deploy preview when one exists',
     '`e2e-runner`', '`designer`', '`review.visual.viewports`', '`product-access`', 'as a comment of the pull request', '`aidrian pr ingest`',
     '`capture:<key>`', 'Never post a secret', 'report that gap as a finding, and ask nothing',
     '`signoff: "human"`', '`harness-config`', '`human_required`']) {
     assert.ok(route.includes(step), `gather route: ${step}`);
   }
-  // The trust gate: a pull request from outside the team gets no run, preview, or sign-in, and the preview is the
-  // validated one, before anything runs.
-  const resolve = route.indexOf('First run `aidrian pr resolve <PR>`: with `limited` true');
+  // The trust gate: only a successful trust read with `limited: false` gathers; anything else takes the next route,
+  // and the agents reach the product under the existing product-access workflow's checks, which the route never restates.
+  const resolve = route.indexOf('Gather only when `aidrian pr resolve <PR>` succeeded and printed `limited: false`');
   assert.ok(resolve !== -1 && resolve < route.indexOf('`e2e-runner`'), 'the trust gate comes before any dispatch');
-  for (const step of ['run, open, and sign in to nothing, and go to the next route', 'the `preview_url` that command prints',
-    'sign in only with the test accounts', '§ A pull request link alone']) {
-    assert.ok(route.includes(step), `trust gate: ${step}`);
-  }
-  // The attach policy: ingest keeps the images local; posting them follows review.visual.attach.
-  assert.ok(route.includes('Post them through the `pr-screenshot` skill only when `review.visual.attach` resolves to `auto`'), 'attach policy');
+  assert.ok(route.includes('any other result, limited, an error, or a missing field, takes the next route'), 'trust gate: any other result');
+  assert.ok(route.includes('under the checks of the product-access workflow the `persona-audit` skill runs'), 'trust gate: the workflow\'s checks');
+  // The attach policy: ingest keeps the images local; posting follows the mode the capture resolved from the base branch.
+  assert.ok(route.includes('only when this head\'s captures comment says `Attach: **auto**`') && route.includes('never the checkout\'s config'), 'attach policy');
   // A local run is no CI check.
-  assert.ok(route.includes('never a flow\'s `checks`') && route.includes('`checks_pending`'), 'a local run never clears a flow\'s checks');
+  assert.ok(route.includes('A local run never clears a flow\'s `checks`.'), 'a local run never clears a flow\'s checks');
   assert.ok(fix.slice(ask).includes('never how to get the proof'), 'the Human is asked to approve, never how to get the proof');
   assert.doesNotMatch(read('SKILL.md') + plan, /how should the session get/iu, 'no step offers a "how should the session get that proof" question');
 
@@ -89,9 +87,9 @@ test('an unverified invariant the session can prove itself is gathered, never a 
   const rulings = doc('Unattended rulings', '####');
   for (const step of ['**Proof the session gathers.**', '`e2e-runner`', '`designer`', '`product-access`', 'aidrian pr settle <PR> --flow <id> --accept',
     'asks nothing', '`signoff: "human"` flow and a change to `harness-config` still ask the Human',
-    '(personas.md#a-pull-request-link-alone)', '`limited` false', 'gets no local run, preview, or sign-in',
-    'only when `review.visual.attach` resolves to `auto`', 'a flow\'s `checks` still wait for the CI job']) {
+    '(personas.md#a-pull-request-link-alone)', 'printed `limited: false`; any other result', 'takes the next route as before',
+    'says `Attach: **auto**`, the mode the capture resolved from the base branch', 'never clears a flow\'s `checks`']) {
     assert.ok(rulings.includes(step), `Unattended rulings: ${step}`);
   }
-  assert.match(doc('Visual review', '##'), /\*\*An empty capture\*\*.*`designer`.*`product-access`.*no question to the Human/u);
+  assert.match(doc('Visual review', '##'), /\*\*An empty capture\*\*.*`limited: false`.*`designer`.*product-access workflow.*`Attach: \*\*auto\*\*`.*no question to the Human/u);
 });

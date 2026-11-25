@@ -86,20 +86,18 @@ crosses them.
   2. The proof is one the session can take itself: gather it, and never ask the Human how. That is so when the pull
      request is a draft and the project's CI runs its end-to-end tests only once it is ready, or when the visual
      reviewer opened the captures and reported an empty, logged-out, or data-less page; measured facts alone never say so.
-     First run `aidrian pr resolve <PR>`: with `limited` true, the pull request comes from outside the team, so run,
-     open, and sign in to nothing, and go to the next route. Otherwise run locally, or against a deploy preview when
-     one exists, the `preview_url` that command prints, and sign in only with the test accounts the project's
-     `product-access` knowledge (`personas`) names, as § A pull request link alone of docs/personas.md in the aidrian
-     repository says.
+     Gather only when `aidrian pr resolve <PR>` succeeded and printed `limited: false`; any other result, limited,
+     an error, or a missing field, takes the next route. Run locally, or against a deploy preview when one exists.
      Dispatch `e2e-runner` for the end-to-end run, and `designer` for screenshots at each width of
-     `review.visual.viewports`. Post the run's command and result lines as a comment of the pull request. Ingest the
-     screenshots with `aidrian pr ingest`, which keeps them local, and dispatch the visual reviewer again to cite
-     `capture:<key>`. Post them through the `pr-screenshot` skill only when `review.visual.attach` resolves to `auto`
-     and that skill's upload rule allows it. Never post a secret or a session token from the login.
-     The local run settles the invariant, never a flow's `checks`: the step still returns `checks_pending` or
-     `checks_failing` until that CI job runs once the pull request is ready. When `product-access` holds no way in,
-     report that gap as a finding, and ask nothing. A sign-off the Human owes, a `signoff: "human"` flow or a
-     `harness-config` change, still stops at `human_required`.
+     `review.visual.viewports`, each briefed to reach the product under the checks of the product-access workflow
+     the `persona-audit` skill runs, with the project's `product-access` knowledge (`personas`).
+     Post the run's command and result lines as a comment of the pull request. Ingest the screenshots with
+     `aidrian pr ingest`, which keeps them local, and dispatch the visual reviewer again to cite `capture:<key>`.
+     Post them through the `pr-screenshot` skill only when this head's captures comment says `Attach: **auto**`,
+     the mode the capture resolved from the base branch, never the checkout's config; with no such comment, keep
+     them local. Never post a secret or a session token from the login. A local run never clears a flow's `checks`.
+     When `product-access` holds no way in, report that gap as a finding, and ask nothing. A sign-off the Human owes,
+     a `signoff: "human"` flow or a `harness-config` change, still stops at `human_required`.
   3. An entry has `settle`, so this project allows unattended rulings: dispatch an independent read-only agent, such as
      the critic, as judge, with the diff and the invariant. It rules `accept` only when the diff shows the invariant
      cannot be affected or a comment of the pull request holds the evidence, such as the run route 2 posted, and

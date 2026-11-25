@@ -334,8 +334,8 @@ decides, so a refusal after an approval under the same question refuses, and a p
 again. The command is one plain `aidrian pr` call run from the pull request's checkout, with no shell variables, repeated flags, `cd`, `env -C`, or chain.
 The question asks whether to approve, never how the session should get the proof: proof the session can take
 itself, an end-to-end run CI defers to ready or screenshots of a screen the capture saw empty, it gathers first and
-asks nothing, within the product-access limits ([Unattended rulings](#unattended-rulings)). Such a local run
-settles the invariant, never a flow's `checks`, which wait for the CI job once the pull request is ready.
+asks nothing, within the product-access workflow's checks ([Unattended rulings](#unattended-rulings)). Such a local
+run never clears a flow's `checks`.
 Before it asks, a session on a host that offers a tool to send the Human a push notification sends one, so a Human away from the session, such as on a phone, sees that a decision waits.
 `--last` stays in the Human's shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
 
@@ -409,21 +409,21 @@ Like the [unattended waiver](config.md#unattended-waiver), a ruling is the sessi
 **Proof the session gathers.** An invariant stays `unverified` when its proof needs a run or a picture no reviewer
 had: the pull request is a draft and the project's CI runs its end-to-end tests only once it is ready, or the visual
 reviewer opened the [visual capture](#visual-review) and reported an empty, logged-out, or data-less page. That is a
-process choice with a safe default, so the session asks the Human nothing. It gathers only where the
-[product-access limits](personas.md#a-pull-request-link-alone) allow: `aidrian pr resolve <PR>` must print `limited`
-false, the deploy preview is the `preview_url` it prints, and sign-in uses only the test accounts `product-access`
-names. A limited pull request, one from outside the team, gets no local run, preview, or sign-in, and goes on to the
-next route. Otherwise the session runs locally, or against that preview: `e2e-runner` runs the end-to-end tests and
-`designer` takes the screenshots at each width of `review.visual.viewports`. The session posts the run's command and
-result lines as a comment of the pull request, and ingests the screenshots with `aidrian pr ingest`, which keeps
-them on this machine. It posts them through the `pr-screenshot` skill only when `review.visual.attach` resolves to
-`auto` (unset, `local` on a public repository) and that skill's upload rule allows it, and never posts a secret or
-session token from the login. A visual reviewer then cites the ingested images as `capture:<key>`.
+process choice with a safe default, so the session asks the Human nothing. It gathers only when
+`aidrian pr resolve <PR>` succeeded and printed `limited: false`; any other result, a pull request from outside the
+team, an error, or a missing field, takes the next route as before. It runs locally, or against a deploy preview:
+`e2e-runner` runs the end-to-end tests and `designer` takes the screenshots at each width of
+`review.visual.viewports`, each reaching the product under the checks of the
+[product-access workflow](personas.md#a-pull-request-link-alone) that the `persona-audit` skill runs. The session
+posts the run's command and result lines as a comment of the pull request, and ingests the screenshots with
+`aidrian pr ingest`, which keeps them on this machine. It posts them through the `pr-screenshot` skill only when the
+head's captures comment says `Attach: **auto**`, the mode the capture resolved from the base branch's
+`review.visual`, never the checkout's config, and never posts a secret or session token from the login. A visual
+reviewer then cites the ingested images as `capture:<key>`.
 With both switches on, the judge settles an invariant the run proves with `aidrian pr settle <PR> --flow <id> --accept
 <invariant> --evidence <url> --reason "<what it shows>" --head <sha> --judge <agent>`, `<url>` being that comment.
 With either off, the session asks the Human to approve that `--accept`, not how to get the proof. A local run settles
-the invariant only: a flow's `checks` still wait for the CI job, so the step returns `checks_pending` or
-`checks_failing` until it runs once the pull request is ready. When `product-access` holds no way in, the session
+the invariant only, and never clears a flow's `checks`. When `product-access` holds no way in, the session
 reports that gap as a finding and asks nothing. A `signoff: "human"` flow and a change to `harness-config` still ask
 the Human, by design. The steps are in the `pr-review-loop` skill's `references/review-plan.md`.
 
@@ -593,10 +593,10 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   screen. Such a reason holds none of the adapter's own text: the screen is numbered from the capture's own list. Its whole error output is kept, readable by its owner only, as
   `capture-stderr.log` in the head's capture folder, which each new attempt removes as it starts when it can; one it cannot remove is never written into.
 - **An empty capture**: a capture the visual reviewer opened and reported as an empty, logged-out, or data-less page
-  proves nothing of the screen. Where the product-access limits allow, the session dispatches `designer`, signed in
-  with the test accounts the project's `product-access` knowledge names, for the same screens at each width, locally
-  or against the deploy preview, then ingests the images, posts them only as `attach` allows, and has the visual
-  reviewer cite them, with no question to the Human ([Unattended rulings](#unattended-rulings)).
+  proves nothing of the screen. When `aidrian pr resolve` printed `limited: false`, the session dispatches `designer`
+  under the product-access workflow's checks for the same screens at each width, then ingests the images, posts them
+  only when the captures comment says `Attach: **auto**`, and has the visual reviewer cite them, with no question to
+  the Human ([Unattended rulings](#unattended-rulings)).
 - **Ingested images**: `aidrian pr ingest` ([Ingesting images](#sign-off-by-the-human)) adds images taken
   elsewhere to the manifest's own `ingested` list, never to the tool's entries. Each key is
   `ingest-<file name>-<6 hex of its hash>`, so the same image under the same file name ingests again in place. The

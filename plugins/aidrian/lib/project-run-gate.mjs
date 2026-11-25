@@ -706,7 +706,7 @@ export function startDocsAt(root, tip, configFile, prefix) {
 // `tip`, read in `root`: the pointer and config.json `policyFiles` names (policyFilesAt), what the start hook loads (`startLoaded`), the
 // forge's workflow folders, and each guarded path the tip holds. { problem } when a path of the tip spells one another
 // way, else { spelled }, which gives why a list of a head's paths does, or null.
-function spellingAt(root, tip, { policyFiles, startLoaded }) {
+export function spellingAt(root, tip, { policyFiles, startLoaded }) {
   const [files, links] = [commitFiles(root, tip), commitGitlinks(root, tip)];
   if (!files || !links) return { problem: `git cannot read the files of the base tip ${tip.slice(0, 7)}` };
   const paths = [...files.keys(), ...links];

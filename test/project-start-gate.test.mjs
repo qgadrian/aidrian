@@ -17,7 +17,7 @@ import { ownIssue, runDriver } from '../plugins/aidrian/lib/project-run-guard.mj
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { indexFilesOf } from '../plugins/aidrian/lib/index-edits.mjs';
-import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, INDEX_EDITS_LINE, ISSUE_ATTEMPTS, POLICY_FILES_LINE, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, startDocsAt, startGuards, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
+import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, INDEX_EDITS_LINE, ISSUE_ATTEMPTS, POLICY_FILES_LINE, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, spellingAt, startDocsAt, startGuards, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { commitFiles } from '../plugins/aidrian/lib/project-trust.mjs';
 import { recordHumanSignoff } from '../plugins/aidrian/lib/review/merge-trust.mjs';
@@ -1026,6 +1026,12 @@ test('policyFilesAt reads a nested project\'s pointer from the whole tree, and r
     const other = git('commit-tree', '-m', 'another spelling', git('write-tree').trim()).trim();
     assert.equal(startDocsAt(app, other, 'app/harness/config.json', 'app/'), `${spelled} at the base tip ${other.slice(0, 7)} is app/harness/knowledge in another spelling, which a disk may read as the same folder`);
   }
+  // A link in another spelling of a folder that holds the knowledge folder, beside it, refuses a start on existing work.
+  git('read-tree', tip);
+  git('update-index', '--add', '--cacheinfo', `120000,${git('rev-parse', `${tip}:app/.aidrian.json`).trim()},app/HARNESS`);
+  const linked = git('commit-tree', '-m', 'a link', git('write-tree').trim()).trim();
+  const policyFiles = ['app/.aidrian.json', 'app/harness/config.json'];
+  assert.deepEqual(spellingAt(app, linked, { policyFiles: policyFiles.slice(0, 1), startLoaded: startDocsAt(app, linked, policyFiles[1], 'app/') }).problem, `the base tip ${linked.slice(0, 7)} holds "app/HARNESS" is "app/harness" in another spelling, which a disk that ignores case or Unicode form reads as the same path`);
   const blob = git('rev-parse', `${tip}:app/.aidrian.json`).trim();
   rmSync(path.join(top, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
   assert.deepEqual(policyFilesAt(app, tip, 'app/'), { problem: `git cannot read app/.aidrian.json at the base tip ${tip.slice(0, 7)}, so where its policy lives cannot be told` });

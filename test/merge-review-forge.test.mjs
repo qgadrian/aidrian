@@ -560,6 +560,10 @@ test('the floor of flows a merge needs the Human for comes from the forge`s file
   assert.deepEqual(floor(['docs/rules.md']), ['harness-config'], 'a doc an invariant cites');
   assert.deepEqual(floor(['.aidrian/config.json']), ['harness-config'], 'the review config');
   assert.deepEqual(floor(['conf/aidrian/config.json'], { policyFiles: ['.aidrian.json', 'conf/aidrian/config.json'] }), ['harness-config'], 'a config a pointer relocates');
+  // By its fold, as a disk that ignores case or Unicode form reads it: a ligature, and a sharp s.
+  assert.deepEqual(floor(['conf/aidrian/con\ufb01g.json'], { policyFiles: ['.aidrian.json', 'conf/aidrian/config.json'] }), ['harness-config'], 'a relocated config in another spelling');
+  assert.deepEqual(floor(['.aidrian/con\ufb01g.json']), ['harness-config'], 'the review config in another spelling');
+  assert.deepEqual(floor(['stra\u1e9ee/config.json'], { policyFiles: ['.aidrian.json', 'stra\u00dfe/config.json'] }), ['harness-config'], 'a capital sharp s');
   // github.autoMerge.includePolicyFiles with includeGuardedPaths on every config lifts the review config's sign-off alone.
   const lifted = { ...base, github: { autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } } };
   assert.deepEqual(floor(['.aidrian/config.json', 'conf/aidrian/config.json'], { configs: [lifted, lifted], policyFiles: ['conf/aidrian/config.json'] }), [], 'lifted on both branches');

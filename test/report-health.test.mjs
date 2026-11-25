@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,9 +9,12 @@ import test from 'node:test';
 import { DEFAULTS, pluginRepository } from '../plugins/aidrian/lib/config.mjs';
 import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
+import { idleChildrenSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { staleTables } from '../plugins/aidrian/lib/model-prices.mjs';
 import { FIXES, formatHealth, summarizeHealth } from '../plugins/aidrian/lib/report-health.mjs';
 import { reviewRounds } from '../plugins/aidrian/lib/report-reviews.mjs';
+import { summarize } from '../plugins/aidrian/lib/report-agents.mjs';
+import { summarizeSessions } from '../plugins/aidrian/lib/report-sessions.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -24,12 +27,14 @@ const at = (hoursAgo) => new Date(NOW - hoursAgo * 3_600_000).toISOString();
 const configWith = (health = {}) => ({ ...DEFAULTS, telemetry: { ...DEFAULTS.telemetry, health: { ...DEFAULTS.telemetry.health, ...health } } });
 
 // One subagent run: its dispatch row and its stop row, and a first stop row marked `missing` and `sent_back` when the
-// delivery check sent it back. `legacy` writes the stop rows as they were before they recorded `sent_back`.
+// delivery check sent it back, for `cause`. `legacy` writes the stop rows as they were before they recorded `sent_back`,
+// and `cause: null` as they were before they recorded `sent_back_for`.
 let runs = 0;
-function run(agentType, session, description, { sentBack = false, legacy = false, docs = [] } = {}) {
+function run(agentType, session, description, { sentBack = false, legacy = false, docs = [], cause = 'missing_file' } = {}) {
   const id = `agent-${(runs += 1)}`;
   const stop = { event: 'stop', ts: at(48), session_id: session, agent_id: id, agent_type: agentType, docs_read: docs, cost_usd: 0.1 };
-  const mark = (row, sent) => (legacy ? row : { ...row, sent_back: sent });
+  const causes = (sent) => (cause === null ? {} : { sent_back_for: sent ? [cause] : [] });
+  const mark = (row, sent) => (legacy ? row : { ...row, sent_back: sent, ...causes(sent) });
   return [
     { event: 'dispatch', ts: at(48), session_id: session, agent_id: id, agent_type: agentType, description },
     ...(sentBack ? [mark({ ...stop, delivered: 'missing' }, true)] : []),
@@ -124,9 +129,9 @@ test('summarizeHealth: each signal carries its sample, and a part under minSampl
     prices: 'ok', lessons: 'problem',
   });
   assert.deepEqual(signals.agents.agents.map((agent) => [agent.agent_type, agent.redispatch, agent.sent_back]), [
-    ['Explore', { n: 3, percent: 0, status: 'not_enough_data' }, { n: 3, percent: 0, status: 'not_enough_data', unknown: 0 }],
-    ['aidrian:explorer', { n: 10, percent: 40, status: 'problem' }, { n: 10, percent: 20, status: 'problem', unknown: 0 }],
-    ['code-reviewer', { n: 6, percent: 0, status: 'ok' }, { n: 6, percent: 0, status: 'ok', unknown: 0 }],
+    ['Explore', { n: 3, percent: 0, status: 'not_enough_data' }, { n: 3, percent: 0, status: 'not_enough_data', unknown: 0, leading: null }],
+    ['aidrian:explorer', { n: 10, percent: 40, status: 'problem' }, { n: 10, percent: 20, status: 'problem', unknown: 0, leading: { cause: 'missing_file', runs: 2 } }],
+    ['code-reviewer', { n: 6, percent: 0, status: 'ok' }, { n: 6, percent: 0, status: 'ok', unknown: 0, leading: null }],
   ]);
   assert.deepEqual(signals.reviews.late, { n: 2, on_seen_line: 2, percent: 100, status: 'not_enough_data' }, '100% of 2 is not judged');
   assert.deepEqual(signals.denies.rules.map((rule) => [rule.rule, rule.count]), [['git-amend', 6], ['process-kill', 1]], 'pr-body is older than the window');
@@ -174,17 +179,155 @@ test('summarizeHealth: a run that named a missing file before stop rows recorded
     summarizeHealth({ rows: [...rows, ...more], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: { error: 'gh: not found' }, config: configWith() });
   const few = health();
   assert.deepEqual(few.signals.agents.agents.map((agent) => [agent.agent_type, agent.sent_back]), [
-    ['planner', { n: 3, percent: 0, status: 'not_enough_data', unknown: 2 }],
+    ['planner', { n: 3, percent: 0, status: 'not_enough_data', unknown: 2, leading: null }],
   ], '3 known runs are under minSample 5');
   assert.deepEqual(few.problems, []);
   assert.match(formatHealth(few, { file: 'f', since: '30d', skipped: 0 }), /\n {4}planner: .*, sent back not enough data \(n=3, needs 5, 2 unknown\)\n/);
   // Two more runs with sent_back reach the minimum: 1 of 5 known runs sent back, 20%, over 10%.
   const enough = health([...run('planner', 's8', 'p6', { sentBack: true }), ...run('planner', 's8', 'p7')]);
-  assert.deepEqual(enough.signals.agents.agents[0].sent_back, { n: 5, percent: 20, status: 'problem', unknown: 2 });
+  assert.deepEqual(enough.signals.agents.agents[0].sent_back, { n: 5, percent: 20, status: 'problem', unknown: 2, leading: { cause: 'missing_file', runs: 1 } });
   const [problem] = enough.problems.filter((item) => item.kind === 'sent-back');
   assert.deepEqual([problem.value, problem.sample], [20, { n: 5, of: 'runs with a known send-back' }]);
-  assert.equal(problem.summary, 'planner: the delivery check sent back 1 of 5 runs (20%), over 10%; each named a file it had not written.');
-  assert.match(formatHealth(enough, { file: 'f', since: '30d', skipped: 0 }), /\n {4}planner: .*, 20% sent back \(n=5, 2 unknown\)\n/);
+  assert.equal(problem.summary, 'planner: the stop hook sent back 1 of 5 runs (20%), over 10%; the leading cause, in 1 run: missing file, from the delivery check.');
+  assert.match(formatHealth(enough, { file: 'f', since: '30d', skipped: 0 }), /\n {4}planner: .*, 20% sent back \(n=5, 2 unknown; most often missing file\)\n/);
+});
+
+test('summarizeHealth names the leading cause of the send-backs, and files the lesson of that cause', () => {
+  // aidrian:fixer: 5 runs, 3 sent back for a background task, 1 for a handoff marker, and 1 before rows named causes.
+  const rows = [
+    ...['f1', 'f2', 'f3'].flatMap((task) => run('aidrian:fixer', 's9', task, { sentBack: true, cause: 'background' })),
+    ...run('aidrian:fixer', 's9', 'f4', { sentBack: true, cause: 'marker' }),
+    ...run('aidrian:fixer', 's9', 'f5', { sentBack: true, cause: null }),
+  ];
+  const health = (list) => summarizeHealth({ rows: list, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith() });
+  const [background] = health(rows).problems.filter((item) => item.kind === 'sent-back');
+  assert.equal(background.summary, 'aidrian:fixer: the stop hook sent back 5 of 5 runs (100%), over 10%; the leading cause, in 3 runs: background task, from the background check.');
+  assert.deepEqual(background.lesson, { tier: 'P2', kind: 'gap', target: 'plugin', key: 'idle-with-children:aidrian:fixer' }, 'the background check`s own lesson');
+  assert.doesNotMatch(background.summary, /delivery check/u);
+  assert.match(formatHealth(health(rows), { file: 'f', since: '30d' }), /\n {4}aidrian:fixer: .*, 100% sent back \(n=5; most often background task\)\n/);
+  // A marker leads: a key of its own. A cause not recorded leads: the delivery check's key, as before rows named causes.
+  const marker = [...rows.slice(6), ...['f6', 'f7'].flatMap((task) => run('aidrian:fixer', 's9', task, { sentBack: true, cause: 'marker' }))];
+  const [byMarker] = health(marker).problems.filter((item) => item.kind === 'sent-back');
+  assert.match(byMarker.summary, /the leading cause, in 3 runs: handoff marker, from the marker check\.$/u);
+  assert.deepEqual(byMarker.lesson, { tier: 'P2', kind: 'improvement', target: 'plugin', key: 'health:sent-back:marker:aidrian:fixer' });
+  // A project's own agent led by a background task: the fix is to its prompt, so the lesson is the project's, under a
+  // key of its own, since the stop hook files the background check's key in the plugin's inbox.
+  const own = ['p1', 'p2', 'p3', 'p4', 'p5'].flatMap((task) => run('fixer', 's9', task, { sentBack: true, cause: 'background' }));
+  assert.deepEqual(health(own).problems.find((item) => item.kind === 'sent-back').lesson,
+    { tier: 'P2', kind: 'improvement', target: 'project', key: 'health:sent-back:background:fixer' });
+  const legacy = ['f8', 'f9'].flatMap((task) => run('code-reviewer', 's9', task, { sentBack: true, cause: null }));
+  const [unrecorded] = health([...legacy, ...['g1', 'g2', 'g3'].flatMap((task) => run('code-reviewer', 's9', task))]).problems;
+  assert.equal(unrecorded.summary, 'code-reviewer: the stop hook sent back 2 of 5 runs (40%), over 10%; the leading cause, in 2 runs: cause not recorded.');
+  assert.deepEqual(unrecorded.lesson, { tier: 'P2', kind: 'bug', target: 'project', key: 'delivery-check:code-reviewer' });
+});
+
+test('a background-led send-back lesson shares the stop hook`s key only in the inbox the hook files it in', () => {
+  // The stop hook's own lesson for an agent left idle with a background task: its key and its inbox.
+  for (const agentType of ['aidrian:fixer', 'fixer']) {
+    const hook = idleChildrenSignal({ agentType, children: [] });
+    const rows = ['k1', 'k2', 'k3', 'k4', 'k5'].flatMap((task) => run(agentType, 's9', task, { sentBack: true, cause: 'background' }));
+    const { lesson } = summarizeHealth({ rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith() })
+      .problems.find((item) => item.kind === 'sent-back');
+    assert.equal(lesson.target, agentType.startsWith('aidrian:') ? 'plugin' : 'project', agentType);
+    // One key, one inbox: a shared key is the same lesson seen again, so it must land where the hook's does.
+    assert.ok(lesson.key !== hook.key || lesson.target === hook.target, `${agentType}: ${JSON.stringify(lesson)}`);
+    assert.equal(lesson.key === hook.key, lesson.target === 'plugin', agentType);
+  }
+});
+
+test('a resolved send-back lesson is reopened only by send-backs of its own cause', () => {
+  // Before the fix, ten days ago: 6 runs, each sent back for `before`. After it, two days ago: 6 runs, 3 sent back for `after`.
+  const window = (before, after, agentType = 'aidrian:fixer') => [
+    ...['b1', 'b2', 'b3', 'b4', 'b5', 'b6'].flatMap((task) => run(agentType, 'o1', task, { sentBack: true, cause: before })).map((row) => ({ ...row, ts: at(24 * 10) })),
+    ...['a1', 'a2', 'a3', 'a4', 'a5', 'a6'].flatMap((task, i) => run(agentType, 'n1', task, { sentBack: i < 3, cause: after })),
+  ];
+  const resolved = (key) => fold([
+    { event: 'add', id: 'cccc0001', at: at(24 * 20), tier: 'P2', note: 'sent back', key },
+    { event: 'resolve', id: 'cccc0001', at: at(24 * 5), outcome: 'mechanism', link: 'abc1234' },
+  ]).lessons;
+  // The resolved lesson sits in the inbox its key belongs to: the plugin's for a plugin agent, the project's otherwise.
+  const sentBack = (rows, key, inbox = 'plugin') => summarizeHealth({
+    rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith(),
+    lessons: inbox === 'project' ? resolved(key) : [], pluginLessons: inbox === 'plugin' ? resolved(key) : [],
+  }).problems.find((item) => item.kind === 'sent-back');
+  // A project agent's background lesson, under its own key in the project's inbox, holds and reopens the same way.
+  const project = sentBack(window('background', 'missing_file', 'fixer'), 'health:sent-back:background:fixer', 'project');
+  assert.deepEqual([project.lesson.key, project.resolved?.id, project.since_resolution], ['health:sent-back:background:fixer', 'cccc0001', { n: 6, status: 'ok' }]);
+  assert.deepEqual(sentBack(window('background', 'background', 'fixer'), 'health:sent-back:background:fixer', 'project').since_resolution, { n: 6, status: 'problem' });
+  // The background check's lesson leads the window; only missing files came back after its fix: it held.
+  const background = sentBack(window('background', 'missing_file'), 'idle-with-children:aidrian:fixer');
+  assert.deepEqual([background.lesson.key, background.resolved?.id, background.since_resolution], ['idle-with-children:aidrian:fixer', 'cccc0001', { n: 6, status: 'ok' }]);
+  // The delivery check's lesson leads; only background tasks came back after its fix: it held too.
+  const delivery = sentBack(window('missing_file', 'background'), 'delivery-check:aidrian:fixer');
+  assert.deepEqual([delivery.lesson.key, delivery.resolved?.id, delivery.since_resolution], ['delivery-check:aidrian:fixer', 'cccc0001', { n: 6, status: 'ok' }]);
+  // The same cause after the fix reopens it.
+  assert.deepEqual(sentBack(window('background', 'background'), 'idle-with-children:aidrian:fixer').since_resolution, { n: 6, status: 'problem' });
+});
+
+// Every number a view prints as dollars, by its key, with the cost the rows logged left out.
+function dollarsOf(value, key = '') {
+  if (Array.isArray(value)) return value.flatMap((item) => dollarsOf(item, key));
+  if (value && typeof value === 'object') return Object.entries(value).flatMap(([name, item]) => dollarsOf(item, name));
+  return typeof value === 'number' && /usd/u.test(key) && !/logged/u.test(key) ? [value] : [];
+}
+
+test('every report view prices a row through rowCostUsd: a logged cost the tokens contradict never reaches a figure', () => {
+  // Each row logged $5000, but its tokens cost $4 at today's Opus 5.5 price: one million input tokens.
+  const LOGGED = 5000;
+  const tokens = { input: 1_000_000, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };
+  const byModel = { 'claude-opus-5-5': { ...tokens, over: { ...tokens, input: 0 } } };
+  const side = { tokens, tokens_by_model: byModel, cost_usd: LOGGED, requests: 1, tool_requests: 0, tool_calls: 0 };
+  const rows = [
+    ...Array.from({ length: 12 }, (_, i) => ({
+      event: 'session', ts: at(200 - i * 10), session_id: `c${i}`, models: ['claude-opus-5-5'], tokens_by_model: byModel,
+      cost_usd: LOGGED, cost_by_model: { 'claude-opus-5-5': LOGGED }, main: side, subagents: side, docs_read: [],
+    })),
+    ...Array.from({ length: 6 }, (_, i) => [
+      { event: 'dispatch', ts: at(48), session_id: 'c0', agent_id: `r${i}`, agent_type: 'aidrian:explorer', description: `t${i}` },
+      { event: 'stop', ts: at(48), session_id: 'c0', agent_id: `r${i}`, agent_type: 'aidrian:explorer', models: ['claude-opus-5-5'], tokens, tokens_by_model: byModel, cost_usd: LOGGED },
+    ]).flat(),
+  ];
+  const views = {
+    agents: summarize(rows, { sinceMs: SINCE }),
+    sessions: summarizeSessions(rows, { sinceMs: SINCE }),
+    health: summarizeHealth({ rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith() }).signals.cost,
+  };
+  for (const [name, view] of Object.entries(views)) {
+    const dollars = dollarsOf(view);
+    assert.ok(dollars.length > 0, `${name} prints dollars`);
+    assert.deepEqual(dollars.filter((usd) => usd >= LOGGED), [], `${name} read a logged cost: ${JSON.stringify(view)}`);
+  }
+  assert.deepEqual([views.agents.agents[0].cost_usd, views.agents.agents[0].cost_logged_usd], [24, 30000]);
+  assert.deepEqual([views.sessions.cost_usd, views.sessions.cost_logged_usd, views.sessions.by_model[0].cost_usd], [48, 60000, 48]);
+  assert.deepEqual([views.health.older.avg_usd, views.health.top.cost_usd], [4, 4]);
+});
+
+// The names the report views give their own sums and summaries, which hold costs rowCostUsd already priced. A log row,
+// or a side of one, goes by another name, such as `row` or `side`, so reading its `cost_usd` here fails the scan below.
+const VIEW_TOTALS = new Set(['summary', 'agent', 'sessions', 'top', 'cost', 'sum', 'entry', 'a', 'b', 'kept', 'keptSides', 'main', 'subagents',
+  'day', 'model', 'effort', 'session', 'total', 'line']);
+
+test('no report module reads a row`s cost but through rowCostUsd: a source scan of every view', () => {
+  const lib = path.join(ROOT, 'plugins/aidrian/lib');
+  const files = readdirSync(lib).filter((name) => /^report.*\.mjs$/u.test(name) || name === 'dispatch-log.mjs');
+  assert.ok(files.length >= 7, files.join(', '));
+  const found = [];
+  for (const name of files) {
+    readFileSync(path.join(lib, name), 'utf8').split('\n').forEach((line, i) => {
+      if (/^\s*\/\//u.test(line)) return;
+      const at = `${name}:${i + 1}`;
+      // A member read, `x.cost_usd` or `x?.y.cost_usd`, named by the first name of its chain; a bracket read or a
+      // logged cost per model is never a view's own.
+      for (const match of line.matchAll(/([A-Za-z_$][\w$]*)((?:\??\.[\w$]+|\([^()]*\))*)\??\.cost_usd\b/gu)) {
+        if (!VIEW_TOTALS.has(match[1])) found.push(`${at}: ${match[0]}`);
+      }
+      for (const match of line.matchAll(/\[\s*['"`]cost_usd['"`]\s*\]|\bcost_by_model\b/gu)) found.push(`${at}: ${match[0]}`);
+    });
+  }
+  assert.deepEqual(found, [], 'read a row`s cost through rowCostUsd (lib/model-prices.mjs)');
+  // The scan sees a read it must refuse.
+  assert.match('const usd = row.cost_usd;', /([A-Za-z_$][\w$]*)((?:\??\.[\w$]+|\([^()]*\))*)\??\.cost_usd\b/u);
+  assert.ok(!VIEW_TOTALS.has('row') && !VIEW_TOTALS.has('side'));
 });
 
 test('summarizeHealth compares the session cost unrounded: $0.014 against $0.016 is up 14%, and $0.004 a session is judged', () => {
@@ -214,7 +357,7 @@ test('summarizeHealth judges rates and averages unrounded, and prints a tenth wh
     rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews, config: configWith({ redispatchPercent: 33, sentBackPercent: 33 }),
   });
   assert.deepEqual(health.problems.map((item) => [item.kind, item.value, item.threshold]), [['redispatch', 33.3, 33], ['sent-back', 33.3, 33], ['review-rounds', 3.04, 3]]);
-  assert.equal(health.problems[1].summary, 'planner: the delivery check sent back 2 of 6 runs (33.3%), over 33%; each named a file it had not written.');
+  assert.equal(health.problems[1].summary, 'planner: the stop hook sent back 2 of 6 runs (33.3%), over 33%; the leading cause, in 2 runs: missing file, from the delivery check.');
   assert.equal(health.problems[2].summary, 'The review bot took 3.04 rounds a pull request on 25 reviewed, over 3; 0 needed 5 or more.');
 });
 
@@ -375,7 +518,7 @@ test('formatHealth prints the problems worst first, then each signal with its sa
     '  2. The always docs are 20000 bytes, over knowledge.budgets.alwaysBytes (16384); every session and subagent reads them. Fix: split-doc.',
     '  3. docs/a.md is 30000 bytes, over knowledge.budgets.taggedDocBytes (24576); every route to testing reads it whole. Fix: split-doc.',
     '  4. aidrian:explorer: 40% of 10 dispatches repeated a task already dispatched in the same session, over 20%. Fix: agent-prompt.',
-    '  5. aidrian:explorer: the delivery check sent back 2 of 10 runs (20%), over 10%; each named a file it had not written. Fix: agent-prompt.',
+    '  5. aidrian:explorer: the stop hook sent back 2 of 10 runs (20%), over 10%; the leading cause, in 2 runs: missing file, from the delivery check. Fix: agent-prompt.',
     '  6. The review bot took 3.5 rounds a pull request on 6 reviewed, over 3; 2 needed 5 or more. Fix: round-cap.',
     '  7. The git-amend rule blocked 6 calls in 12 sessions, 5 or more: by main 6; most often: this rewrites the branch tip. Fix: deny-rule.',
     '  8. 1 of 1 fix in the window recurred, so the problem came back: aaaa0003. Fix: lesson-triage.',
@@ -389,7 +532,7 @@ test('formatHealth prints the problems worst first, then each signal with its sa
       '2 indexed docs never read, 1 of them tagged',
     '  Agents: problem (thresholds: 20% re-dispatched, 10% sent back)',
     '    Explore: re-dispatched not enough data (n=3, needs 5), sent back not enough data (n=3, needs 5)',
-    '    aidrian:explorer: 40% re-dispatched (n=10), 20% sent back (n=10)',
+    '    aidrian:explorer: 40% re-dispatched (n=10), 20% sent back (n=10; most often missing file)',
     '    code-reviewer: 0% re-dispatched (n=6), 0% sent back (n=6)',
     '  Reviews: problem; 3.5 rounds a pull request (n=6 reviewed, threshold 3); late findings not enough data (n=2, needs 5 checked)',
     '  Drafts: not enough data; no orchestrator or autopilot session opened a draft pull request',

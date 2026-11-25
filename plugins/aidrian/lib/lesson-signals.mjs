@@ -39,6 +39,9 @@ export function recordSignal(project, signal, { config, now = new Date() } = {})
   }
 }
 
+// Who fixes what an agent's own instructions cause: a plugin agent (`aidrian:<name>`) is the plugin's, any other the project's.
+export const agentOwner = (agentType) => (agentType.startsWith('aidrian:') ? 'plugin' : 'project');
+
 // The delivery check sent a subagent back: its last message named files as written that do not exist (`missing`), or
 // a handoff file its brief named is still unwritten, with no report the hook could write there or a write that failed
 // (`unwritten`). The note tells
@@ -54,7 +57,7 @@ export function deliverySignal({ agentType, agentId = null, session = null, miss
     key: `delivery-check:${agentType}`,
     tier: 'P2',
     kind: 'bug',
-    target: agentType.startsWith('aidrian:') ? 'plugin' : 'project',
+    target: agentOwner(agentType),
     title: `The delivery check sent ${agentType} back: ${title}`,
     note: notes.join(' '),
     evidence: agentId ? [`dispatch log: agent ${agentId}`] : [],

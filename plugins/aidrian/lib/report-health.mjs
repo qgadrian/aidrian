@@ -10,9 +10,10 @@ import { summarizeDocs } from './report-docs.mjs';
 import { NO_BOT } from './report-reviews.mjs';
 import { endedSessions, latestRows } from './jsonl.mjs';
 import { priceTables } from './hosts/index.mjs';
+import { SEND_BACK_CAUSES } from './dispatch-log.mjs';
 import { lessonStats } from './lesson-inbox.mjs';
-import { deliverySignal, denialSignal, roundLimitSignal } from './lesson-signals.mjs';
-import { priceFor, STALE_DAYS, staleTables } from './model-prices.mjs';
+import { agentOwner, deliverySignal, denialSignal, idleChildrenSignal, roundLimitSignal } from './lesson-signals.mjs';
+import { priceFor, rowCostUsd, STALE_DAYS, staleTables } from './model-prices.mjs';
 import { summarizeSessions } from './report-sessions.mjs';
 
 // Each kind of problem, worst first, and its fix: the row of the harness-health skill's fix table that answers it.
@@ -120,15 +121,17 @@ function sinceResolution(problems, input) {
   }
 }
 
-function judgedAfter({ kind, subject, sample }, resolvedMs, input, later) {
+function judgedAfter({ kind, subject, sample, lesson }, resolvedMs, input, later) {
   if (!Number.isFinite(resolvedMs)) return { n: null, status: UNAVAILABLE };
   if (resolvedMs < (input.sinceMs ?? 0)) return { n: sample.n, status: PROBLEM };
   // Strictly after, as an occurrence must be to count against a fix.
   if (!later.has(resolvedMs)) later.set(resolvedMs, judge({ ...input, sinceMs: resolvedMs + 1, reviews: null, lessons: [] }));
   const { problems, signals } = later.get(resolvedMs);
-  const again = problems.find((item) => item.kind === kind && item.subject === subject);
+  // The same problem with the same lesson: agents sent back since, led by another cause, are another lesson's to reopen.
+  const again = problems.find((item) => item.kind === kind && item.subject === subject && item.lesson?.key === lesson?.key);
   if (again) return { n: again.sample.n, status: PROBLEM };
-  // Not found again: not enough data or unavailable as the signal says, else judged and within its threshold.
+  // Not found again: not enough data or unavailable as the signal says, else judged, and within its threshold or led
+  // by another cause than this lesson's.
   const signal = signals[SIGNAL_OF[kind]];
   const agent = signal.agents?.find((item) => item.agent_type === subject);
   const part = signal.agents ? (agent?.[kind === 'redispatch' ? 'redispatch' : 'sent_back'] ?? { n: 0, status: NOT_ENOUGH })
@@ -195,10 +198,24 @@ function docsSignal(rows, sinceMs, { indexed, tags }, { minSample, topDocPercent
   return { status: heavy || unread.length ? PROBLEM : OK, ...base };
 }
 
-// Per agent type: the share of dispatches that repeat a task, over its dispatches, and the share of runs the delivery
-// check sent back, over its runs whose stop rows say so. A run that named a missing file before stop rows recorded
-// `sent_back` is unknown: it leaves the sample as it leaves the rate, and counts in `unknown`. The shares come from the
-// counts, since summarize() rounds its rates.
+// The lesson of a sent-back problem, by its leading cause (dispatch-log.mjs SEND_BACK_CAUSES): a cause the stop hook
+// already records as an automatic lesson takes that lesson's labels, the delivery check's or the background check's.
+// A cause not recorded keeps the delivery check's, the key this problem held before rows named causes, so a lesson
+// resolved then still holds it. The marker and evidence causes take a key of their own. Every one is owned by whoever
+// owns the agent (lesson-signals.mjs agentOwner), since the fix is to that agent's prompt. The background check's
+// lesson is the plugin's, so only a plugin agent shares its key; a project agent's background send-backs take a key
+// of their own, so one key never sits in two inboxes.
+function sentBackLesson(agentType, cause) {
+  const target = agentOwner(agentType);
+  if (cause === 'background' && target === 'plugin') return labels(idleChildrenSignal({ agentType, children: [] }));
+  if (['missing_file', 'handoff', 'unrecorded'].includes(cause)) return labels(deliverySignal({ agentType, missing: [] }));
+  return { tier: 'P2', kind: 'improvement', target, key: `health:sent-back:${cause}:${agentType}` };
+}
+
+// Per agent type: the share of dispatches that repeat a task, over its dispatches, and the share of runs the stop hook
+// sent back, over its runs whose stop rows say so, with `leading`, the cause that sent the most runs back, as
+// { cause, runs }, or null. A run that named a missing file before stop rows recorded `sent_back` is unknown: it leaves
+// the sample as it leaves the rate, and counts in `unknown`. The shares come from the counts, since summarize() rounds its rates.
 function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPercent }, add) {
   const rate = (n, count, threshold) => {
     const percent = percentOf(count, n);
@@ -208,22 +225,25 @@ function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPer
   const agents = summarize(rows, { sinceMs }).agents.map((agent) => {
     const redispatch = rate(agent.dispatches, agent.redispatched, redispatchPercent);
     const unknown = agent.runs_without_send_back;
-    const sentBack = { ...rate(agent.runs - unknown, agent.sent_back, sentBackPercent), unknown };
-    const sentBackLesson = labels(deliverySignal({ agentType: agent.agent_type, missing: [] }));
+    const [cause, runs] = agent.sent_back_causes[0] ?? [];
+    const leading = cause ? { cause, runs } : null;
+    const sentBack = { ...rate(agent.runs - unknown, agent.sent_back, sentBackPercent), unknown, leading };
+    const lesson = sentBackLesson(agent.agent_type, cause ?? 'unrecorded');
     if (redispatch.status === PROBLEM) {
       add('redispatch', {
         subject: agent.agent_type, value: redispatch.percent, threshold: redispatchPercent, sample: { n: redispatch.n, of: 'dispatches' },
         summary: `${agent.agent_type}: ${redispatch.percent}% of ${redispatch.n} dispatches repeated a task already dispatched in the same session, ` +
           `over ${redispatchPercent}%.`,
-        lesson: { tier: 'P2', kind: 'improvement', target: sentBackLesson.target, key: `health:redispatch:${agent.agent_type}` },
+        lesson: { tier: 'P2', kind: 'improvement', target: agentOwner(agent.agent_type), key: `health:redispatch:${agent.agent_type}` },
       });
     }
     if (sentBack.status === PROBLEM) {
+      const { words, check } = SEND_BACK_CAUSES[leading.cause];
       add('sent-back', {
         subject: agent.agent_type, value: sentBack.percent, threshold: sentBackPercent, sample: { n: sentBack.n, of: 'runs with a known send-back' },
-        summary: `${agent.agent_type}: the delivery check sent back ${agent.sent_back} of ${sentBack.n} runs (${sentBack.percent}%), over ${sentBackPercent}%; ` +
-          'each named a file it had not written.',
-        lesson: sentBackLesson,
+        summary: `${agent.agent_type}: the stop hook sent back ${agent.sent_back} of ${sentBack.n} runs (${sentBack.percent}%), over ${sentBackPercent}%; ` +
+          `the leading cause, in ${plural(leading.runs, 'run')}: ${words}${check ? `, from ${check}` : ''}.`,
+        lesson,
       });
     }
     return { agent_type: agent.agent_type, redispatch, sent_back: sentBack };
@@ -345,14 +365,15 @@ function decisionsSignal(rows, sinceMs, { decisionMinSample, decisionOverridePer
   return { status: PROBLEM, ...base };
 }
 
-// The cost a session of the newer half of the window's sessions against the older half, in the order they ended. The
+// The cost a session of the newer half of the window's sessions against the older half, in the order they ended, each
+// at today's prices (model-prices.mjs rowCostUsd), so a price change moves no half against the other. The
 // averages are compared unrounded: rounded to the cent, $0.014 against $0.016 reads as a 100% rise, and $0.004 as nothing.
 function costSignal(rows, sinceMs, { minSample, costRisePercent }, add) {
   const summary = summarizeSessions(rows, { sinceMs });
   const ended = endedSessions(rows.filter((row) => row.event === 'session' && Date.parse(row.ts) >= sinceMs))
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
   const half = Math.floor(ended.length / 2);
-  const average = (list) => (list.length ? sumOf(list, (row) => row.cost_usd) / list.length : null);
+  const average = (list) => (list.length ? sumOf(list, (row) => rowCostUsd(row).usd) / list.length : null);
   const older = average(ended.slice(0, half));
   const newer = average(ended.slice(half));
   const top = summary.top[0] ?? null;
@@ -465,7 +486,8 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
   const agentLines = agents.agents.map((agent) => {
     const part = (label, judged) => {
       const sample = `${n(judged.n, minSample)}${judged.unknown ? `, ${judged.unknown} unknown` : ''}`;
-      return judged.status === NOT_ENOUGH ? `${label} not enough data (${sample})` : `${judged.percent}% ${label} (${sample})`;
+      const lead = judged.leading ? `; most often ${SEND_BACK_CAUSES[judged.leading.cause].words}` : '';
+      return judged.status === NOT_ENOUGH ? `${label} not enough data (${sample})` : `${judged.percent}% ${label} (${sample}${lead})`;
     };
     return `    ${agent.agent_type}: ${part('re-dispatched', agent.redispatch)}, ${part('sent back', agent.sent_back)}`;
   });

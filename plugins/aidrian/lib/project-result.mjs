@@ -32,8 +32,15 @@ export const CAPS = Object.freeze({ question: 300, option: 120, stop: 300 });
 export const DROP_FILE = 'result.json';
 
 const iso = (now) => new Date(now).toISOString();
+// A value a problem names, as one short scalar: a string masked (maskSecrets) and only then cut at 40, so no part of a
+// token comes back, a number or a boolean as it is, null as `null`, and anything else as a fixed word. No value is
+// serialized whole: a session's file may nest one too deep for JSON.stringify, which would throw on every read of it.
+const QUOTE_WORDS = Object.freeze({ object: 'an object', undefined: 'nothing' });
 const quote = (value) => {
-  const text = JSON.stringify(value) ?? String(value);
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return String(value);
+  if (Array.isArray(value)) return 'a list';
+  if (typeof value !== 'string') return QUOTE_WORDS[typeof value] ?? 'a value';
+  const text = JSON.stringify(maskSecrets(value));
   return text.length > 40 ? `${text.slice(0, 37)}...` : text;
 };
 const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);

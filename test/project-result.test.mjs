@@ -329,6 +329,19 @@ test('a result of a wrong shape, too large, not JSON, or behind a symlink is ref
   assert.equal(bad.result, null);
   assert.equal(bad.problems.length, 7);
   assert.match(fx.result({ status: 'done' }).err.join('\n'), /"status" "done" is not one of merged, pr_open, parked, blocked, failed/u);
+  // A value a problem names is one masked scalar: a token is masked before the cut, so none of it comes back, and a
+  // value nested too deep for JSON.stringify is a fixed word, never thrown on.
+  const token = `ghp_${'a1B2'.repeat(9)}`;
+  const [masked] = validateResult({ status: token }).problems;
+  assert.match(masked, /^"status" "\[redacted\]" is not one of /u);
+  assert.equal(masked.includes('ghp_') || masked.includes('a1B2'), false, masked);
+  const deep = JSON.parse(`${'['.repeat(20_000)}${']'.repeat(20_000)}`);
+  const decision = { question: 'Which?', options: ['a', 'b'], recommended: 0 };
+  assert.match(validateResult({ status: deep }).problems[0], /^"status" a list is not one of /u);
+  assert.deepEqual(validateResult({ status: 'failed', pr: deep }).problems, ['"pr" a list is not a pull request number or null']);
+  assert.match(validateResult({ status: 'parked', decisions: [{ ...decision, class: deep }] }).problems[0], /^decisions\[0\]\.class a list is not one of /u);
+  assert.deepEqual(['nothing', 'an object', '7', 'true', 'null'].map((word, i) => validateResult({ status: [undefined, {}, 7, true, null][i] }).problems[0].split(' is not')[0]),
+    ['"status" nothing', '"status" an object', '"status" 7', '"status" true', '"status" null']);
   assert.match(fx.result(`{"status":"failed","pad":"${'x'.repeat(RESULT_CAP)}"}`).err[0], /over the 65536 it may hold/u);
   assert.match(fx.result('{ nope').err[0], /is not JSON/u);
   const real = fx.file({ status: 'failed' });

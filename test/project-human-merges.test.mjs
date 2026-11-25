@@ -129,10 +129,21 @@ test('a remembered pull request that is not from the branch the issue resumes on
   }
 });
 
+test('an open pull request whose branch the forge does not say is told as unknown', () => {
+  for (const missing of ['headRefName', 'isCrossRepository']) {
+    const forge = stubForge({ views: { 42: { files: ['.aidrian/config.json'] } } });
+    const change = forge.change;
+    forge.change = (...args) => ({ ...change(...args), [missing]: undefined });
+    assert.deepEqual(lines(forge, { resumed: [{ key: 'ENG-1', pr: 42 }] }), ['needs your merge, unknown: #42 of ENG-1: the forge does not say which branch it is from, so whether auto-merge merges it cannot be told'], missing);
+  }
+});
+
 test('under both lifts a text is warned of only when it names the pointer file', () => {
   const warned = (named, folder = '') => lines(stubForge({ autoMerge: LIFTED, folder }), { prefix: () => folder, startable: ['ENG-1'], texts: { 'ENG-1': { description: `Edit ${named}` } } }).length;
   for (const named of ['.aidrian.json', './.aidrian.json', '.AIDRIAN.json']) assert.equal(warned(named), 1, named);
-  for (const named of ['.aidrian.json', 'apps/web/.aidrian.json']) assert.equal(warned(named, 'apps/web/'), 1, named);
+  for (const named of ['.aidrian.json', 'apps/web/.aidrian.json', '/apps/web/.aidrian.json']) assert.equal(warned(named, 'apps/web/'), 1, named);
+  // A path from the top of the repository is never read from the nested project's folder.
+  assert.equal(warned('/.aidrian.json', 'apps/web/'), 0);
   for (const named of ['.aidrian/config.json', 'other/.aidrian.json']) assert.equal(warned(named), 0, named);
 });
 

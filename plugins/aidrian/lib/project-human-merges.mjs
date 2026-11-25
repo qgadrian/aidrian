@@ -40,7 +40,8 @@ function textLines({ forge, pinned, folder, keys, texts }) {
   const isHeld = includesPolicyFiles(policies)
     ? (file) => movedPointer([{ path: file }], folder) !== undefined
     : (file) => isPolicyPath(file, policies.policyFiles);
-  const isNamed = (word) => [word, `${folder}${word}`].some((file) => isHeld(path.posix.normalize(file)));
+  // A leading slash names the top of the repository, so only a relative word is read from the project folder too.
+  const isNamed = (word) => (word.startsWith('/') ? [word.replace(/^\/+/u, '')] : [word, `${folder}${word}`]).some((file) => isHeld(path.posix.normalize(file)));
   return keys.flatMap((key) => {
     const named = words(textOf(texts, key)).find(isNamed);
     return named ? [`${NEEDS_MERGE}, maybe: ${key}'s text names ${JSON.stringify(named)}, a policy file auto-merge never merges, so a pull request that changes it waits for your merge`] : [];
@@ -59,7 +60,9 @@ function pullLine({ forge, repository, pinned, folder, pluginRepository, policie
   } catch (error) {
     return unknown(`the forge cannot read it (${ghError(error)})`);
   }
-  if (view?.state !== 'OPEN' || view.headRefName !== branch || view.isCrossRepository !== false) return {};
+  if (view?.state !== 'OPEN') return {};
+  if (typeof view.headRefName !== 'string' || view.headRefName === '' || typeof view.isCrossRepository !== 'boolean') return unknown('the forge does not say which branch it is from');
+  if (view.headRefName !== branch || view.isCrossRepository) return {};
   const pr = readView(view);
   if (typeof pr === 'string') return unknown(pr);
   if (pr.repo.toLowerCase() !== pinned.repo.toLowerCase() || pr.host.toLowerCase() !== repository.host.toLowerCase()) return {};

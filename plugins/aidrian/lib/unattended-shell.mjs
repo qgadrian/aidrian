@@ -137,11 +137,17 @@ function copySources(program, args) {
   return directory ? named : named.slice(0, -1);
 }
 
-// The paths each link `ln`, or `cp -s` or `cp -l`, makes points at: { from, to, folder }, `to` as the link's folder
-// resolves a symbolic link's relative target, and the command's folder a hard link's.
+// The paths each link `ln`, `cp -s` or `cp -l`, or `link`, makes points at: { from, to, folder }, `to` as the link's
+// folder resolves a symbolic link's relative target, and the command's folder a hard link's. `link A B` makes a hard
+// link to A, as `ln A B` does.
 function linksOf(program, args, folder, env, command) {
-  if (program !== 'ln' && program !== 'cp') return [];
+  if (program !== 'ln' && program !== 'cp' && program !== 'link') return [];
   const words = args.map((token) => expand(token.text, env, token.dynamic ? command : ''));
+  if (program === 'link') {
+    const [from] = words.filter((text) => text !== '--');
+    if (from === undefined) return [];
+    return [/[$`]/u.test(from) || path.isAbsolute(from) || folder === null ? { from, to: [from], folder } : { from, to: [path.resolve(folder, from)], folder }];
+  }
   const short = words.filter((text) => /^-[A-Za-z]+$/u.test(text)).join('');
   const symbolic = short.includes('s') || words.includes('--symbolic') || words.includes('--symbolic-link');
   if (program === 'cp' && !symbolic && !short.includes('l') && !words.includes('--link')) return [];

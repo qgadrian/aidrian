@@ -1,4 +1,4 @@
-// SessionEnd hook (Claude Code): records a tracker refusal no read followed (settleRefusal), then deletes the session's block counts (lesson-signals.mjs noteDenial), its gate snapshot
+// SessionEnd hook: records a tracker refusal no read followed (settleRefusal), then deletes the session's block counts (lesson-signals.mjs noteDenial), its gate snapshot
 // (gate-snapshot.mjs), its tracker record (hook-tracker-post.mjs), its recorded issue reads (project-issue-text.mjs),
 // and the session-length reminder's marker
 // (hook-stop.mjs), wherever the session ran. Then, inside a project with config.json `telemetry.enabled` on, it hands the
@@ -85,8 +85,8 @@ async function settleRefusal(input) {
     if (refusal === null) return;
     const record = trackerRecord(input.session_id);
     if (record && existsSync(record)) return;
-    const { tool, agent_type: agent, cwd } = JSON.parse(refusal);
-    (await import('../lib/hook-deny.mjs')).recordBlock({ ...input, tool_name: tool, agent_type: agent, cwd: cwd ?? input.cwd }, 'tracker-guard', NO_READ_LANDED);
+    const { tool, agent_type: agent, agent_id: agentId, cwd } = JSON.parse(refusal);
+    (await import('../lib/hook-deny.mjs')).recordBlock({ ...input, tool_name: tool, agent_type: agent, agent_id: agentId, cwd: cwd ?? input.cwd }, 'tracker-guard', NO_READ_LANDED);
   } catch {
     // No marker, which is almost every session, or the row is lost.
   }

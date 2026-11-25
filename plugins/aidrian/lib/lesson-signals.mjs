@@ -152,7 +152,10 @@ export { hookCountsFolder };
 // without following a link and without waiting (fs.mjs openOwnFile), in folders of this user that are no links.
 const DENIALS_PREFIX = 'aidrian-denials-';
 const denialsDir = (dir, session) => path.join(dir, `${DENIALS_PREFIX}${session}`);
-const agentOf = (input, env) => (typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : sessionIdentity(env).agent);
+const given = (value) => (typeof value === 'string' && value !== '' ? value : null);
+// The agent a hook payload's call comes from, as dispatch-rows.mjs callerAgent names it: a subagent's call never takes the
+// session's --agent, which names the main thread alone. Null for a main thread with none.
+const agentOf = (input, env) => given(input.agent_type) ?? (given(input.agent_id) ? 'general-purpose' : sessionIdentity(env).agent);
 
 // The file name of one count: the rule, the agent run (the payload's `agent_id`, or `main` for the main thread), and a
 // digest of the cause, the rule's own words for what it matched (hook-deny.mjs firstSentence). Null for an id or rule

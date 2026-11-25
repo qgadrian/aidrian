@@ -105,6 +105,7 @@ Checked on Claude Code 2.1.314, with a hook that logged each call:
 - A subagent's call carries `agent_type` and `agent_id`.
   `agent_type` is `aidrian:<agent>` for this plugin's agents, and the agent's own name for a project agent.
 - The main session's call carries neither, so it is `main`.
+- A call with `agent_id` and no `agent_type`, which no live session has shown, would meet every entry's gates.
 - A session started with `claude --agent <name>` carries `agent_type` alone, so it is both `main` and that agent.
 
 So Claude Code holds each agent to its gates, tool by tool and pattern by pattern.

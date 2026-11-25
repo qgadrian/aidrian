@@ -103,7 +103,9 @@ test('noteDenial records a lesson on the third block of one rule for one cause i
 // pull requests, for three causes, each a block the rule was right to make.
 test('noteDenial counts a repeat only within one agent run and for one cause', (t) => {
   const { dir, temp, plugin: all } = project(t);
-  const block = (agentId, cause) => noteDenial({ session_id: 'long', cwd: dir, agent_type: agentId ? 'general-purpose' : undefined, agent_id: agentId }, 'public-text', { dir: temp, cause });
+  // The subagents' calls name no agent, and the session's --agent names the main thread alone.
+  const env = { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_AGENT: 'lead' };
+  const block = (agentId, cause) => noteDenial({ session_id: 'long', cwd: dir, agent_id: agentId }, 'public-text', { dir: temp, cause, env });
   assert.deepEqual([block(undefined, 'the body names a banned term.'), block('a1', 'the body names a banned term.'), block('a2', 'the body names a banned term.')], [null, null, null], 'three runs, one block each');
   assert.deepEqual([block(undefined, 'the heredoc body cannot be read.'), block(undefined, 'the body changed on the same line.')], [null, null], 'the main thread, three causes');
   assert.deepEqual(all(), []);

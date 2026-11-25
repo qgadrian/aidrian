@@ -13,6 +13,7 @@ import { globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { defaultSessionsFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { forgetGateSnapshot, saveGateSnapshot } from '../plugins/aidrian/lib/gate-snapshot.mjs';
+import { normalizeHookInput } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { configFiles, findProject, LOCAL_FILE as LOCAL_NAME, stateDir, stateRoot } from '../plugins/aidrian/lib/project.mjs';
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 import { originFolder, readOrigins } from '../plugins/aidrian/lib/session-origins.mjs';
@@ -809,6 +810,185 @@ test('a subagent may not change the keychain entry a project run takes its forge
   assert.equal((await run(subagent(dir, 'Edit', { file_path: local, old_string: '"human": "off"', new_string: '"human": "on"' }))).status, 0);
 });
 
+test('a switch change is read from an Edit`s own fields and from its edits list, whatever raw_tool_name says', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const local = path.join(dir, LOCAL_NAME);
+  writeFileSync(local, `${JSON.stringify({ names: { human: 'Ann' }, github: { autoMerge: 'off' } })}\n`);
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const ask = (toolInput, more = {}) => machineSwitchWriteDenial({ ...subagent(dir, 'Edit', { file_path: local, ...toolInput }), ...more }, found, config)?.match ?? '';
+  const turns = { old_string: '"off"', new_string: '"on"' };
+  const other = { old_string: '"Ann"', new_string: '"Bo"' };
+  for (const given of [turns, { ...turns, replace_all: true }, { ...turns, edits: [] }, { ...turns, edits: [other] }, { ...turns, edits: [null] }, { ...other, edits: [turns] }]) {
+    assert.match(ask(given), /autoMerge/u, JSON.stringify(given));
+  }
+  for (const raw of ['shell', 'edit', 'write', 'patch', 'Read', 'apply_patch', 'nonsense']) assert.match(ask(turns, { raw_tool_name: raw }), /autoMerge/u, raw);
+  for (const given of [other, { ...other, edits: [] }, { ...other, edits: [other] }]) assert.equal(ask(given), '', JSON.stringify(given));
+  // An Edit that holds only its edits list is read the same way.
+  assert.match(ask({ edits: [turns] }), /autoMerge/u);
+  assert.match(ask({ edits: [other, { old_string: 'Bo', new_string: 'x", "autoMerge": "on' }] }), /autoMerge/u, 'a later edit that names the key');
+  assert.equal(ask({ edits: [other] }), '');
+});
+
+// A host may match an edit's old text by rules of its own, so the guard judges an edit only where it can replay it.
+test('an Edit of the local file whose old text is not there as written may change a switch, on both hosts, and one of another file runs', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const local = path.join(dir, LOCAL_NAME);
+  writeFileSync(local, `${JSON.stringify({ names: { human: 'Ann' }, github: { autoMerge: 'off' } }, null, 2)}\n`);
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const claude = (file, from, to) => subagent(dir, 'Edit', { file_path: file, old_string: from, new_string: to });
+  const opencode = (file, from, to) => normalizeHookInput({ opencode: {}, hook_event_name: 'PreToolUse', cwd: dir, agent_id: 'ses_child', tool_name: 'edit', tool_input: { path: file, oldString: from, newString: to } }, {});
+  for (const call of [claude, opencode]) {
+    const ask = (...edit) => machineSwitchWriteDenial(call(...edit), found, config);
+    for (const from of ['\u201coff\u201d', '"off"  \n  }', '"off"\r\n  }', 'absent']) {
+      const denial = ask(local, from, '"on"');
+      assert.equal(denial?.match, `may set a switch in ${LOCAL_NAME}`, JSON.stringify(from));
+      assert.match(denial.reason, /its old text is not in the file as written/u);
+    }
+    assert.equal(ask(path.join(dir, 'src/app.js'), 'absent', '"on"'), null, 'another file');
+    assert.equal(ask(local, '"Ann"', '"Bo"'), null, 'an edit the guard can replay, of another key');
+    assert.match(ask(local, '"off"', '"on"').match, /sets github\.autoMerge/u, 'a change it can replay names the switch');
+    const { agent_id: _id, ...main } = call(local, 'absent', '"on"');
+    assert.equal(machineSwitchWriteDenial(main, found, config), null, 'the main session may');
+  }
+  rmSync(local);
+  for (const call of [claude, opencode]) {
+    assert.equal(machineSwitchWriteDenial(call(local, 'absent', '"on"'), found, config), null, 'no file, so no text to match');
+    assert.match(machineSwitchWriteDenial(call(local, '', '{ "github": { "auto\\u004derge": "on" } }'), found, config)?.match ?? '', /autoMerge/u, 'an edit that creates it');
+  }
+});
+
+test('the replay of an Edit`s replacements stops at the guards` deadline, and one too large to replay may change a switch', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const local = path.join(dir, LOCAL_NAME);
+  writeFileSync(local, `${JSON.stringify({ names: { human: 'Ann' }, github: { autoMerge: 'off' } })}\n`);
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const ask = (toolInput) => machineSwitchWriteDenial(subagent(dir, 'Edit', { file_path: local, ...toolInput }), found, config);
+  const same = { old_string: 'Ann', new_string: 'Ann' };
+  assert.equal(ask({ ...same, edits: [same, same] }), null);
+  assert.throws(() => withinDeadline(performance.now() - 1, () => ask({ ...same, edits: [same, same] })), PastDeadline);
+  const began = performance.now();
+  for (const big of [{ old_string: '"', new_string: `"${' '.repeat(1024 * 1024)}`, replace_all: true }, { old_string: '', new_string: ' '.repeat(1024 * 1024), replace_all: true }]) {
+    assert.equal(ask(big)?.match, `may set a switch in ${LOCAL_NAME}`);
+  }
+  const doubling = Array.from({ length: 64 }, () => ({ old_string: 'A', new_string: 'A'.repeat(1024), replace_all: true }));
+  assert.equal(ask({ edits: doubling })?.match, `may set a switch in ${LOCAL_NAME}`);
+  assert.ok(performance.now() - began < 5000, 'a replay past the cap is never built');
+});
+
+// The guard on a patch of `lines`, as a subagent's call or, with `main`, the main session's, on each host a patch comes from.
+function patchAsk(dir) {
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const codex = (text) => subagent(dir, 'apply_patch', { command: text });
+  const opencode = (text) => normalizeHookInput({ opencode: {}, hook_event_name: 'PreToolUse', cwd: dir, agent_id: 'ses_child', tool_name: 'patch', tool_input: { patchText: text } }, {});
+  const asked = (call) => (lines, { main = false } = {}) => {
+    const { agent_id: id, agent_type: type, ...input } = call(['*** Begin Patch', ...lines, '*** End Patch', ''].join('\n'));
+    return machineSwitchWriteDenial(main ? input : { ...input, agent_id: id, agent_type: type }, found, config)?.match ?? '';
+  };
+  return { codex: asked(codex), opencode: asked(opencode) };
+}
+
+test('a patch that deletes or moves the local file counts as changing every switch, for a subagent alone, on both hosts', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const local = path.join(dir, LOCAL_NAME);
+  const all = patchAsk(dir);
+  const taken = [
+    [`*** Delete File: ${LOCAL_NAME}`], [`*** Delete File: ${local}`], ['*** Add File: a.md', '+x', ` *** Delete File: ${LOCAL_NAME}`],
+    [`*** Update File: ${LOCAL_NAME}`, '*** Move to: moved.json', '@@', '+  "names": {},'],
+  ];
+  for (const [host, ask] of Object.entries(all)) {
+    writeFileSync(local, `${JSON.stringify({ github: { autoMerge: 'off' } }, null, 2)}\n`);
+    for (const lines of taken) {
+      assert.equal(ask(lines), `changes ${LOCAL_NAME}`, `${host} ${JSON.stringify(lines)}`);
+      assert.equal(ask(lines, { main: true }), '', `${host}: the main session may`);
+    }
+    for (const lines of [['*** Delete File: a.md'], ['*** Update File: a.md', '*** Move to: b.md', '@@', '+x'], [`*** Update File: ${LOCAL_NAME}`, '@@', '+  "names": {},']]) {
+      assert.equal(ask(lines), '', `${host} ${JSON.stringify(lines)}`);
+    }
+    // While the file selects a keychain entry, the denial names that switch, under each header the host reads.
+    writeFileSync(local, JSON.stringify({ projectRun: { forgeTokenKeychain: { service: 's', account: 'me' } } }));
+    for (const lines of [[` *** Delete File: ${LOCAL_NAME}`], [`\t*** Delete File: ${local}`]]) assert.match(ask(lines), /forgeTokenKeychain/u, `${host} ${JSON.stringify(lines)}`);
+  }
+});
+
+test('a patch that adds the local file is judged as a Write of it, for the same callers', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const local = path.join(dir, LOCAL_NAME);
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const contents = ['{}', '{ "names": { "human": "Bo" } }', '{ "github": { "auto\\u004derge": "off" } }', '{ "github": { "auto\\u004derge": "on" } }', '{ "github": { "autoMerge": "off" } }', 'no JSON',
+    '{\n  "names": {\n    "human": "Bo"\n  },\n  "github": { "auto\\u004derge": "off" }\n}'];
+  const verdicts = [];
+  for (const before of [null, '{ "names": { "human": "Ann" } }', '{ "github": { "autoMerge": "off" } }', 'no JSON']) {
+    rmSync(local, { force: true });
+    if (before !== null) writeFileSync(local, before);
+    for (const content of contents) {
+      const write = subagent(dir, 'Write', { file_path: local, content: `${content}\n` });
+      const { agent_id: _id, ...main } = write;
+      const [held, free] = [write, main].map((input) => machineSwitchWriteDenial(input, found, config)?.match ?? '');
+      verdicts.push(held);
+      for (const [host, ask] of Object.entries(patchAsk(dir))) {
+        const lines = [`*** Add File: ${LOCAL_NAME}`, ...content.split('\n').map((line) => `+${line}`)];
+        assert.equal(ask(lines), held, `${host} ${before} ${content}`);
+        assert.equal(ask(lines, { main: true }), free, `${host} main ${before} ${content}`);
+      }
+    }
+  }
+  assert.ok(verdicts.includes('') && verdicts.some((each) => /autoMerge/u.test(each)), 'some Writes run and some are refused');
+});
+
+test('a patch that moves a file into the local file is judged by the file its host resolves', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-patch-home-')));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const before = process.env.HOME;
+  t.after(() => { process.env.HOME = before; });
+  process.env.HOME = home;
+  writeFileSync(path.join(home, 'staged.json'), JSON.stringify({ projectRun: { forgeTokenKeychain: { service: 'other', account: 'me' } } }));
+  const { codex, opencode } = patchAsk(dir);
+  const lines = ['*** Update File: ~/staged.json', `*** Move to: ${LOCAL_NAME}`];
+  assert.match(opencode(lines), /forgeTokenKeychain/u, 'OpenCode reads a leading ~ as the home folder');
+  assert.equal(codex(lines), '', 'Codex reads it as it is, a file that is not there');
+});
+
+test('a patch that sets a switch in the local file is refused under each header its host reads, on both hosts', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const local = path.join(dir, LOCAL_NAME);
+  writeFileSync(local, `${JSON.stringify({ github: { autoMerge: 'off' } }, null, 2)}\n`);
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const codex = (text) => subagent(dir, 'apply_patch', { command: text });
+  const opencode = (text) => normalizeHookInput({ opencode: {}, hook_event_name: 'PreToolUse', cwd: dir, agent_id: 'ses_child', tool_name: 'patch', tool_input: { patchText: text } }, {});
+  const on = ['@@', '-    "autoMerge": "off"', '+    "autoMerge": "on"'];
+  for (const call of [codex, opencode]) {
+    const ask = (...lines) => machineSwitchWriteDenial(call(['*** Begin Patch', ...lines, '*** End Patch', ''].join('\n')), found, config)?.match ?? '';
+    for (const lines of [
+      [`*** Update File: ${LOCAL_NAME}`, ...on],
+      [` *** Update File: ${LOCAL_NAME}`, ...on],
+      [`\t*** Update File: ${local}`, ...on],
+      [`*** Update File: \u2028${LOCAL_NAME}`, ...on],
+      [`\u0085*** Update File: ${LOCAL_NAME}`, ...on],
+      [`*** Update File: ${LOCAL_NAME}\r`, ...on.map((line) => `${line}\r`)],
+      ['*** Add File: a.md', '+x', ` *** Update File: ${LOCAL_NAME}`, ...on],
+      ['*** Update File: a.json', `*** Move to: \u2028${LOCAL_NAME}`, ...on],
+      // Each reading of a patch counts.
+      [`*** Add File: ${LOCAL_NAME}`, '+{ "github": { "auto\\u004derge": "off" } }', ' *** Update File: a.md', '@@', '+    "autoMerge": "on"'],
+    ]) {
+      assert.match(ask(...lines), /autoMerge/u, JSON.stringify(lines));
+    }
+    for (const lines of [
+      ['*** Update File: docs/notes.md', '@@', ` *** Update File: ${LOCAL_NAME}`, '+    "autoMerge": "on"'],
+      ['*** Update File: docs/notes.md', '@@', '+autoMerge is a key'],
+      [` *** Update File: ${LOCAL_NAME}`, '@@', '+  "names": {},'],
+    ]) {
+      assert.equal(ask(...lines), '', JSON.stringify(lines));
+    }
+  }
+});
+
 test('a subagent may not change the auto-merge switch without naming it: the guard reads what an Edit, Write, or apply_patch leaves', async (t) => {
   const { dir } = project(t, { version: 1 });
   const local = path.join(dir, '.aidrian.local.json');
@@ -840,8 +1020,8 @@ test('a subagent may not change the auto-merge switch without naming it: the gua
     // The text is written as it is: `$&` is no reference to what it replaces.
     edit('"human": "off"', '"human": "$&"'),
     edit('"off"', '"on"'),
-    edit('"absent"', '"on"'),
     ['Edit', { file_path: 'src/app.js', old_string: '"off"', new_string: '"on"' }],
+    ['Edit', { file_path: 'src/app.js', old_string: '"absent"', new_string: '"on"' }],
     ['Write', { file_path: '.aidrian.local.json', content: '{ "github": { "auto\\u004derge": "off" } }' }],
     ['apply_patch', patch('.aidrian.local.json', '     "autoMerge": "off"', '-  "models": {}', '+  "models": { "claude": {} }')],
     ['apply_patch', patch('docs/notes.md', '+autoMerge is a key of the local file')],

@@ -108,10 +108,10 @@ function heldSession(session) {
 
 // Leaves what the row at the session's end needs, which the SessionEnd payload lacks. The first refusal of a session keeps
 // its marker. Never throws: a marker that cannot be written costs that row, never the refusal.
-function markRefusal({ session_id: session, tool_name: tool, agent_type: agent, cwd }) {
+function markRefusal({ session_id: session, tool_name: tool, agent_type: agent, agent_id: agentId, cwd }) {
   const marker = refusalMarker(session);
   // Already marked, or the counts folder cannot be written: nothing is written.
-  if (marker) writeOwnText(marker, JSON.stringify({ tool, agent_type: agent, cwd }), { exclusive: true });
+  if (marker) writeOwnText(marker, JSON.stringify({ tool, agent_type: agent, agent_id: agentId, cwd }), { exclusive: true });
 }
 
 // Whether hook-tracker-post.mjs could save `file`: the nearest folder above it that exists can be written, so it could

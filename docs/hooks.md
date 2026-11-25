@@ -2,7 +2,8 @@
 
 The plugin's hooks are in [`plugins/aidrian/hooks/hooks.json`](../plugins/aidrian/hooks/hooks.json).
 How each host runs them: [Claude Code](providers/claude-code.md#hooks), [Codex](providers/codex.md#hooks),
-[OpenCode](providers/opencode.md#hooks), which runs the session ledger alone, through a bridge plugin.
+[OpenCode](providers/opencode.md#hooks), which runs each session's start, the hooks after a tool call, and a root session's end,
+with no guard, through a bridge plugin.
 
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
 Two exceptions: the [merge guard](#merge-guard) refuses a merge whose pull request or head it cannot read,
@@ -23,7 +24,7 @@ the tracker write guard, and the question names check also record each block: se
 
 | When | What runs | Host | Blocks |
 | --- | --- | --- | --- |
-| A session or subagent starts | The [start lines](#start-lines); in a main session the clear command started, the [handoff continuation](handoff.md#the-clear-route) the cleared session armed, as a banner and start context | Claude Code, Codex; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
+| A session or subagent starts | The [start lines](#start-lines); in a main session the clear command started, the [handoff continuation](handoff.md#the-clear-route) the cleared session armed, as a banner and start context | Claude Code, Codex; OpenCode the start lines, by fixture only ([provider page](providers/opencode.md#session-hooks-and-what-reaches-the-model)); the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
 | A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command, and one line naming the [background session](handoff.md#the-background-route) that owns the work when the session handed it off in the last 24 hours; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
@@ -35,15 +36,15 @@ the tracker write guard, and the question names check also record each block: se
 | Before a GitHub MCP merge | The [merge guard](#merge-guard) | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
 | Before a GitHub MCP call that marks a draft ready | The [ready hold](#ready-hold), in a project that runs product feedback, then the [ready checks hold](#ready-checks) | Claude Code, Codex ([not live](#where-the-ready-hold-is-verified)) | yes |
 | Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools`; and, whatever the working copy says, the [project run rule](config.md#project-run): a run session's tracker writes by its marks, and a tracker's merge or ready tool for every session | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | yes |
-| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged); and, whatever the working copy says, where the base branch allows project runs, the record of each issue's text a tracker's issue read answers, the only text a [project run](config.md#project-run) keeps, swept after a day | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | no |
+| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged); and, whatever the working copy says, where the base branch allows project runs, the record of each issue's text a tracker's issue read answers, the only text a [project run](config.md#project-run) keeps, swept after a day | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)); OpenCode by fixture only ([provider page](providers/opencode.md#hooks)) | no |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent, and a subagent's background dispatch moved to the [foreground](#background-check) | Claude Code | no |
-| After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
+| After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code; OpenCode by fixture only, its feedback appended to the call's result ([provider page](providers/opencode.md#hook-context-in-a-tool-result)) | feedback |
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
-| After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
+| After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code; OpenCode by fixture only ([provider page](providers/opencode.md#limits)) | no |
 | The main session ends a turn | The [result hold](config.md#project-run) of a project run's issue session that has not handed its result over, first, then the [announce check](#announced-work), the [review-loop check](#review-loop-check), the [merge hand-back check](#merge-hand-back-check), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the result hold, announce, and hand-back checks also Codex ([not live](providers/codex.md#hooks)), the review-loop and merge hand-back checks Claude Code only; the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop, and each check once per turn ([send-backs](#send-backs-per-turn)); the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) with its marker check, the [background check](#background-check), and the [evidence check](#check-runs), for the five [send-back causes](#send-back-causes) | Claude Code | once |
-| A session ends | The main session's recorded issue reads for a [project run](config.md#project-run) removed. When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
+| A session ends | The main session's recorded issue reads for a [project run](config.md#project-run) removed. When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; OpenCode for a root session's delete alone, with no `session` row, by fixture only ([provider page](providers/opencode.md#session-end)); the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
 The Bash rules run in the order of their table, in one process.
 A file edit is an Edit, Write, or NotebookEdit call, or Codex's `apply_patch`.
@@ -134,7 +135,7 @@ Hook payloads pass through `lib/hosts/` first, so the guard reads every tool as 
 | On | Live | Not live |
 | --- | --- | --- |
 | Claude Code | The `PostToolUse` payload of a real `get_workspace` call on 2.1.318, kept as `test/fixtures/hosts/claude-code/tracker.json` | The payload of a write, which the same fixture builds from the documented shape |
-| OpenCode | Nothing: no tracker hook runs there, since the bridge forwards no MCP tool call | Every tracker write, which passes unchecked; while `tracker.enabled` is true, `aidrian check` says so where OpenCode is set up ([OpenCode](providers/opencode.md#limits)) |
+| OpenCode | Nothing: the record after a read runs there in tests alone, on no live payload, and no route runs before a tool call, so no write is judged | Every tracker write, which passes unchecked; while `tracker.enabled` is true, `aidrian check` says so where OpenCode is set up ([OpenCode](providers/opencode.md#limits)) |
 | Codex | On 0.166.0, `codex exec --json` called `linear.get_workspace` through the Linear app, with server `codex_apps`, and returned the `url` the guard reads | Any hook on Codex: no session has run the guard with a person's trust. The names and payload come from the source and `test/fixtures/hosts/codex/tracker.json` |
 
 What the Codex source says, at `rust-v0.166.0`:
@@ -1164,6 +1165,8 @@ not there yet is read with `..` taken from the text, not after the link, so the 
 
 Before every tool call, the hook checks the call against the project's `agents` gates; [config.md](config.md#agents) gives the keys and patterns.
 A blocked call exits 2 with the rule on stderr, such as `agents.main.deny has "Bash(git push)"`.
+A subagent's call with no `agent_type` meets every entry's gates ([config.md](config.md#agents)), and a block by an entry
+that does not name it says so.
 A `Bash(...)` gate matches the command text: it reads the command line of `sh -c` and `bash -c`, a heredoc or here-string fed
 to a shell (`bash <<'EOF'`), function bodies and `case` arms, and commands behind wrappers such as `sudo`, `doas`, `setsid`,
 `flock`, and `coproc`.
@@ -1213,7 +1216,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`, whether it names the file, a glob
   that matches it, such as `.aidrian.local.js*`, or a glob that passes a link to it already on disk, such as `tee out/alias*`:
   the [auto-merge](config.md#auto-merge), [unattended waiver](config.md#unattended-waiver), and review-approvals switches
-  are the main session's. Any other Bash write, move, remove, truncate, or copy over that file counts as changing every
+  are the main session's. An Edit of that file whose old text is not in it as written, or whose result is too large to
+  replay, is refused too. A patch that deletes that file, or moves it elsewhere, counts as changing every switch.
+  A patch that adds that file is judged as a Write of it. Any other Bash write, move, remove, truncate, or copy over that file counts as changing every
   switch, since erasing a local `off` lets [`solo`](config.md#solo) turn it on: `rm`, `mv`, `: >`, or `cp` over it is
   refused too, however its name is quoted. So is a link made from it (`ln`, `ln -s`, `cp -l`, `cp -s`); `git clean -x`
   or `-X`, and `git stash -a` or `--all`, run in the main checkout or a folder the guard cannot know; and a command that
@@ -1664,10 +1669,17 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `npx prettier codex login`, and a runner option's value whose last path part is a host's program, when the words
     after it spell one of that program's guarded subcommands.
   - A review manifest takes the name of the review gate's old attest record, `pr-<n>.json`, so a write that may give it
-    a top-level `reviewer` key is refused: a file tool's text that parses as JSON with that key, escapes read as JSON
-    reads them, or, when it does not parse, holds the key or a quoted key with an escape in it; a shell write of a
-    temporary copy whose command names one; and any shell write to `pr-<n>.json` itself but a delete, or a rename or
-    copy of a file on disk with no such key that the same call does not write.
+    a top-level `reviewer` key is refused. A file tool writes `pr-<n>.json` only whole, by a Write or by a patch that
+    adds it, and that text is judged as the review gate reads it: JSON with that key, escapes read as JSON reads them,
+    or, when it does not parse, the key or a quoted key with an escape in it. An Edit or notebook edit of it, or a patch
+    that updates or deletes it or moves a file onto it, is refused, and the reason names the route the pr-review skill's
+    manifest reference gives: write the whole file to a temporary copy in the same folder, then rename it. A write is
+    judged by the name it gives and by its real path, a shell command that makes a link to a file in a
+    reviews folder is refused, and so is interpreter code that names the manifest. A shell write of a temporary copy is
+    refused when its command names a `reviewer`, and any shell write to `pr-<n>.json` itself but a delete, or a rename
+    or copy of a file on disk with no such key that the same call does not write. Interpreter code is judged as the
+    interpreter row below says.
+    Its cost: an agent that edits the manifest in place is refused, and writes it whole instead.
 
   The two ways a session writes are read differently, so a refused path is refused through both:
 
@@ -1677,7 +1689,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   | A target built from a variable or a substitution | expanded where it can be, else judged by its names and the whole command | none: a file tool names a literal path |
   | Code an interpreter runs, such as `python3 -c` | judged by the paths and names in its code, input, and words; a refusal for a path there that the guard places among the refused entries says so and names the file tool, for text that only goes in a file, while a refused name, such as `.gitconfig`, gets the plain refusal | none: the text a file tool writes names no target |
   | Links a command makes, and a program's own config | judged by what they point at or change | none |
-  | Text written into a review manifest | the command must not name a `reviewer` key | the text must not give it one |
+  | Text written into a review manifest | `pr-<n>.json` itself only by a delete, or a rename or copy of a file on disk with no top-level `reviewer` key that the same call does not write; a temporary copy by a command that names no `reviewer`; interpreter code that names the manifest is refused | `pr-<n>.json` only whole, by a Write or a patch's Add, judged as the review gate reads it; an edit in place is refused |
   | Where the host's sandbox stands | outside the guard: a confined session's Bash also runs in the host's sandbox | the file tools run outside the sandbox, held by this hook alone |
 
   A session a pending mark holds, while a gate starts a session, or whose mark cannot be read, may be one a Human opened

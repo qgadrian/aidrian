@@ -23,8 +23,8 @@ How to build, check, and release a change is in [contributing.md](contributing.m
 - A hook lets the action run when it cannot read its input: a hook never breaks a session.
 - Plugin text names no project, project path, person, or bare slash command; a project's rules live in its own `.aidrian/`.
 - The harness is provider agnostic: shared rules, code, and config assume no one host.
-  Claude Code, Codex, and OpenCode 2.0 and later are today's hosts, OpenCode with the session ledger alone and no guard
-  ([its limits](providers/opencode.md#limits)); others, such as DeepSeek Code or Kimi Code, may follow.
+  Claude Code, Codex, and OpenCode 2.0 and later are today's hosts, OpenCode with the hooks that cannot block and no
+  guard ([its limits](providers/opencode.md#limits)); others, such as DeepSeek Code or Kimi Code, may follow.
 - `mcp__<server>__<tool>` is the standard format for naming an MCP tool in permissions and config.
   A host that names tools or events differently gets a translation layer that maps to the standard;
   the difference never spreads into shared code.

@@ -469,13 +469,15 @@ What each rule matches:
   request, body file, or subcommand it cannot read is refused while a record holds a post; so is text fed to a shell, `xargs`,
   `parallel`, or a command it did not judge, such as `npx`, whose words name `product-feedback` and `post`, and a post in the same
   command as `record` or an aidrian call it cannot read. The deny says the Human can run `post` in their own shell.
-- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, and with quotes or
-  backslashes the shell takes out anywhere in its words (`r""eady`), but `--undo` with no value or a true one, and a
+- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, and with quotes,
+  backslashes, or a line continuation the shell takes out anywhere in its words (`r""eady`, a backslash and a line break
+  inside `ready`), but `--undo` with no value or a true one, and a
   `gh api` call to any spelling of the graphql endpoint that names `markPullRequestReadyForReview` ([Ready hold](#ready-hold)).
 - Ready checks: the same `gh pr ready` calls, but not the `gh api` form, and a `gh pr edit` with `--title`, `--body`, or
   `--body-file` (`-t`, `-b`, `-F`), or any `gh pr create`, in the same command as one ([Ready checks](#ready-checks)).
 - Merge guard: `gh pr merge` but `--disable-auto` and a read of its `--help` or `-h`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
-  sent as a PUT or a POST ([Merge guard](#merge-guard)).
+  sent as a PUT or a POST ([Merge guard](#merge-guard)). `--help` and `--disable-auto` exempt only as gh reads them, the last
+  of each with no value or a true one, and `-h` anywhere: `gh pr merge 7 --help=false` merges, and is judged as `gh pr merge 7`.
 - Push first: a command of `testing.fullSuite` as written, through wrappers such as `rtk` and redirects, in the folder a leading
   `cd` names; `npm test -- <file>` runs no full suite. [Push first](#push-first) says when it refuses.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
@@ -531,6 +533,10 @@ to a shell; the last four refuse text piped or scripted into a shell that names 
 The ready hold reads them too, and refuses text fed to a shell, or a shell's `-c` string or `eval` words built by a command
 substitution, that holds the word `gh` and a word close to `ready` (`"ready"`, `re""ady`, printf's `re%sdy`), or names
 `markPullRequestReadyForReview`, in a project where git says product feedback is on.
+The ready hold's and the ready checks' quick look, which spares every other command the full read, and the merge guard's and the
+ready hold's reads of fed text, read the text as the shell reads its words (`shellPlain` in `lib/shell-lex.mjs`): a backslash
+and the line break after it are dropped, then every quote and backslash, so `r""eady` and `r`, a backslash, a line break, and
+`eady` each read `ready`.
 A command reached only through a script or an interpreter such as `python -c` is out of their sight.
 
 The product feedback answer rule has limits it accepts, so a reader does not take it for more than it is:

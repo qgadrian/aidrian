@@ -129,6 +129,9 @@ test('with nothing recorded, every way of marking ready is held, and the deny na
     'gh pr r""eady 7',
     'gh pr re""""ady 7',
     'gh pr r\\e\\a\\d\\y 7',
+    // A backslash and a line break inside the word: the shell drops both and runs `gh pr ready 7`.
+    'gh pr r\\\neady 7',
+    "sh -c 'gh pr r\\\neady 7'",
     `cd ${dir} && gh pr ready 7`,
     graphql('graphql', 'PR_kwDOabc123'),
     "gh api graphql -F id=PR_kwDOabc123 -f query='mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }'",
@@ -202,6 +205,8 @@ test('what the hold cannot read runs with no gh call; only text fed to a shell t
     "echo 'gh pr ready 7' | bash",
     'echo \'gh pr "ready" 7\' | bash',
     'echo \'gh pr re""ady 7\' | bash',
+    // A line continuation the fed shell drops, inside the word.
+    "echo 'gh pr r\\\neady 7' | bash",
     'bash -c "$(printf \'gh pr re%sdy 7\' a)"',
   ];
   for (const command of fed) {

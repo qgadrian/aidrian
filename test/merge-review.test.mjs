@@ -165,6 +165,14 @@ test('a head the guard cannot read refuses the merge, and --match-head-commit ne
   assert.equal(r.run('gh pr merge -h', { head: null }), null);
   assert.equal(r.run('gh pr merge 5 --squash --help', { head: null }), null, 'gh prints the help and merges nothing, whatever else is given');
   assert.deepEqual(r.views, [], 'a help read asks gh nothing');
+  assert.equal(r.run('gh pr merge 5 --help=true', { head: null }), null, 'a help gh reads as on');
+  assert.equal(r.run('gh pr merge 5 --help=false -h', { head: null }), null, 'gh prints the help for a `-h` anywhere');
+  // A switch gh reads as off merges: `--help=false` and `--disable-auto=false` run the merge, and are judged as one.
+  for (const command of ['gh pr merge 5 --help=false', 'gh pr merge 5 --help --help=0', 'gh pr merge 5 --disable-auto=false', 'gh pr merge 5 --help="$H"']) {
+    assert.match(r.run(command, { head: null }) ?? '', /could not read its head commit/u, command);
+  }
+  // A backslash and a line break inside a word, which the shell drops: `gh pr merge 5`.
+  assert.match(r.run('gh pr m\\\nerge 5', { head: null }) ?? '', /could not read its head commit/u);
   assert.equal(r.run('gh pr merge 5 -R other/repo', { head: null }), null, 'another repository is not this record`s');
 });
 
@@ -1016,7 +1024,9 @@ test('a merge inside a shell string, eval, or a heredoc fed to a shell is guarde
 
 test('a merge fed to a shell as text the rule cannot read is refused; other text fed to a shell runs', (t) => {
   const r = repo(t);
-  for (const command of ['echo "gh pr merge 5 --squash" | bash', "printf 'gh api -X PUT repos/acme/notes/pulls/5/merge' | sh -s"]) {
+  // The fed text read as the shell reads its words: a line continuation or quotes inside a word hide no merge.
+  for (const command of ['echo "gh pr merge 5 --squash" | bash', "printf 'gh api -X PUT repos/acme/notes/pulls/5/merge' | sh -s",
+    "echo 'gh pr m\\\nerge 5' | bash", 'echo \'gh pr "merge" 5\' | bash']) {
     assert.match(r.run(command) ?? '', /feeds a shell text the merge guard cannot read as commands/u, command);
   }
   assert.equal(r.run('cat setup.sh | bash'), null, 'a pipe into a shell naming no merge');

@@ -85,12 +85,12 @@ import { readHumanSignoffs, sameBot, trustProblem } from '../../review/merge-tru
 import { CAPPED, clip, emptyState, FINISHED, openCount, owed, owedElsewhere, pendingOf, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { budgetedForge, guardWaiver, READ_TIMEOUT_MS, runOf, trailKey, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
-import { walkCommands } from '../../shell-lex.mjs';
+import { shellPlain, walkCommands } from '../../shell-lex.mjs';
 import { driverHold } from '../../run-driver.mjs';
 import { readUnattendedMark } from '../../unattended-mark.mjs';
 import { transcriptAnswers, waitingRoute } from '../review-extend.mjs';
 import { severalRemotes } from '../review-signoff.mjs';
-import { commandPath, fillRepo, invocationRepo, readWords } from './review-request.mjs';
+import { commandPath, fillRepo, invocationRepo, readWords, switchOn } from './review-request.mjs';
 
 // How long the head lookup may take, inside the hook's 5 s, as pr-body's open pull request lookup.
 const VIEW_TIMEOUT_MS = 3000;
@@ -159,8 +159,11 @@ function readGh(args, environment, env, cwd) {
   }
   if (command[0] !== 'pr' || command[1] !== 'merge') return null;
   const { words, flags } = readWords(args, new Set(MERGE_VALUES));
-  // `--help` prints the command's options and merges nothing, so a read of them is never held.
-  if (flags.some((flag) => ['--disable-auto', '--help', '-h'].includes(flag.name))) return null;
+  // `--help` prints the command's options and merges nothing, so a read of them is never held; nor is `--disable-auto`.
+  // Each exempts only as gh reads it: `-h` anywhere, and a last `--help` or `--disable-auto` that is on, so
+  // `gh pr merge 7 --help=false`, which merges, is judged as `gh pr merge 7`.
+  const on = (name) => switchOn(flags.filter((flag) => flag.name === name).at(-1));
+  if (flags.some((flag) => flag.name === '-h') || on('--help') || on('--disable-auto')) return null;
   const last = (...names) => flags.filter((flag) => names.includes(flag.name)).at(-1)?.value ?? null;
   const target = words[2] ? literal(words[2]) : null;
   const head = literal(last('--match-head-commit'));
@@ -869,7 +872,9 @@ function checkCommand(command, { cwd, env, input, viewPr, waiverForge, startedAt
   const memo = {};
   for (const { invocation, unread } of walkCommands(command, null)) {
     if (unread !== undefined) {
-      if ((found && MERGE_TEXT.test(unread)) || ((MERGE_TEXT.test(unread) || MUTATION_TEXT.test(unread)) && markOf())) return UNREAD_REASON;
+      // Read as the shell reads its words, so `pr m\<newline>erge` or `pr "merge"` names a merge too.
+      const plain = shellPlain(unread);
+      if ((found && MERGE_TEXT.test(plain)) || ((MERGE_TEXT.test(plain) || MUTATION_TEXT.test(plain)) && markOf())) return UNREAD_REASON;
       continue;
     }
     const merge = readMerge(invocation, env, { cwd });

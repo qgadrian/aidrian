@@ -158,6 +158,11 @@ export function readWords(args, values) {
   return { words, flags };
 }
 
+// Whether a switch `flag` of readWords is on as gh reads a bool (Go's strconv.ParseBool): given with no value, or with a
+// literal true word. Absent (undefined), false, or a value the shell fills in is off, so it grants no exemption.
+const TRUE_WORDS = new Set(['1', 't', 'T', 'TRUE', 'true', 'True']);
+export const switchOn = (flag) => Boolean(flag) && (flag.value === null || (!flag.value.dynamic && TRUE_WORDS.has(flag.value.text)));
+
 // The body text: an inline body (a substitution's text, heredoc included, is read as written), or a readable file.
 function bodyOf(inline, file, read) {
   if (inline) return inline.text;

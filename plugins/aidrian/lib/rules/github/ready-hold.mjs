@@ -32,9 +32,9 @@ import { VIEW_FIELDS } from '../../pr-auto-merge.mjs';
 import { feedbackStatus, localFeedback } from '../../pr-product-feedback.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo } from '../../review-gate.mjs';
-import { walkCommands } from '../../shell-lex.mjs';
+import { shellPlain, walkCommands } from '../../shell-lex.mjs';
 import { projectReader, UNKNOWN, unreadable } from '../product-feedback-answer.mjs';
-import { commandPath, readWords } from './review-request.mjs';
+import { commandPath, readWords, switchOn } from './review-request.mjs';
 
 // The one deadline every gh call of one check shares: 3.5 s from the first gh call, and never later than 4 s after the
 // hook's process started (`startedAt`, when the hook passes it), so another rule's lookups in the same command, such as
@@ -46,15 +46,14 @@ const MUTATION = 'markPullRequestReadyForReview';
 // A word close to `ready`, as text a shell is fed may spell it: `re""ady`, `"ready"`, or printf's `re%sdy`.
 const READY_LIKE = /re\S{0,4}dy/iu;
 // Only a command holding one of these can mark ready: every other Bash call pays for this one look. A glob or brace
-// character, or a substitution, can build a word the rule then reads as unreadable. Quotes and backslashes the shell takes
-// out may sit anywhere in a word (`r""eady`, `r\e\a\d\y`), so the command is also tried without them.
+// character, or a substitution, can build a word the rule then reads as unreadable. It looks at the command as the shell
+// reads its words (shell-lex shellPlain), so a quote, a backslash, or a line continuation inside a word (`r""eady`,
+// `r\e\a\d\y`, `r\<newline>eady`) hides nothing.
 const CANDIDATE = /re\S{0,4}dy|markPullRequestReadyForReview|[$`{[*?]/iu;
 // Whether `command` may mark a pull request ready, by CANDIDATE. The ready checks hold shares it.
-export const mayMarkReady = (command) => CANDIDATE.test(command) || CANDIDATE.test(command.replace(/["'\\]/gu, ''));
+export const mayMarkReady = (command) => CANDIDATE.test(shellPlain(command));
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'eval']);
 const READY_VALUES = new Set(['-R', '--repo']);
-// gh reads a bool flag's value with Go's strconv.ParseBool: these are true.
-const TRUE_WORDS = new Set(['1', 't', 'T', 'TRUE', 'true', 'True']);
 // Pull request node ids: the current `PR_…`, and the legacy base64 of `011:PullRequest…`.
 const NODE_IDS = /\bPR_[A-Za-z0-9_-]{4,}|\bMDExOlB1bGxSZXF1ZXN0[A-Za-z0-9+/=]+|(?<=pullRequestId\s*:\s*\\?")[^"\\\s]+/gu;
 const URL_TARGET = /^https?:\/\//iu;
@@ -85,8 +84,7 @@ export function readReady({ program, args, environment = [] }, env = {}) {
   }
   if (command[0] !== 'pr' || command[1] !== 'ready') return null;
   const { words, flags } = readWords(args, READY_VALUES);
-  const undo = flags.filter((flag) => flag.name === '--undo').at(-1);
-  if (undo && (undo.value === null || (!undo.value.dynamic && TRUE_WORDS.has(undo.value.text)))) return null;
+  if (switchOn(flags.filter((flag) => flag.name === '--undo').at(-1))) return null;
   const word = words[2] ?? null;
   if (word && (unreadable(word) || word.text.startsWith('-'))) return { unreadable: 'a pull request the shell fills in' };
   const target = word?.text ?? null;
@@ -107,9 +105,9 @@ function fedText({ unread, invocation, line }) {
   return invocation.args.some(({ text, dynamic }) => dynamic && /\$\(|`/u.test(text)) ? line : null;
 }
 
-// Whether fed text names marking ready: the word `gh` and a word close to `ready`, with quotes and backslashes taken out.
+// Whether fed text names marking ready: the word `gh` and a word close to `ready`, read as the shell reads its words.
 const namesReady = (text) => {
-  const plain = text.replace(/["'\\]/gu, '');
+  const plain = shellPlain(text);
   return plain.includes(MUTATION) || (/\bgh\b/u.test(plain) && READY_LIKE.test(plain));
 };
 

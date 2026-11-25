@@ -1224,7 +1224,8 @@ test('the unattended rule: under "auto" with the waiver counting, an extend over
   assert.match(out.next, /^the cap stands on a red flag under the unattended rule: run aidrian pr review 5\b.*, which reports round_limit/u);
   const step = stepAfter(r, 'auto');
   assert.deepEqual([step.status, step.extension.status, step.extension.by], ['round_limit', 'stopped', 'unattended']);
-  assert.deepEqual([step.question, step.options, step.raise], [undefined, undefined, undefined], 'no question to the Human, and no raise');
+  assert.deepEqual([step.question, step.options], [undefined, undefined], 'no question to the Human');
+  assert.equal(step.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 5 --max-rounds 3 --repo acme/notes', 'the Human\'s own command for one more round stays');
   // The summary comment names the rule and the flags on any repository, and the reasons where the copy holds them.
   assert.match(summaryBody(readLocalState(r.project(), 5), null, 'round_limit'), /\n- round 2 on `abcdef1`: stopped by the unattended rule \(over red flags: looping\)\n/u);
   assert.match(summaryBody(readLocalState(r.project(), 5), null, 'round_limit', { reading: { visibility: 'PRIVATE', inside: true } }), /- round 2 on `abcdef1`: stopped by the unattended rule: R2-1 at src\/a\.js:3 is a valid medium finding; red flags \(looping\) stand under github\.extraRounds "auto" and the unattended waiver[^\n]*\(over red flags: looping\)/u);
@@ -1255,6 +1256,18 @@ test('the unattended rule: under "ask", an extend over a red flag asks the Human
   assert.equal(forge.calls.filter(([call]) => call === 'repository' || call === 'contents').length, 0, 'no policy read for the switch');
 });
 
+test('the unattended rule: a team switch the forge cannot read is off, and the Human is asked', async (t) => {
+  const r = repo(t, { local: ON, config: AUTO });
+  r.record(5, atFlaggedCheck('auto'));
+  const forge = landForge(r);
+  forge.contents = () => {
+    throw Object.assign(new Error('gh: HTTP 502'), { stderr: 'gh: HTTP 502' });
+  };
+  const { code, out } = await extend(t, r, EXTEND_OVER_FLAG, { forge });
+  assert.deepEqual([code, out.extension.status, out.extension.by], [0, 'asking', 'judge']);
+  assert.equal(stepAfter(r, 'auto').status, 'extension_ask');
+});
+
 test('the unattended rule: a check opened under "auto" asks the Human once the base branch commits "ask"', async (t) => {
   const r = repo(t, { local: ON });
   r.record(5, atFlaggedCheck('auto'));
@@ -1270,7 +1283,8 @@ test('the unattended rule on the bot`s cap: the stop is reported as it stands, a
   assert.deepEqual([code, out.extension.source, out.extension.status, out.extension.by], [0, 'bot', 'stopped', 'unattended']);
   assert.equal(out.next, 'the cap stands on a red flag under the unattended rule, with no question: report round_limit and the findings left open');
   const step = stepAfter(r, 'auto', BOT_CHECK);
-  assert.deepEqual([step.status, step.question, step.raise], ['round_limit', undefined, undefined]);
+  assert.deepEqual([step.status, step.question, step.options], ['round_limit', undefined, undefined]);
+  assert.match(step.raise, /^AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 5 --request --max-rounds 3 --repo acme\/notes$/u);
 });
 
 // The words of one command line as a shell reads them: single- and double-quoted parts kept whole.

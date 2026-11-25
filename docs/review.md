@@ -1253,8 +1253,8 @@ The stop changes neither the cap nor the rules below: an extra round over a red 
 
    **The unattended rule.** Under `"auto"`, as the base branch commits it when the verdict is recorded, and while the
    [unattended waiver](config.md#unattended-waiver)'s two switches count for the pull request, an `extend` over a red
-   flag asks no one: it stops the check, `by: "unattended"`, and the cap is `round_limit` with no `question`, `options`,
-   or `raise`. For the review step's check, the step run again offers the waiver's judge
+   flag asks no one: it stops the check, `by: "unattended"`, and the cap is `round_limit` with no `question` or
+   `options`. It keeps `raise`, the Human's own command for one more round, so a Human who attends later still has it. For the review step's check, the step run again offers the waiver's judge
    ([At the cap under autopilot](#at-the-cap-under-autopilot)); for the bot's, the stop is reported as it stands.
    The switches are read as the merge guard reads them: the team's `github.unattendedWaiver.allow` from GitHub on the
    default branch and the base, never the working copy, and this machine's switch. A read that fails counts as off.

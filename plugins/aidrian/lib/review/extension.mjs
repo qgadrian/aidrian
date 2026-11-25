@@ -540,8 +540,13 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     };
   }
   // The cap stands on a head no round reviewed: said in the result, and in the summary comment's Extra rounds list.
-  // A stop by the unattended rule asks no one, so it carries no question, options, or raise.
-  const ask = entry.by === 'unattended' && entry.status === 'stopped' ? {} : raiseAsk({ pr, repo, source, round, granted, ...raise });
+  // A stop by the unattended rule asks no one, so it carries no question or options. It keeps `raise`, the Human's own
+  // command for one more round, so a Human who attends later, or turns a switch off, still has it.
+  const ask = raiseAsk({ pr, repo, source, round, granted, ...raise });
+  if (entry.by === 'unattended' && entry.status === 'stopped') {
+    delete ask.question;
+    delete ask.options;
+  }
   return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}), ...ask };
 }
 

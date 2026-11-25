@@ -10,10 +10,10 @@
 // prepends the plugin's bin/ to every shell's PATH, so the `aidrian` that reads a record is the copy whose hook wrote it.
 //
 // output.mjs spawns each script, pinned to Node resolved to an absolute file at setup, and reads its bounded answer. A
-// script not on disk, at setup or since, is a script that does not start: its route stays registered, so on a blocking
-// route a subagent's call it guards is refused, and a root's runs. `setup` never throws. Only an execute.before
-// callback rejects, for a refusal (output.mjs); every other callback resolves, and a hook that cannot run leaves the
-// call as it would be without the plugin. EVENTS names PostToolUse alone, whose answer changes nothing of the call;
+// script missing when its call checks it, or gone when it exits 1, is a script that does not start: its route stays
+// registered, and it refuses a subagent's call on a blocking route, while a root's runs. `setup` never throws. Only an
+// execute.before callback rejects, for a refusal (output.mjs); every other callback resolves, and a hook that cannot
+// run leaves the call as it would be without the plugin. EVENTS names PostToolUse alone, whose answer changes nothing of the call;
 // tests reach the blocking (execute.before) path and the stop path (experimental.idle) through the `events` seam.
 //
 // The stop path keeps `stop_hook_active` for each session: true once a Stop route sent that session back with a
@@ -159,7 +159,7 @@ function routesOf(file, scripts, events, trace, notices) {
   const routes = (read ?? []).filter((route) => Object.hasOwn(events, route.event)).map((route) => ({ ...route, file: path.join(scripts, route.script) }));
   const missing = [...new Set(routes.filter((route) => !isFile(route.file)).map((route) => route.script))];
   for (const script of missing) trace('unregistered', { script, status: 'missing' });
-  if (missing.length > 0) notices.push(`aidrian's hook scripts not on disk at setup run nothing until restored, as each call checks again, and a subagent's call one of them guards is refused when the call finds it missing: ${missing.join(', ')}.`);
+  if (missing.length > 0) notices.push(`aidrian's hook scripts not on disk at setup run nothing until restored, as each call checks again, and a script missing when its call checks it, or gone when it exits 1, refuses a subagent's call on a blocking route: ${missing.join(', ')}.`);
   return routes;
 }
 

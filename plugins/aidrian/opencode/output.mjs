@@ -77,11 +77,11 @@ export function capture(stream, bound = CAPTURE_BYTES) {
 
 // Runs `route`'s script on `call` with `runner`'s spawn, Node, environment, and trace, in the session's folder, and
 // resolves its answer once it closes: { exit, signal, stdout, stderr, overflow }, or { failed: true } when it does not
-// start, Node gone since setup included, which ends this call alone. A script that is no file when its call checks it,
-// gone at setup or since, is one that does not start, traced `missing`: Node would exit 1 on it, which reads as a hook
-// error and would let a subagent's call run. One removed after this check, as Node starts, still exits 1 and lets the
-// call run (opencode.md Limits). Once `ms`, counted from its spawn, ends, a script that has not exited is killed, and
-// its answer is a signal's; one that exited is read with what it wrote.
+// start, Node gone since setup included, which ends this call alone. A script missing when its call checks it, or gone
+// when it exits 1, is one that does not start, traced `missing`, so it refuses a subagent's call on a blocking route:
+// Node exits 1 on a missing script, which would read as a hook error and let that call run. Once `ms`, counted from
+// its spawn, ends, a script that has not exited is killed, and its answer is a signal's; one that exited is read with
+// what it wrote.
 export function run(runner, route, call, ms) {
   return new Promise((resolve) => {
     const answer = settler(runner, route, resolve);
@@ -105,8 +105,9 @@ export function run(runner, route, call, ms) {
 }
 
 // The one answer of one script, settled once: `read` captures the child's output, `exited` notes its exit, `closed`
-// settles with what it wrote, `failed` settles as a script that did not start, and `time` settles at `ms`: with what
-// it wrote when it exited, else killed, as a signal's answer. Each settle traces a `run` line.
+// settles with what it wrote, or as `missing` when it exited 1 and its file is gone, `failed` settles as a script that
+// did not start, and `time` settles at `ms`: with what it wrote when it exited, else killed, as a signal's answer.
+// Each settle traces a `run` line.
 function settler(runner, route, resolve) {
   let settled = false;
   let timer = null;
@@ -120,7 +121,11 @@ function settler(runner, route, resolve) {
     runner.trace('run', { script: route.script, status });
     resolve(answer);
   };
-  const closed = (code, signal) => done(code ?? signal, { exit: code, signal, stdout: out.text(), stderr: err.text(), overflow: out.overflow || err.overflow });
+  const closed = (code, signal) => {
+    // An exit 1 whose script is gone is Node failing to load it, the answer of a script the call's check found missing.
+    if (code === 1 && !isFile(route.file)) return done('missing', { failed: true });
+    return done(code ?? signal, { exit: code, signal, stdout: out.text(), stderr: err.text(), overflow: out.overflow || err.overflow });
+  };
   return {
     read(child) {
       out = capture(child.stdout);

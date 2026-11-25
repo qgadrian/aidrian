@@ -166,8 +166,8 @@ export const isFileEditTool = (tool) => HOSTS.some((host) => host.fileEditTools.
 //   write     { file, content }: a whole file
 //   edit      { file, edits, newText, replaceAll }: replacements in a file
 //   notebook  { file }: a cell of a notebook
-//   patch     { text, files: [{ file, added }], operations: [{ kind, file, move, text }] }: a patch naming its files,
-//             whose text is never known here
+//   patch     { text, files: [{ kind, file, added }], operations: [{ kind, file, move, text }] }: a patch naming its
+//             files, whose text is never known here
 // Every path in it is as the host's file tool resolves it (hostPath), as a leading `~` the host expands: the one resolver
 // every guard of a file tool reads it through. The tool is the one the host sent (sentName), whose input shape this is.
 export function fileEditOf(input) {

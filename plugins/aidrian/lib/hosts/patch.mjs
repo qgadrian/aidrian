@@ -51,12 +51,12 @@ function bothReadings([host, plain], read) {
   return [...found, ...read(plain).filter((each) => !seen.has(JSON.stringify(each)))];
 }
 
-// The files a patch adds to or updates, as [{ file, added }], each with the lines it adds, up to the next header; a
-// deleted file adds none. A `*** Move to:` that names no path keeps the file it follows, and its lines.
+// The files a patch adds to or updates, as [{ kind, file, added }], each with the kind of the section that names it, `add`
+// or `update`, and the lines it adds, up to the next header; a deleted file adds none. A `*** Move to:` that names no path keeps the file it follows, and its lines.
 function filesOf(lines) {
   const files = [];
   for (const { line, kind, file } of lines) {
-    if (kind === 'add' || kind === 'update') files.push({ file, added: [] });
+    if (kind === 'add' || kind === 'update') files.push({ kind, file, added: [] });
     else if (kind === 'delete') files.push({ file: null, added: [] });
     else if (files.at(-1)?.file) {
       if (kind === 'move' && file) files.at(-1).file = file;

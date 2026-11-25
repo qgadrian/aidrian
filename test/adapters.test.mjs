@@ -343,7 +343,7 @@ for (const [id, read] of Object.entries(patchOn)) {
     for (const end of ['*** End of File', '*** End of File  ']) {
       assert.deepEqual(read(patchText('*** Update File: a.md', '@@', '+one', end, '@@', '+two', '*** Delete File: b.md')).files.map((each) => [each.file, each.added]), [['a.md', ['one', 'two']]], end);
     }
-    assert.deepEqual(read(patchText('*** Add File: a.md', '+one', '*** Update File: b.md', '*** Move to: c.md', '@@', '+two')).files, [{ file: 'a.md', added: ['one'] }, { file: 'c.md', added: ['two'] }], 'a plain patch reads once');
+    assert.deepEqual(read(patchText('*** Add File: a.md', '+one', '*** Update File: b.md', '*** Move to: c.md', '@@', '+two')).files, [{ kind: 'add', file: 'a.md', added: ['one'] }, { kind: 'update', file: 'c.md', added: ['two'] }], 'a plain patch reads once');
   });
 }
 

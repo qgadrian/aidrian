@@ -679,13 +679,13 @@ function placed(spelled, places, options) {
   return placeOf(real(spelled), spelled, places, options);
 }
 
-// The text a file edit tool writes to each file it names, { file, texts }, for the manifest check: the lines a patch adds,
-// as the text a Write of them would hold.
+// The text a file edit tool writes to each file it names, { file, texts, whole }, for the manifest check: the lines a patch
+// adds, `whole` when it adds the file, as the text a Write of them would hold, and not when it updates it.
 function editedTexts(input) {
   const edit = fileEditOf(input);
   if (!edit) return [];
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  if (edit.shape === 'patch') return (edit.files ?? []).map(({ file, added }) => ({ file: path.resolve(cwd, file), texts: [(added ?? []).join('\n')] }));
+  if (edit.shape === 'patch') return (edit.files ?? []).map(({ kind, file, added }) => ({ file: path.resolve(cwd, file), texts: [(added ?? []).join('\n')], whole: kind === 'add' }));
   const texts = [edit.content, edit.newText, ...(Array.isArray(edit.edits) ? edit.edits.flatMap((each) => Object.values(each ?? {})) : [])];
   return [{ file: path.resolve(cwd, edit.file ?? ''), texts: texts.filter((each) => typeof each === 'string') }];
 }
@@ -760,7 +760,8 @@ function manifestKind(file, places) {
 
 // Why a write to a review manifest name may make it an attest record, or null: { file, how }, `how` 'partial' when a file
 // edit tool writes the manifest itself other than whole (partialManifest), and 'named' when interpreter code names it
-// (namedManifest). Otherwise a file edit tool's text must not be attest-shaped (attestShaped). A shell write to a
+// (namedManifest). Otherwise a file edit tool's text must not be attest-shaped (attestShaped), and the lines a patch's
+// update adds must hold no key of one (holdsKey). A shell write to a
 // temporary copy must not name a `reviewer` either; one to the manifest itself, pr-<n>.json, is only a delete, or a
 // rename or copy of a file whose text is not attest-shaped and that the same call does not write, read before the call
 // runs, which judges a copy a file tool wrote.
@@ -770,8 +771,8 @@ function manifestProblem(input, shell, places) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const partial = edit ? partialManifest(edit, cwd, kind) : null;
   if (partial) return { file: partial, how: 'partial' };
-  for (const { file, texts } of editedTexts(input)) {
-    if (kind(file) && texts.some(attestShaped)) return { file };
+  for (const { file, texts, whole = true } of editedTexts(input)) {
+    if (kind(file) && texts.some(whole ? attestShaped : holdsKey)) return { file };
   }
   const named = namedManifest(input, kind, places.home);
   if (named) return { file: named, how: 'named' };

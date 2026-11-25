@@ -755,6 +755,11 @@ test('a file tool writes a review manifest only whole, judged as the review gate
       assert.equal(said(patch(`*** Add File: ${file}`, ...whole(JSON.stringify(quoting, null, 2)))), '', `${host}: a text that quotes a JSON key`);
       assert.match(said(patch(`*** Add File: ${file}`, ...whole(JSON.stringify({ ...quoting, reviewer: 'me' }, null, 2)))), /attest record/u, `${host}: the same text with the key at its top level`);
     }
+    const update = (...lines) => patch(`*** Update File: ${copy}`, '@@', ...lines);
+    const fragment = [' "y":', '+{', '+"a": {', ' }', ' }', ' ,', '+"reviewer": "me"', ' , "w": {', ' "q": 1', '+}', '+}'];
+    assert.match(said(update(' "pr": 7,', ...fragment)), /attest record/u, `${host}: an update whose added lines parse alone`);
+    assert.equal(said(update('+    { "id": "F2", "specialist": "reviewer", "status": "open" },')), '', `${host}: an update that adds a plain finding`);
+    assert.equal(said(update('-  "status": "open"', '+  "status": "fixed"')), '', `${host}: an update of a status line`);
     // Each Add is judged whole, so the file the last one leaves was judged.
     assert.match(said(patch(`*** Add File: ${manifest}`, ...whole(clean), `*** Add File: ${manifest}`, ...whole(forged))), /attest record/u, `${host}: a clean add, then an attest-shaped one`);
     assert.equal(said(patch(`*** Add File: ${manifest}`, ...whole(clean), `*** Add File: ${manifest}`, ...whole(clean))), '', `${host}: two clean adds`);

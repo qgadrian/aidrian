@@ -85,8 +85,6 @@ A marker elsewhere still counts, and `aidrian decisions list` reports it.
 - **A wording never holds its build state.** It states the rule as it holds.
   "Not built yet" goes in the tracker issue, or in text outside the block the wording sits in, so building the rule changes no record:
   a doc step that marks a rule as built edits that text, and no decision line.
-  `aidrian decisions list --added-since <ref>` reports a new unconfirmed marker whose wording says "decided, not built",
-  or "not implemented" in its place, with or without a "but" or a "yet".
   A wording already on record so stays as it is until the Human settles it, with `aidrian decisions set`; `undo` refuses one that was changed.
   Until then, an agent may add a sentence outside the block that says the rule is built.
 - **Only the Human settles one.** The main session runs `aidrian decisions set <id> confirmed|changed|rejected` or `aidrian decisions undo <id>`,

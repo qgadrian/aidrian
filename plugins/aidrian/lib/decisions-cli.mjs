@@ -44,7 +44,7 @@ import { baseBranchTip, commandConfig, committedAuthority, committedDecisions, D
 import { appendEvent, stamp } from './dispatch-log.mjs';
 import { isObject } from './fs.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { ageDays, blockOf, buildStateProblem, classDomain, consequenceLines, supersededAdr, DECISION_STATUSES, isClassName, judgeResiduals, loadVocab, pairResiduals, parseDecisions, recordAt, residualItems, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
+import { ageDays, blockOf, classDomain, consequenceLines, supersededAdr, DECISION_STATUSES, isClassName, judgeResiduals, loadVocab, pairResiduals, parseDecisions, recordAt, residualItems, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { indexedPaths, loadKnowledge } from './knowledge.mjs';
@@ -288,8 +288,7 @@ const sameLine = (line) => line.trim().replace(STATUS_VALUE, '$1').replace(/(\sp
 // such as one undone; a marker the merge base held outside the indexed docs, and HEAD still holds there, is not removed.
 // A problem is `inherited: true` when the merge base has the same problem on the same line, a valid status and pull request
 // aside, and every other is the branch's own. A new decision in a Markdown file no index lists is a problem, and with a pull
-// request open for the branch, so is a `pr=none` the branch added. An added decision whose wording holds its build state is a
-// problem too (buildStateProblem), which `list` and `aidrian check` never report. Each end reads its markers with its own commit's
+// request open for the branch, so is a `pr=none` the branch added. Each end reads its markers with its own commit's
 // `decisions.classes`, so a branch that removes a class owns the problems that makes, and a marker that only lost its class
 // is neither new nor removed.
 function addedSince(project, ref) {
@@ -326,9 +325,8 @@ function addedSince(project, ref) {
   const queue = decisionsInForce(project).decisions?.record.queue ?? DEFAULTS.decisions.record.queue;
   const unset = pullRequest === null ? [] : added.filter(({ pr }) => pr === null)
     .map(({ doc, line, id }) => ({ doc, line, problem: `"${id}" still says pr=none, but pull request #${pullRequest} exists: write its number on the marker` }));
-  const states = added.map((each) => ({ doc: each.doc, line: each.line, problem: buildStateProblem(each) })).filter(({ problem }) => problem !== null);
   const marked = problems.map((each) => (each.line !== null && baseProblems.has(sameProblem(each, lineAt)) ? { ...each, inherited: true } : each));
-  return { decisions: added, settled, removed, problems: [...indexProblems(errors), ...marked, ...stray, ...unset, ...states], pullRequest, queue };
+  return { decisions: added, settled, removed, problems: [...indexProblems(errors), ...marked, ...stray, ...unset], pullRequest, queue };
 }
 
 // What a branch added where no project folder exists, so no marker does: the empty result, so a repository that has not

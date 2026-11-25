@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { blockAbove, buildStateProblem, findWording, parseDecisions, recordAt, undoDecision, wordingProblems } from '../plugins/aidrian/lib/decisions.mjs';
+import { blockAbove, findWording, parseDecisions, recordAt, undoDecision, wordingProblems } from '../plugins/aidrian/lib/decisions.mjs';
 import { fencedIn } from '../plugins/aidrian/lib/markdown-sections.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -337,30 +337,14 @@ test('a rule states its build state outside its block, so marking it built chang
   const rule = 'A cancelled slot goes back at once.';
   const problems = (text) => {
     const found = parseDecisions(text);
-    return [...found.problems, ...wordingProblems(text, found), ...found.decisions.map(buildStateProblem).filter(Boolean)];
+    return [...found.problems, ...wordingProblems(text, found)];
   };
   const lines = [rule, ...record({ wrote: rule })];
   for (const state of [['The rule below is not built yet.', ''], ['The rule below is built.', ''], []]) {
     assert.deepEqual(problems(['# Booking', '', ...state, ...lines, ''].join('\n')), [], state[0] ?? 'the sentence removed');
   }
   const inside = `${rule} Decided, not built yet.`;
-  assert.equal(problems([inside, ...record({ wrote: inside }), ''].join('\n')).length, 1, 'the state inside the wording is what the rule is for');
-});
-
-test('buildStateProblem reads what a wording says of its own decision, in any letter case and across white space, on an unconfirmed wording alone', () => {
-  const problem = (newWording, status = 'unconfirmed') => buildStateProblem({ id: 'a', status, newWording });
-  for (const [words, said] of [
-    ['Slots go back. Decided, not built yet.', 'Decided, not built yet'], ['decided but not yet implemented', 'decided but not yet implemented'], ['Decided (not built yet)', 'Decided (not built yet'],
-    ['DECIDED\n  not\tImplemented.', 'DECIDED not Implemented'], ['decided; not implemented', 'decided; not implemented'], ['decided: not built', 'decided: not built'], ['decided [not built]', 'decided [not built'],
-    ['decided - not built', 'decided - not built'], ['decided \u2013 not built', 'decided \u2013 not built'], ['decided\u2014but not built yet', 'decided\u2014but not built yet'],
-  ]) {
-    assert.equal(problem(words), `"a" wrote wording that says "${said}": a wording states the rule as it holds, and its build state goes in the tracker issue or in text outside its block`);
-  }
-  for (const words of [
-    'A cancelled slot goes back at once.', 'If the search index is not yet built, return HTTP 503.', 'Returns HTTP 501 Not Implemented when the export is off.', 'The parser is not yet built-in.',
-    'Decided: not built-in.', 'Undecided, not built.', 'Decided. Not built pages are skipped.', 'The team decided what is not built.', 'decidednot built', null,
-  ]) assert.equal(problem(words), null, words);
-  for (const status of ['confirmed', 'rejected']) assert.equal(problem('Decided, not built yet.', status), null, status);
+  assert.equal(problems([rule, ...record({ wrote: inside }), ''].join('\n')).length, 1, 'a state inside the wording drifts once the rule is built');
 });
 
 // A project with the doc `docs/a.md`, indexed, and the doc's path.

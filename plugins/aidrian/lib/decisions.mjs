@@ -440,19 +440,6 @@ export function wordingProblems(text, { decisions, problems: parsed = [] } = par
   return problems;
 }
 
-// A wording that says the decision itself is not built, so building it would make the wording wrong: "decided", at most one
-// mark and a "but", and "not built" or "not implemented", with or without "yet". Those words without "decided" can be what a
-// rule is about, as in "if the index is not yet built, return 503". A state worded another way passes.
-const BUILD_STATE = /\bdecided(?:\s+|\s*[,;:(\[\u2013\u2014-]\s*)(?:but\s+)?not\s+(?:yet\s+)?(?:built|implemented)(?:\s+yet)?\b(?!-\w)/iu;
-
-// What is wrong with an unconfirmed decision's new wording when it holds its build state, or null. Only for a decision a
-// branch added: one already on record keeps its wording until the Human settles it.
-export function buildStateProblem({ id, status, newWording }) {
-  const said = status === 'unconfirmed' && newWording !== null ? BUILD_STATE.exec(newWording) : null;
-  if (!said) return null;
-  return `"${id}" wrote wording that says "${said[0].replace(/\s+/gu, ' ')}": a wording states the rule as it holds, and its build state goes in the tracker issue or in text outside its block`;
-}
-
 // The lines of the block above the marker of `decision`, for a person to compare with its wording.
 export function blockOf(text, { line }) {
   const lines = String(text).split(/\r?\n/u);

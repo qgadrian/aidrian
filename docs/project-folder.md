@@ -697,12 +697,6 @@ A problem the merge base already has, the same text on the same line, stays in t
 A change to a valid `status` or `pr` alone does not make a line new, and an invalid value does.
 So a branch that rewords an inherited rule sees the drift as its own.
 A new decision in a Markdown file no index lists is a `problem`: markers belong in an indexed doc.
-So is a new unconfirmed marker whose new wording says that the decision itself is not built: "decided",
-at most one comma, semicolon, colon, dash, or opening bracket, an optional "but", and "not built" or "not implemented",
-with a "yet" before or after the last word or none, as in "decided, not built yet" or "Decided (not yet implemented)".
-Letter case and white space between the words do not matter, and a hyphened word such as "built-in" is no match.
-A build state worded another way passes.
-Plain `list` and `aidrian check` do not report it, and a marker the merge base has is never reported for it.
 Its JSON adds `settled`, each inherited marker whose status the branch changed, with `was`, the status at the merge base.
 `removed` holds each id at the merge base that no indexed doc at `HEAD` holds, such as one undone, with its `status` and `doc` there.
 A marker the merge base held in an unindexed file, which `HEAD` still holds in that file, is not `removed`.

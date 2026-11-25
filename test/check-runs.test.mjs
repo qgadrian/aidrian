@@ -12,7 +12,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 
 import {
-  appendCheckRuns, checkRows, claimProblem, commandKey, fileTail, isFullSuite, mayRunTests, outputText, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims,
+  appendCheckRuns, checkRows, claimFacts, claimProblem, commandKey, fileTail, isFullSuite, mayRunTests, outputText, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims,
   workingTree,
 } from '../plugins/aidrian/lib/check-runs.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
@@ -258,6 +258,79 @@ test('a row a finished run, with the status the line carries', () => {
   assert.equal(row('repeat 0 npm test && npm run check', 'ℹ pass 4\nℹ fail 0').map((each) => each.command).join(), 'npm run check', 'the run that certainly ran keeps its row');
 });
 
+// The trees of the folder a run is read at, so a row names the folder it was read in.
+const treeOf = (folder) => ({ tree: `tree of ${folder}`, trackedTree: `tracked of ${folder}`, untrackedCode: ['lib/other.mjs'] });
+const runsOf = (command, { cwd = '/w', ...rest } = {}) => checkRows({ command, cwd, output: 'ℹ pass 12\nℹ fail 0\n', exitZero: true, tree: treeOf, at: 't', ...rest });
+
+test('a run whose folder the command does not tell records no tree, and any other is read where it ran', () => {
+  const unknown = { at: 't', agentId: null, command: 'node --test', tree: null, trackedTree: null, untrackedCode: [], status: 'passed', pass: 12, fail: 0, folder: 'unknown' };
+  for (const command of [
+    'env -C $W node --test',
+    'env -C "$W" node --test',
+    'env --chdir="$W" node --test',
+    'env -C "$(pwd)" node --test',
+    'W=/x; env -C $W node --test',
+    'W=/x && env -C "$W" node --test',
+    'cd $W && node --test',
+    'cd "$W" && node --test',
+    'cd ~/x && node --test',
+    'cd /x; node --test',
+    'true && cd /x && node --test',
+    '(cd /x && node --test)',
+    'popd && node --test',
+    'cd /x && cd "$W" && node --test',
+  ]) assert.deepEqual(runsOf(command), [unknown], command);
+  // With no folder for the call itself, a run is in no known folder unless its own is written out.
+  assert.deepEqual(runsOf('node --test', { cwd: null }), [unknown]);
+  assert.equal(runsOf('env -C /x node --test', { cwd: null })[0].tree, 'tree of /x');
+  for (const [command, folder] of [
+    ['node --test', '/w'],
+    ['FOO=1 node --test', '/w'],
+    ['node --test && cd "$W"', '/w'],
+    ['env -C /x node --test', '/x'],
+    ['env -C "/x" node --test', '/x'],
+    ['cd /x && node --test', '/x'],
+    ['cd sub && node --test', '/w/sub'],
+    ['pushd /x && node --test', '/x'],
+    ['cd "$W"; env -C /x node --test', '/x'],
+  ]) {
+    const [row] = runsOf(command);
+    assert.deepEqual([row.tree, row.trackedTree, row.untrackedCode], [`tree of ${folder}`, `tracked of ${folder}`, ['lib/other.mjs']], command);
+    assert.ok(!('folder' in row), `${command}: a row of a known folder has no such field`);
+  }
+  // The count rule is the line's, whatever the folders: two runs take no count, and the agent is the call's own.
+  const two = runsOf('node --test && env -C "$W" node --test', { agentId: 'a1' });
+  assert.deepEqual(two.map(({ agentId, folder, pass, tree }) => [agentId, folder, pass, tree]), [['a1', undefined, null, 'tree of /w'], ['a1', 'unknown', null, null]]);
+  assert.deepEqual(runsOf('env -C "$W" node --test && env -C /x npm test', { keep: (folder) => folder !== null }).map(({ command }) => command), ['npm test'], '`keep` is told the folder is unknown');
+});
+
+test('a run in an unknown folder supports no claim, and what says so asks for a literal path', () => {
+  const claim = { clause: 'c', key: 'node --test', counts: [12], commits: [] };
+  const [unknown] = runsOf('env -C "$W" node --test');
+  const [placed] = runsOf('env -C /x node --test');
+  assert.equal(unsupportedClaims([claim], [unknown], { tree: 'tree of /w' }).length, 1, 'at no tree');
+  assert.equal(unsupportedClaims([claim], [unknown]).length, 1, 'nor for a report, which any tree will do for');
+  assert.deepEqual(unsupportedClaims([claim], [unknown, placed], { tree: 'tree of /x' }), [], 'and takes nothing from another run');
+  // A row from before the field: its trees say what it supports, as they did.
+  const older = { ...unknown, tree: 't1', trackedTree: 't1' };
+  delete older.folder;
+  assert.deepEqual(unsupportedClaims([claim], [older], { tree: 't1' }), []);
+  assert.deepEqual(unsupportedClaims([claim], [{ ...older, tree: null, trackedTree: null }]), [], 'a tree git could not read, for a report');
+
+  const said = claimProblem([claim], [unknown], { where: 'the body' });
+  assert.match(said, /The record holds passed \(pass 12, fail 0\) in a folder its command does not tell\. A run's folder could not be told from its command, as with one a variable holds, so that run supports no claim\. Run it again with a literal path, `env -C <path> \.\.\.`\. Quote only/u);
+  assert.doesNotMatch(said, /Untracked code|git could not read/u);
+  const other = claimProblem([claim], [older, { ...older, tree: null }], { where: 'the body' });
+  assert.match(other, /at tree t1; passed \(pass 12, fail 0\) at a tree git could not read\./u);
+  assert.doesNotMatch(other, /could not be told/u, 'an older row reads as before');
+  assert.match(claimProblem([claim], [{ ...placed, command: 'npm test' }], { where: 'the body' }), /holds no finished run of it/u);
+
+  const facts = (runs) => claimFacts(claim, runs, { tree: 't9', commitOf: (tree) => (tree === 'tree of /x' ? 'abc' : null), named: () => 'named' });
+  assert.equal(facts([unknown]), 'the nearest recorded run is of `node --test`: passed, 12 pass, 0 fail; its folder could not be told from its command. Run it again with a literal path, `env -C <path> ...`.');
+  assert.match(facts([placed, unknown]), /at commit abc\. Cite one finished run/u, 'a pass in a known folder is the one to cite');
+  assert.match(facts([{ ...unknown, status: 'failed', pass: 11, fail: 1 }]), /its folder could not be told from its command\. Report that outcome, or get a passing run\.$/u);
+});
+
 const BODY = (lines) => `## Summary\n\n- x\n\n## Tests run\n\n${lines.join('\n')}\n`;
 
 test('a pass claim names a test command and a pass, and never a failure, an unfinished run, or CI', () => {
@@ -445,16 +518,21 @@ function recorded(session) {
   return rows;
 }
 
-test('the PostToolUse hook records a finished run, and nothing for one stopped or in the background', () => {
+test('the PostToolUse hook records a finished run, and nothing for one stopped or in the background', async () => {
   const { dir, git } = repo();
   const tree = git('rev-parse', 'HEAD^{tree}');
   const ran = runScript('hook-bash-post.mjs', postPayload('npm run check 2>&1', { cwd: dir, session: 'rec-1', stdout: 'ℹ pass 7\nℹ fail 0\n' }));
   assert.deepEqual([ran.status, ran.stdout, ran.stderr], [0, '', '']);
   assert.deepEqual(recorded('rec-1').map(({ command, status, pass, fail, tree: at, trackedTree }) => ({ command, status, pass, fail, at, trackedTree })),
     [{ command: 'npm run check', status: 'passed', pass: 7, fail: 0, at: tree, trackedTree: tree }]);
-  runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'rec-2', response: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' } }));
-  runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'rec-2', response: { stdout: 'ℹ pass 1', stderr: '', interrupted: true } }));
+  const call = (input) => hookCall(path.join(SCRIPTS, 'hook-bash-post.mjs'), { input: JSON.stringify(input), env: ENV });
+  await call(postPayload('npm run check', { cwd: dir, session: 'rec-2', response: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' } }));
+  await call(postPayload('npm run check', { cwd: dir, session: 'rec-2', response: { stdout: 'ℹ pass 1', stderr: '', interrupted: true } }));
   assert.deepEqual(recorded('rec-2'), [], 'a run in the background or stopped records nothing');
+  // A run in a folder the command does not tell is filed with the session's own project, with no tree of its checkout.
+  await call(postPayload('W=/x; env -C "$W" npm run check', { cwd: dir, session: 'rec-3', stdout: 'ℹ pass 7\nℹ fail 0\n' }));
+  assert.deepEqual(recorded('rec-3').map(({ command, status, pass, tree: at, trackedTree, folder }) => ({ command, status, pass, at, trackedTree, folder })),
+    [{ command: 'npm run check', status: 'passed', pass: 7, at: null, trackedTree: null, folder: 'unknown' }]);
 });
 
 // Another session removed this session's starting worktree: the host sends the home folder as its cwd, and the session
@@ -484,7 +562,8 @@ test('a run after a cd is recorded when the call\'s own folder holds no project'
   assert.deepEqual(holders('moved-3'), [first], 'the run went to the project of the folder it ran in');
   // Each run is read with the config of the project it runs in: one project's test command is no run in another.
   const { dir: smoke } = repo({ config: { version: 1, testing: { fullSuite: ['make smoke'] } } });
-  await call(`git -C ${smoke} status && env -C ${other} make smoke && env -C ${dir} npm run check`, 'moved-4');
+  // One whose folder is unknown is filed nowhere, and takes no other run's row with it.
+  await call(`git -C ${smoke} status && env -C ${other} make smoke && env -C ${dir} npm run check && env -C "$W" npm run check`, 'moved-4');
   assert.deepEqual(holders('moved-4'), [first]);
   assert.deepEqual(recorded('moved-4').map(({ command }) => command), ['npm run check']);
   // Two runs on the line, each its own project's: the line's one summary is neither's count.
@@ -599,6 +678,9 @@ test('the pull request body rule refuses a pass the session record does not supp
   assert.match(judge([claim], [{ ...run, pass: 4031, fail: 40, status: 'failed' }]), /The record holds failed \(pass 4031, fail 40\)/u);
   assert.match(judge([claim], [{ ...run, pass: null, fail: null, status: 'unjudged' }]), /The record holds unjudged at tree/u);
   assert.match(judge([claim], [{ ...run, tree: null, trackedTree: null }]), /at a tree git could not read/u);
+  const unplaced = judge([claim], [{ ...run, tree: null, trackedTree: null, untrackedCode: [], folder: 'unknown' }]);
+  assert.match(unplaced, /^Blocked: the `## Tests run` section says `npm run check` passed.*Run it again with a literal path, `env -C <path> \.\.\.`\./su);
+  assert.doesNotMatch(unplaced, /Untracked code/u);
   assert.match(judge([claim], [{ ...run, tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) }]), /the files of HEAD \(tree [0-9a-f]{12}\), or of the commit the line names/u);
   assert.equal(judge(['- `npm run check`: not finished (stopped under load)', '- CI `Check (Node 22)`: pass'], []), null);
   assert.equal(judge([claim], null), null, 'a session with no readable record is not judged');

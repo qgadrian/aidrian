@@ -153,16 +153,14 @@ export function writeSnapshot(briefPath, bytes, { exclusive = false } = {}) {
 // replaces nothing, so one taken after the write never copies the new text over the good prior: an entry already at
 // the snapshot's name is kept, and is a problem unless it is a regular file, not the brief's own, with the same bytes,
 // which is { source, snapshot, unchanged: true } with no write. Only a vacant name is written, by an exclusive publish;
-// only a passing check replaces the snapshot. The stale clear removes a regular file only when it is older than this
-// call, so a snapshot another call published meanwhile stays. `now` (ms, wall clock) and `beforeOpen` (run between the
-// look at the snapshot's entry and its open) are the test seams.
-export function takeSnapshot(briefPath, explicitPrior, { now = () => performance.timeOrigin + performance.now(), beforeOpen = () => {} } = {}) {
-  const started = now();
+// only a passing check replaces the snapshot. `beforeOpen`, run between the look at the snapshot's entry and its open,
+// is the test seam.
+export function takeSnapshot(briefPath, explicitPrior, { beforeOpen = () => {} } = {}) {
   const snapshot = snapshotPath(briefPath);
   const source = explicitPrior ?? (existsSync(briefPath) ? briefPath : findSupersededBrief(briefPath));
   if (!source) {
     try {
-      if (!linkedPrior(briefPath) && !newerFile(snapshot, started)) rmSync(snapshot, { force: true });
+      if (!linkedPrior(briefPath)) rmSync(snapshot, { force: true });
     } catch (error) {
       return { source: briefPath, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` };
     }
@@ -182,16 +180,6 @@ export function takeSnapshot(briefPath, explicitPrior, { now = () => performance
   } catch (error) {
     // An entry that took the name after the look above is judged as one that was there before it.
     return (error.code === 'EEXIST' && bytes !== undefined && keptSnapshot(briefPath, source, bytes, beforeOpen)) || cannot(error);
-  }
-}
-
-// Whether `file` is a regular file changed at or after `started`, which a stale clear leaves alone.
-function newerFile(file, started) {
-  try {
-    const entry = lstatSync(file);
-    return entry.isFile() && entry.mtimeMs >= started;
-  } catch {
-    return false;
   }
 }
 

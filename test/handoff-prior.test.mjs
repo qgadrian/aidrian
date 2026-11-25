@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 
 import { checkBrief, commands, resolvePrior, snapshotPath, takeSnapshot } from '../plugins/aidrian/lib/handoff-brief.mjs';
@@ -190,29 +191,22 @@ test('clearing a stale snapshot removes nothing through a .prior that is a link'
   assert.equal(readFileSync(kept, 'utf8'), 'not this folder\'s\n');
 });
 
-test('the stale clear keeps a snapshot changed after the call started, and removes an older one', (t) => {
-  const dir = tempDir(t);
-  const lone = path.join(dir, '2026-01-02-lone.md');
-  mkdirSync(path.dirname(snapshotPath(lone)));
-  writeFileSync(snapshotPath(lone), 'published by another snapshot\n');
-  const { mtimeMs } = statSync(snapshotPath(lone));
-  assert.equal(takeSnapshot(lone, undefined, { now: () => mtimeMs - 1000 }), null);
-  assert.equal(readFileSync(snapshotPath(lone), 'utf8'), 'published by another snapshot\n', 'a newer snapshot stays');
-  assert.equal(takeSnapshot(lone, undefined, { now: () => mtimeMs + 1000 }), null);
-  assert.equal(existsSync(snapshotPath(lone)), false, 'an older snapshot is cleared');
-});
-
-test('a pipe swapped in between the look and the open returns at once with the not-regular message', { timeout: 10_000 }, (t) => {
+test('a pipe swapped in between the look and the open returns at once with the not-regular message', (t) => {
   const dir = tempDir(t);
   const file = write(dir, '2026-01-02-widget.md', brief());
   mkdirSync(path.join(dir, '.prior'));
   writeFileSync(snapshotPath(file), brief());
-  const swap = (snapshot) => {
-    rmSync(snapshot);
-    assert.equal(spawnSync('mkfifo', [snapshot]).status, 0, 'mkfifo made the pipe');
-  };
-  const taken = takeSnapshot(file, undefined, { beforeOpen: swap });
-  assert.equal(taken.problem, `cannot be saved: ${snapshotPath(file)} is not a regular file, and a snapshot replaces nothing: remove it and run snapshot again`);
+  const pipe = path.join(dir, 'pipe');
+  assert.equal(spawnSync('mkfifo', [pipe]).status, 0, 'mkfifo made the pipe');
+  // In a child the parent can kill: an open that waited on the pipe would block the test runner's own thread.
+  const child = `import { renameSync } from 'node:fs';
+    const { takeSnapshot } = await import(process.argv[1]);
+    const [file, pipe] = process.argv.slice(2);
+    process.stdout.write(JSON.stringify(takeSnapshot(file, undefined, { beforeOpen: (snapshot) => renameSync(pipe, snapshot) })));`;
+  const module = pathToFileURL(path.resolve(import.meta.dirname, '../plugins/aidrian/lib/handoff-prior.mjs')).href;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', child, module, file, pipe], { encoding: 'utf8', timeout: 10_000 });
+  assert.deepEqual([result.signal, result.status, result.stderr], [null, 0, ''], 'the child returned before its timeout');
+  assert.equal(JSON.parse(result.stdout).problem, `cannot be saved: ${snapshotPath(file)} is not a regular file, and a snapshot replaces nothing: remove it and run snapshot again`);
   assert.equal(lstatSync(snapshotPath(file)).isFIFO(), true, 'the pipe is kept');
 });
 

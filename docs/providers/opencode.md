@@ -282,8 +282,8 @@ walk, the root's own or a child's ([Session ids](#session-ids)), with that root'
 `cwd`, and the root's id as `session_id`. A start of that session that still runs ends first, within its own
 timeout. A child's delete runs nothing, since its payload would carry its root's id and delete the root's records while
 the root runs on. A session whose root-ness the bridge cannot tell runs none, traced as a `skip` with `read`: one it
-never read in this setup, and one whose walk the 256-answer roots map forgot. Nor does a root whose
-folder is gone, traced with `cwd`. The root's start lines and stop state are dropped after its end ran. The payload
+never read in this setup, and one the 256-entry maps of kept answers and of root folders both forgot. Nor does a root
+whose folder is gone, traced with `cwd`. The root's start lines and stop state are dropped after its end ran. The payload
 carries no `reason` and no `transcript_path`, so the hook deletes the session's records and writes no session row.
 OpenCode publishes a root's delete event before it removes the root's children, so the root's records are deleted
 before its children stop, and a child's call that settles later can leave records under the root's id until the
@@ -440,8 +440,8 @@ through the `events` seam. None means no OpenCode hook or session read gives the
   root is kept, and the agent gates would judge it as the strictest subagent once a route runs before a tool call
   ([Agents](../config.md#agents)); none does yet.
   That call still carries the kept root as `session_id`, so a kept child's call keeps its root session's holds:
-  a root is kept only from a walk that reached its end, for the session it started from and for the root it reached, and
-  a session's parent never changes.
+  a root is kept only from a walk that reached its end for that same session, and a session's parent never changes.
+  A walk that ends at a session kept as a child takes that child's root.
 - A subagent's own shell names the child session in `OPENCODE_SESSION_ID`, so that command run there shows none of
   the root session's pull requests.
 - A command in an OpenCode that was itself started from a Claude Code or Codex shell reads the outer host's session:
@@ -693,7 +693,7 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
   refuses the call, stays in the map until that bound clears it or the same call id is seen again in that session.
 - `SessionEnd` runs for a root session's delete alone ([Session end](#session-end)): an archived session's records stay
   until the gate snapshot's 30-day sweep, and so do those of a root the bridge cannot tell is one, such as one it never
-  read in this setup, one the roots map forgot past 256 sessions, or one deleted after OpenCode loaded the plugin anew,
+  read in this setup, one it forgot past 256 sessions, or one deleted after OpenCode loaded the plugin anew,
   and of a root whose folder is gone. No session row is written, since the hook reads no transcript here.
 - OpenCode removes a root's children only after the root's delete event, so the root's records are deleted before its
   children stop: a child's call that settles later can leave records under the root's id, and those wait for the

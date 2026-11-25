@@ -20,14 +20,15 @@
 //     in a clone a session had, and the driver removes an attempt's folder once its session ended (sweepAttempts).
 //     The session may also write the state work folders, plans, reviews, tmp, and dispatch, each a plain folder of the
 //     user directly in the state folder that holds no guarded folder and lies in none.
-//   - A later attempt starts on the commits an attempt a limit ended made and never pushed, when its kept clone's are
-//     taken (lib/project-kept.mjs); each clone packs no object on its own (UNPACKED), so its commits stay loose to take.
+//   - A later attempt's clone also holds the commits an attempt a limit ended made and never pushed, under a ref of their
+//     own, for its session to take (lib/project-kept.mjs); each clone packs no object on its own (UNPACKED), so its
+//     commits stay loose to read.
 //   - Each attempt's clone commits unsigned (UNSIGNED, in its own config alone): the sandbox hides the user's signing
 //     keys, so a commit the user's own config signs would fail after the work is done. commitProblem is the preflight's
 //     probe that a commit works in a clone made so.
 // Every git call goes through gateGit (lib/git.mjs).
 
-import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS, systemReal } from './attempt-clone.mjs';
@@ -36,13 +37,13 @@ import { gateGit } from './git.mjs';
 import { nestedPathspecs } from './hosts/index.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, keepTokenFiles, sessionToken, tokenDigest, tokenFiles, tokenRecordThere, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
-import { keptCandidate, NO_CHECKOUT, takeKept } from './project-kept.mjs';
+import { keptCandidate, takeKept } from './project-kept.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
 import { appendToRun, pinnedRepository, runFolder, runsFolder } from './project-run.mjs';
 import { commitFiles, commitGitlinks, isGuarded, namedFiles, overlayGuarded } from './project-trust.mjs';
-import { latestStart, ownAttemptFolder, startRows, startsOf } from './project-run-guard.mjs';
+import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
 import { decisionStoreFolders } from './project-decision-store.mjs';
 import { signoffFolders } from './review/signoff-store.mjs';
 import { archiveStops } from './stop-history.mjs';
@@ -256,14 +257,15 @@ export function stateWorkFolders(state, { env, home }) {
 }
 
 // The fresh clone of attempt `attempt` of issue `key` for a confined host: { folder, work, git, drop, cache, branch,
-// onForge, head, reviewed, overlay, kept }, or { problem }, { halt }, { retry }, or { park }, each of which leaves no attempt
-// folder. `head` is the commit the forge's branch was at, or the tip it was cut from, which the start row records.
+// onForge, head, reviewed, overlay, kept }, or { problem }, { halt }, { retry }, or { park }, each of which leaves no
+// attempt folder. `head` is the commit the forge's branch was at, or the tip it was cut from, which the start row records.
 // `cache` is the owner-only folder its package managers' caches go to (project-registries.mjs cacheVars), which holds
 // only npm's empty config files (NPM_CONFIGS) at first; it and `drop` each hold a read-only keep file (attempt-clone.mjs
-// ATTEMPT_KEEP). Any folder the attempt had is removed first, as a start given back leaves (heldFolder): a number a `kept`
-// row of the run `found` names refuses the start, a folder the sweep has yet to decide is { retry }, and that of a start
-// that took kept commits is set aside, never removed. The clone
-// borrows the main checkout's objects read-only, takes origin's URL from the main checkout, which pushProblem checked, and checks out `branch`: from the base tip `tip`
+// ATTEMPT_KEEP). Any folder the attempt had is removed first, as a start given back (`void`) leaves; but a number a `kept`
+// row of the run `found` names refuses the start, wherever its folder went, since the clone of one may hold work found
+// nowhere else, and a second clone of that number could never have a row of its own. The clone borrows the main
+// checkout's objects read-only,
+// takes origin's URL from the main checkout, which pushProblem checked, and checks out `branch`: from the base tip `tip`
 // on the first attempt, or on a later one from the head the forge has, fetched and named by its commit. Its own config
 // turns signing off (UNSIGNED) and git's own packing (UNPACKED); a clone whose commits would still sign (signingProblem)
 // is { halt }.
@@ -284,17 +286,17 @@ export function stateWorkFolders(state, { env, home }) {
 // branch does not hold, are { park: { branch, head, why } }, `head` the recorded one or null, as every park names it.
 // A branch the forge no longer has is cut from the tip under the same name, as a first attempt's: deleting it is how a
 // person asks for the issue to start over. `onForge` says whether the attempt goes on on the issue's branch as the forge
-// has it. When the forge has the branch and it holds the recorded head, the attempt starts on the commits an ended
-// attempt's kept clone holds over that head, where they may be taken (project-kept.mjs): `kept` is that take, or why the
-// latest kept clone was not taken, or null, and `head` stays the forge's. Everything after it, the review asked and the
-// base copies included, goes by the commit taken, as for any head. `take.took` is set to whether one was, and with
-// `take.off` none is (project-run-gate.mjs startRoom). `env` is the environment of its network calls.
-export function prepareAttempt({ project, state, run, found, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, take = {}, env }) {
+// has it. When the forge has the branch and it holds the recorded head, the clone also takes in the commits an ended
+// attempt's kept clone holds over that head, under a ref alone, where its session may take them (project-kept.mjs):
+// `kept` is that offer, or why the latest kept clone's are not offered, or null. Nothing else here reads them: the
+// checkout, the review asked, and the base copies go by the forge's head. `env` is the environment of its network calls.
+export function prepareAttempt({ project, state, run, found, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
-  const held = heldFolder({ found, run, key, attempt, folder });
-  if (held) return held;
+  if (found.rows.some((row) => row.event === 'kept' && row.key === key && row.attempt === attempt)) {
+    return { problem: `attempt ${attempt} of ${key} is kept for the run's life, as the run's ledger says: its clone may hold work the forge does not have, so no start of this run takes its number; recover the work from ${work}, or where that folder was moved, and start the issue in a new run` };
+  }
   try {
     rmSync(folder, { recursive: true, force: true });
     mkdirSync(folder, { recursive: true, mode: 0o700 });
@@ -345,7 +347,7 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
   if (!later && listed.status === 0) return park(null, `the forge has ${branch}, and the ledger records no head of it`);
   if (!later && listed.status !== 2) return failed('ls-remote', listed);
   if (later) {
-    kept = keptCandidate({ found, key, branch, folderOf: (each) => attemptFolder(state, run, key, each), refs: cloneRefs });
+    kept = keptCandidate({ found, run, key, branch, folderOf: (each) => attemptFolder(state, run, key, each), refs: cloneRefs });
     if (listed.status === 0) {
       const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
       if (fetched.status !== 0) return failed('fetch', fetched);
@@ -357,10 +359,12 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
       // The recorded commit, or one after it: exit 1 is another history, and 128 a commit the fetch did not bring.
       const ours = own ? git(['merge-base', '--is-ancestor', own, from]) : null;
       if (ours && ours.status !== 0) return park(own, `its head ${from.slice(0, 7)} does not hold ${own.slice(0, 7)}, the commit this project's runs recorded it at`);
-      if (kept?.head) kept = take.off ? { attempt: kept.attempt, why: NO_CHECKOUT } : takeKept({ candidate: kept, folder, work, gitFolder, forgeHead: onHead, guards, git });
-      take.took = Boolean(kept?.took);
+      if (kept?.retry) {
+        remove();
+        return { retry: kept.retry };
+      }
+      if (kept?.head) kept = takeKept({ candidate: kept, folder, work, gitFolder, forgeHead: onHead, guards, git });
       if (kept?.problem) return gone(kept.problem);
-      if (kept?.took) from = kept.took.head;
       const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--']);
       if (changed.status !== 0) return failed('diff', changed);
       const paths = changed.stdout.split('\0').filter((file) => file !== '');
@@ -387,7 +391,7 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
       }
     } else if (listed.status !== 2) return failed('ls-remote', listed);
     // A branch a person deleted on the forge starts the issue over, its kept commits included.
-    else if (kept?.head) kept = { attempt: kept.attempt, why: 'the forge has no branch of the issue' };
+    else if (kept?.head || kept?.retry) kept = { attempt: kept.attempt, why: 'the forge has no branch of the issue' };
   }
   const checkout = git(['checkout', '--quiet', '-b', branch, from]);
   if (checkout.status !== 0) return failed('checkout', checkout);
@@ -411,37 +415,6 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
   // `onForge`: the attempt goes on on the issue's branch the forge has, not one the forge lacks.
   return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, branch, onForge: later && listed.status === 0, head: onHead ?? tip, reviewed: passed, overlay, kept };
-}
-
-// Why the folder `folder` of attempt `attempt` of issue `key`, whose number a start given back (`void`) freed, may not be
-// removed for the next start, or null. A session that start ran may have committed work found nowhere else. Once the
-// sweep kept its clone, { problem }: the `kept` row alone holds the number, wherever the folder went, since a second clone
-// of that number could never have a row of its own. The folder of one that took kept commits, which no sweep decides, may
-// hold their one whole copy: it is set aside (setAside). While the sweep has yet to decide any other, { retry }: the
-// clone's refs cannot be read, or one is at a commit other than that start's `head`.
-function heldFolder({ found, run, key, attempt, folder }) {
-  if (found.rows.some((row) => row.event === 'kept' && row.key === key && row.attempt === attempt)) {
-    return { problem: `attempt ${attempt} of ${key} is kept for the run's life, as the run's ledger says: its clone may hold work the forge does not have, so no start of this run takes its number; recover the work from ${path.join(folder, 'work')}, or where that folder was moved, and start the issue in a new run` };
-  }
-  const row = startsOf(found, key).find((each) => each.attempt === attempt);
-  if (!row || !existsSync(folder)) return null;
-  if (row.took) return setAside(folder);
-  const read = cloneHeads(path.join(folder, 'git'), row.branch);
-  if (!read.problem && read.heads.every((head) => head === row.head)) return null;
-  return { retry: `the folder of attempt ${attempt} of ${key}, a start given back, may hold work the forge does not have; run \`aidrian project wait ${run}\`, whose sweep keeps or removes it, then start again` };
-}
-
-// Renames the attempt's folder `folder` to a name beside it that no attempt's folder has (attempt-clone.mjs ATTEMPT), where
-// it stays for the run's life: null, or { problem }.
-function setAside(folder) {
-  let count = 1;
-  while (existsSync(`${folder}.given-back-${count}`)) count += 1;
-  try {
-    renameSync(folder, `${folder}.given-back-${count}`);
-    return null;
-  } catch (error) {
-    return { problem: `the folder of a start given back, ${folder}, which holds kept commits it took, cannot be set aside (${error.code ?? 'no code'})` };
-  }
 }
 
 // Why the base tip's copies cannot be written safely over `overlay.files` in the clone `work`, read from the two
@@ -742,8 +715,7 @@ function linkedPart(top, relative) {
 // start left it unknown waits for its orphan settling, and one whose drop holds a result no row took in yet stays. Only
 // a folder at the path attemptFolder gives is removed, and only once its stop history is archived (stop-history.mjs).
 // Once the session ended, the host's session environment files it handed the forge token to go first, kept folder or
-// not (forgetToken). The folder of a start given back that took another attempt's kept commits is left as it is, with no
-// row: they are no work of its own, and it may hold their one whole copy. A clone whose HEAD or issue branch holds a commit the forge does not have keeps its folder for the
+// not (forgetToken). A clone whose HEAD or issue branch holds a commit the forge does not have keeps its folder for the
 // run's life, with a `kept` row and a line saying where to recover it (unpushedHead): a run never discards work that
 // exists only there. The lines, in order.
 export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge = null }) {
@@ -764,7 +736,7 @@ export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge 
     // The token goes first, whatever keeps the folder; a file the host could not remove yet keeps the folder, and its
     // record, for the next sweep.
     const forgotten = !token || forgetToken({ cap, folder, row, env, home });
-    if (stays || waits || !forgotten || (row.outcome === 'void' && row.took)) continue;
+    if (stays || waits || !forgotten) continue;
     const unpushed = unpushedHead({ folder, row, repository: found.init?.repository, forge });
     if (unpushed?.wait) continue;
     if (unpushed) {

@@ -800,7 +800,7 @@ test('a start given back records no head: the next attempt holds the branch to t
 });
 
 // A start given back (`void`) frees its number, and a session it ran may have committed work the forge does not have.
-test('a start that takes the number of a kept attempt refuses, wherever its folder is, and one the sweep has yet to decide waits for it', (t) => {
+test('a start that takes the number of a kept attempt refuses, and removes nothing, wherever its folder is', (t) => {
   const fx = runFixture(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   fx.git('-C', work(fx), 'commit', '-q', '--allow-empty', '-m', 'work found nowhere else');
@@ -808,15 +808,8 @@ test('a start that takes the number of a kept attempt refuses, wherever its fold
   const { id, child, ...ahead } = fx.rows().findLast((row) => row.event === 'start');
   fx.claude.states[STARTED[0].session] = 'done';
   appendToRun(fx.state, 'launch', () => ({ rows: [{ ...ahead, outcome: 'void', proof: true, at: at(Date.now()) }, { event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
-  // Before any sweep: the folder holds a commit the start's row does not name, and stays.
-  let before = fx.rows().length;
-  const early = fx.cmd(['start', 'launch', 'ENG-1']);
-  assert.deepEqual([early.exitCode, early.out[0]], [75, 'retry: the folder of attempt 1 of ENG-1, a start given back, may hold work the forge does not have; run `aidrian project wait launch`, whose sweep keeps or removes it, then start again']);
-  assert.equal(fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim(), head, 'the work is still there');
-  assert.deepEqual([fx.rows().length, fx.claude.starts().length], [before, 1], 'nothing recorded, nothing started');
-  // The sweep kept it: no start of the run takes the number again, with its folder there or moved away.
   assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0']).out[0], /^kept ENG-1 attempt 1: /u);
-  before = fx.rows().length;
+  const before = fx.rows().length;
   const folder = path.dirname(work(fx));
   const refuses = (message) => {
     const refused = fx.cmd(['start', 'launch', 'ENG-1']);
@@ -827,27 +820,6 @@ test('a start that takes the number of a kept attempt refuses, wherever its fold
   assert.equal(fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim(), head, 'the work is still there');
   renameSync(folder, path.join(fx.root, 'recovered'));
   refuses('its folder moved away');
-});
-
-test('a start given back whose clone the forge holds whole frees its number once wait swept it, and one whose refs cannot be read is kept', (t) => {
-  const fx = runFixture(t);
-  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  const { id, child, ...ahead } = fx.rows().findLast((row) => row.event === 'start');
-  fx.claude.states[STARTED[0].session] = 'done';
-  const giveBack = () => appendToRun(fx.state, 'launch', () => ({ rows: [{ ...ahead, outcome: 'void', proof: true, at: at(Date.now()) }, { event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
-  // Pushed work, under another branch: the sweep alone can ask the forge.
-  fx.git('-C', work(fx), 'commit', '-q', '--allow-empty', '-m', 'pushed');
-  fx.git('-C', work(fx), 'push', '-q', fx.bare, 'HEAD:refs/heads/elsewhere');
-  giveBack();
-  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 75);
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['idle']);
-  assert.equal(existsSync(path.dirname(work(fx))), false, 'swept');
-  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  fx.claude.states[STARTED[1].session] = 'done';
-  writeFileSync(path.join(path.dirname(work(fx)), 'git', 'HEAD'), 'garbage\n');
-  giveBack();
-  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 75);
-  assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0']).out[0], /^kept ENG-1 attempt 1: its clone's refs cannot be read/u);
 });
 
 // A submodule entry is neither a file nor a folder an overlay can write over.

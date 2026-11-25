@@ -17,6 +17,7 @@ import { checkDelivery, unwrittenHandoffs } from '../plugins/aidrian/lib/deliver
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
 import { rawPaths, statusEntries } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { findingsFile, sessionIssue } from '../plugins/aidrian/lib/review/dispatch.mjs';
+import { keptPrompt } from '../plugins/aidrian/lib/project-kept.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { ownAttemptFolder, ownIssue } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { issueHeld, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -74,6 +75,8 @@ const PASSED = [
   'npm test', 'echo "push the tags later"', 'git lfs ls-files', 'git lfs pull', 'git submodule update --init', 'git rebase origin/main',
   'git interpret-trailers --parse msg.txt', 'find . -name "*.js" -exec grep -l TODO {} +', 'ls | xargs grep -l TODO', 'find . -name "*.orig" -delete',
   'gh repo view acme/widgets', 'gh gist list',
+  // As a first message has an issue's session take an ended attempt's kept commits (lib/project-kept.mjs keptPrompt).
+  `git merge --ff-only ${'a'.repeat(40)}`,
 ];
 
 // A run `launch` whose issue ENG-1 runs in a confined attempt clone, and SESSION marked as that issue's session.
@@ -170,6 +173,20 @@ test('the agent gate hook, run as the host runs it, refuses an issue session eac
   const moved = fx.spawn(bash('git fetch . +HEAD:refs/remotes/origin/main'));
   assert.equal(moved.status, 2, moved.stderr);
   assert.match(moved.stderr, /blocked for the issue session of a project run \(launch, ENG-1\) in this project: .*or a remote-tracking ref.*this session works an issue of a project run/u);
+});
+
+test('the merge a first message names for an ended attempt\'s kept commits passes every Bash hook of an issue session', async (t) => {
+  const fx = issueFixture(t);
+  const [line] = keptPrompt({ took: { attempt: 1, head: 'a'.repeat(40) }, count: 2 });
+  const command = /`(git merge [^`]+)`/u.exec(line)[1];
+  assert.equal(command, `git merge --ff-only ${'a'.repeat(40)}`);
+  assert.equal(fx.ask(bash(command)), null);
+  for (const script of ['hook-agent-gates.mjs', 'hook-bash.mjs']) {
+    const ran = await hookCall(path.resolve(import.meta.dirname, '../plugins/aidrian/scripts', script), {
+      input: JSON.stringify({ session_id: SESSION, cwd: fx.work, hook_event_name: 'PreToolUse', ...bash(command) }), encoding: 'utf8', env: { ...fx.env, CLAUDECODE: '1', AIDRIAN_TELEMETRY: '0' },
+    });
+    assert.deepEqual([ran.status, ran.stdout], [0, ''], `${script}: ${ran.stderr}`);
+  }
 });
 
 test('an issue session\'s exact push is refused when its commits change a workflow file, however it got there, and not for a merge of the default branch', async (t) => {

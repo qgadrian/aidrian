@@ -83,7 +83,7 @@ import { fenceFor, writeIssueFile } from './project-issue-text.mjs';
 import { keptLines, keptPrompt } from './project-kept.mjs';
 import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, recordedHead, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
-import { accessProblem, attemptFolder, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
+import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { holdsProblem } from './project-forge-holds.mjs';
 import { pushPreflight } from './push-preflight.mjs';
@@ -240,14 +240,15 @@ function machineProblem(project, policy) {
 // copies of the host files its branch changed (`baseCopies`, the file that names them, confinedRoom) says so, and that
 // a push changing one is refused but as git merges the base. An attempt that goes on on an existing branch, a later one
 // or a resumed one, runs stop-action's catch-up first, which names the one way it merges a base that moved (catchUpLine).
-// An attempt that starts on an ended attempt's kept commits (`kept`, project-kept.mjs) says so, as unreviewed data.
+// An attempt an ended attempt's kept commits are offered to (`kept`, project-kept.mjs) is told how to take them, as
+// unreviewed data, before the catch-up.
 export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL, note = null, afterLimit = false, issueFile = null, decisionFile = null, baseCopies = null, confine = false, resumed = null, includePolicyFiles = false, kept = null }) {
   return [
     `Project run ${run}, issue ${key}, attempt ${attempt}: this session works one issue of a project run, started in the background by the run's driver session, with no Human attending.`,
     ...(confine ? [`Before anything else, as this session's first tool call, run exactly \`aidrian project confine ${run} ${key}\` with the Bash tool, alone: it proves this session's sandbox holds, and every other call is refused until the start has confirmed it, a few seconds after it passes.`] : []),
     ...(resumed?.head && attempt === 1 ? [`An earlier run of this project, ${resumed.run}, started this issue and parked it: the branch ${branch} on the forge holds the work it pushed, and an open pull request from that branch is this issue's own; go on from there, and open no second one.`] : []),
     ...(afterLimit ? [`Attempt ${attempt - 1} stopped when the host met a usage or rate limit: the branch ${branch} on the forge holds the work it pushed, and a pull request from that branch is this issue's own; go on from there.`] : []),
-    ...keptPrompt(branch, kept),
+    ...keptPrompt(kept),
     ...(attempt > 1 || resumed?.head ? [catchUpLine(run, key)] : []),
     `Read the autopilot skill at ${skill} and follow it on the task ${key}, in the attempt's clone ${clone} on the branch ${branch}, which this session starts in.`,
     `Merge only through the pr-auto-merge skill, when \`aidrian pr auto-merge <number> --check\` exits 0. Push only with a full refspec, in a call of its own once the commit is made: \`git push origin HEAD:refs/heads/${branch}\`.`,
@@ -558,7 +559,7 @@ function startPlace(context) {
   const guards = (file) => isGuarded(file) || isPolicyPath(file, policyFiles);
   const recorded = recordedHead(current, key) ?? resumed?.head ?? null;
   const where = { ...context, policy, found: current, attempt: capped.attempt, tip: base.tip, branch, resumed, recorded, reviewed, guards, policyFiles, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
-  const room = startRoom(where);
+  const room = confinedRoom(where);
   if (room.halt) return { answer: noted(haltAnswer(room.halt, { lines: orphans })) };
   if (room.retry) return { answer: noted(retryAnswer('start', room.retry, orphans)) };
   if (room.park) return { answer: noted(parkUnreconciled({ ...context, policy, key, park: room.park, pr, orphans })) };
@@ -650,25 +651,13 @@ export function policyFilesAt(root, tip, prefix) {
 // Whether attempt `attempt` of issue `key` ended on a usage or rate limit, as the run `found` records it.
 const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event === 'ended' && row.key === key && row.attempt === attempt && row.reason === 'limit');
 
-// confinedRoom, once more with no kept commits taken when a start on them ends in any refusal but a retry: a name no disk
-// can write, a link where a placeholder goes, or a path that keeps base copies from being made is theirs, and a start
-// never fails for commits it need not take. A refusal that is there without them is then given as it is. The first clone
-// goes first, which no session had.
-function startRoom(where) {
-  const take = { off: false, took: false };
-  const room = confinedRoom({ ...where, take });
-  if (!take.took || room.cwd || room.retry) return room;
-  safely(() => rmSync(attemptFolder(where.state, where.run, where.key, where.attempt), { recursive: true, force: true }));
-  return confinedRoom({ ...where, take: { off: true } });
-}
-
 // The attempt's fresh clone, checked, and the folders it may write: { folder, cwd, git, grants, drop, cache, vars, main,
 // mainGit, issueFile, decision, pushUrl, branch, overlay, baseCopies, resumed, kept }, `decision` the recorded decision
 // (decisionFor), `pushUrl` the URL its origin pushes to, which the
 // start row pins for the session's push (lib/issue-push-checkout.mjs), `branch` the one checked out, `overlay` the
 // branch's head when the clone holds the base branch's copies of the host files it changed (prepareAttempt), which the
 // start row records for the push guard, with `baseCopies` the file that names them (writeBaseCopies), else null, and
-// `resumed` the earlier run's entry only when the attempt goes on on its branch as the forge has it, `kept` the take of
+// `resumed` the earlier run's entry only when the attempt goes on on its branch as the forge has it, `kept` the offer of
 // an ended attempt's kept commits (prepareAttempt), or { halt },
 // { retry }, { park }, or { problem }. The clone's host files are held to the base tip's, or to the head the review
 // passed (`reviewed`, reviewedProblem). A clone the host says would run a command outside its sandbox (`cloneProblem`) halts, and so
@@ -678,10 +667,10 @@ function startRoom(where) {
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the placeholders go in (placeHolders,
 // clonePlaceholders).
-function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked, take }) {
+function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
-  const clone = prepareAttempt({ project, state, run, found, key, attempt, branch, recorded, tip, reviewed, guards, take, env });
+  const clone = prepareAttempt({ project, state, run, found, key, attempt, branch, recorded, tip, reviewed, guards, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.retry) return { retry: clone.retry };
   if (clone.park) return { park: clone.park };
@@ -873,9 +862,9 @@ function launchStart(context, place) {
   // The hours the team confirmed for this start, which a wait the forge cannot answer holds the session to (settlePolicy).
   // `head`: the commit the branch was at, which the next attempt's branch must hold (recordedHead). `overlay`: the branch
   // head the attempt started from on the base branch's copies of its host files, with the policy files the pinned base
-  // tip names (`policyFiles`, policyFilesAt), both for the push guard. `took`: the attempt whose kept commits it starts
-  // on, and the commit taken, which the sweep and the next take read (project-kept.mjs). A recorded decision that stood is in the row for
-  // the audit alone: nothing reads it back.
+  // tip names (`policyFiles`, policyFilesAt), both for the push guard. `took`: the attempt whose kept commits it was
+  // offered, and the commit, which a later offer reads (project-kept.mjs keptCandidate). A recorded decision that stood
+  // is in the row for the audit alone: nothing reads it back.
   const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20) } : {};
   // `machine`: this machine's auto-merge switch as the main checkout reads it, which a confined session, denied that
   // checkout, reads in its place (attempt-clone.mjs confinedMachine): "unset" only for an untracked local file.

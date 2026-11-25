@@ -10,7 +10,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { forgetEnvFiles, sessionEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
-import { attemptFolder, cloneHeads, sweepAttempts, unpushedHead } from '../plugins/aidrian/lib/project-start.mjs';
+import { attemptFolder, cloneHeads, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
 import { recordTokenFile, TOKEN_FILES, tokenRecordThere } from '../plugins/aidrian/lib/project-token.mjs';
 import { DRIVER, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -110,33 +110,6 @@ test('the clone\'s refs are read as files: a detached HEAD, a packed branch, and
   mkdirSync(path.join(dir, 'refs'));
   symlinkSync(elsewhere, path.join(dir, 'refs', 'heads'));
   assert.deepEqual(cloneHeads(dir, BRANCH), { problem: `refs/heads/${BRANCH} lies below refs/heads, a link` });
-});
-
-test('the folder of a start given back that took kept commits is left as it is, and one that ran is swept as any other', (t) => {
-  const state = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-sweep-took-')));
-  t.after(() => rmSync(state, { recursive: true, force: true }));
-  const taken = 'a'.repeat(40);
-  const folder = attemptFolder(state, 'launch', 'ENG-1', 2);
-  mkdirSync(path.join(folder, 'drop'), { recursive: true });
-  mkdirSync(path.join(folder, 'git', 'refs', 'heads', 'feat'), { recursive: true });
-  writeFileSync(path.join(folder, 'git', 'HEAD'), `ref: refs/heads/${BRANCH}\n`);
-  writeFileSync(path.join(folder, 'git', 'refs', 'heads', BRANCH), `${taken}\n`);
-  writeFileSync(path.join(folder, TOKEN_FILES), JSON.stringify({ session: CHILD, files: ['/x/session-env/a.sh'] }));
-  const start = {
-    event: 'start', key: 'ENG-1', attempt: 2, session: DRIVER, name: 'launch · ENG-1 · 2', cwd: path.join(folder, 'work'), branch: BRANCH,
-    drop: path.join(folder, 'drop'), outcome: 'void', took: { attempt: 1, head: taken }, at: new Date().toISOString(),
-  };
-  const forge = { hasCommit: () => true };
-  const sweep = (row) => sweepAttempts({ state, run: 'launch', found: { init: { repository: { host: 'github.com', owner: 'acme', name: 'widgets' } }, rows: [row], states: new Map([['ENG-1', { state: 'open' }]]) }, cap: { ended: () => true, forgetShellEnv: () => [] }, env: {}, spawn: null, forge });
-  assert.deepEqual(sweep(start), []);
-  assert.ok(existsSync(folder), 'left, even with a forge that holds its commit');
-  assert.equal(existsSync(path.join(folder, TOKEN_FILES)), false, 'its token goes all the same');
-  // A session that ran on the taken commits: its clone counts them as any work.
-  const unpushed = unpushedHead({ folder, row: { ...start, outcome: 'started' }, repository: { host: 'github.com', owner: 'acme', name: 'widgets' }, forge: { hasCommit: () => false } });
-  assert.equal(unpushed?.head, taken);
-  mkdirSync(path.join(state, 'runs', 'launch'), { recursive: true });
-  sweep({ ...start, took: undefined });
-  assert.equal(existsSync(folder), false, 'one that took nothing is swept');
 });
 
 test('a clone whose refs cannot be read keeps its folder, with a kept row', (t) => {

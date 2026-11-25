@@ -70,6 +70,7 @@ export function folderOf(workdir, dir, home) {
 // move, and its root by its parents, PARENT_STEPS reads at most. A read that fails, comes too late, or gives no object,
 // and a walk that runs out of steps, stop where they are, and the call is sent as a subagent's, with `agent` the
 // calling id, never as the root session's own; only a walk that reached its end is kept, so the next call reads again.
+// A kept root answers only a call whose own read gave the session: one whose read failed is a subagent's, kept or not.
 async function sessionOf(runner, get, sessionID) {
   let current;
   try {
@@ -77,7 +78,8 @@ async function sessionOf(runner, get, sessionID) {
   } catch {
     current = null;
   }
-  const dir = isObject(current) ? current.location?.directory ?? null : null;
+  if (!isObject(current)) return { root: sessionID, agent: sessionID, dir: null };
+  const dir = current.location?.directory ?? null;
   const known = runner.roots.get(sessionID);
   if (known) return { ...known, dir };
   let id = sessionID;

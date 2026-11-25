@@ -512,6 +512,47 @@ test('a failed parent read is not kept: the next call of that session reads agai
   assert.deepEqual(calls.map((call) => [sent(call).session_id, sent(call).agent_id ?? null]), [['ses_sub', 'ses_sub'], ['ses_top', 'ses_sub']]);
 });
 
+// The ways a session read fails, each the value the fake's read gives: a throw, no object, and a read that never settles.
+const MISREADS = Object.freeze({ rejects: () => new Error('read failed'), 'gives none': () => null, 'comes late': () => new Promise(() => {}) });
+// Runs `fire` and ends its session reads at their cap, once the first read of it started.
+async function capped(t, context, fire) {
+  const before = context.reads.length;
+  const running = fire();
+  while (context.reads.length === before) await settle();
+  t.mock.timers.tick(READ_MS);
+  return running;
+}
+
+test('a kept root answers only a call whose own read gave the session: one that fails, comes late, or gives none sends agent_id, and its idle runs no Stop route', { timeout: 10_000 }, async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let read = () => ({ location: { directory: SESSION_DIR } });
+  const context = fakeContext({ sessions: { ses_main: () => read() } });
+  const { calls, fire } = await bridge({ context });
+  await capped(t, context, () => fire(shellEvent({ sessionID: 'ses_main' })));
+  assert.equal(Object.hasOwn(sent(calls[0]), 'agent_id'), false, 'the root`s own call, whose root is now kept');
+  for (const [name, misread] of Object.entries(MISREADS)) {
+    read = misread;
+    await capped(t, context, () => fire(shellEvent({ sessionID: 'ses_main' })));
+    assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_main', 'ses_main'], name);
+  }
+  read = () => ({ location: { directory: SESSION_DIR } });
+  await capped(t, context, () => fire(shellEvent({ sessionID: 'ses_main' })));
+  assert.equal(Object.hasOwn(sent(calls.at(-1)), 'agent_id'), false, 'a read that gives the session again is the root`s own call');
+
+  const trace = path.join(ROOT, 'trace-stop-kept.jsonl');
+  let stopRead = () => ({ location: { directory: SESSION_DIR } });
+  const stopContext = fakeContext({ sessions: { ses_main: () => stopRead() } });
+  const stop = await stopBridge('stop-kept', { context: stopContext, spawn: fakeSpawn(), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  await capped(t, stopContext, () => stop.idle('ses_main'));
+  assert.equal(stop.calls.length, 1, 'the root`s idle runs its Stop route, and its root is now kept');
+  for (const [name, misread] of Object.entries(MISREADS)) {
+    stopRead = misread;
+    await capped(t, stopContext, () => stop.idle('ses_main'));
+    assert.equal(stop.calls.length, 1, `${name}: no Stop route`);
+  }
+  assert.deepEqual(traceLines(trace).filter((line) => line.step === 'skip').map(({ script, status }) => [script, status]), Array(3).fill(['hook-stop.mjs', 'subagent']));
+});
+
 test(`session reads that never settle end at their own ${READ_MS} ms cap, and the call is sent as a subagent's from the plugin's folder`, { timeout: 10_000 }, async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const trace = path.join(ROOT, 'trace-stalled.jsonl');

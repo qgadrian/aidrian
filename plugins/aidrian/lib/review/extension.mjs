@@ -540,7 +540,9 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     };
   }
   // The cap stands on a head no round reviewed: said in the result, and in the summary comment's Extra rounds list.
-  return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}), ...raiseAsk({ pr, repo, source, round, granted, ...raise }) };
+  // A stop by the unattended rule asks no one, so it carries no question, options, or raise.
+  const ask = entry.by === 'unattended' && entry.status === 'stopped' ? {} : raiseAsk({ pr, repo, source, round, granted, ...raise });
+  return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}), ...ask };
 }
 
 // ` --check '<id>'`, quoted for any shell: a login's brackets are a glob unquoted, and a quote in a configured reviewer
@@ -571,10 +573,11 @@ function sameHead(entry, current) {
 export const unattendedReason = (flags) => `red flags (${[...new Set(flags.map(flagName))].join(', ')}) stand under github.extraRounds "auto" and the unattended waiver, so the cap stands with no extra round and no question to the Human`;
 
 // The judge's verdict into `state`: stop and land end the check; extend grants on "auto" and asks the Human on "ask",
-// or whenever a red flag stands. On "auto", an extend over a red flag stops instead when `unattended()`, called only
-// then, says the unattended waiver's switches count for the pull request.
+// or whenever a red flag stands. An extend over a red flag stops instead when `mode`, the base branch's
+// github.extraRounds now, is "auto" and `unattended()`, called only then, says the unattended waiver's switches count
+// for the pull request: the mode the check opened under is not enough, since the base may have moved to "ask" since.
 // `current` is the pull request's head now, when known.
-export function recordVerdict(state, { verdict, reason, head = null, current = null, check = null, at = new Date().toISOString(), unattended = () => false }) {
+export function recordVerdict(state, { verdict, reason, head = null, current = null, check = null, at = new Date().toISOString(), mode = null, unattended = () => false }) {
   const entry = waiting(state, 'judging', check);
   if (!entry) throw new Error('no extension check waits for a verdict: run the review step at the cap first');
   if (head !== null && !sameCommit(head, entry.head)) throw new Error(`the check was for ${String(entry.head).slice(0, 7)}, not ${head.slice(0, 7)}: run the review step again`);
@@ -583,7 +586,7 @@ export function recordVerdict(state, { verdict, reason, head = null, current = n
   // A `land` stops the check as `stop` does: the cap stands, and the waiver's verdict is recorded beside it (runLanding).
   if (verdict === 'stop' || verdict === 'land') Object.assign(entry, { status: 'stopped', by: 'judge', reasons: [reason], decided_at: at });
   else if (entry.mode === 'auto' && !entry.red_flags?.length) Object.assign(entry, { status: 'granted', by: 'judge', reasons: [reason], decided_at: at });
-  else if (entry.mode === 'auto' && unattended()) Object.assign(entry, { status: 'stopped', by: 'unattended', reasons: [reason, unattendedReason(entry.red_flags)], decided_at: at });
+  else if (entry.red_flags?.length && mode === 'auto' && unattended()) Object.assign(entry, { status: 'stopped', by: 'unattended', reasons: [reason, unattendedReason(entry.red_flags)], decided_at: at });
   else Object.assign(entry, { status: 'asking', by: 'judge', reasons: [reason], decided_at: at });
   return entry;
 }
@@ -638,7 +641,12 @@ export function parseExtend(args) {
 function nextStep(entry, pr, repo, repoArg = '') {
   const again = entry.source === 'bot' ? `aidrian pr await-review ${pr} --request${repoArg}` : `aidrian pr review ${pr}${repoArg}`;
   if (entry.status === 'granted') return `round ${entry.round + 1} is granted: run ${again}`;
-  if (entry.by === 'unattended') return `the cap stands on a red flag under the unattended rule: run ${again}, which reports round_limit and, where the waiver may run, the judge it dispatches`;
+  // Only the review step's cap offers the waiver's judge: the bot's cap reports its stop as any other.
+  if (entry.by === 'unattended') {
+    return entry.source === 'bot'
+      ? 'the cap stands on a red flag under the unattended rule, with no question: report round_limit and the findings left open'
+      : `the cap stands on a red flag under the unattended rule: run ${again}, which reports round_limit and, where the waiver may run, the judge it dispatches`;
+  }
   if (entry.status === 'asking') return `ask the Human "${askQuestion(pr, entry.round + 1, entry.unreviewed, entry.red_flags, repo)}" with the options ${askOptions(entry.round + 1).map((each) => `"${each}"`).join(' and ')}, then record the answer: aidrian pr extend ${pr} --human approve|deny${checkArg(entry)}${repoArg}`;
   return 'the cap stands: report round_limit and the findings left open';
 }
@@ -689,7 +697,7 @@ export async function runExtend(args, project, config, deps = {}) {
   const env = deps.env ?? process.env;
   if (opts.judge !== null) return runLanding({ opts, project, config, forge, repo, view, held, onPr, comments, state, local: record.local, env, gate: deps.gate ?? {} });
   let entry;
-  if (opts.verdict) entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head, current, check: opts.check, unattended: () => switchesOn(project, forge, view) });
+  if (opts.verdict) entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head, current, check: opts.check, mode: held ? policyOf(held.committed.github).mode : null, unattended: () => switchesOn(project, forge, view) });
   else {
     const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
     entry = recordHuman(state, { answer: opts.human, by, session: sessionIdentity(env).session, current, check: opts.check });

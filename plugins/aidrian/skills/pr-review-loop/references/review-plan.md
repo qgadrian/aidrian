@@ -270,8 +270,9 @@ no waiver: run the step again on it. The session runs no gate command: the step 
   Otherwise merge naming the head, as the command's `next` says: `gh pr merge <n> --match-head-commit <sha>`.
   On `stop`, report the stop with the judge's evidence: the Human merges, or answers the merge guard's question with
   "Merge with the findings filed". On `extend`, go on as § At the cap: extra rounds says. An `extend` the command
-  records as `stopped` by `unattended`, over a red flag under `"auto"`, asks no one: run the step again, as its `next`
-  says, and its `round_limit` names the waiver's judge, the step's own dispatch and no verdict shopping.
+  records as `stopped` by `unattended`, over a red flag under `"auto"`, asks no one: follow its `next`. For the review
+  step's check, run the step again, and its `round_limit` names the waiver's judge, the step's own dispatch and no
+  verdict shopping; for the bot's, report the stop.
 
 ## Owed reviews
 

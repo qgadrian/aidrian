@@ -557,13 +557,13 @@ test('the kept links are cleared whole once the next would pass 256: an earlier 
 });
 
 // The bridge with the record-only shell route and the SessionEnd route, on ses_top, ses_mid with the parent `parent()` gives
-// on each read, and ses_low, a child of ses_mid; `topParent()` gives ses_top's parent. `prompt` fires the prompt hook,
+// on each read, ses_low, a child of ses_mid, and the cycle of ses_a and ses_b; `topParent()` gives ses_top's parent. `prompt` fires the prompt hook,
 // `last()` is the last call's [session_id, agent_id], and `skips()` each skip traced, [script, status].
 async function middleBridge(name, parent, topParent = () => undefined) {
   const stream = eventStream();
   const at = { location: { directory: PROJECT_DIR } };
   const kids = Object.fromEntries(Array.from({ length: 257 }, (_, n) => [`ses_kid${n}`, { parentID: 'ses_top', ...at }]));
-  const sessions = { ses_top: () => ({ parentID: topParent(), ...at }), ses_mid: () => ({ parentID: parent(), ...at }), ses_low: { parentID: 'ses_mid', ...at }, ...kids };
+  const sessions = { ses_top: () => ({ parentID: topParent(), ...at }), ses_mid: () => ({ parentID: parent(), ...at }), ses_low: { parentID: 'ses_mid', ...at }, ses_a: { parentID: 'ses_b', ...at }, ses_b: { parentID: 'ses_a', ...at }, ...kids };
   const context = fakeContext({ sessions, subscribe: () => stream.iterable });
   const trace = path.join(ROOT, `trace-${name}.jsonl`);
   const events = { PostToolUse: EVENTS.PostToolUse, SessionEnd: EVENTS.SessionEnd, UserPromptSubmit: 'prompt' };
@@ -682,6 +682,29 @@ test('a call of a child already linked, with 256 links kept, clears none: anothe
   misread(context, 'ses_kid1');
   await call('ses_kid1');
   assert.deepEqual(last(), ['ses_top', 'ses_kid1']);
+});
+
+test('with 256 links kept, a new descendant`s walk that ends at a linked child goes to that child`s root, and the child`s delete runs nothing', { timeout: 10_000 }, async () => {
+  let parentID = 'ses_top';
+  const { call, calls, last, remove, skips } = await middleBridge('descendant-at-bound', () => parentID);
+  await call('ses_mid');
+  for (let n = 0; n < 255; n += 1) await call(`ses_kid${n}`);
+  parentID = undefined;
+  await call('ses_low');
+  assert.deepEqual(last(), ['ses_top', 'ses_low']);
+  await remove('ses_mid');
+  assert.deepEqual(ends(calls), []);
+  assert.deepEqual(skips(), [['hook-session-end.mjs', 'read']], 'no folder was kept for it');
+});
+
+test('a two-session cycle`s links count once: with 254 links kept, its walk clears none', async () => {
+  const { call, context, last } = await middleBridge('cycle-at-bound', () => 'ses_top');
+  for (let n = 0; n < 254; n += 1) await call(`ses_kid${n}`);
+  await call('ses_a');
+  assert.deepEqual(last(), ['ses_a', 'ses_a']);
+  misread(context, 'ses_kid0');
+  await call('ses_kid0');
+  assert.deepEqual(last(), ['ses_top', 'ses_kid0']);
 });
 
 test('a deleted middle child`s link stays: its late call and its child`s go to the top, and a replayed delete runs nothing', { timeout: 10_000 }, async () => {

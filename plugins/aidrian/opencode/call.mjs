@@ -101,8 +101,9 @@ export function folderOf(workdir, dir, home) {
 // walk, one whose read fails, comes too late, or gives no session of the id asked for, one that runs out of steps, and one
 // that ends at a linked session, sets `failed`: the call is sent as a subagent's, with `agent` the calling id and `root`
 // where the links lead, never as the root session's own. A link drops any folder kept for the child as a root, and a
-// finished walk keeps its root's for its end (endCall). Nothing is awaited between the last read and the last store, so two
-// calls in flight cannot undo each other's.
+// finished walk keeps its root's for its end (endCall). A walk is resolved by the links held with its own, and only then,
+// past ROOTS_MAX, are all but its own forgotten. Nothing is awaited between the last read and the last store, so two calls
+// in flight cannot undo each other's.
 async function sessionOf(runner, get, sessionID) {
   const own = await readOf(get, sessionID);
   const links = [];
@@ -113,15 +114,20 @@ async function sessionOf(runner, get, sessionID) {
     id = last.parent;
     last = links.length < PARENT_STEPS ? await readOf(get, id) : null;
   }
-  if (runner.roots.size + links.filter(([child]) => !runner.roots.has(child)).length > ROOTS_MAX) runner.roots.clear();
   for (const [child, parent] of links) {
     runner.roots.set(child, parent);
     runner.folders.delete(child);
   }
+  const finished = last !== null && !runner.roots.has(id);
+  const root = finished ? id : linkedRoot(runner, sessionID);
+  if (runner.roots.size > ROOTS_MAX) {
+    runner.roots.clear();
+    for (const [child, parent] of links) runner.roots.set(child, parent);
+  }
   const dir = own?.dir ?? null;
-  if (last === null || runner.roots.has(id)) return { root: linkedRoot(runner, sessionID), agent: sessionID, dir, rootDir: null, failed: true };
-  remember(runner, id, last.dir);
-  return { root: id, agent: links.length === 0 ? null : sessionID, dir, rootDir: last.dir };
+  if (!finished) return { root, agent: sessionID, dir, rootDir: null, failed: true };
+  remember(runner, root, last.dir);
+  return { root, agent: links.length === 0 ? null : sessionID, dir, rootDir: last.dir };
 }
 
 // What one read gave of the session `id`, { parent, dir }, `parent` null when it names none or itself, or null when the

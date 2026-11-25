@@ -44,8 +44,8 @@ A gate runs at most 3 times in this review, the first run included, and so does 
 1. Carried findings go into step 4's critique brief as notes to record, never as findings to revise the plan for.
 2. The proposed diff adds them to the plan's `## Risks`, under the line `Implementation notes from plan review:`,
    one item each: the gate or the quorum and its run number, the severity, the surface, and the finding in a few words.
-   Before step 4's report, check that the proposed diff holds each carried finding, and send the critique back to
-   `planning-agent` once to add a missing one.
+   When the critique proposes a diff, check before step 4's report that it holds each carried finding;
+   send it back to `planning-agent` once for a missing one, and when one is still missing, report it and do not offer `apply`.
 3. The report's Gates item names each carried finding, with the run, as `security gate run 3 of 3: approved by the stop rule`.
 4. Step 5.5 reports each one as `recorded` or `not recorded in the plan`.
    The `issue-implement` skill, which `plan-implement` runs, puts that list in the brief of each slice's `code-reviewer` and `security-engineer`.

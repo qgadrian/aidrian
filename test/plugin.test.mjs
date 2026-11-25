@@ -1631,12 +1631,12 @@ test('every agent that pushes, and the orchestration skill, says to wait in the 
   for (const rel of ['agents-src/build/backend-developer.md', 'agents-src/build/frontend-developer.md', 'agents-src/harness/harness-mechanic.md']) {
     const text = read(rel);
     assert.equal((text.match(/Wait in the foreground for every command and agent you start/g) ?? []).length, 1, `${rel} states the rule once`);
-    assert.match(text, /a reviewer agent in the foreground/, rel);
+    assert.match(text, /Start a long push or CI wait, and when the host moves it to the background, wait for it before you end the turn; run a reviewer agent in the foreground\./, rel);
   }
-  assert.match(read('agents-src/coordination/integrator.md'), /Run the push in the foreground with a timeout, repeated until it ends/);
+  assert.match(read('agents-src/coordination/integrator.md'), /Start the push, and when the host moves it to the background, wait for it before you end the turn: once you end your turn, nothing wakes you/);
   const skill = read('skills/orchestration/SKILL.md');
   assert.match(skill, /An idle notice is not a result: before you act on one, check the branch and pull request yourself/);
-  assert.match(skill, /every brief to an agent that pushes, waits on CI, or starts a reviewer says to wait in the foreground/);
+  assert.match(skill, /every brief to an agent that pushes, waits on CI, or starts a reviewer says to wait in the foreground: start a long push or CI wait, wait for it before the turn ends when the host moves it to the background, and run the reviewer in the foreground\./);
 });
 
 test('each flow runs product feedback after its draft opens, and status and its re-check before each gh pr ready', () => {

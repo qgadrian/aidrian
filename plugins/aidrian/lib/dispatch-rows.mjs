@@ -10,7 +10,7 @@ import { CHILD_SEND_BACKS } from './child-send-backs.mjs';
 import { checkDelivery } from './delivery-check.mjs';
 import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
-import { detectHost, sessionIdentity, wakesOnEnd, wakesOnReport } from './hosts/index.mjs';
+import { detectHost, sessionIdentity, TASK_ID, wakesOnEnd, wakesOnReport } from './hosts/index.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import { priceFor } from './model-prices.mjs';
 import {
@@ -77,7 +77,7 @@ export const ENDED_STATUSES = new Set(['completed', 'failed', 'killed', 'stopped
 // Code), or a transcript the hook cannot read, finds none.
 export function runningChildren(input) {
   const tasks = Array.isArray(input.background_tasks) ? input.background_tasks : [];
-  const live = tasks.filter((task) => typeof task?.id === 'string' && /^[\w-]+$/u.test(task.id) && task.id !== input.agent_id
+  const live = tasks.filter((task) => typeof task?.id === 'string' && TASK_ID.test(task.id) && task.id !== input.agent_id
     && task.type !== 'teammate' && !ENDED_STATUSES.has(task.status));
   if (!live.length || typeof input.agent_transcript_path !== 'string') return [];
   const transcript = readText(input.agent_transcript_path);

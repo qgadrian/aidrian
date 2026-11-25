@@ -138,6 +138,10 @@ for (const host of [...HOSTS, fakeHost]) {
     for (const field of ['identityVars', 'detectVars', 'fileEditTools']) assert.ok(Array.isArray(host[field]) && host[field].every((each) => typeof each === 'string'), field);
     assert.ok(host.fileEditTools.length > 0);
     assert.equal(typeof host.capabilities.transcripts, 'boolean');
+    const { foregroundLimit, waitCall, taskOutput } = host.capabilities;
+    if (foregroundLimit !== undefined || taskOutput !== undefined) assert.ok(0 < waitCall.seconds && waitCall.seconds < waitCall.toolTimeout, 'a wait call ends before its own tool timeout');
+    if (foregroundLimit !== undefined) assert.ok(waitCall.toolTimeout < foregroundLimit, 'and before the host moves it');
+    if (taskOutput !== undefined) assert.ok(taskOutput.taskTypes.length > 0 && [taskOutput.find, taskOutput.read].every((each) => typeof each === 'function'), 'taskOutput');
     assert.ok(DELIVERIES.has(host.delivery), `delivery names one of the three cases: ${host.delivery}`);
     assert.ok(typeof host.projectFolders === 'object' && host.projectFolders !== null);
     assert.ok(typeof host.modelChoices === 'object' && host.modelChoices !== null);

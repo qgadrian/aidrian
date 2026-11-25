@@ -1,7 +1,7 @@
 // JSON Lines files for project state, such as the lesson inbox and the dispatch log: one JSON object per line.
 
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import path from 'node:path';
 
@@ -180,9 +180,11 @@ function alive(pid) {
   }
 }
 
+// The text of a lock file, or null: a named pipe or any other entry that is no regular file never makes the read wait, and
+// holds no lock.
 const readText = (file) => {
   try {
-    return readFileSync(file, 'utf8');
+    return readRegularFile(file);
   } catch {
     return null;
   }

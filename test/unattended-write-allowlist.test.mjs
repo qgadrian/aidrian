@@ -489,6 +489,53 @@ test('a git call that writes its output to a file names that file to the write a
   }
 });
 
+// The plan `aidrian plan set` and `record` edit is a path the call writes, so the hook's own session id and the session's
+// places decide, whatever project or environment the call names.
+test('a session no Human attends marks with aidrian plan only a plan it may write, behind the prefixes the guard reads', (t) => {
+  const fx = fixture(t);
+  const ask = fx.steady();
+  const own = path.join(fx.state, 'plans', 'mine-plan.md');
+  const other = path.join(fx.root, 'other-state', 'plans', 'shared-plan.md');
+  const set = (file) => `set ${file} S1 complete`;
+  for (const command of [
+    `aidrian plan ${set(other)}`, `aidrian plan record ${other} --by a --text t --project ${fx.dir}`, `aidrian plan ${set(other)} --project ${path.dirname(other)}`,
+    `env -u CLAUDE_CODE_SESSION_ID aidrian plan ${set(other)}`, `CLAUDE_CODE_SESSION_ID=x XDG_STATE_HOME=/x aidrian plan ${set(other)}`, `env -i aidrian plan ${set(other)}`,
+    `/opt/plugin/bin/aidrian plan ${set(other)}`, `node /opt/plugin/lib/cli.mjs plan ${set(other)}`, `node --no-warnings "$CLAUDE_PLUGIN_ROOT/bin/aidrian" plan ${set(other)}`,
+    `"$CLAUDE_PLUGIN_ROOT/bin/aidrian" plan ${set(other)}`, `nodejs /opt/plugin/lib/cli.mjs plan ${set(other)}`, `bun /opt/plugin/lib/cli.mjs plan ${set(other)}`, `node -r /opt/plugin/lib/cli.mjs /opt/plugin/bin/aidrian plan ${set(other)}`,
+    `sh -c 'aidrian plan ${set(other)}'`, `true && timeout 5 aidrian plan ${set(other)}`,
+    `cd ${path.dirname(other)} && aidrian plan ${set('shared-plan.md')}`, `env -C ${path.dirname(other)} aidrian plan ${set('shared-plan.md')}`,
+  ]) assert.match(ask(bash(command))?.reason ?? '', /outside the places/u, command);
+  assert.match(ask(bash(`aidrian plan ${set(path.join(fx.home, '.tool', 'plans', 'x.md'))}`))?.reason ?? '', /a dot file or folder of the user's home folder/u);
+  // The subcommand, the action, and the file are each one word written out, whatever plan the rest names: a word the shell
+  // builds may be, or split into, any of them, and an empty one moves the words after it.
+  const name = (word) => [`aidrian ${word} ${set(own)}`, `aidrian ${word} ${own} S1 complete`, `aidrian ${word} set`];
+  const act = (word) => [`aidrian plan ${word}`, `aidrian plan ${word} ${own} S1 complete`, `aidrian plan ${word} ${set(own)}`];
+  for (const command of [
+    ...['$W', '"$W"', '"$@"', '$(cat w)', '`cat w`', 'pla?', '{plan,x}', "$'plan'"].flatMap((word) => [...name(word), ...act(word), `aidrian plan set ${word} ${own} S1 complete`]),
+    'aidrian "$@"', `node /opt/plugin/lib/cli.mjs "$W" ${own} S1 complete`, `"$CLAUDE_PLUGIN_ROOT/bin/aidrian" "$W" "$X" ${own} S1 complete`, `node -r /opt/plugin/lib/cli.mjs /opt/plugin/bin/aidrian "$W" "$X" ${own} S1 complete`,
+    'aidrian plan set', 'aidrian plan record', 'aidrian plan set "$PLAN" S1 complete', 'aidrian plan record $(ls) --by a --text t', `aidrian plan set --note x ${own} S1 complete`, `aidrian plan set -- ${own} S1 complete`,
+    `aidrian plan set ${fx.state}/plans/*.md S1 complete`, `aidrian plan set {${other},x} S1 complete`, `aidrian plan set ${fx.state}/plans/mine-plan.md(x) S1 complete`, 'aidrian plan set =mine-plan.md S1 complete', 'aidrian plan set ~/mine-plan.md S1 complete',
+  ]) assert.match(ask(bash(command))?.reason ?? '', /whose subcommand, action, and file are not each one word written out/u, command);
+  // The file is the word as the command opens it: a quoted variable or tilde is no path but its own letters.
+  const quoted = (word) => `cd ${path.dirname(other)} && aidrian plan set ${word} S1 complete`;
+  for (const word of ["'$TMPDIR/mine-plan.md'", "\\$TMPDIR/mine-plan.md"]) {
+    assert.match(ask(bash(quoted(word)))?.reason ?? '', /other-state[^ ]*TMPDIR[^ ]*mine-plan\.md \(.*outside the places/u, word);
+    assert.match(ask(bash(quoted(word).replace('set', 'record')))?.reason ?? '', /outside the places/u, word);
+  }
+  assert.equal(ask(bash("aidrian plan set '$HOME/mine-plan.md' S1 complete")), null, 'a path below the session\'s own folder');
+  for (const word of ["'~/mine-plan.md'", '"~/mine-plan.md"', '\\~/mine-plan.md']) assert.match(ask(bash(quoted(word)))?.reason ?? '', /not each one word written out/u, word);
+  assert.match(ask(bash(`aidrian plan set ${fx.state}/plans/link/../x.md S1 complete`))?.reason ?? '', /a path that climbs/u);
+  for (const command of [
+    `aidrian plan ${set(own)} --note "$NOTE" --project $P`, `(aidrian plan ${set(own)})`, `"$CLAUDE_PLUGIN_ROOT/bin/aidrian" plan ${set(own)}`, `aidrian plan set '${fx.state}/plans/#459-implementation.md' S1 complete`, `aidrian plan record ${own} --by product-manager --text-file ${path.join(fx.temp, 'note.md')}`, `env -C ${path.dirname(own)} aidrian plan set mine-plan.md --plan complete`,
+    'aidrian plan', 'aidrian plan --help', 'aidrian plan --help $X', 'aidrian report', 'aidrian', 'aidrian pr review "$N"', 'aidrian report $FLAGS', 'aidrian lesson list --target "$T"', 'for n in 1 2; do aidrian pr checks "$n"; done',
+    `grep -n "aidrian plan set" ${other}`, `echo aidrian plan ${set(other)}`, `git log --grep 'plan set ${other}'`,
+    // An ordinary script's arguments are its own, whatever words are among them.
+    ...['node', 'nodejs', 'bun'].flatMap((runner) => ['set', 'record'].map((action) => `${runner} ./report.mjs "$LABEL" plan ${action}`)), 'node ./report.mjs "$LABEL" "$X"',
+  ]) assert.equal(ask(bash(command)), null, command);
+  // An attended session is never asked.
+  assert.equal(fx.ask(bash(`aidrian plan ${set(other)}`), { held: null }), null);
+});
+
 test('a session no Human attends never publishes, withdraws, or changes a package or its owners on a registry', (t) => {
   const fx = fixture(t);
   const refused = [
@@ -1895,13 +1942,44 @@ test('a Write or an Edit through a link and a `..` that lands outside the places
     write(`${fx.worktree}/a/out/./../x.txt`), write(`${fx.worktree}/a/out//../x.txt`),
     bash(`python3 -c "open('${fx.worktree}/a/out/../x.txt', 'w').write('x')"`), bash(`python3 -c "open('a/out./../x.txt', 'w')"`),
     bash(`python3 -c "open('a/out /../x.txt', 'w')"`), bash(`python3 -c "open('../../x.txt', 'w')"`),
-  ]) assert.match(ask(input)?.reason ?? '', /a path that climbs with `\.\.` from a folder it names.*name the path without `\.\.`/u, JSON.stringify(input));
+  ]) assert.match(ask(input)?.reason ?? '', /a path that climbs with `\.\.` from a folder it names.*only where this session may write, make the same call with each path it names spelled as the plain path it really has, with no `\.\.`, or/u, JSON.stringify(input));
   assert.equal(ask(write(path.join(fx.worktree, 'a', 'x.txt'))), null, 'the same file named without the link');
+  // The refusal shows the path's end, where its `..` is, however long the folders before it are.
+  const long = /names `([^`]*)`, a path/u.exec(ask(write(`${'d'.repeat(200)}/../x.txt`))?.reason ?? '')?.[1];
+  assert.equal(long, `${'d'.repeat(117)}/..`);
   // A path that climbs from the call's own folder, which the host names as the system resolves it, is placed as usual.
   assert.equal(ask(write('../wt/a/x.txt')), null);
   assert.equal(ask(bash('cat ../notes/a/../b > a/x.txt')), null, 'a climb in what the command reads, not writes');
   // In an interpreter's code, where an escape may spell a slash, any `/..` counts, a name that starts with two dots too.
   for (const code of ["open('a/..\\x2fb', 'w')", "open('a/..draft', 'w')"]) assert.match(ask(bash(`python3 -c "${code}"`))?.reason ?? '', /climbs with `\.\.`/u, code);
+});
+
+// An interpreter's code is judged whole, so a `/..` in text it only puts in a file is refused too: the refusal quotes
+// that text, never the script's start, and names the one way on.
+test('a script that writes an import of a parent folder is refused with the text that climbs and one remedy', (t) => {
+  const fx = fixture(t);
+  const ask = fx.steady();
+  const script = (line) => bash(`cd ${fx.worktree} && python3 - <<'PY'\nimport pathlib\np = pathlib.Path("src/page.ts")\np.write_text(p.read_text().replace("OLD", "${line}"))\nPY`);
+  assert.equal(ask(script("import { a } from '../name';"))?.reason, undefined, 'an import that holds no `/..`');
+  const quoted = (reason) => /names `([^`]*)`, a path/u.exec(reason ?? '')?.[1];
+  for (const [line, text] of [["import { a } from './x/../y';", './x/../y'], ["import { a } from '../../name';", '../../name'], ['see <a/../b>, c', 'a/../b'], ['at=a/../b;c', 'a/../b'], ['x\na/../b\nc', 'a/../b']]) {
+    assert.equal(quoted(ask(script(line))?.reason), text, line);
+  }
+  // At most 120 characters, the `/..` among them: a long run before it, and a long one after it.
+  const [before, after] = [quoted(ask(script(`${'a'.repeat(200)}/../b`))?.reason), quoted(ask(script(`a/../${'b'.repeat(200)}`))?.reason)];
+  assert.deepEqual([before, after], [`${'a'.repeat(117)}/..`, `a/../${'b'.repeat(115)}`]);
+  const { match, reason } = ask(script("import { a } from './x/../y';"));
+  assert.equal(match, 'unattended write through a climbing path');
+  assert.equal(reason, 'aidrian: Bash is blocked for the main session in this project: it writes a file and names `./x/../y`, a path that climbs'
+    + ' with `..` from a folder it names, which a link there would lead elsewhere than the text says, and no Human attends this session. This is a'
+    + ' project rule: only where this session may write, make the same call with each path it names spelled as the plain path it really has, with no `..`, or, where a script only'
+    + ' writes the quoted text as a file\'s content, write that file through the host\'s file tool; reach the same result no other way, and otherwise stop and tell the Human to make that change, or where the work should go instead.');
+  // The way it names: the file tool on that file, whatever its text holds.
+  assert.equal(ask({ tool_name: 'Edit', tool_input: { file_path: path.join(fx.worktree, 'src', 'page.ts'), old_string: 'OLD', new_string: "import { a } from './x/../y';" } }), null);
+  // Every other refusal keeps the general line, and only that.
+  const other = ask(write(path.join(fx.root, 'elsewhere', 'notes.md')))?.reason ?? '';
+  assert.match(other, /\. This is a project rule: do not reach the same result with another tool; tell the Human to make that change, or where the work should go instead\.$/u);
+  assert.doesNotMatch(other, /the plain path it really has|no other way/u);
 });
 
 // A folder that holds a checkout of the repository git lists, wherever it lies, is refused to a removal or move: the

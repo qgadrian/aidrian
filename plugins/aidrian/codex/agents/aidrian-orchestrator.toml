@@ -31,7 +31,7 @@ code is the implementing agent's.
 ## Delegation boundary and triggers
 
 - When a needed agent cannot run, report the block; never build the result yourself.
-- Asked to do it yourself, say you cannot edit; name the agent instead.
+- Asked to do it yourself, say you cannot edit; name the agent.
 - Read the repository only to route, with one confirming read at most; more discovery goes to `explorer`.
 - Always delegate a code change, a review, an end-to-end or verification run, multi-owner or multi-phase work, and a critical-flow change.
 
@@ -47,7 +47,7 @@ code is the implementing agent's.
 - Only read-only exploration and light review run in the background; wait for the rest.
 - Require a machine handoff file: each brief names its absolute path on its own `Handoff file: <path>` line,
   as the `orchestration` skill's `references/briefs.md` § The handoff file says.
-- Write `<state>` files, such as dispatch handoffs, only with `aidrian` commands or a shell redirect.
+- Write `<state>` files only with `aidrian` commands or a shell redirect.
 - Dispatch disjoint slices together, each writer in its own worktree; never report done before every agent returns.
 - Before a slice adds a script, check, or schema field, search its likely home; one that exists makes it a `no_op`.
 
@@ -74,12 +74,13 @@ On resume and before reporting near-done, check the work against the project's c
 
 Pick each owner by the `knowledge` skill's agent rule; the plugin agents below are the fallback.
 
-On a conflict: the Human's explicit instructions, then project knowledge, then the gates of the skill that owns the flow,
-then the issue's agent action plan, then the critical-flow and security gates, then these defaults.
+On a conflict, in order: the Human's explicit instructions, project knowledge, the owning skill's gates,
+the issue's agent action plan, the critical-flow and security gates, these defaults.
 
 - A flow the project's `product_sensitive` knowledge declares critical: `product-manager` first, even unasked, then a `planning-agent` plan;
   implement only after every `critical_flow[].sign_off` is `approved`, and `code-reviewer` signs off after.
-- A plan request: `planning-agent`. Never rewrite its plan.
+- Plan content: `planning-agent`. Never rewrite its plan. A slice's status, notes, or a record that changes no slice: `aidrian plan`.
+  Does a record change what any slice must do? A yes is content.
 - An issue to implement: run the `issue-implement` skill, so its tracker guards and In Progress move hold;
   a reviewed local plan with no issue: the `plan-implement` skill.
   When its report names an opened draft, continue with the `orchestration` skill § 3 from step 4 to its end.

@@ -1,12 +1,16 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import fs, { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { consequenceLines, judgeResiduals, pairResiduals, residualItems, supersededAdr } from '../plugins/aidrian/lib/decisions.mjs';
+import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
+import { markKept, recordHash, residualHash, saveVerdicts, VERDICTS_FILE, withKept } from '../plugins/aidrian/lib/residual-verdicts.mjs';
+import { cliCall } from './cli-call.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -148,7 +152,7 @@ test('judgeResiduals lists contradictions with their place and every invalid row
     invalid: [],
   });
   assert.deepEqual(judgeResiduals(pairs, [row('- A.'), row('- B.', null, 'anything')]), { contradictions: [], invalid: [] });
-  assert.deepEqual(judgeResiduals(pairs, { rows: [] }), { contradictions: [], invalid: ['the judged file is not a JSON array of rows'] });
+  assert.deepEqual(judgeResiduals(pairs, { rows: [] }), { contradictions: [], invalid: ['the judged file holds no rows: write { "record": ..., "rows": [...] }'] });
   const invalid = (rows) => judgeResiduals(pairs, rows).invalid;
   assert.deepEqual(invalid([row('- A.', 'one'), row('- B.')]), ['residual "- A." contradicts "one" with no quoted evidence']);
   assert.deepEqual(invalid([row('- A.', 'one', '  '), row('- B.')]), ['residual "- A." contradicts "one" with no quoted evidence']);
@@ -259,7 +263,7 @@ test('every row null exits 0', (t) => {
   const { dir, write } = project(t);
   const out = run(['--body', write('body.md', body()), '--judged', write('judged.json', [row(`- ${CONTRADICTING}`), row(`- ${CLEAN}`)])], dir);
   assert.deepEqual([out.status, out.stderr], [0, '']);
-  assert.equal(out.stdout, 'no residual contradicts a decision on record\n');
+  assert.equal(out.stdout, 'no residual contradicts a decision on record\nnote\tno verdict was kept: the judged file does not name the record this run read\n');
 });
 
 test('a body with no section, or an empty one, has nothing to check, with --judged too', (t) => {
@@ -481,6 +485,443 @@ test('the section config.json github.pullRequest.residuals names is the one read
   assert.equal(other.stdout, 'nothing to check: the body has no "## Known gaps" items\n');
 });
 
+// The verdict store: the residuals a judged run found clean, kept while the residual and the record are unchanged.
+const call = (args, cwd) => cliCall(['decisions', 'residuals', ...args], { cwd });
+const listed = async (file, dir, ...extra) => JSON.parse((await call(['--body', file, '--json', ...extra], dir)).stdout);
+const owedTexts = ({ residuals, owed }) => residuals.filter(({ n }) => owed.includes(n)).map(({ residual }) => residual);
+// In an empty repository, with a state folder of the project's own, so a command makes the fewest git calls.
+const storeProject = (t, options) => {
+  const made = project(t, options);
+  if (options?.folder === false) return made;
+  writeFileSync(path.join(made.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: path.join(made.dir, 'state') } }));
+  for (const part of ['objects', 'refs']) mkdirSync(path.join(made.dir, '.git', part), { recursive: true });
+  writeFileSync(path.join(made.dir, '.git/HEAD'), 'ref: refs/heads/main\n');
+  return { ...made, store: path.join(made.dir, 'state/decisions', VERDICTS_FILE) };
+};
+const THREE = [CLEAN, 'The export has no header: nobody reads it.', 'The menu closes late: the fix needs a redesign.'];
+const rowsOf = (items) => items.map((each) => row(`- ${each}`));
+const EVERY = 'every residual was judged against this record';
+
+// A judged run whose file names the record the listing before it printed, as the skill writes it.
+async function judge({ dir, write }, file, rows, ...extra) {
+  const { record } = await listed(file, dir, ...extra);
+  return call(['--body', file, '--judged', write('judged.json', { record, rows }), ...extra], dir);
+}
+
+// A project whose body holds the three clean residuals, every one judged clean.
+async function judgedProject(t, options) {
+  const made = storeProject(t, options);
+  const file = made.write('body.md', body('Accepted residuals', THREE));
+  const judged = await judge(made, file, rowsOf(THREE));
+  assert.deepEqual([judged.status, judged.stderr], [0, '']);
+  return { ...made, file };
+}
+
+test('a first run owes every residual, and a second over the same body and record owes none', async (t) => {
+  const { dir, write, store } = storeProject(t);
+  const file = write('body.md', body('Accepted residuals', THREE));
+  const first = await listed(file, dir);
+  assert.deepEqual([first.nothing, first.owed], [false, [1, 2, 3]]);
+  assert.ok(first.residuals.every((each) => !Object.hasOwn(each, 'kept')));
+  await call(['--body', file, '--judged', write('judged.json', { record: first.record, rows: rowsOf(THREE) })], dir);
+  const second = await listed(file, dir);
+  assert.deepEqual([second.nothing, second.owed, second.residuals.map(({ kept }) => kept)], [true, [], [true, true, true]]);
+  assert.ok(second.notes.includes(EVERY));
+  const text = await call(['--body', file], dir);
+  assert.equal(text.status, 0);
+  assert.match(text.stdout, new RegExp(`^residual 1 \\(kept\\): - ${CLEAN}$`, 'mu'));
+  assert.ok(text.stdout.endsWith(`\n${EVERY}\n`));
+  assert.doesNotMatch(text.stdout, /judgment owed/u);
+  const entry = JSON.parse(readFileSync(store, 'utf8')).kept[0];
+  assert.deepEqual(Object.keys(entry).sort(), ['at', 'record', 'residual']);
+  assert.ok([entry.residual, entry.record].every((hash) => /^[0-9a-f]{64}$/u.test(hash)), 'two hashes, and no text of the body');
+});
+
+test('only a changed residual is owed, and any change to the record makes every residual owed', async (t) => {
+  const { dir, write, file } = await judgedProject(t);
+  const changed = `${THREE[1].slice(0, -1)}!`;
+  assert.deepEqual(owedTexts(await listed(write('changed.md', body('Accepted residuals', [THREE[0], changed, THREE[2]])), dir)), [`- ${changed}`]);
+  const everyOwed = async (what, name, text, ...extra) => {
+    const at = path.join(dir, name);
+    const before = readFileSync(at, 'utf8');
+    writeFileSync(at, text);
+    assert.deepEqual((await listed(file, dir, ...extra)).owed, [1, 2, 3], what);
+    writeFileSync(at, before);
+  };
+  const adr = 'docs/adr/0001-offer-window.md';
+  await everyOwed('an ADR line', adr, ADR.replace('7 days', '8 days'));
+  await everyOwed('a decision\'s wording', 'docs/a.md', DOC.replaceAll('14 days', '15 days'));
+  mkdirSync(path.join(dir, 'records'));
+  writeFileSync(path.join(dir, 'records/0001-offer-window.md'), ADR);
+  assert.deepEqual((await listed(file, dir, '--adr', 'records')).owed, [1, 2, 3], 'another ADR folder');
+  assert.deepEqual((await listed(file, dir)).owed, [], 'all put back');
+});
+
+test('the record hash covers every field of a listed decision and ADR line, and the ADR folder', () => {
+  const decision = { id: 'one', status: 'confirmed', wording: 'R.', doc: 'docs/a.md', line: 4 };
+  const adr = { path: 'docs/adr/1.md', line: 7, text: '- X.' };
+  const hash = ({ decisions = [decision], adrs = [adr], folder = 'docs/adr', texts = [] } = {}) => recordHash({ decisions, adrs }, folder, texts);
+  const same = hash();
+  assert.equal(hash({ decisions: [{ ...decision, doc: 'docs/b.md', line: 9 }] }), same, 'where a decision sits is no part of the record');
+  for (const other of [{ decisions: [{ ...decision, id: 'two' }] }, { decisions: [{ ...decision, status: 'unconfirmed' }] }, { decisions: [{ ...decision, wording: 'R' }] },
+    { adrs: [{ ...adr, path: 'docs/adr/2.md' }] }, { adrs: [{ ...adr, line: 8 }] }, { adrs: [{ ...adr, text: '- X' }] }, { adrs: [] }, { decisions: [] },
+    { folder: 'docs/decisions' }, { folder: null }, { texts: ['the doc'] }]) assert.notEqual(hash(other), same, JSON.stringify(other));
+});
+
+test('a decision with no wording on record is judged from its doc, so a change there makes every residual owed', async (t) => {
+  const { dir, write } = storeProject(t);
+  const bare = `# Refunds\n\n${RULE}\n${MARKER.replace('status=unconfirmed', 'status=confirmed')}\n`;
+  writeFileSync(path.join(dir, 'docs/a.md'), bare);
+  const file = write('body.md', body('Accepted residuals', THREE));
+  const first = await listed(file, dir);
+  assert.equal(first.decisions[0].wording, 'wording at docs/a.md:4');
+  await call(['--body', file, '--judged', write('judged.json', { record: first.record, rows: rowsOf(THREE) })], dir);
+  assert.deepEqual((await listed(file, dir)).owed, []);
+  writeFileSync(path.join(dir, 'docs/a.md'), bare.replace('14 days', '15 days'));
+  assert.deepEqual((await listed(file, dir)).owed, [1, 2, 3]);
+});
+
+test('a judged run takes rows for the owed residuals alone, and exits over the whole body', async (t) => {
+  const { dir, write } = await judgedProject(t);
+  const added = 'The footer is grey: the palette is not ready.';
+  const grown = write('grown.md', body('Accepted residuals', [...THREE, added]));
+  const grew = await listed(grown, dir);
+  assert.deepEqual(owedTexts(grew), [`- ${added}`]);
+  assert.match((await call(['--body', grown], dir)).stdout, /\njudgment owed for residual 4: product-manager returns one row per residual, /u);
+  const none = await call(['--body', grown, '--judged', write('none.json', [])], dir);
+  assert.equal(none.status, 1);
+  assert.match(none.stdout, /^invalid: residual "- The footer is grey: the palette is not ready\." has no row$/mu);
+  assert.match(none.stdout, /^0 contradiction\(s\), 1 invalid row\(s\)$/mu);
+  const bad = await call(['--body', grown, '--judged', write('bad.json', [row(`- ${added}`, 'refund-window', RULE)])], dir);
+  assert.equal(bad.status, 1, 'one contradiction among kept and new fails the whole body');
+  const good = await call(['--body', grown, '--judged', write('good.json', { record: grew.record, rows: [row(`- ${added}`)] })], dir);
+  assert.deepEqual([good.status, good.stderr], [0, '']);
+  assert.equal(good.stdout, 'no residual contradicts a decision on record\nnote\t3 residuals kept from an earlier judgment of this record\n');
+  assert.deepEqual((await listed(grown, dir)).owed, []);
+});
+
+test('a contradiction, or a run with an invalid row, is never stored, and a contradiction found later drops what was kept', async (t) => {
+  const { dir, write } = storeProject(t);
+  const file = write('body.md', body());
+  const bad = [row(`- ${CONTRADICTING}`, 'refund-window', RULE), row(`- ${CLEAN}`)];
+  const { record } = await listed(file, dir);
+  for (const rows of [bad, [row(`- ${CONTRADICTING}`, 'no-such-id', 'x'), row(`- ${CLEAN}`)], [row(`- ${CLEAN}`)]]) {
+    assert.equal((await call(['--body', file, '--judged', write('judged.json', { record, rows })], dir)).status, 1);
+    assert.deepEqual((await listed(file, dir)).owed, [1, 2], 'a run that does not exit 0 stores nothing');
+  }
+  assert.equal((await call(['--body', file, '--judged', write('judged.json', { record, rows: rowsOf([CONTRADICTING, CLEAN]) })], dir)).status, 0);
+  assert.deepEqual((await listed(file, dir)).owed, []);
+  assert.deepEqual((await listed(file, dir, '--rejudge')).owed, [1, 2], '--rejudge ignores the store');
+  const unruled = await call(['--body', file, '--judged', write('empty.json', []), '--rejudge'], dir);
+  assert.equal(unruled.status, 1, 'with --rejudge a kept residual needs a row of its own');
+  assert.equal((await call(['--body', file, '--judged', write('judged.json', bad), '--rejudge'], dir)).status, 1);
+  assert.deepEqual(owedTexts(await listed(file, dir)), [`- ${CONTRADICTING}`]);
+});
+
+test('withKept adds a clean row for a kept residual with none of its own, and a row given counts', () => {
+  const residuals = [{ n: 1, residual: '- A.', kept: true }, { n: 2, residual: '- B.' }];
+  assert.deepEqual(withKept([row('- B.')], residuals), [row('- B.'), row('- A.')]);
+  const given = [row(' - A. ', 'one', 'R.'), row('- B.')];
+  assert.deepEqual(withKept(given, residuals), given);
+  assert.deepEqual(withKept({ rows: [] }, residuals), { rows: [] });
+  assert.deepEqual(withKept([null, 'text'], residuals), [null, 'text', row('- A.')]);
+});
+
+test('a run narrowed with --residual or --path stores nothing and reuses nothing', async (t) => {
+  const { dir, write } = storeProject(t);
+  const file = write('body.md', body('Accepted residuals', THREE));
+  const { record } = await listed(file, dir);
+  const judged = write('judged.json', { record, rows: rowsOf(THREE) });
+  for (const narrow of [['--path', 'docs/adr'], ['--residual', '1']]) {
+    assert.equal((await call(['--body', file, '--judged', judged, ...narrow], dir)).status, 1);
+  }
+  assert.deepEqual((await listed(file, dir)).owed, [1, 2, 3]);
+  await call(['--body', file, '--judged', judged], dir);
+  const part = await listed(file, dir, '--path', 'docs/adr');
+  assert.deepEqual([part.nothing, part.owed, part.residuals.some(({ kept }) => kept), part.record, part.notes], [false, [1, 2, 3], false, null, []]);
+  assert.deepEqual((await listed(file, dir, '--residual', '2')).owed, [2]);
+});
+
+// Over `file`, whose three residuals are kept, `what` leaves part of the record unread: nothing is stored or reused, and a note says so.
+async function keepsNothing(what, { dir, write, store }, file, ...extra) {
+  const held = readFileSync(store, 'utf8');
+  const part = await listed(file, dir, ...extra);
+  assert.deepEqual([part.owed, part.nothing, part.record], [[1, 2, 3], false, null], what);
+  assert.ok(part.notes.length > 1, `${what}: a note says what could not be read`);
+  assert.equal(part.notes.at(-1), 'no verdict is kept or reused while the problems noted here stand', what);
+  assert.equal((await call(['--body', file, '--judged', write('part.json', { record: part.record, rows: rowsOf(THREE) }), ...extra], dir)).status, 0, what);
+  assert.equal(readFileSync(store, 'utf8'), held, `${what}: nothing was stored`);
+}
+
+test('while a decision could not be read, or a scan failed, nothing is stored or reused, and a note says so', async (t) => {
+  const made = await judgedProject(t);
+  const index = path.join(made.dir, '.aidrian/knowledge/10-docs.json');
+  const broken = JSON.parse(readFileSync(index, 'utf8'));
+  broken.docs['gone.md'] = { summary: 'gone', tags: [] };
+  const other = (marker) => `${DOC}\n${marker.replace('refund-window', 'other')}\n`;
+  const breaks = [
+    ['an indexed doc that is not there', index, JSON.stringify(broken)],
+    ['a marker that does not parse', path.join(made.dir, 'docs/a.md'), other(MARKER.replace('status=unconfirmed', 'status=maybe'))],
+    ['the wording of a marker whose class no list holds', path.join(made.dir, 'docs/a.md'), other(`${MARKER.replace('class=product-behaviour', 'class=no-such-class')}\n${NEW}`)],
+  ];
+  for (const [what, at, text] of breaks) {
+    const before = readFileSync(at, 'utf8');
+    writeFileSync(at, text);
+    await keepsNothing(what, made, made.file);
+    writeFileSync(at, before);
+  }
+  rmSync(path.join(made.dir, '.git/HEAD'));
+  await keepsNothing('a git scan that failed', made, made.file);
+});
+
+test('while an ADR or the ADR folder could not be read, nothing is stored or reused', asRoot, async (t) => {
+  const made = storeProject(t);
+  const file = made.write('body.md', body('Accepted residuals', THREE));
+  const folder = path.join(made.dir, 'records');
+  mkdirSync(folder);
+  writeFileSync(path.join(folder, '0001-offer-window.md'), ADR);
+  assert.equal((await judge(made, file, rowsOf(THREE), '--adr', 'records')).status, 0);
+  const unread = path.join(folder, '0002-unread.md');
+  writeFileSync(unread, ADR);
+  chmodSync(unread, 0o000);
+  await keepsNothing('an ADR that does not read', made, file, '--adr', 'records');
+  rmSync(unread);
+  chmodSync(folder, 0o000);
+  await keepsNothing('an ADR folder that does not read', made, file, '--adr', 'records').finally(() => chmodSync(folder, 0o755));
+});
+
+test('rows judged against another record exit 1, and rows that name no record keep nothing, as a note says', async (t) => {
+  const { dir, write } = storeProject(t);
+  const file = write('body.md', body('Accepted residuals', THREE));
+  const { record } = await listed(file, dir);
+  // A merge from the base branch brings a decision the rows never answered.
+  writeFileSync(path.join(dir, 'docs/a.md'), `${DOC}\nEvery export starts with a header row.\n${MARKER.replace('refund-window', 'export-header')}\n`);
+  const other = 'note\tno verdict was kept: the judged file does not name the record this run read\n';
+  const stale = await call(['--body', file, '--judged', write('judged.json', { record, rows: rowsOf(THREE) })], dir);
+  assert.equal(stale.status, 1);
+  assert.match(stale.stdout, /^invalid: the judged file answers another record than this run read: list again, and judge again$/mu);
+  assert.match(stale.stdout, /^0 contradiction\(s\), 1 invalid row\(s\)$/mu);
+  for (const [what, rows] of [['no record', { rows: rowsOf(THREE) }], ['a null record', { record: null, rows: rowsOf(THREE) }], ['rows alone', rowsOf(THREE)]]) {
+    const out = await call(['--body', file, '--judged', write('judged.json', rows)], dir);
+    assert.deepEqual([out.status, out.stdout], [0, `no residual contradicts a decision on record\n${other}`], what);
+  }
+  const later = await listed(file, dir);
+  assert.deepEqual(later.owed, [1, 2, 3]);
+  assert.notEqual(later.record, record);
+  assert.match((await call(['--body', file], dir)).stdout, new RegExp(`^record ${later.record}$`, 'mu'));
+});
+
+test('a store that does not read, or holds what the code does not know, keeps nothing, and the run still answers', async (t) => {
+  const { dir, write, file, store } = await judgedProject(t);
+  const residuals = THREE.map((each, index) => ({ n: index + 1, residual: `- ${each}` }));
+  const good = JSON.parse(readFileSync(store, 'utf8'));
+  for (const text of ['', '{', '[]', 'null', JSON.stringify({ ...good, version: 2 }), JSON.stringify({ kept: good.kept }), JSON.stringify({ version: 1, kept: true }),
+    JSON.stringify({ version: 1, kept: good.kept.map(({ residual }) => ({ residual })) }),
+    JSON.stringify({ version: 1, kept: good.kept.map((each) => ({ ...each, residual: { toString: 1 } })) }),
+    JSON.stringify({ version: 1, kept: good.kept.map((each) => ({ ...each, record: { toString: 1 } })) }), JSON.stringify({ version: 1, kept: [null, 'x', 7] })]) {
+    writeFileSync(store, text);
+    assert.deepEqual(markKept(residuals, store, good.kept[0].record), residuals, text);
+  }
+  writeFileSync(store, '{');
+  assert.deepEqual((await listed(file, dir)).owed, [1, 2, 3]);
+  rmSync(path.dirname(store), { recursive: true });
+  writeFileSync(path.dirname(store), 'a file where the folder goes');
+  assert.deepEqual((await listed(file, dir)).owed, [1, 2, 3]);
+  const out = await judge({ dir, write }, file, rowsOf(THREE));
+  assert.equal(out.status, 0, 'the verdict stands');
+  assert.match(out.stdout, /^note\tno verdict was kept: /mu);
+});
+
+test('saveVerdicts keeps the newest verdicts, writes only what changes, and never under another record', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-verdicts-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = path.join(dir, 'decisions', VERDICTS_FILE);
+  const [one, two] = ['a'.repeat(64), 'b'.repeat(64)];
+  const residuals = [{ n: 1, residual: '- A.' }];
+  const save = (record, extra) => saveVerdicts(store, record, { residuals, rows: [row('- A.')], clean: true, ...extra });
+  const saved = { lost: false, problem: null };
+  const held = () => JSON.parse(readFileSync(store, 'utf8')).kept;
+  assert.deepEqual(save(one, { clean: false, rows: [row('- A.', 'x')] }), saved);
+  assert.equal(existsSync(store), false, 'nothing to drop, nothing written');
+  save(one, { at: 'first' });
+  save(one, { at: 'second' });
+  assert.deepEqual(held(), [{ residual: residualHash('- A.'), record: one, at: 'first' }]);
+  assert.ok(existsSync(`${store}.lock.3.released`), 'each run took the store\'s lock, and released it');
+  save(two);
+  assert.equal(markKept(residuals, store, two)[0].kept, true);
+  save(one, { clean: false, rows: [row('- A.', 'x')] });
+  assert.deepEqual([markKept(residuals, store, one)[0].kept, markKept(residuals, store, two)[0].kept], [undefined, true], 'only that record\'s verdict is dropped');
+  const many = Array.from({ length: 1_100 }, (_, i) => `- ${i}.`);
+  save(one, { residuals: many.map((residual, i) => ({ n: i + 1, residual })), rows: many.map((residual) => row(residual)) });
+  assert.equal(held().length, 1_000);
+  assert.equal(held().at(-1).residual, residualHash('- 1099.'));
+});
+
+test('a clean run writes only the residuals its rows judged, so it restores none another run dropped meanwhile', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-verdicts-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = path.join(dir, 'decisions', VERDICTS_FILE);
+  const record = 'a'.repeat(64);
+  const residuals = [{ n: 1, residual: '- A.' }, { n: 2, residual: '- B.' }];
+  const kept = () => markKept(residuals, store, record).filter((each) => each.kept).map(({ n }) => n);
+  saveVerdicts(store, record, { residuals, rows: [row('- A.')], clean: true });
+  assert.deepEqual(kept(), [1]);
+  // This run read A as kept, and before it saves its row for B another run finds A contradicts a decision.
+  saveVerdicts(store, record, { residuals, rows: [row('- A.', 'one', 'R.')], clean: false });
+  saveVerdicts(store, record, { residuals, rows: [row('- B.')], clean: true });
+  assert.deepEqual(kept(), [2]);
+  const marked = residuals.map((each) => ({ ...each, kept: true }));
+  const rows = [row('- A.'), row('- B.')];
+  assert.deepEqual(saveVerdicts(store, record, { residuals: marked, rows, clean: true }), { lost: false, problem: null }, 'a residual with its own row needs no kept verdict');
+  assert.deepEqual(kept(), [1, 2]);
+});
+
+test('a clean run whose kept verdict another run dropped before it answered exits 1, with rows to save or none', async (t) => {
+  const { dir, write, file, store } = await judgedProject(t);
+  const held = readFileSync(store, 'utf8');
+  const { record } = JSON.parse(held).kept[0];
+  const judged = write('judged.json', '');
+  const read = fs.readFileSync;
+  // Another run drops every verdict once this one has read the store, as it reads its judged file.
+  fs.readFileSync = function readFileSync(name, ...rest) {
+    if (name === judged) rmSync(store, { force: true });
+    return read.call(this, name, ...rest);
+  };
+  syncBuiltinESMExports();
+  t.after(() => {
+    fs.readFileSync = read;
+    syncBuiltinESMExports();
+  });
+  for (const rows of [{ record, rows: rowsOf(THREE.slice(0, 1)) }, { record, rows: [] }, []]) {
+    writeFileSync(store, held);
+    writeFileSync(judged, JSON.stringify(rows));
+    const out = await call(['--body', file, '--judged', judged], dir);
+    assert.equal(out.status, 1, JSON.stringify(rows));
+    assert.match(out.stdout, /^invalid: a kept verdict was dropped while this run judged: list again, and judge again$/mu);
+    assert.equal(existsSync(store), false, 'nothing is kept from it');
+  }
+});
+
+// The store's next lock, taken by process `pid` of this machine; `release` lets it go.
+function lockHeldBy(pid, store) {
+  const next = 1 + Math.max(0, ...fs.readdirSync(path.dirname(store)).map((name) => Number(/\.lock\.(\d+)$/u.exec(name)?.[1] ?? 0)));
+  const name = `${realpathSync(path.dirname(store))}/${VERDICTS_FILE}.lock.${next}`;
+  writeFileSync(name, JSON.stringify({ pid, host: hostname(), nonce: 'other' }));
+  return { name, release: () => writeFileSync(`${name}.released`, '') };
+}
+
+// Every wait for a lock ends at once: a pause moves the clock past it.
+function skipLockWaits(t) {
+  const now = Date.now;
+  let ahead = 0;
+  t.mock.method(Date, 'now', () => now() + ahead);
+  t.mock.method(Atomics, 'wait', () => {
+    ahead += 60_000;
+    return 'timed-out';
+  });
+}
+
+// Every way the store's lock cannot be taken, as a function that sets it up and gives the one that takes it down.
+const UNWRITABLE = 'a folder that cannot be written';
+const NO_LOCK = {
+  'held by another run': (t, store) => {
+    skipLockWaits(t);
+    return lockHeldBy(process.pid, store).release;
+  },
+  [UNWRITABLE]: (t, store) => {
+    chmodSync(path.dirname(store), 0o555);
+    return () => chmodSync(path.dirname(store), 0o755);
+  },
+  'a lock that cannot be created': (t, store) => {
+    const write = fs.writeFileSync;
+    const swap = (fn) => {
+      fs.writeFileSync = fn;
+      syncBuiltinESMExports();
+    };
+    swap((name, ...rest) => {
+      if (String(name).includes(`${path.basename(store)}.lock.`)) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      return write(name, ...rest);
+    });
+    return () => swap(write);
+  },
+};
+
+// A store that holds a verdict of each of THREE, and `save`, which takes a judged run's rows into it.
+function heldStore() {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-verdicts-'));
+  const store = path.join(dir, 'decisions', VERDICTS_FILE);
+  const residuals = THREE.map((each, index) => ({ n: index + 1, residual: `- ${each}`, kept: true }));
+  const save = (rows, options) => saveVerdicts(store, 'a'.repeat(64), { residuals, rows, clean: true, ...options });
+  save(rowsOf(THREE));
+  const before = readFileSync(store, 'utf8');
+  return { dir, store, save, before };
+}
+
+for (const [what, unlockable] of Object.entries(NO_LOCK)) {
+  test(`with no store lock, a run that needs a kept verdict fails, and one with rows of its own answers: ${what}`, what === UNWRITABLE ? asRoot : {}, (t) => {
+    const { dir, store, save, before } = heldStore();
+    const undo = unlockable(t, store);
+    t.after(() => {
+      undo();
+      rmSync(dir, { recursive: true, force: true });
+    });
+    const tryAgain = { code: LOCKED, message: /^the kept verdicts cannot be checked, so run this again, or list and judge with --rejudge: \S/u };
+    assert.throws(() => save([]), tryAgain, 'every row from the store');
+    assert.throws(() => save(rowsOf(THREE.slice(0, 1))), tryAgain, 'some rows from the store');
+    assert.throws(() => save(rowsOf(THREE.slice(0, 1)), { named: false }), tryAgain, 'rows alone, with no record');
+    for (const [rows, clean] of [[rowsOf(THREE), true], [[row(`- ${THREE[0]}`, 'refund-window', RULE)], false]]) {
+      const { lost, problem } = save(rows, { clean });
+      assert.deepEqual([lost, typeof problem], [false, 'string'], `its own rows, clean ${clean}`);
+    }
+    assert.equal(readFileSync(store, 'utf8'), before, 'and no run wrote anything');
+    undo();
+    assert.deepEqual(save([]), { lost: false, problem: null }, 'the same run answers once the lock can be taken');
+  });
+}
+
+test('a released lock, one whose process is gone, and none at all stop no run', (t) => {
+  const { dir, store, save, before } = heldStore();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const answers = (why) => assert.deepEqual(save([]), { lost: false, problem: null }, why);
+  lockHeldBy(process.pid, store).release();
+  answers('released');
+  lockHeldBy(2 ** 31 - 1, store);
+  answers('its process no longer runs');
+  rmSync(path.dirname(store), { recursive: true });
+  mkdirSync(path.dirname(store));
+  writeFileSync(store, before);
+  answers('no lock was ever taken');
+});
+
+test('a judged run in a folder it may not write prints no verdict when it needs a kept one, and else answers with a note', asRoot, async (t) => {
+  let open = () => {};
+  // Registered first, so it runs before the project's folder is deleted.
+  t.after(() => open());
+  const { dir, write, file, store } = await judgedProject(t);
+  const judged = (rows, ...extra) => call(['--body', file, '--judged', write('judged.json', rows), ...extra], dir);
+  open = () => chmodSync(path.dirname(store), 0o755);
+  chmodSync(path.dirname(store), 0o555);
+  const needs = await judged([]);
+  assert.deepEqual([needs.status, needs.stdout], [1, '']);
+  assert.match(needs.stderr, /^the kept verdicts cannot be checked, .* --rejudge: EACCES: .*\n$/u);
+  const { record } = JSON.parse(readFileSync(store, 'utf8')).kept[0];
+  const own = await judged({ record, rows: rowsOf(THREE) }, '--rejudge');
+  assert.deepEqual([own.status, own.stderr], [0, '']);
+  assert.match(own.stdout, /^no residual contradicts a decision on record\n(?:.*\n)*note\tno verdict was kept: EACCES: /u);
+  const against = await judged([row(`- ${THREE[0]}`, 'refund-window', RULE)]);
+  assert.deepEqual([against.status, against.stderr], [1, '']);
+  assert.match(against.stdout, /^note\tan earlier verdict may still be kept, so list with --rejudge: EACCES: /mu);
+});
+
+test('a residual the body holds twice is never kept, and with no project folder nothing is', async (t) => {
+  const { dir, write } = await judgedProject(t);
+  assert.deepEqual((await listed(write('twice.md', body('Accepted residuals', [CLEAN, CLEAN])), dir)).owed, [1, 2]);
+  const bare = project(t, { folder: false });
+  const file = bare.write('body.md', body('Accepted residuals', THREE));
+  assert.equal((await call(['--body', file, '--judged', bare.write('judged.json', rowsOf(THREE))], bare.dir)).status, 0);
+  assert.deepEqual((await listed(file, bare.dir)).owed, [1, 2, 3]);
+});
+
 test('pr-write runs the residuals check before the body ships, and the docs say what is judged', () => {
   const read = (file) => readFileSync(path.join(ROOT, file), 'utf8').replace(/\s+/gu, ' ');
   const skill = read('plugins/aidrian/skills/pr-write/SKILL.md');
@@ -499,7 +940,12 @@ test('pr-write runs the residuals check before the body ships, and the docs say 
   assert.match(read('docs/config.md'), /`aidrian decisions list`, `set`, `undo`, and `residuals` read it from the working copy/u);
   assert.match(read('docs/config.md'), /`aidrian decisions residuals` reads `residuals\.section` too/u);
   assert.match(read('docs/project-folder.md'), /`aidrian decisions residuals` sets a pull request body's accepted residuals against these markers/u);
-  assert.match(read('plugins/aidrian/skills/knowledge/references/handoff.md'), /- `residual_rows` \(`product-manager`/u);
+  assert.match(read('plugins/aidrian/skills/knowledge/references/handoff.md'), /- `residual_rows` \(`product-manager`.*? per owed residual\./u);
+  assert.match(step, /every residual was judged against this record/u);
+  assert.match(step, /the owed residuals alone/u);
+  assert.match(step, /another `record` than the run reads exits 1: run step 1 again, and judge again/u);
+  assert.match(step, /`\{ "record": <step 1's record>, "rows": \[\.\.\.\] \}`.*`aidrian decisions residuals --body <file> --judged <that file>`, with the same `--adr <folder>` as step 1/u);
+  assert.match(step, /An exit 1 that says `the kept verdicts cannot be checked` judged nothing: run the same command again/u);
   assert.match(step, /never reworded on this branch to make a residual pass/u);
   assert.match(step, /one line of why stays in the body/u);
   assert.match(step, /an ADR whose Status starts `Superseded` is skipped/iu);

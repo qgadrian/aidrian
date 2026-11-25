@@ -425,5 +425,14 @@ export const wakesOnReport = (host, child) => host.capabilities.wakesOnChildRepo
 // child agent's report (wakesOnReport) or with the notice of a shell's end (`capabilities.wakesOnTaskEnd`).
 export const wakesOnEnd = (host, child) => wakesOnReport(host, child) || host.capabilities.wakesOnTaskEnd?.taskTypes?.includes(child?.type) === true;
 
+// A background task's id, as a host's payloads name one and `aidrian wait` takes one.
+export const TASK_ID = /^[\w-]+$/u;
+
+// The longest one wait call may last on every host, in seconds: the shortest `capabilities.waitCall` of one.
+export const WAIT_CALL_SECONDS = Math.min(...HOSTS.flatMap((host) => host.capabilities.waitCall?.seconds ?? []));
+
+// Whether `aidrian wait` can wait for `child`, a background task, on `host` (`capabilities.taskOutput`).
+export const waitsFor = (host, child) => host.capabilities.taskOutput?.taskTypes?.includes(child?.type) === true;
+
 // What each host says about the tracker guard, as { host, ...capability }.
 export const trackerGuards = (hosts = HOSTS) => hosts.map((host) => ({ host, ...host.capabilities.trackerGuard }));

@@ -78,7 +78,12 @@ At the start of every session and subagent, the hook prints:
   `.claude/settings.json`, and the user's `settings.json` that sets it holds no such line, or, with none set,
   `includeCoAuthoredBy` is `false`. `{ "attribution": { "pr": "" } }` in `.claude/settings.json` settles it for a project;
 - one `Commands:` line when the first `aidrian` on the PATH is another copy of the plugin, such as an installed
-  release while a branch is tried: it names this copy's `aidrian` by its path, so the session runs the code it loaded;
+  release while a branch is tried: it names this copy's `aidrian` by its path, so the session runs the code it loaded.
+  The knowledge line, the `Lessons` reminder, the `Long commands:` line, and the
+  [background check](#background-check)'s message name a command by its bare name only when that runs this copy's, and
+  by its path otherwise, as one shell word, in single quotes when it holds a character a shell reads specially;
+- in a subagent, on a host that may move a long foreground command to the background, one `Long commands:` line
+  ([Waiting for a long command](#waiting-for-a-long-command));
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
 - in the main session only, while [`session.handoff.mode`](handoff.md#the-reminder) is `"auto"`, one `Handoff:` line:
@@ -179,7 +184,7 @@ A session that reaches a known server the key leaves out hears it at the start.
 | Automatic lessons from the stop hook and the blocking rules | `"lessons": { "auto": false }` |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
-The knowledge, names, and lessons start lines and the [announce check](#announced-work) have no switch; they act only inside a project folder.
+The knowledge, names, lessons, and `Long commands:` start lines and the [announce check](#announced-work) have no switch; they act only inside a project folder.
 The [review-loop check](#review-loop-check) has no switch of its own: it follows `github.reviewLoop`.
 The [merge hand-back check](#merge-hand-back-check) has no switch: it acts only on a refusal the gate printed in the turn.
 The main-checkout start lines follow the commit guard, so they are off with it.
@@ -1477,10 +1482,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   writes anything and names a target that climbs with `..` from a folder it names, as `<worktree>/a/out/../x`,
   `"$d/../x"`, or `~/a/../x`, by a file tool, a redirect, a writer, a glob, a removal, a mode change, or a link, is
   refused first, whatever the folder is: the system takes that `..` from where a link there leads, and the guard's
-  readers fold it as text, so it names the path without `..` instead. A target that starts with `..` climbs from the
-  call's own folder, which the host names as the system resolves it, and is placed as usual. In an interpreter's code,
-  where a quote or an escape may end a path anywhere, any `/..` counts, `../../x` and `a/..draft` included. It writes
-  only:
+  readers fold it as text, which may name another file. The refusal allows one way on, only where the session may
+  write: the same call with each path it names spelled as the plain path it really has, with no `..`, or, where a script
+  only writes the quoted text as a file's content, that file through the host's file tool. A target that starts with
+  `..` climbs from the call's own folder, which the host names as the system resolves it, and is placed as usual. In an
+  interpreter's code, where a quote or an escape may end a path anywhere, any `/..` counts, `../../x` and `a/..draft`
+  included, in text the code only puts in a file too, such as an import; the refusal quotes the run of characters around
+  the first one. It writes only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names: a linked worktree from any folder inside it, such as a package of a
     monorepo, and the main checkout only from its own top, so a removed worktree's folder left as a plain one inside the
@@ -1642,7 +1650,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `--output <file>` on any subcommand, as `git log`, `show`, or `diff`, and `-o` or `--output-directory` of
     `git format-patch`, and `-o` of `git archive`, alone, attached, or last in a cluster), and the file
     `git bundle create` writes, when outside the places, or when built at run time; a relative name lies in the folder
-    every leading `-C` moves to, the last one included; the forge CLI's, which its adapter declares
+    every leading `-C` moves to, the last one included; the plan `aidrian plan set` and `record` edit
+    ([Marking a plan](project-folder.md#marking-a-plan)), the word right after the action, read as the path it is written as,
+    whatever `--project` or environment the call names, when outside the places; a call that may be one of the two, when its
+    subcommand, its action, and its file are not each one word written out, so when one is missing, an option, built at run
+    time, or a glob, or holds a brace, a parenthesis, or a leading `~` or `=`, quoted or not, each in a call that names
+    aidrian, or aidrian's script for node to run, in plain words: what a program or script built at run time runs is not
+    read; the forge CLI's, which its adapter declares
     (`gh auth setup-git`, `login`, `logout`, `switch`, and `refresh`, `gh config set`, and `gh extension install` on
     GitHub); each host's own config subcommands, which its adapter declares (`configCommands`: `claude mcp add`,
     `claude config set`, `claude plugin install`, and `claude plugin marketplace add` for Claude Code, `codex mcp add`,
@@ -2069,8 +2083,11 @@ A subagent that ends its turn goes idle. Claude Code wakes it with a notice when
 but a background agent it started, such as a reviewer resumed with SendMessage, cannot hand its report back to an idle
 agent, and the work waiting on that report stalls until someone messages it.
 So when a subagent stops while one of its own background tasks still runs, the stop hook sends it back, naming each task,
-to wait for it in the foreground: poll it with a foreground command whose loop ends on its own before the command's timeout,
-and repeat the call until the task ends, or stop it with `TaskStop` when it should not outlive the turn.
+to wait for it in the foreground, or stop it with `TaskStop` when it should not outlive the turn. For a shell on a host
+whose output `aidrian wait` can read, the message names `aidrian wait <id>`, and what its exits 3 and 2 ask for
+([Waiting for a long command](#waiting-for-a-long-command));
+any other task is polled with a foreground command whose loop ends on its own before the command's timeout, repeated
+until the task ends. On a host that declares one, the message names the limit past which it may move a foreground command.
 
 One send-back did not hold. A foreground wait that outlives its timeout is moved to the background, so at the next stop it
 is one more running task, and some agents answered the send-back by arming a Monitor, another task, and ending the turn.
@@ -2107,6 +2124,44 @@ it started in the background or was moved there at its timeout; an async Agent l
 `resumedAgentId`. A result's text never counts, so a command's output or an agent's report that quotes a launch line claims nothing.
 Reading, waiting on, or stopping another agent's task, such as tailing its output file, does not make it the subagent's own.
 A peer teammate is never a child: a message wakes it. A payload without `background_tasks`, such as Codex's, checks nothing.
+
+## Waiting for a long command
+
+A host may move a subagent's foreground command to the background once it ran for a while, whatever timeout the call asks
+for. Such a host declares it in its adapter (`capabilities.foregroundLimit` and `capabilities.waitCall`), and every subagent
+on it that starts inside a project folder gets one `Long commands:` [start line](#start-lines): the limit, that a long
+push or CI wait is expected to land there, and how to wait for it. Outside one it gets none, as it gets no other start
+line. The line says "may", since a host can move the commands of one kind of subagent only. The agent sources and skills
+name no number, but for the project run's loop, which a test holds to the adapter's. Claude Code is the one host that
+declares it ([Long commands](providers/claude-code.md#long-commands)).
+
+`aidrian wait <task id> [--max-wait SECONDS]` waits in one call for such a shell to end, for at most the host's
+`waitCall`, 150 seconds on Claude Code, by default. Its first line is `ended <id>`, or
+`running <id>: run the command again to keep waiting, unless the host says the task ended`; an ended task's second is
+`exit code: N`, `exit code: none, it was killed`, or `exit code: unknown` when the host wrote none. Then come the last
+lines of the output, at most 40, each after `| ` and without its hidden characters but tabs, since a task can print
+anything, such as a line that says it ended. It starts no process and writes nothing.
+Setting the machine's clock during a wait does not change how long it lasts.
+
+| Exit | When |
+| --- | --- |
+| 0 | The task ended, whatever its own exit code |
+| 3 | It still runs when the wait is over: run the command again |
+| 2 | The id is no task id, the host has no output of it in this session or none that can be read, or the host gives no way to read one. Repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check, or report the wait as blocked |
+| 1 | Wrong arguments |
+
+It finds a task through the host's adapter alone (`capabilities.taskOutput`), and only in the output folder of the session
+its environment names, not of another one in the same project. It reads a regular file of this user's, reached through no
+link, and only its end. Its limits:
+
+- What it prints is a report, never evidence for a gate: its environment and the output file are the user's own to write.
+- Another agent of the same session can read a task's output by its id: the host's file does not say which agent started it.
+- A running command whose latest output is the host's own last line, such as `[exited with code 0]`, reads as ended.
+- A task the host never wrote an end for, as when the host itself ended, reads as running, and so does a killed one that
+  printed more as it shut down, since the host's line is then not the last. An end line in the middle of the file never
+  counts: a running command can print one. So an agent also stops waiting once the host says the task ended.
+- A test run the host moved to the background still leaves no row on the [check-run record](#check-runs), so a report
+  cannot claim it passed, whatever the wait printed.
 
 ## Announced work
 

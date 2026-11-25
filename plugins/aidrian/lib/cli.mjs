@@ -24,10 +24,12 @@ const COMMANDS = {
   review: './review/bench.mjs',
   quorum: './quorum.mjs',
   decisions: './decisions-cli.mjs',
+  plan: './plan-cli.mjs',
   report: './report.mjs',
   project: './project-run-cli.mjs',
   'shell-init': './shell-init.mjs',
   test: './test-changed.mjs',
+  wait: './wait-cli.mjs',
 };
 
 // The switch only test code sets (test/cli-in-process.mjs), before it imports this module, to call runCli in its own

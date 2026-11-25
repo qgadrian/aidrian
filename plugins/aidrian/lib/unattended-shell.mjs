@@ -13,7 +13,7 @@ import { configCommands } from './hosts/index.mjs';
 import { readings } from './package-runner.mjs';
 import { isFolderIn } from './rules/main-checkout/bash-writes.mjs';
 import { WRITERS, written } from './rules/main-checkout/writers.mjs';
-import { readGit, walkCommands } from './shell-lex.mjs';
+import { aidrianArgs, readGit, walkCommands } from './shell-lex.mjs';
 
 // Programs, besides each host's own (hosts/index.mjs configCommands) and the forge CLI's (forges/index.mjs
 // forgeConfigCommands), whose subcommands write the user's config, login, or jobs. `valueOptions` are the global options
@@ -75,7 +75,8 @@ export const expand = expandKnown;
 // { dynamic, links, programs, manifests, removed, text }.
 //   - dynamic: each target built from a variable or a command, { text, folder }, `text` as expand gives it.
 //   - links: each path a link the command makes points at, { from, to, folder }.
-//   - programs: each write a program makes to its own config, { file, folder, text } or { what, text }.
+//   - programs: each write a program makes to its own config, { file, folder, text } or { what, text }, with `literal` true
+//     for a file the program opens as it is spelled, which is never expanded.
 //   - manifests: each target that may be a review manifest's name, { text, folder, how, sources }, with `mode` true for
 //     a `mkdir` that sets the folder's mode.
 //   - removed: each folder `rmdir` removes, { text, folder }, which no other reader names.
@@ -110,7 +111,7 @@ export function shellWrites(command, cwd, env) {
     }
     found.links.push(...linksOf(program, args, folder, env, command));
     for (const write of programWrites(segment, invocation, folder)) {
-      found.programs.push(write.file ? { ...write, file: expand(write.file, env, command) } : write);
+      found.programs.push(write.file && !write.literal ? { ...write, file: expand(write.file, env, command) } : write);
     }
   }
   return found;
@@ -179,10 +180,13 @@ export function runsDeclared(each, program, words) {
 
 // The config each program call in a command writes: `git config` by its scope (configForm), any key that makes git run
 // a program (attempt-clone.mjs PROGRAM_KEYS) at any scope, the folders `git worktree add`, `git clone`, and `git init`
-// make, the forge CLI's and each host's own config subcommands, SHARED_COMMANDS, PUBLISH_COMMANDS, crontab, and launchctl.
+// make, the forge CLI's and each host's own config subcommands, SHARED_COMMANDS, PUBLISH_COMMANDS, crontab, and launchctl;
+// and the local plan `aidrian plan` edits (planTarget).
 function programWrites(segment, invocation, folder) {
   const shown = [invocation.program, ...plainWords(invocation.args)].join(' ').slice(0, 120);
   if (invocation.program === 'git') return gitWrites(readGit(segment), folder, shown);
+  const plan = planTarget(invocation, folder, shown);
+  if (plan.length > 0) return plan;
   // Through a package runner, each program it may run (package-runner.mjs readings), as `npx codex login` runs codex,
   // and `npx npm publish codex` both npm's publish and codex: the first that writes config counts.
   for (const { program, args: words } of readings(invocation.program, plainWords(invocation.args))) {
@@ -190,6 +194,32 @@ function programWrites(segment, invocation, folder) {
     if (writes.length > 0) return writes;
   }
   return [];
+}
+
+// The actions of `aidrian plan` that edit the plan they name.
+const PLAN_EDITS = ['set', 'record'];
+// Whether the shell passes `token` on as the one word it is written as. The lexer keeps no quotes, so a word the shell
+// would expand unquoted counts as expanded: one with a glob, brace, or parenthesis, or a `~` or `=` at its start.
+const asWritten = (token) => Boolean(token) && !token.dynamic && !/^[~=]|[*?[\]{}()]/u.test(token.text);
+
+// The plan `aidrian plan set` or `record` edits, whatever project or environment the call names: the word right after the
+// action, as the command takes its first operand there, and the path it opens is that word as written (`literal`).
+// One rule: a call that may be one of the two is refused unless its subcommand, its action, and its file are each one word
+// as written (asWritten), and the file no option, since a word the shell builds may be, or split into, any of them.
+function planTarget(invocation, folder, shown) {
+  const other = (token, names) => !token || (asWritten(token) && !names.includes(token.text));
+  return planCalls(invocation).flatMap(([subcommand, action, file]) => {
+    if (other(subcommand, ['plan']) || (asWritten(subcommand) && other(action, PLAN_EDITS))) return [];
+    if ([subcommand, action, file].every(asWritten) && !file.text.startsWith('-')) return [{ file: file.text, folder, text: shown, literal: true }];
+    return [{ what: 'what may be a local plan `aidrian plan` edits, whose subcommand, action, and file are not each one word written out, the file right after the action, with no variable, glob, brace, parenthesis, or `~`, so which plan it edits cannot be told', text: shown }];
+  });
+}
+
+// The first three words of each call to aidrian that `invocation` names: run as `aidrian` by any path, or by node, whose
+// options may take a value, with a word that is aidrian's script. What a program or script built at run time runs is not read.
+function planCalls({ program, args }) {
+  if (program === 'aidrian') return [args.slice(0, 3)];
+  return args.flatMap((token, at) => (aidrianArgs({ program, args: [token] }) ? [args.slice(at + 1, at + 4)] : []));
 }
 
 // The config one program call with the arguments `words` writes, as programWrites reads it, shown as `shown`.

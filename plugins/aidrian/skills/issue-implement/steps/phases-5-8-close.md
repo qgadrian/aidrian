@@ -43,7 +43,8 @@ The `pr-write` skill owns the title, the body, and the publishing.
 
 **Integration review.** A plan with an `INTEGRATION-REVIEW` slice runs it on the draft, by the `orchestration` skill § 3 step 3:
 the `pr-review` skill on the assembled branch, then the `pr-review-fix` skill for its `fix_now` findings, one commit per fix, pushed.
-The review itself commits nothing. Set the slice's `status: complete`, with the review's verdict in `notes`.
+The review itself commits nothing. Set the slice's `status: complete`, with the review's verdict in `notes`:
+on a local plan, `aidrian plan set <plan> INTEGRATION-REVIEW complete --note '<verdict, on one line>'`.
 When git tracks the plan, `planning-agent` makes that edit under the `orchestrator`, and `doc-updater` commits it alone
 with a `docs` subject and pushes it. `doc-updater` also makes the `pr-write` skill's commit of the pull request's number on the decision markers.
 No slice owns either commit, and no other commit goes without an owning slice.

@@ -2,7 +2,9 @@
 // the rest, one line with the names to call the human and the AI, one voice line (push back with a reason; ask the human
 // plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
 // ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), for a
-// subagent while config.json `attribution.commit` lists effort, the `Agent-Effort:` trailer its commits carry (effortLine), and, for
+// subagent on a host that moves a long foreground command to the background, how long one may run and how to wait for it
+// (lib/wait-advice.mjs longCommandLine), and, while config.json `attribution.commit` lists effort, the `Agent-Effort:`
+// trailer its commits carry (effortLine), and, for
 // the main session only, a format line for chat replies, a handoff line while config.json `session.handoff.mode` is
 // "auto" (handoffLine), at most one `Handoff terminal:` line while this machine runs the background handoff route
 // (lib/shell-init.mjs terminalLine): first, when a shell startup file holds a block of the shell function that lets the
@@ -29,10 +31,11 @@
 // file the token goes to (`shellEnvFile`), which the driver removes after the session (`forgetShellEnv`), and last the attempt's marker, which the sandbox
 // proof waits for (lib/project-confine.mjs runConfine).
 
-import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { auditNudge } from '../lib/audits.mjs';
+import { binCommand, commandPath, firstOnPath } from '../lib/bin-command.mjs';
 import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { ageDays, parseDecisions } from '../lib/decisions.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
@@ -48,8 +51,8 @@ import { confinedShellVars, confinedTokenVars } from '../lib/project-start.mjs';
 import { recordTokenFile, writeHandoff } from '../lib/project-token.mjs';
 import { noteOrigin } from '../lib/session-origins.mjs';
 import { terminalLine } from '../lib/shell-init.mjs';
+import { longCommandLine } from '../lib/wait-advice.mjs';
 
-const BIN = path.resolve(import.meta.dirname, '../bin');
 // The main session only: its replies are read by the human, while a subagent's report feeds commits and pull requests.
 const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to aid scanning; never in commits, pull requests, docs, or code.';
 // Claude Code only, unless its settings already drop the footer (footerLine).
@@ -86,12 +89,12 @@ export async function handle(input) {
   const human = JSON.stringify(config.names.human);
   const names = `Names: call the human ${human} and yourself ${JSON.stringify(ai)}, in replies and questions alike; never "I", "me", "my", "you", or "your".`;
   const footer = footerLine(project.root, process.env, input);
-  const commands = commandsLine(process.env);
+  const commands = commandsLine();
   const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}${tokenLine ? `\n${tokenLine}` : ''}`;
 
   if (subagent) {
-    const effort = effortLine(input, project, config);
-    print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: effort ? `${lines}\n${effort}` : lines } }));
+    const additionalContext = [lines, longCommandLine(detectHost({ input })), effortLine(input, project, config)].filter(Boolean).join('\n');
+    print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext } }));
   } else {
     await mainSessionOutput(input, project, { lines, config, buckets });
   }
@@ -260,33 +263,10 @@ function footerLine(root, env, input) {
 // When the first `aidrian` on PATH is another copy of the plugin, such as an installed release while this copy is a
 // branch under test, a bare `aidrian` runs that copy's code and not this one's: one line names this copy's by its path.
 // Nothing when this copy's comes first, or when none is on PATH, where the knowledge line already names commands by path.
-function commandsLine(env) {
-  const real = (dir) => {
-    try {
-      return realpathSync(dir);
-    } catch {
-      return null;
-    }
-  };
-  const own = real(BIN);
-  for (const dir of (env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
-    try {
-      accessSync(path.join(dir, 'aidrian'), constants.X_OK);
-    } catch {
-      continue;
-    }
-    if (real(dir) === own) return null;
-    const full = path.join(BIN, 'aidrian');
-    return `Commands: the aidrian on PATH, in ${dir}, is another copy of this plugin; run this session's as ${/\s/.test(full) ? `"${full}"` : full}.`;
-  }
-  return null;
-}
-
-// The bare name when the plugin's bin/ is on PATH; the full path otherwise, so the line works on either host.
-function binCommand(name) {
-  if ((process.env.PATH ?? '').split(path.delimiter).includes(BIN)) return name;
-  const full = path.join(BIN, name);
-  return /\s/.test(full) ? `"${full}"` : full;
+function commandsLine() {
+  const first = firstOnPath('aidrian');
+  if (first === null || first.own) return null;
+  return `Commands: the aidrian on PATH, in ${first.dir}, is another copy of this plugin; run this session's as ${commandPath('aidrian')}.`;
 }
 
 // Hands the host the environment of a confined attempt's sandboxed commands, when this session is one, then its forge

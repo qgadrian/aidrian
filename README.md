@@ -194,6 +194,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian check` | Checks the project folder and its indexes. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
 | `aidrian lint` | Lints the project's skills, agents, paths, knowledge size, banned terms, the review config, and persona docs. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
 | `aidrian state` | Prints the state folder. | [Local state](docs/project-folder.md#local-state) |
+| `aidrian plan` | Marks a local plan's slice, or the plan itself, with its status, and records an outcome that changes no slice. | [Marking a plan](docs/project-folder.md#marking-a-plan) |
 | `aidrian worktree new` | Creates a task worktree. | [Task worktrees](docs/project-folder.md#task-worktrees) |
 | `aidrian worktree cleanup` | Removes the task worktrees whose work merged. | [Task worktrees](docs/project-folder.md#task-worktrees) |
 | `aidrian pr await-review` | Waits for the review bot. | [`pr-review-loop`](plugins/aidrian/skills/pr-review-loop/SKILL.md) |
@@ -202,6 +203,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian pr auto-merge` | Says whether a session may merge a pull request unasked (`--check`), or whether it merged. | [Auto-merge](docs/config.md#auto-merge) |
 | `aidrian pr disposition` | Decides what to do with one review finding. | [`pr-review`](plugins/aidrian/skills/pr-review/SKILL.md) |
 | `aidrian test changed` | Runs only the test files a change touches, the local check before a push; CI runs the full suite. | [Push first](docs/hooks.md#push-first) |
+| `aidrian wait` | Waits in one call for a command the host moved to the background, and prints its exit code and the end of its output. | [Waiting for a long command](docs/hooks.md#waiting-for-a-long-command) |
 | `aidrian commit-msg` | Checks a commit message. | [Commit messages](docs/hooks.md#commit-messages) |
 | `aidrian pre-commit` | Refuses a commit in the main checkout, one that newly stages a git-ignored file, or one that adds a conflict marker, while `git.mainCheckout.guard` is on. | [Commit guard](docs/hooks.md#commit-guard) |
 | `aidrian lesson` | Keeps the lesson inbox. | [Lessons](docs/lessons.md#commands) |
@@ -214,7 +216,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian decisions list` | Lists the decisions agents made alone, from the markers in the indexed docs. | [Decision markers](docs/project-folder.md#decision-markers) |
 | `aidrian decisions set` | Records the Human's answer on one decision. | [Decision markers](docs/project-folder.md#decision-markers) |
 | `aidrian decisions undo` | Puts back the wording one decision replaced and removes its lines, or refuses and writes nothing. | [Decision markers](docs/project-folder.md#decision-markers) |
-| `aidrian decisions residuals` | Sets a pull request body's accepted residuals beside the decisions on record and ADR consequences, and checks the judgment. | [Accepted residuals against decisions](docs/review.md#accepted-residuals-against-decisions) |
+| `aidrian decisions residuals` | Sets a pull request body's accepted residuals beside the decisions on record and ADR consequences, checks the judgment, and keeps each clean verdict while the residual and the record are unchanged. | [Accepted residuals against decisions](docs/review.md#accepted-residuals-against-decisions) |
 | `aidrian report` | Shows what each agent type cost and read. | [The report](docs/dispatch-log.md#the-report) |
 | `aidrian report docs` | Lists the knowledge docs agents read. | [Doc reads](docs/dispatch-log.md#doc-reads) |
 | `aidrian report sessions` | Shows what each session cost. | [Sessions](docs/dispatch-log.md#sessions) |

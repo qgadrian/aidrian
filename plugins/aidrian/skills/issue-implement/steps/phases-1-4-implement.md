@@ -39,6 +39,8 @@ The review-only `INTEGRATION-REVIEW` slice never enters this loop: phase 7 runs 
 For each slice:
 
 1. **Plan state.** Read the plan again and set the slice's `status: in_progress`. Step 9 sets `status: complete`.
+   On a local plan, run `aidrian plan set <plan> <slice> in_progress`: it changes that line alone, and prints it.
+   Exit 2 changed nothing and says why: fix what it names, or hand that edit to `planning-agent`.
    The plan records no commit SHA: `git log` finds a slice's commit by its subject.
    When git tracks the plan file, as a design import's, the plan is one of the slice's files and goes in its commit;
    under the `orchestrator`, `planning-agent` makes this edit and step 9's.
@@ -83,7 +85,8 @@ For each slice:
 8. **Verification.** The owner's handoff lists each command from its closure gate in `commands_run`, with its result.
    A missing or failing command goes back to the owner. A slice that touches a critical flow also gets `e2e-runner`,
    in the foreground and alone, on that flow.
-9. **Commit.** Once the review is clean, set the slice's `status: complete` in the plan.
+9. **Commit.** Once the review is clean, set the slice's `status: complete` in the plan,
+   a local one with `aidrian plan set <plan> <slice> complete`.
    Then the slice's own agent makes exactly one Conventional Commits commit
    with the planned subject and a `Refs <ref>` body line, and pushes it, the first push with `-u`.
    In a project run's issue session, the push is `git push origin HEAD:refs/heads/<branch>`, in a call of its own.

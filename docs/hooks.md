@@ -2495,9 +2495,11 @@ The folder a run ran in is the call's own when nothing before it on its line mov
 `env -C <path>` on the run, or a `cd <path>` or `pushd <path>` that opens the line and that `&&` alone joins to the run.
 Any other move leaves the folder unknown, since no variable's value is read and a run may outlive a `cd` that failed:
 `env -C "$W"`, `cd "$W" &&`, `cd ~/x &&`, a `cd` that does not open the line, a negated one, and one with a `;`, `||`, pipe,
-`&`, `!`, or subshell between it and the run, such as `cd <path> && true; node --test`.
+`&`, `!`, or subshell between it and the run, such as `cd <path> && true; node --test` or `cd <path> && x | node --test`.
+So does a `builtin`, `eval`, `source`, `.`, or zsh's `chdir` before the run, since it may change the folder unseen.
 An absolute `env -C <path>` names the folder after any of those; a relative one is unknown when the shell's folder is.
 No redirection or substitution of the line is judged for it.
+An accepted residual: a function, an alias, or a program a variable names that changes the folder is not seen.
 Such a run's row has `folder: "unknown"`, null trees, and no untracked files, so it never holds the session's own
 checkout's. It supports no pull request body line, which is held to a tree: that refusal says the run's folder could not
 be told from its command, and to run it again with a literal absolute path.

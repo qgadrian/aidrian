@@ -287,6 +287,20 @@ test('a run whose folder the command does not tell records no tree, and any othe
     'cd /x && true | node --test',
     'cd /x && (node --test)',
     'cd /other < /missing && true; env -C sub node --test',
+    // A command that may change the folder where the lexer does not follow it.
+    'cd /a && builtin cd /b && node --test',
+    'builtin cd /b && node --test',
+    'builtin pushd /b && node --test',
+    'command builtin cd /b && node --test',
+    'command cd /b && node --test',
+    'eval "cd /b" && node --test',
+    'eval cd /b; node --test',
+    'command eval "cd /b" && node --test',
+    'source ./env.sh && node --test',
+    '. ./env.sh && node --test',
+    'cd /a && . ./env.sh && node --test',
+    'chdir /b && node --test',
+    'builtin cd /b && env -C sub node --test',
   ]) assert.deepEqual(runsOf(command), [unknown], command);
   // With no folder for the call itself, a run is in no known folder unless its own is written out.
   assert.deepEqual(runsOf('node --test', { cwd: null }), [unknown]);
@@ -308,6 +322,10 @@ test('a run whose folder the command does not tell records no tree, and any othe
     ['env -C sub node --test', '/w/sub'],
     ['true; node --test', '/w'],
     ['node --test; cd /x', '/w'],
+    ['node --test && eval "cd /x"', '/w'],
+    ['builtin cd /b && env -C /x node --test', '/x'],
+    ['. ./env.sh; env --chdir=/x node --test', '/x'],
+    ['exec 2>&1; node --test', '/w'],
   ]) {
     const [row] = runsOf(command);
     assert.deepEqual([row.tree, row.trackedTree, row.untrackedCode], [`tree of ${folder}`, `tracked of ${folder}`, ['lib/other.mjs']], command);

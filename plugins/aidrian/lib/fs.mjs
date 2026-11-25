@@ -270,11 +270,11 @@ export function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-// `name`, a key a file gave, as a quoted string for one line of output: JSON's quoting, which escapes C0 controls, with
-// the C1 controls and the line and paragraph separators escaped too, as `\uXXXX`, since JSON leaves them raw and a
+// `name`, a key or value a file gave, as a quoted string for one line of output: JSON's quoting, which escapes C0
+// controls, with DEL, the C1 controls and the line and paragraph separators escaped too, as `\uXXXX`, since JSON leaves them raw and a
 // terminal may read them as a line break or a control sequence.
 export function quoteName(name) {
-  return JSON.stringify(String(name)).replace(/[\u0080-\u009f\u2028\u2029]/gu, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return (JSON.stringify(name) ?? String(name)).replace(/[\u007f-\u009f\u2028\u2029]/gu, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 // The fields of the object `value`, at `at` in `file`, that `fields` names, as a new object. Each other field adds

@@ -126,7 +126,7 @@ export function checkAgents(value, file, errors, base, gateErrors = []) {
   for (const [name, gates] of Object.entries(value)) {
     const at = `agents.${name}`;
     const problem = agentNameProblem(name);
-    if (problem) lost(`"${at}": ${problem}`);
+    if (problem) lost(`${quoteName(at)}: ${problem}`);
     else if (!isObject(gates)) lost(`"${at}" must be an object with "deny", "allow", or both`);
     else {
       const kept = {};
@@ -137,7 +137,7 @@ export function checkAgents(value, file, errors, base, gateErrors = []) {
           kept[list] = patterns.filter((pattern) => {
             const bad = patternProblem(pattern);
             if (!bad) return true;
-            const message = `"${at}.${list}" has ${JSON.stringify(pattern)}: ${bad}`;
+            const message = `"${at}.${list}" has ${quoteName(pattern)}: ${bad}`;
             if (list === 'deny') lost(message);
             else errors.push(`${file}: ${message}`);
             return false;

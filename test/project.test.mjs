@@ -427,6 +427,32 @@ test('.aidrian.local.json escapes a C1 control or a line separator in an unknown
   assert.ok([...project.warnings, ...warnings].every((warning) => !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(warning)));
 });
 
+// DEL too, and the names the local file's errors print: a review.publish field, an agent name, and a rejected gate
+// pattern. Each stays the error it was; only its quoting changes.
+test('.aidrian.local.json escapes DEL, and a control in a review.publish field, an agent name, or a gate pattern, keeping each an error', (t) => {
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  const del = `x${String.fromCodePoint(0x7f)}y`;
+  const csi = `p${String.fromCodePoint(0x9b)}q`;
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({
+    [del]: 1,
+    review: { publish: { [csi]: 1 } },
+    agents: { [csi]: { deny: ['Bash'] }, explorer: { allow: [`Bash(git ${csi} *)`], deny: [`Read${csi}(`] } },
+  }));
+  const project = findProject(dir);
+  const { errors, warnings, gateErrors } = loadConfig(project);
+  assert.deepEqual([project.errors, project.warnings, warnings], [[], ['.aidrian.local.json: unknown key "x\\u007fy"'], []]);
+  assert.deepEqual(errors, [
+    '.aidrian.local.json: "review.publish.p\\u009bq" is the team\'s: "review.publish" in the local settings file may set only "summary": "counts" and "inline": false',
+    '.aidrian.local.json: "agents.p\\u009bq": an agent name is "*", "main", or an agent name such as explorer',
+    '.aidrian.local.json: "agents.explorer.allow" has "Bash(git p\\u009bq *)": Bash(...) takes a command prefix without "*", such as Bash(git push)',
+    '.aidrian.local.json: "agents.explorer.deny" has "Readp\\u009bq(": a pattern is a tool name such as Read, a name ending in "*" such as mcp__github__*, or Bash(<command prefix>)',
+  ]);
+  assert.deepEqual(gateErrors.map(({ problem }) => problem.split(':')[0]), ['"agents.p\\u009bq"', '"agents.explorer.deny" has "Readp\\u009bq("'], 'the gate errors stay gate errors');
+  assert.ok([...project.warnings, ...errors].every((line) => !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(line)));
+});
+
 // A field a newer release adds inside a setting this plugin reads: a warning, and the setting's own field still applies.
 // A bad value of the field it reads stays an error.
 const localFieldCases = [

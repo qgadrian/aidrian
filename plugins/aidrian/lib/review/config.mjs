@@ -443,7 +443,7 @@ function checkLocalPublish(publish, file, errors) {
   }
   const allowed = { summary: 'counts', inline: false };
   for (const [key, value] of Object.entries(publish)) {
-    if (!Object.hasOwn(allowed, key) || value !== allowed[key]) errors.push(`${file}: "review.publish.${key}" is the team's: ${LOCAL_PUBLISH}`);
+    if (!Object.hasOwn(allowed, key) || value !== allowed[key]) errors.push(`${file}: ${quoteName(`review.publish.${key}`)} is the team's: ${LOCAL_PUBLISH}`);
   }
 }
 

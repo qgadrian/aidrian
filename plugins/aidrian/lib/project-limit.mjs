@@ -4,11 +4,16 @@
 // reads none, or its record goes unrecognised, the session ends as any other with no result, and projectRun.issueHours
 // stops one that never ends.
 // A limit writes a `limit` row whose `until` every start waits for:
-//   - the reset time the host's record names, clamped to PAUSE_FLOOR .. PAUSE_CEILING from now, so no text stretches a
-//     pause past 6 hours, and a reset already past waits the floor;
+//   - the reset time the host's record names, at most PAUSE_CEILING after the record's own time (after the read, where
+//     the host gave none or one dated ahead), so no text stretches a pause past 6 hours, and a driver that comes back
+//     hours after the limit waits only the rest; and at least PAUSE_FLOOR from the read, as for a reset already past;
 //   - with no reset time, BACKOFF: 15, then 30, then 60 minutes for each pause in a row since the last result;
 //   - a limit met while a pause lasts joins it: the same `wait` number, its `until` moved later only by a named reset;
 //   - past LIMIT_WAITS pauses a run, a `halt` row instead, which an attended `aidrian project resume` lifts.
+// A pause ends early, with a `lifted` row (liftRow), only when the host's own record shows the signed-in account changed
+// after each limit the pause holds (`changed` of `limitOf`). No session's answer lifts one, a driver's least of all: an
+// answer shows nothing of a limit on another model. Each record's pause lifts once, so an account still limited pauses
+// again, as a new pause that counts toward LIMIT_WAITS. A pause over early is over for every reader below.
 // A host that continues its own session once a usage limit resets (`capabilities.projectStart.continuesAtLimit`) keeps
 // it: `wait` records the pause and waits on that session while the pause runs, and RESUME_GRACE past the later of its end
 // and the session's newest entry after the limit (recordedPauseRuns). A rate limit, a pause and its grace over with the
@@ -41,8 +46,19 @@ const timeOf = (text) => (typeof text === 'string' ? Date.parse(text) : Number.N
 export const limitRows = (found) => found.rows.filter((row) => row.event === 'limit' && Number.isInteger(row.wait) && row.wait >= 1
   && Number.isFinite(timeOf(row.until)) && Number.isFinite(timeOf(row.at)));
 
+// When each lifted pause of the run `found` was lifted, by its `wait` number: the time of its first `lifted` row.
+function liftTimes(found) {
+  const times = new Map();
+  for (const row of found.rows) {
+    const at = row.event === 'lifted' && Number.isInteger(row.wait) ? timeOf(row.at) : Number.NaN;
+    if (Number.isFinite(at) && !times.has(row.wait)) times.set(row.wait, at);
+  }
+  return times;
+}
+
 // The run's pauses, by their `wait` number: [{ wait, begin, end, key, kind }], `begin` its first row's time and `end` the
-// latest `until` any of its rows set, `key` and `kind` those of the row that set it.
+// latest `until` any of its rows set, or the time it was lifted, if sooner, `key` and `kind` those of the row that set
+// that `until`.
 export function pauses(found) {
   const byWait = new Map();
   for (const row of limitRows(found)) {
@@ -51,13 +67,15 @@ export function pauses(found) {
     const later = !was || timeOf(row.until) > was.end;
     byWait.set(row.wait, later ? { wait: row.wait, begin, end: timeOf(row.until), key: row.key, kind: row.kind } : { ...was, begin });
   }
-  return [...byWait.values()];
+  const lifts = liftTimes(found);
+  return [...byWait.values()].map((each) => ({ ...each, end: Math.min(each.end, lifts.get(each.wait) ?? Infinity) }));
 }
 
 // The pause on the run `found` at `now`: { until, key, kind, wait } of the pause that lasts longest, while it lasts, or
-// null.
+// null. A lifted pause never lasts, even read at a `now` before its lift, so no limit joins it.
 export function pauseOf(found, now) {
-  const longest = pauses(found).filter((each) => each.end > now).sort((a, b) => b.end - a.end)[0];
+  const lifts = liftTimes(found);
+  const longest = pauses(found).filter((each) => each.end > now && !lifts.has(each.wait)).sort((a, b) => b.end - a.end)[0];
   return longest ? { until: iso(longest.end), key: longest.key, kind: longest.kind, wait: longest.wait } : null;
 }
 
@@ -74,23 +92,26 @@ export function pausedTime(found, from, to) {
   return total;
 }
 
-// The limit a host adapter answered, `given`, as the run keeps it: { kind, until, at, after } with kind one of
-// LIMIT_KINDS, until a time or null (Infinity for a reset on another day), at the record's own time or null, and after
-// the time of the newest entry the session's record shows after the limit, or null when it shows none; null when the
-// answer names no limit or no kind the run knows.
+// The limit a host adapter answered, `given`, as the run keeps it: { kind, until, at, after, changed } with kind one of
+// LIMIT_KINDS, until a time or null (Infinity for a reset on another day), at the record's own time or null, after the
+// time of the newest entry the session's record shows after the limit, and changed the time the host's own entry there
+// says the signed-in account changed after it, each null when it shows none; null when the answer names no limit or no
+// kind the run knows.
 export function checkedLimit(given) {
   if (given === null || typeof given !== 'object' || !LIMIT_KINDS.includes(given.kind)) return null;
   const until = typeof given.until === 'number' && !Number.isNaN(given.until) ? given.until : null;
   const at = Number.isFinite(given.at) ? given.at : null;
   const after = Number.isFinite(given.after) ? given.after : null;
-  return { kind: given.kind, until, at, after };
+  const changed = Number.isFinite(given.changed) ? given.changed : null;
+  return { kind: given.kind, until, at, after, changed };
 }
 
-// When the pause for `limit` (checkedLimit) ends, from `now`, with `streak` the pauses in a row before it: its reset
-// time clamped to PAUSE_FLOOR .. PAUSE_CEILING from now, or the BACKOFF step for the streak when it names none.
+// When the pause for `limit` (checkedLimit) ends, read at `now`, with `streak` the pauses in a row before it: its reset
+// time, at most PAUSE_CEILING after the limit's own time, or after now when that is unknown or ahead, and at least
+// PAUSE_FLOOR from now; or the BACKOFF step for the streak, from now, when it names none.
 export function pauseEnd(limit, streak, now) {
-  const wanted = limit.until ?? now + BACKOFF[Math.min(streak, BACKOFF.length - 1)];
-  return Math.min(Math.max(wanted, now + PAUSE_FLOOR), now + PAUSE_CEILING);
+  if (limit.until === null) return now + BACKOFF[Math.min(streak, BACKOFF.length - 1)];
+  return Math.max(Math.min(limit.until, Math.min(limit.at ?? now, now) + PAUSE_CEILING), now + PAUSE_FLOOR);
 }
 
 // The pauses of the run `found` in a row: those whose rows come after its last `result` row, the last time a session got
@@ -117,6 +138,34 @@ export function recordedPauseRuns(found, key, attempt, limit, now) {
   const waits = new Set(limitRows(found).filter((row) => row.key === key && row.attempt === attempt && (row.record ?? null) === recordOf(limit)).map((row) => row.wait));
   const resumed = Number.isFinite(limit.after) ? Math.min(limit.after, now) : -Infinity;
   return pauses(found).some((each) => waits.has(each.wait) && Math.min(Math.max(each.end, resumed) + RESUME_GRACE, each.end + RESUME_CEILING) > now);
+}
+
+// The row that lifts the pause on the run `found` at `now`, or null: { event: 'lifted', wait, key, attempt, record, cause,
+// at }, `key`, `attempt`, and `record` those of the pause's first limit. `read(row)` answers the limit the session of the
+// `limit` row `row` last met, as the host's record shows it now (checkedLimit), or null. A pause lifts only when, for
+// every row that set, extended, or joined it, the host's own entry says the signed-in account changed after that limit
+// and no later than now: one that joined shows a limit too, and may be the new account's own. The limit a session shows
+// now must be one the pause holds: a newer one waits until `wait` has recorded it, so no lift spends a limit still to be
+// recorded. A row with no `record`, a record whose pause was lifted before, and a read that shows no limit, or one with
+// no time, lift nothing.
+export function liftRow({ found, now, read }) {
+  const lasting = pauseOf(found, now);
+  if (!lasting) return null;
+  const lifts = liftTimes(found);
+  const rows = limitRows(found).filter((row) => row.wait === lasting.wait);
+  const spent = limitRows(found).filter((row) => lifts.has(row.wait));
+  const holds = (list, row, record) => list.some((each) => each.key === row.key && each.attempt === row.attempt && each.record === record);
+  const liftable = (row) => {
+    if (holds(spent, row, row.record)) return false;
+    const limit = read(row);
+    // A row with no record, whose time is NaN, and a limit that shows no change, null, pass no comparison, and a limit
+    // with no time of its own is no record such a pause holds.
+    return limit !== null && holds(rows, row, recordOf(limit)) && limit.changed > Math.max(timeOf(row.record), limit.at) && limit.changed <= now;
+  };
+  if (!rows.every(liftable)) return null;
+  const [{ key, attempt, record }] = rows;
+  const cause = cleanText(`the host's record shows the signed-in account changed after the limit met by ${[...new Set(rows.map((row) => row.key))].join(', ')}`, CAPS.stop);
+  return { event: 'lifted', wait: lasting.wait, key, attempt, record, cause, at: iso(now) };
 }
 
 // The row that records the limit `limit` attempt `attempt` of issue `key` met, at `now`: { row, until } with `until` the

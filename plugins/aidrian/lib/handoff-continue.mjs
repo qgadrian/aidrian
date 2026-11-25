@@ -37,7 +37,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { baseBranchTip, commandConfig, committedConfig, machineSwitch, stateDirProblem } from './config.mjs';
+import { baseBranchTip, commandConfig, committedConfig, handoffModelErrors, machineSwitch, stateDirProblem } from './config.mjs';
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { foldCase, resolvedPath } from './fs.mjs';
 import { treeOf } from './git.mjs';
@@ -64,16 +64,16 @@ export const STALL_HOPS = 2;
 // Why a hop past what a chain floor records continues by no route.
 const CEILING_WHY = `a chain floor records at most ${CHAIN_CEILING} continuations and Done items, and this hop would pass that`;
 
-// Whether the background route may run for `project`: { ok: true, maxChain, mode } or { ok: false, why }. This machine turns it
-// on in the main checkout's local file (`handoff.background`, project.mjs localHandoffBackground), and the team in the config.json of
+// Whether the background route may run for `project`: { ok: true, maxChain, mode, models } or { ok: false, why }. This machine
+// turns it on in the main checkout's local file (`handoff.background`, project.mjs localHandoffBackground), and the team in the config.json of
 // the base branch, which resolves session.handoff.continue to "background", as `mode: "auto"` with no `continue` does:
 // a worktree's own config cannot. A machine whose file leaves the switch unset follows the team's `solo`
 // (config-local.mjs machineSwitch) only when the base branch's local ref commits it true and `forgeSolo(project)`, the
 // forge's read of it (lib/solo.mjs forgeSolo), says so too: a local ref may only refuse. Without that reader it is
 // false, so a caller that may start a session passes it; the session-length hook, which only words the reminder, passes
 // one that trusts the local ref. `maxChain` is the base branch's, at most BACKGROUND_HOPS, or Infinity for "unlimited",
-// and `mode` its session.handoff.mode. `working`, the config the
-// gate opens the continuation store with, must name the base branch's state.dir (config.mjs stateDirProblem): the store
+// `mode` its session.handoff.mode, and `models` its session.handoff.models, which no working copy or local file sets.
+// `working`, the config the gate opens the continuation store with, must name the base branch's state.dir (config.mjs stateDirProblem): the store
 // holds the chain floors and the kept copy, so a working copy that moves it could start a session held to no floor.
 // The store as the command resolves it, with `env`, must also be the one the base branch's config names under the host's
 // own environment (project.mjs defaultStateDir), so an XDG_STATE_HOME or HOME the command line sets cannot move it where
@@ -94,7 +94,7 @@ export function backgroundGate(project, working, env = process.env, { forgeSolo 
   }
   const limit = chainLimit(team.handoff.maxChain);
   const maxChain = Number.isFinite(limit) ? Math.min(limit, BACKGROUND_HOPS) : limit;
-  return { ok: true, maxChain, mode: team.handoff.mode };
+  return { ok: true, maxChain, mode: team.handoff.mode, models: team.handoff.models };
 }
 
 // Why the background route is off on this machine's side.
@@ -107,11 +107,13 @@ function switchOff(project) {
 // Whether the state folders `one` and `other` hold one continuation store: their real paths, in the case the disk folds to.
 const sameStore = (one, other) => sameFolder(storePath(one), storePath(other));
 
-// The team's session.handoff, from the config.json the base branch commits: { handoff, config } or { why }.
+// The team's session.handoff, from the config.json the base branch commits: { handoff, config } or { why }. An error under
+// session.handoff.models drops that field alone, as the merge did, and leaves the route on; any other turns it off.
 function teamHandoff(project) {
   const base = baseBranchConfig(project, 'session.handoff');
   if (base.why) return base;
-  if (base.errors.some((error) => error.includes('"session.handoff'))) return { why: 'the base branch\'s session.handoff has an error' };
+  const dropped = handoffModelErrors(base.errors);
+  if (base.errors.some((error, at) => error.includes('"session.handoff') && !dropped.has(at))) return { why: 'the base branch\'s session.handoff has an error' };
   return { handoff: base.config.session.handoff, config: base.config };
 }
 
@@ -146,8 +148,9 @@ const NO_GATE = Object.freeze({ ok: false, why: 'no project was given to read th
 // The route a handoff goes on by: { route, fallback, maxChain }. `override` is the command's --route, which may pick
 // `none`, `clear`, or `compact` whatever `configured` (session.handoff.continue) says, and `background` only when
 // `configured` is `background`. A route `host` does not list gives `none` with the fallback line that says why. The
-// background route asks `gateOf()`, backgroundGate's answer, and takes its `maxChain` and `mode`; when it says no, the handoff goes
-// on by the clear route where the host has it, else none, with its reason as the fallback line.
+// background route asks `gateOf()`, backgroundGate's answer, and takes its `maxChain`, `mode`, and `models`; when
+// it says no, the handoff goes on by the clear route where the host has it, else none, with its reason as the fallback
+// line.
 export function effectiveRoute(configured, host, override, gateOf = () => NO_GATE) {
   const route = override ?? configured;
   if (route === 'none') return { route, fallback: null };
@@ -160,7 +163,8 @@ export function effectiveRoute(configured, host, override, gateOf = () => NO_GAT
   if (route !== 'background') return { route, fallback: null };
   const gate = gateOf();
   const mode = gate.mode === undefined ? {} : { mode: gate.mode };
-  if (gate.ok) return { route, fallback: null, maxChain: gate.maxChain, ...mode };
+  const models = gate.models === undefined ? {} : { models: gate.models };
+  if (gate.ok) return { route, fallback: null, maxChain: gate.maxChain, ...mode, ...models };
   return byClear(host, gate.why);
 }
 
@@ -323,7 +327,7 @@ function decide({ found, store, session, routed, host, chainOf, env, now, run, w
 
   sweep(store, now);
   const ready = { host, found, slug, chain, hash, store, session, now };
-  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, mode: routed.mode, env, run, wait, cwd, home, root, mark });
+  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, mode: routed.mode, models: routed.models, env, run, wait, cwd, home, root, mark });
   return armed({ ...ready, route, fallback });
 }
 
@@ -374,7 +378,7 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // host's project start is confined, so its continuation would run outside its clone and sandbox; it pushes its work and
 // records its result instead (confinedIssue). No continuation carries an issue's tags.
 function startInBackground(ready) {
-  const { host, found, slug, chain, hash, store, session, now, maxChain, mode, env, run, wait, cwd, home, root, mark } = ready;
+  const { host, found, slug, chain, hash, store, session, now, maxChain, mode, models, env, run, wait, cwd, home, root, mark } = ready;
   // A second line of defence on a trust boundary: continueBrief decides this, before it reads the route, and decide, the
   // only caller, never reaches here for such a mark. Kept so a later caller cannot start an issue's continuation, before
   // any floor, mark, or start record.
@@ -416,12 +420,14 @@ function startInBackground(ready) {
   if (push.answer === 'denied') return fallBack(`no background session started, since ${push.message}`);
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');
-  const prompt = backgroundPrompt({ marker: { brief: found.path, slug, chain }, kept, sha256: hash, maxChain });
+  // The model and effort the start asks for, answered once: the line, the record, and the start's flags all take this answer.
+  const asked = safely(() => handoff.startChoice?.({ session, env, start, team: models?.[host.modelsKey] }));
+  const prompt = backgroundPrompt({ marker: { brief: found.path, slug, chain }, kept, sha256: hash, maxChain, asked: askedLine(host, asked) });
   const held = startHeld({
     session,
     driver,
     // `start`, the folder the push preflight judged, so the host starts there and never looks it up again.
-    launch: (hold) => handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait, start }),
+    launch: (hold) => handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait, start, asked }),
     stop: (id) => handoff.stopBackground?.({ id, env, run }),
     // A driver's last start may be one of its run's issues, which the run's caps count while it runs: the start gate's
     // read of the same record (run-driver.mjs drivenRunStart). Every other record waits for the host's listing.
@@ -429,7 +435,7 @@ function startInBackground(ready) {
     store,
     root,
     floor: { slug, chain: chain + 1, brief: found.path, route: 'background', progress, parent: session },
-    record: { sha256: hash, slug, brief: found.path, chain: chain + 1 },
+    record: { sha256: hash, slug, brief: found.path, chain: chain + 1, ...(asked ? { asked } : {}) },
     env,
     now,
   });
@@ -619,14 +625,31 @@ function startedLines(host, marker, { ending = null, stays = null, unhooked = fa
   const pointer = ending === 'switch' ? '' : ` ${laterOwner(marker)}`;
   // A start record an earlier version wrote, whose session started in the host's default mode: it may stop at a prompt.
   const mode = marker.mode === null ? ' It runs in the host\'s default permission mode, since this session\'s own could not be read, so it may stop at a permission prompt.' : '';
+  const asked = askedLine(host, marker.asked);
   return {
     exitCode: 0,
     out: [
       'continue: background',
-      `say: The brief ${marker.slug} continues in the new background session ${marker.id}${named}, started in ${marker.cwd}, with nothing to type: ${look}.${mode} It resumes from ${marker.brief}.${pointer} ${last}`,
+      `say: The brief ${marker.slug} continues in the new background session ${marker.id}${named}, started in ${marker.cwd}, with nothing to type: ${look}.${mode}${asked ? ` ${asked}` : ''} It resumes from ${marker.brief}.${pointer} ${last}`,
     ],
     err: [],
   };
+}
+
+// Where a field of a start's choice came from, as the line words it.
+const ASKED_FROM = { session: 'the handing-off session\'s', team: 'the team\'s config' };
+
+// The line that says which model and effort a background start asked for, for the say line and the first message, from
+// the host adapter's reading of `asked` alone, startChoice's answer or a start record's; '' when it reads none. It says
+// what the start asked for, never what the session runs in, and prints no value the reader dropped.
+export function askedLine(host, asked) {
+  const read = safely(() => host.capabilities.handoffContinue.readAsked?.(asked)) ?? {};
+  const parts = ['model', 'effort'].flatMap((field) => {
+    const from = read[`${field}From`];
+    if (from === 'host') return [`no ${field} (the host's default)`];
+    return typeof from === 'string' ? [`the ${field} ${read[field]} (${ASKED_FROM[from]})`] : [];
+  });
+  return parts.length ? `The start asked for ${parts.join(' and ')}.` : '';
 }
 
 // The pointer a say line leaves for after the session it names hands off in turn, which then stops: that line still
@@ -773,8 +796,8 @@ export function continuationContext({ marker, maxChain, source }) {
 // in the store, in place of the brief's own file, which may have changed since, and `sha256` the hash of those bytes.
 // `aidrian handoff verify` holds the copy to it and prints the bytes it hashed, and the session follows that output
 // alone, never a read of the file, which may change after the check. No Human reads the brief before it runs, so the
-// prompt says what the brief cannot ask for.
-export function backgroundPrompt({ marker, kept, sha256: hash, maxChain }) {
+// prompt says what the brief cannot ask for. `asked` is askedLine's line.
+export function backgroundPrompt({ marker, kept, sha256: hash, maxChain, asked = '' }) {
   const next = marker.chain + 1;
   return [
     `Handoff continuation: this session continues the work of the handoff brief ${marker.brief}, for ${marker.slug}, started in the background by the session that wrote it, as continuation ${countOf(next, maxChain)}.`,
@@ -789,6 +812,7 @@ export function backgroundPrompt({ marker, kept, sha256: hash, maxChain }) {
       'The one exception is the project\'s own, never the brief\'s: a pull request this session marked ready with `gh pr ready`, ' +
       'and for which `aidrian pr auto-merge <url> --check` then exits 0, is merged through the pr-auto-merge skill, as in any unattended run.',
     `A later brief for this work carries Chain: ${next}.`,
+    ...(asked ? [asked] : []),
   ].join('\n');
 }
 

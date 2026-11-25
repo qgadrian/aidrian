@@ -6,9 +6,9 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findLine, findSessions, heldSessions, listBackground, nameMatcher, sessionEnded, sessionFinished, startBackground, startFolder, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { attachLine, findLine, findSessions, heldSessions, listBackground, nameMatcher, readAsked, sessionEnded, sessionFinished, startBackground, startChoice, startFolder, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
 import { PROJECT_AGENTS, subagentEffort } from './claude-code-agents.mjs';
-import { configDir } from './claude-code-config.mjs';
+import { configDir, MODEL_CHOICES } from './claude-code-config.mjs';
 import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
@@ -18,7 +18,6 @@ import { accessProblem, cloneProblem, confineDomains, confineReads, forgetEnvFil
 import { trustProblem } from './claude-code-trust.mjs';
 import { responseObjects } from './response.mjs';
 
-const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
 const agentName = (env) => env.CLAUDE_CODE_AGENT || null;
 const effort = (env) => env.CLAUDE_EFFORT || null;
 // What a session in a linked worktree reads from the main checkout (the adapter's `mainCheckoutPaths`, below).
@@ -356,7 +355,8 @@ export default {
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,
     // the claude process, names the session before and after it. The background route starts a new session with
     // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, `startFolder`, under its name,
-    // agent, and effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by
+    // agent, and the model and effort `startChoice` answered, which `readAsked` reads back from a start record;
+    // `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by
     // hand when that failed, `findLine` how to find and stop one a start may have made that the gate cannot name,
     // `attachLine` and `attachCommand` say how to open one, and `sessionEnded` whether `claude agents --json --all` lists a
     // started one as done. `replaceTerminal` ends a session that handed off once its turn ends, so the shell function
@@ -367,9 +367,12 @@ export default {
         clear: 'type /clear, then any message',
         background: 'nothing to type, since a new session starts in the background and resumes from the brief by itself',
       },
-      startBackground: ({ session, slug, chain, env, prompt, hold, run, wait, start }) => startBackground({
-        session, slug, chain, env, prompt, hold, run, wait, start, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
+      startBackground: ({ session, slug, chain, env, prompt, hold, run, wait, start, asked }) => startBackground({
+        session, slug, chain, env, prompt, hold, run, wait, start, agent: agentName(env), model: asked?.model, effort: asked?.effort, efforts: MODEL_CHOICES.effort,
       }),
+      // The model and effort the start asks for, read once before the first message is built, and passed back as `asked`.
+      startChoice: ({ session, env, start, team }) => startChoice({ session, env, start, team, effort: effort(env) }),
+      readAsked,
       // The folder startBackground would start the new session in, which the gate's push preflight judges and passes back.
       startFolder: ({ session, env, run }) => startFolder({ session, env, run }),
       stopBackground: ({ id, env, run }) => stopBackground({ id, env, run }),
@@ -466,7 +469,7 @@ export default {
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),
       find: ({ cwd, name, env, run }) => findSessions({ cwd, name, env, run }),
       // Whether the session last met a usage or rate limit, from the host's own API error entry at the end of its
-      // transcript (hosts/claude-code-limit.mjs); unverified, as no live session has shown that entry.
+      // transcript (hosts/claude-code-limit.mjs), and whether its account-change entry came after it.
       limitOf: ({ session, cwd, env, home, now }) => transcriptLimit({ session, cwd, env, home, now }),
       // The session starts with autoContinueAtUsageLimit (claude-code-sandbox.mjs sandboxSettings), so the host waits
       // out a usage limit and goes on with its work: `wait` keeps a limited session it still lists running. Unverified

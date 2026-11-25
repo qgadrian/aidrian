@@ -69,7 +69,9 @@ export async function handle(input) {
 if (isMain(import.meta.url)) await runHook(handle);
 
 // The check-run rows of a finished call, appended to the session's record: all of them in the project of the call's
-// folder; with none there, each run in the project of the folder it runs in, as that project's config reads the line.
+// folder, one whose folder is unknown too, so a refusal can name it, though it supports no claim held to a tree; with
+// none there, each run in the project of the folder it runs in, as that project's config reads the line, and one whose folder is unknown
+// nowhere, since no project is known to hold it.
 async function recordCheckRuns(input, command) {
   const run = detectHost({ input }).shellRun?.(input.tool_response);
   if (!run?.finished) return;
@@ -100,7 +102,7 @@ async function recordCheckRuns(input, command) {
     const project = findProject(folder);
     if (project && !projects.has(project.root)) projects.set(project.root, project);
   }
-  const keeps = [...projects.values()].map((project) => [project, (folder) => findProject(folder)?.root === project.root]);
+  const keeps = [...projects.values()].map((project) => [project, (folder) => folder !== null && findProject(folder)?.root === project.root]);
   // The runs of the whole line: every run any config of the line, the defaults included, reads on it, each once, by its
   // command and folder, as often as the config that reads it most often does. So a run in no project, or one only another
   // project reads, counts too: the line's one count goes to a lone run only, and a count too high only withholds it.
@@ -108,7 +110,7 @@ async function recordCheckRuns(input, command) {
   for (const testing of [DEFAULTS.testing, ...keeps.map(([project]) => loadConfig(project).config.testing)]) {
     const seen = new Map();
     for (const { key, folder } of testRuns(command, input.cwd, testing)) {
-      const id = `${key}\u0000${folder ?? input.cwd}`;
+      const id = `${key}\u0000${folder ?? ''}`;
       seen.set(id, (seen.get(id) ?? 0) + 1);
     }
     for (const [id, count] of seen) most.set(id, Math.max(most.get(id) ?? 0, count));

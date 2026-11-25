@@ -7,7 +7,9 @@
 //   from-<session>.json        { slug, chain, brief, route, parent, at }              the chain floor of a session;
 //                              a background hop's adds { tree, done, stalls }, the progress it starts from;
 //                              `parent`, the session that handed off, is optional, and only the snapshot reads it
-//   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
+//   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made;
+//                              `asked`, the model and effort it asked for, is optional, and only the host adapter's
+//                              `readAsked` reads it: it never decides whether the record holds
 // A project run's start (lib/project-run-gate.mjs) starts a session from no brief: its floor's `brief` is null, and its
 // start record has `sha256` and `brief` null and `project`, { run, issue, attempt }, in their place.
 //   claim-<session>.json       { at, kept }       a gate run's claim on starting a session for it (claimStart)
@@ -471,12 +473,14 @@ const floorsOf = (store, session, now, names) => floorFiles(store, session, name
 // Records that `session` started a background session from the brief whose bytes hash to `sha256`: { sha256, slug,
 // brief, chain, id, session, name, cwd, mode }, where `id` is the id the gate names it by, `session` its full id or null,
 // `name` a plain name or null, and `mode` the permission mode it started in, null when the host's default, or left out
-// when the host does not say. A project run's start passes `sha256` and `brief` null and `project`, { run, issue,
+// when the host does not say. `asked` is the host adapter's startChoice answer, kept as given, or left out; isStarted
+// reads none of it, so no value of it voids the record that holds one start a session. A project run's start passes `sha256` and `brief` null and `project`, { run, issue,
 // attempt }. Returns the file, or null when the store is refused or the value has a wrong shape.
 export function noteStarted(store, session, started, { now = Date.now() } = {}) {
   const value = {
     sha256: started.sha256, slug: started.slug, brief: started.brief, chain: started.chain, ...(started.project === undefined ? {} : { project: started.project }),
-    id: started.id, session: started.session ?? null, name: started.name ?? null, cwd: started.cwd, ...(started.mode === undefined ? {} : { mode: started.mode }), at: now,
+    id: started.id, session: started.session ?? null, name: started.name ?? null, cwd: started.cwd, ...(started.mode === undefined ? {} : { mode: started.mode }),
+    ...(started.asked === undefined ? {} : { asked: started.asked }), at: now,
   };
   return isStarted(value) ? writeMarker(store, sessionFile('started', session), value) : null;
 }

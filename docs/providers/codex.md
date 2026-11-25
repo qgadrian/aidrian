@@ -266,9 +266,10 @@ The one-time steps before a run are in [Project run setup](../project-run-setup.
   minutes.` or `... try again at 3:04 PM.`, or `exceeded retry limit, last status: 429 Too Many Requests`; never a
   top-level `error` event, an item's output, or a message. Its reset time is read against the log's last write. No
   Codex setting is known that continues a session once the limit resets, so the adapter declares no
-  `continuesAtLimit`: `wait` stops the session and the issue starts again after the pause. These come from Codex's
-  source, not a live run: until one shows them, a limit the reader misses ends the session with no result, or past
-  `issueHours` ([Project run](../config.md#project-run)).
+  `continuesAtLimit`: `wait` stops the session and the issue starts again after the pause. Nothing in the log is known
+  to show a changed account, so a pause on a Codex limit runs to its end. These come from Codex's source, not a live
+  run: until one shows them, a limit the reader misses ends the session with no result, or past `issueHours`
+  ([Project run](../config.md#project-run)).
 - A driver on Codex has no route to continue itself: Codex lists no handoff route, so `aidrian project preflight`
   prints a `note handoff` line, and the driver keeps driving in its one session, which Codex compacts
   ([Handoff](../handoff.md#a-project-run)). An issue's session starts no continuation on any host.

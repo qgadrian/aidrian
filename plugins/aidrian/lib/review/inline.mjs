@@ -207,7 +207,7 @@ export function postInline(s, open) {
   const ready = found.filter((each) => !unminted.includes(each.entry.id));
 
   const prefix = showPrefix(root);
-  let added = {};
+  let added = Object.create(null);
   try {
     // Renames detected, as the forge's diff of the pull request shows them: an unchanged line of a moved file is no
     // added line.

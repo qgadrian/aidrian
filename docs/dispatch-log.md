@@ -40,7 +40,8 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | --- | --- |
 | `ts`, `session_id`, `agent_id`, `agent_type` | Which subagent. `agent_id` joins it to its `dispatch` row. |
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's API requests, each request counted once. |
-| `models`, `cost_usd` | The models it used, and the cost estimated from list prices (the host adapter's `modelPrices`, [Model prices](#model-prices)). |
+| `tokens_by_model` | The same per model, with `cache_write_5m` and `cache_write_1h` apart, and `over`: the part of them sent by requests whose prompt was over the model's price row's `over.prompt`, all zero when none was, with `over_prompt`, that cutoff, or `null` when the row had no tier. It is what the report [prices again](#prices-at-report-time). A row written before the field has none. |
+| `models`, `cost_usd` | The models it used, and the cost estimated from list prices as they were when the row was written (the host adapter's `modelPrices`, [Model prices](#model-prices)). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
 | `docs_read` | The knowledge docs it opened with the Read tool or printed with a shell command (`cat`, `head`, `tail`, `sed`, `awk`, `less`, `more`, `bat`, `nl`), as `{ "path", "bytes" }`: index path and size. A shell path counts by its end, so `$W/docs/x.md` and a `docs/x.md` relative to a `cd` both name `docs/x.md`. `null` while `telemetry.docReads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written, `pending` when nothing is missing but such a handoff file is not due yet, since a background task of its own still runs and a later stop is sure ([delivery check](hooks.md#delivery-check)), `chat` for none. A pending file is never in `paths`, even when the message names it. |
@@ -48,6 +49,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `running` | The background shells and agents it started that still ran as it stopped: the [background check](hooks.md#background-check). A row written before the field has none. |
 | `handoffs_written` | How many handoff files its brief asked for the hook wrote from its final report, as the [delivery check](hooks.md#delivery-check) does when the agent did not write one. A row written before the field has none. |
 | `sent_back` | `true` when the hook sent the subagent back at this stop, `false` when it let it end. A row written before the field has none. |
+| `sent_back_for` | Why it was sent back at this stop, among `background`, `missing_file`, `handoff`, `marker`, and `evidence` ([send-back causes](hooks.md#send-back-causes)), several when several held; `[]` when the stop ended. `sent_back` is `true` exactly when it is not empty. A row written before the field has none. |
 
 `cache_write` is `cache_write_5m` plus `cache_write_1h`: the cache writes kept 5 minutes and 1 hour, which cost 1.25x and 2x the input price.
 
@@ -70,8 +72,8 @@ is a subagent that went idle with its task still running.
 | `ts`, `session_id`, `agent`, `reason` | Which session, its `--agent` if any, and why it ended. |
 | `duration_min` | From the first to the last transcript entry. |
 | `effort`, `effort_varied` | The effort of the main conversation's last request, or `null`; `effort_varied` is `true` when its requests used several. |
-| `models`, `tokens_by_model`, `cost_usd`, `cost_by_model` | Tokens and estimated cost of the whole session, subagents included, per model and in total. |
-| `main`, `subagents` | Each side's `tokens`, `cost_usd`, `requests`, `tool_requests` (requests that made a tool call), and `tool_calls`. |
+| `models`, `tokens_by_model`, `cost_usd`, `cost_by_model` | Tokens and estimated cost of the whole session, subagents included, per model and in total. `tokens_by_model` holds each model's tokens as on a `stop` row, `over` included; a row written before `over` has the rest. |
+| `main`, `subagents` | Each side's `tokens`, `tokens_by_model` (as the session's, for that side alone), `cost_usd`, `requests`, `tool_requests` (requests that made a tool call), and `tool_calls`. A row written before a side's `tokens_by_model` has the rest. |
 | `subagent_count` | How many subagent transcripts the session has. |
 | `docs_read` | The knowledge docs the main conversation opened, as on a `stop` row. Each subagent's reads are on its own `stop` row. |
 | `skills` | The skills the session ran, by a Skill call that succeeded or as a slash command that names one of this plugin's skills, such as `aidrian:autopilot`. |
@@ -196,9 +198,9 @@ and starts a new log with this row. `aidrian report` reads `dispatch-log.1.jsonl
 
 ```console
 $ aidrian report --since 7d
-Dispatch log /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 7d
-Explore: 12 dispatches, 8% re-dispatched, median 88s and 85k tokens, $3.08, delivered 2 file / 9 chat / 0 missing
-  11 runs, $0.28 a run, 9% sent back by the delivery check, 1.40 tool calls per request that made one
+Dispatch log /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 7d; costs at today's list prices
+Explore: 12 dispatches, 8% re-dispatched, median 88s and 85k tokens, $3.08 (logged $3.85), delivered 2 file / 9 chat / 0 missing
+  11 runs, $0.28 a run, 1.40 tool calls per request that made one; 18% sent back: 1 background task, 1 handoff marker
   docs read: 1.5 docs and 13.0 KB a run; docs/knowledge/engineering/testing.md (11), docs/knowledge/engineering/code-style.md (5)
 Sessions: 2, $42.10 estimated, main conversation and subagents together
 Hook denies: 6 in 2 sessions
@@ -215,10 +217,17 @@ Hook denies: 6 in 2 sessions
 - **re-dispatched**: the share of dispatches that repeat a task already dispatched in the same session,
   `1 - distinct (session, description) / dispatches`. A high rate means agents are sent back to redo work.
 - **median time and tokens**: per dispatch, from the `dispatch` and `stop` rows.
-- **cost**: the sum of the agent type's `stop` rows. The session total already includes it; do not add them.
-- **delivered**: how the agents' reports turned out: files that exist, chat only, or a named file that did not exist; `/ N pending` follows when a run's last stop left its handoff file waiting on a background task.
+- **cost**: the sum of the agent type's `stop` rows, [priced at today's list prices](#prices-at-report-time), as the
+  title line says. Where that moves the agent type's cost by a cent or more, `(logged $X)` follows with the sum the rows logged.
+  The session total already includes it; do not add them.
+- **delivered**: how the agents' reports turned out: files that exist, chat only, or a named file that did not exist;
+  `/ N pending` follows when a run's last stop left its handoff file waiting on a background task.
 - **runs**: the subagents of that type that stopped, and the cost of each on average.
-- **sent back by the delivery check**: the share of runs with any `stop` row whose `sent_back` is `true`.
+- **sent back**: the share of runs with any `stop` row whose `sent_back` is `true`, then each cause with the runs it
+  sent back, over every `stop` row of each run, the most first, in the words of [send-back causes](hooks.md#send-back-causes):
+  `background task`, `missing file`, `handoff file`, `handoff marker`, `test claim with no run`. A run sent back for two
+  causes counts under each, and a run sent back for a background task whose last row ended counts once.
+  A run sent back by a row written before `sent_back_for` counts as `cause not recorded`.
   A run that named a missing file before rows recorded `sent_back` is unknown: the share leaves it out, and a `Partial:` line counts it.
   `delivered` counts each run's last row, so a run that wrote the file on its second try shows there as `file`.
 - **tool calls per request that made one**: as in [Sessions](#sessions), over the runs' own requests.
@@ -233,7 +242,9 @@ Hook denies: 6 in 2 sessions
 A date is midnight UTC, and one that does not exist, such as `2026-02-31`, is an error.
 Row times and day buckets, such as `Per day:`, are UTC too.
 `--json` prints the same summary as one JSON object, with `rotated`, the path of the rotated part or `null`, `coverage`,
-and `hook_denies` with every rule's agents and up to three reasons.
+and `hook_denies` with every rule's agents and up to three reasons. Each agent type and `sessions` carry `cost_usd`, at
+today's prices, and `cost_logged_usd`, as the rows logged; each agent type carries `sent_back_causes`, `[cause, runs]`
+pairs; and `kept_logged` counts the `rows` that could not be priced again, with their `cost_usd`.
 
 ### Sessions
 
@@ -241,7 +252,7 @@ and `hook_denies` with every rule's agents and up to three reasons.
 
 ```console
 $ aidrian report sessions --since 7d
-Sessions, from /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 7d
+Sessions, from /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 7d; costs at today's list prices
 3 sessions, $10.50 estimated; 1 ended more than once, counted at the last end
 Main conversation: $8.00 (80%), 2.0M tokens, 1.20 tool calls per request that made one
 Subagents: $2.00 (20%), 1.1M tokens, 1.50 tool calls per request that made one
@@ -270,8 +281,15 @@ Most costly sessions, top 3:
   `--json` lists them in `unknown_models`.
 - **Per effort**: `-` is a session whose main conversation recorded no level, such as one logged before the field existed.
 - A session logged before the main and subagent split counts in the total, per day, and per effort; a `Partial:` line says how many.
+- **Costs** are [at today's list prices](#prices-at-report-time). The total, the main conversation, the subagents,
+  each day, model, and effort, and each of the most costly sessions show `logged $X` beside them where that moves them
+  by a cent or more. A session that cannot be priced again
+  keeps its logged cost, and a `Partial:` line counts those sessions and their dollars; another counts the sessions
+  whose main and subagent lines keep a logged cost, which an older row with several models and no tokens per side does.
 
-`--since` works as above; `--json` prints the same summary. `--prs` belongs to the default view and to `reviews`.
+`--since` works as above; `--json` prints the same summary, with `cost_logged_usd` beside the total, each side, each
+day, model, and effort, and each of the most costly sessions, and `kept_logged` and `sides_kept_logged`, each a count of `sessions` and their `cost_usd`.
+`--prs` belongs to the default view and to `reviews`.
 
 ### When the report is incomplete
 
@@ -295,7 +313,9 @@ Partial: the log starts at 2026-10-27T09:12:44.000Z; older rows were rotated out
 | Partial: the log starts at | `rotated_out_before` | Rotation dropped rows, and the window starts before the oldest row left. |
 
 The default view also says `Partial: N agent runs were logged before tool counts` when some `stop` rows have no tool counts:
-its tool calls per request leave those runs out.
+its tool calls per request leave those runs out. It says `Partial: N agent and session rows were logged without the
+tokens to price them again` when some rows keep their logged cost ([Prices at report time](#prices-at-report-time)),
+with those rows' dollars; `--json` has them in `kept_logged`.
 A time when telemetry was off leaves no rows at all, so no report can tell that it happened,
 and blocks from before this plugin logged `hook_deny` rows are not in the log either.
 
@@ -435,7 +455,11 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
 - **Doc reads**, over the agent and session rows that recorded doc reads: a problem when the doc with the most bytes read
   takes over `topDocPercent` of them, of two docs read or more, or when a tagged doc was never read. Fix: `split-doc`.
 - **Agents**, per agent type, over its dispatches and its runs with a known send-back: a problem when over `redispatchPercent`
-  of its dispatches repeat a task, or the delivery check sent back over `sentBackPercent` of those runs. Fix: `agent-prompt`.
+  of its dispatches repeat a task, or the stop hook sent back over `sentBackPercent` of those runs. Fix: `agent-prompt`.
+  The signal names the leading [send-back cause](hooks.md#send-back-causes), as `most often background task` and in
+  `--json` as `leading`, and the problem's summary names it with its check. The lesson is the agent's one sent-back
+  lesson, `delivery-check:<agent>`, as it was before rows named causes: another cause leading changes the summary's
+  words, never the lesson.
 - **Reviews**, over the reviewed pull requests merged in the window and the late findings checked: a problem when a pull request
   takes over `reviewRounds` rounds on average, or over `lateFindingPercent` of late findings sit on a line already reviewed.
   Fix: `round-cap`.
@@ -447,8 +471,11 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
 - **Decisions**, over the decisions the Human reviewed in the window, with a `decision_confirmed` or `decision_overridden` row:
   a problem when `decisionOverridePercent` of them or more were overridden, over at least `decisionMinSample`, which stands in for `minSample` here.
   The line also counts the decisions made alone and escalated. Fix: `decision-authority`.
-- **Session cost**, over each half of the window's sessions, in the order they ended: a problem when the newer half costs
-  over `costRisePercent` more a session than the older half. Fix: `cost`.
+- **Session cost**, over each half of the window's sessions, in the order they ended, each [at today's list prices](#prices-at-report-time),
+  so a price change between the halves is no rise: a problem when the newer half costs over `costRisePercent` more a
+  session than the older half. Only the sessions priced at today's tables compare: one that keeps the price it logged
+  is left out of the halves, the sample, and the most costly session, and the line counts it, as `--json` does in
+  `kept_logged`; the session count and total still cover every session. Fix: `cost`.
 - **Model prices**, over the models the window's `session` and `stop` rows ran, priced by the tables as they are now:
   a problem when a model has no [price row](#model-prices) of its own, so a family's fallback row priced it or none did.
   A table that holds a row read over 60 days ago is a problem only in a checkout of the plugin's own repository,
@@ -505,6 +532,28 @@ assuming no host. A table has:
 Codex has no prices yet: nothing reads its transcripts, so its sessions have no cost. A model no table prices costs $0
 and is named as unpriced. The repository's `model-prices` skill says how a maintainer reads the price pages and updates the rows.
 
+### Prices at report time
+
+A row's `cost_usd` is priced when the row is written, so a row from before a price change holds the old price.
+Every report view prices each row again from its tokens, at the tables as they are when the report runs
+(`rowCostUsd` in `lib/model-prices.mjs`), and keeps `cost_usd` as the cost the row logged:
+
+- A row with `tokens_by_model` is priced per model, the `over` part of each at its row's `over` rates. An empty one,
+  such as a session's side that made no request, costs $0.
+- A row without it that names one model is priced from its summed `tokens`, as that model.
+- A row that names several models and has no `tokens_by_model` keeps its logged cost, since which model sent which
+  token is unknown; so do a session's sides that have no `tokens_by_model` of their own when the session names several
+  models. So does a row whose model's price row has an `over` tier, from tokens that do not say which part was over it,
+  and a row that names models and holds no tokens. A `Partial:` line counts the rows that keep their logged cost, with their dollars.
+- A row that names no model, as the oldest rows, keeps the cost it logged, counted as such; one that logged $0 costs $0.
+
+A cost a row keeps is never mixed with today's prices where they are compared: the health view's cost trend leaves it out.
+
+The `over` part is split when the row is written, at the `over.prompt` its price row had then, which the row keeps as
+`over_prompt`. Tokens cannot be split again, so a model whose price row has a tier today is priced again only when its
+`over_prompt` is that tier's `over.prompt`; a tier a later table adds or moves keeps the logged cost of an older row,
+counted in the `Partial:` line. A table that drops a tier prices every token at the one rate.
+
 ## Limits
 
 - **Claude Code only**, except `hook_deny` rows and OpenCode's `dispatch` rows.
@@ -517,8 +566,8 @@ and is named as unpriced. The repository's `model-prices` skill says how a maint
 - **Decisions on this machine.** The rows sit in this machine's log, so a decision another machine reviewed counts there,
   and a marker edited by hand counts nowhere.
 - **Only the plugin's own blocks.** A block by Claude Code's permissions, or by another plugin's or the project's hook, writes no row.
-- **Costs are estimates** from list prices, read on the date each [price row](#model-prices) records. A model no table
-  prices counts as zero.
+- **Costs are estimates** from list prices, read on the date each [price row](#model-prices) records, and priced
+  [at report time](#prices-at-report-time). A model no table prices counts as zero.
 - **A background dispatch** writes its `dispatch` row at launch, without time or tool counts; its `stop` row has the rest.
   The report counts `stop` rows with no `dispatch` row, so a host change that breaks the join is visible.
 - **The delivery check reads the last message only, line by line.** It cannot know a path the dispatcher expected but

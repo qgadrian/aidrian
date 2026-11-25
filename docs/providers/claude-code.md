@@ -290,12 +290,14 @@ the handoff goes on by the clear route:
    not place starts nothing. The adapter then calls the gate's `hold` with that folder and the `sessionId` of every
    listed session, which files the pending mark that holds every other session until the new one's id is listed;
    when that fails, nothing starts.
-2. `claude --bg --name '<name> · <n>' [--agent <agent>] [--effort <effort>] [--permission-mode <mode>] -- <prompt>` there,
+2. `claude --bg --name '<name> · <n>' [--agent <agent>] [--effort <effort>] [--model <model>] --permission-mode <mode>
+   -- <prompt>` there,
    where the name is that session's, else the brief's slug. A name that ends in ` · <n - 1>` loses that count and
    any before it that count down by one, so a second hop names `widget-work · 2`, not `widget-work · 1 · 2`;
    any other name stays whole, such as `release · 2026`. `<n>` is the continuation's number; the agent is
-   `CLAUDE_CODE_AGENT` and the effort `CLAUDE_EFFORT` when each holds a value the adapter accepts, the mode is the
-   handing-off session's (below), and the prompt is the continuation. It reads the short id from its
+   `CLAUDE_CODE_AGENT` when it holds a value the adapter accepts, the model and effort are `startChoice`'s
+   ([below](#the-model-and-effort-of-a-continuation)), the mode is the handing-off session's (below), and the prompt is
+   the continuation. No shell runs it, and the model and the prompt are each one argument. It reads the short id from its
    `backgrounded · <id> · <name>` line.
 3. `claude agents --json` again, every half second for about 5 seconds, for the one background session in that folder
    whose `sessionId` the first listing did not hold, by that short id, or by the name when the output printed none.
@@ -335,7 +337,8 @@ Checked by hand on Claude Code 2.1.326 on 2026-11-17, with a trivial prompt rath
 - In a folder the host has not trusted, with no terminal to ask, `claude --bg` exits 1 with `Workspace not trusted`
   before it starts anything, which the gate turns into a fallback. It is the one refusal the adapter knows.
 - The background session started on the model and effort of the user's settings, not the starting session's.
-  `CLAUDE_EFFORT` carries the effort; the model is not passed on.
+  `CLAUDE_EFFORT` carries the effort, and the transcript the model
+  ([below](#the-model-and-effort-of-a-continuation)).
 - Neither the shell of the session's Bash tool nor `claude agents --json` gives the session's permission mode: the
   listing's rows hold `pid`, `cwd`, `kind`, `startedAt`, `sessionId`, `name`, `status`, `id`, and `state`. The
   transcript does, `~/.claude/projects/<start folder, each character but a letter or digit as ->/<session id>.jsonl`
@@ -369,6 +372,48 @@ started: `claude` with no subcommand, with `-p`, `--bg`, `--resume`, or `--conti
 `mcp serve`, and with any subcommand it does not list, counts; `agents`, `attach`, `stop`, `kill`, `logs`, `doctor`,
 `update`, `install`, `config`, `mcp`, `plugin`, `setup-token`, `auth`, `migrate-installer`, `--version`, and `--help`
 do not. The list comes from the CLI reference and the `claude --help` output above; no live run of the hook checked it.
+
+#### The model and effort of a continuation
+
+The adapter's `startChoice` answers both once, before the first message is built, and `startBackground` takes that
+answer as `asked` and reads nothing again:
+
+- The model is read from the transcript the permission mode is read from, in the same backward read and with the same
+  bound. An entry counts when its `type` is `assistant`, it is no sidechain entry, its `sessionId` is the session's,
+  and its `message.model` is a string other than `<synthetic>`. The first such entry after the last prompt gives it, the
+  model the turn started in, else the nearest earlier one. So a switch the Human made before the last prompt is handed
+  on, and a fallback model or a skill's own model in the middle of the turn is not.
+- A prompt is a `user` entry of the session's own, no sidechain entry, whose `message.content` is a string, or a list
+  with a block and no `tool_result` block. The host's own bookkeeping is none: an entry with `isMeta` or
+  `isCompactSummary` true, one whose `origin.kind` is `task-notification`, and an interruption marker, an entry whose
+  whole text, a string or its only block, is `[Request interrupted by user]` or
+  `[Request interrupted by user for tool use]`, with or without space around it. A prompt that quotes the marker, or
+  holds it beside another block, is a prompt. A block that is no object, has no type, or is text with a `text` that is
+  no string counts for nothing: the entry is what its other blocks say. A message of any other origin, such as a
+  peer's, starts a turn, unless the host marks it `isMeta`, as a peer's was on 2.1.330
+  ([above](#prompts-the-human-typed)); in a transcript of 2.1.332, a peer's carried neither `isMeta` nor `origin`. No
+  `permissionMode` takes part: in that transcript, 23 of 32 prompts, such as messages from other sessions, carried none.
+- That one entry is then held to `claude-<family>-<version>`, the family one of `sonnet`, `opus`, `haiku`, and `fable`,
+  the version one or two numbers of at most two digits and at most one date. Any other name, such as one with a
+  context-window suffix, gives none, and no other entry is searched for one that passes. A line over 32 MB that holds
+  the `"model"` key gives none either, and so does one that holds `"user"` where the last prompt is looked for. No
+  answer of this read changes the permission mode's.
+- The effort is `CLAUDE_EFFORT`, when it is one the adapter names.
+- What the session does not tell is the base branch's [`session.handoff.models.claude`](../config.md#handoff-models),
+  held to the adapter's list, where a model is a family's alias such as `opus`; else nothing is passed.
+
+`message.model` on a transcript's assistant entries, such as `claude-opus-5-5`, and `--model`, an alias or a full name,
+and `--effort` in `claude --help` were read on 2.1.332. Checked on fixtures with `node --test`.
+Not verified live: a background start with `--model`, with or without `--permission-mode` beside it, and what a model
+the account or the host refuses prints and exits with. A model read from the session just answered there; a team's
+alias is not proven before the start. Accepted residuals:
+
+- A start the host refuses for its model is an uncertain launch, as any other non-zero exit: no retry, and the chain is
+  held for up to 24 hours.
+- A script that writes the transcript, which no hook sees, can name another model. It changes cost alone, inside the
+  families above; the hooks refuse a session no Human attends a write there and a variable set on the gate's command.
+- A prompt the host writes in the middle of a turn, such as a message that arrives while the session works, reads as the
+  start of a turn, so a fallback after it may be handed on.
 
 Not verified: a background continuation from a real brief, end to end, with the plugin loaded from this branch:
 whether the session-continue skill runs from the first message as intended, and whether a second continuation in a
@@ -448,9 +493,12 @@ How issue sessions and the driver relate to the cap of five background continuat
   limit, and only while its pause runs, with 5 minutes' grace past the later of the pause's end and the newest entry
   of the transcript after the limit record, such as the host's own entry when it continues the session, and never more
   than 30 minutes past the pause's end. Only an entry that carries the session's id and a time no later than the read
-  counts. The host continues only a claude.ai usage limit, on
-  billing that is not usage-based; anything else takes the stop path: a rate limit, a pause over with the same record
-  still the session's last, and a limit past the run's 24 pauses each stop the session and end its attempt. These
+  counts. Such an entry that is the host's own, of `type: "system"` and `subtype: "informational"`, and whose `content`
+  starts `Remote Control disconnected — signed-in claude.ai account or organization changed on this machine` gives
+  `changed`, which may lift the pause; the host writes it only where Remote Control was on. The host continues only a
+  claude.ai usage limit, on billing that is not usage-based; anything else takes the stop path: a rate limit, a pause
+  over with the same record still the session's last, and a limit past the run's 24 pauses each stop the session and
+  end its attempt. A weekly limit's entry and the account-change entry were seen live once, on 2.1.332. The other
   shapes and the setting's effect come from the host's issue reports, changelog, and binary, not a live run (live check
   19): until one shows them, a limit the reader misses ends the session with no result, or past `issueHours`
   ([Project run](../config.md#project-run)).

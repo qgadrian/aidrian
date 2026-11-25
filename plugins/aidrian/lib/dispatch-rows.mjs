@@ -12,6 +12,7 @@ import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
 import { detectHost, sessionIdentity, wakesOnEnd, wakesOnReport } from './hosts/index.mjs';
 import { loadKnowledge } from './knowledge.mjs';
+import { priceFor } from './model-prices.mjs';
 import {
   aggregateUsage, estimateCostUsd, filesRead, partOf, readText, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
 } from './transcript.mjs';
@@ -125,12 +126,20 @@ export function denyRow(input, rule, match, { env = process.env, now = Date.now(
   };
 }
 
-// SubagentStop: the subagent's tokens, cost, API requests and tool calls, the knowledge docs it read with their sizes,
-// its delivery check, the count of background tasks it started that still run (`running`, from runningChildren), and
-// whether the hook sent it back (`sentBack`, by default sendsBack's one send-back per turn), over the requests it made
-// itself (ownRequests). `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
+// Each model's tokens as sumTokens counts them, with `over`: the part sent by requests whose prompt was over its price
+// row's `over.prompt` (transcript.mjs addTokens), all zero when none was, and `over_prompt`, that cutoff, or null when the
+// row had no tier. A reader prices the split again only at the same cutoff (model-prices.mjs rowCostUsd).
+export const tokensByModel = (perModel) => Object.fromEntries(Object.entries(perModel).map(([model, usage]) => [model, {
+  ...sumTokens([usage]), over: sumTokens(usage.over ? [usage.over] : []), over_prompt: priceFor(model)?.over?.prompt ?? null,
+}]));
+
+// SubagentStop: the subagent's tokens, per model and in total, its cost, API requests and tool calls, the knowledge docs
+// it read with their sizes, its delivery check, the count of background tasks it started that still run (`running`, from
+// runningChildren), and why the hook sent it back (`sentBackFor`, the causes of dispatch-log.mjs SEND_BACK_CAUSES, which
+// the stop hook decides; none by default), over the requests it made itself (ownRequests). `sent_back` is true exactly
+// when there is a cause. `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
 export function stopRow(input, project, {
-  now = Date.now(), docReads = true, delivery = checkDelivery(input, project), children = [], sentBack = sendsBack(input, delivery, children),
+  now = Date.now(), docReads = true, delivery = checkDelivery(input, project), children = [], sentBackFor = [],
 } = {}) {
   const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const own = transcript ? ownRequests(input) : undefined;
@@ -143,6 +152,7 @@ export function stopRow(input, project, {
     ts: stamp(now),
     ...stopAgent(input),
     tokens: sumTokens(usage),
+    tokens_by_model: tokensByModel(usage),
     models: Object.keys(usage),
     cost_usd: estimateCostUsd(usage).total,
     requests: part.requests,
@@ -153,7 +163,8 @@ export function stopRow(input, project, {
     paths: claims,
     running: children.length,
     handoffs_written: (delivery.written ?? []).length,
-    sent_back: sentBack,
+    sent_back: sentBackFor.length > 0,
+    sent_back_for: [...sentBackFor],
   };
 }
 
@@ -179,7 +190,8 @@ function ownRequests(input) {
   return (key) => !inherited.has(key);
 }
 
-// SessionEnd: the whole session's tokens and estimated cost, main conversation and subagents together and each apart,
+// SessionEnd: the whole session's tokens per model (tokensByModel) and estimated cost, main conversation and subagents
+// together and each apart,
 // the effort of the main conversation, the knowledge docs it read (each subagent's own reads are on its `stop` row), and
 // the skills, draft pull requests, and review runs of the main conversation and its subagents (sessionActions).
 // `docReads` works as in stopRow.
@@ -197,10 +209,11 @@ export function sessionRow(input, project, { env = process.env, now = Date.now()
   const actions = sessionActions([mainText, ...subagentTexts].filter(Boolean));
   const perModel = acc?.perModel ?? {};
   const minutes = acc?.firstTs && acc.lastTs ? Math.round((Date.parse(acc.lastTs) - Date.parse(acc.firstTs)) / 6000) / 10 : null;
-  const tokensByModel = Object.fromEntries(Object.entries(perModel).map(([model, usage]) => [model, sumTokens({ [model]: usage })]));
   const cost = estimateCostUsd(perModel);
-  const side = ({ perModel: usage, requests, tool_requests: toolRequests, tool_calls: toolCalls }) =>
-    ({ tokens: sumTokens(usage), cost_usd: estimateCostUsd(usage).total, requests, tool_requests: toolRequests, tool_calls: toolCalls });
+  const side = ({ perModel: usage, requests, tool_requests: toolRequests, tool_calls: toolCalls }) => ({
+    tokens: sumTokens(usage), tokens_by_model: tokensByModel(usage), cost_usd: estimateCostUsd(usage).total,
+    requests, tool_requests: toolRequests, tool_calls: toolCalls,
+  });
   return {
     event: 'session',
     ts: stamp(now),
@@ -211,7 +224,7 @@ export function sessionRow(input, project, { env = process.env, now = Date.now()
     effort,
     effort_varied: effortVaried,
     models: Object.keys(perModel),
-    tokens_by_model: tokensByModel,
+    tokens_by_model: tokensByModel(perModel),
     cost_usd: cost.total,
     cost_by_model: cost.byModel,
     main: side(partOf(acc, (key) => mainKeys.has(key))),

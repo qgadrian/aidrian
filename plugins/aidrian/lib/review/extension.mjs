@@ -246,11 +246,13 @@ export function ownDelta(before, after) {
   let added = 0;
   let removed = 0;
   const files = [];
+  // Own keys alone: a file may be named `constructor` or `__proto__`.
+  const linesOf = (lines, file) => (Object.hasOwn(lines, file) ? lines[file] : []);
   for (const file of new Set([...Object.keys(before), ...Object.keys(after)])) {
     const left = new Map();
-    for (const line of before[file] ?? []) left.set(line, (left.get(line) ?? 0) + 1);
+    for (const line of linesOf(before, file)) left.set(line, (left.get(line) ?? 0) + 1);
     let gained = 0;
-    for (const line of after[file] ?? []) {
+    for (const line of linesOf(after, file)) {
       const count = left.get(line) ?? 0;
       if (count) left.set(line, count - 1);
       else gained += 1;

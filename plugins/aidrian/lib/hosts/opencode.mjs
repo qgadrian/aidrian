@@ -231,6 +231,8 @@ export default {
     unguarded: { what: 'no merge guard, Bash rule, or write guard holds an OpenCode session', doc: 'docs/providers/opencode.md#limits' },
     // Nothing here says whether OpenCode would let a session push to the remote.
     pushPermission: () => ({ answer: 'unknown' }),
+    // No handoff continue route runs here, so no start carries a model or an effort on, and session.handoff.models.opencode
+    // is read by nothing.
     handoffContinue: { routes: [] },
     // The harness starts no session here: no handoff route and no project start. docs/providers/opencode.md#limits.
     backgroundSessions: { unsupported: 'the harness starts no background session here, so none can stay after its work' },

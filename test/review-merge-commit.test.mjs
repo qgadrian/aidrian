@@ -109,14 +109,17 @@ test('cleanBaseMerge holds only for a merge from the base branch onto the review
 });
 
 test('a merge with a resolved conflict is no clean merge, and its remerge diff holds only the resolution', (t) => {
-  const r = repo(t);
-  const merge = r.mergeMain(CONFLICT, RESOLVED);
+  // Each file conflicts; git ends the diff header of the name with a space with a tab, and quotes the one with a tab.
+  const files = ['src/a b.js', 'src/app.js', 'src/t\tb.js'];
+  const each = (value) => Object.fromEntries(files.map((file) => [file, value]));
+  const r = repo(t, { baseFiles: each('export const app = 1;\n'), feature: each('export const app = 2;\n') });
+  const merge = r.mergeMain({ ...CONFLICT, ...each(CONFLICT['src/app.js']) }, each(RESOLVED['src/app.js']));
   assert.equal(cleanBaseMerge(r.dir, merge, { priorHead: r.first, base: 'main' }), false);
   const scope = remergeDiff(r.dir, merge);
   // The conflict markers and both sides' lines are what the resolution removed; src/lib.js merged cleanly.
-  assert.deepEqual(scope.changes, [{ file: 'src/app.js', added: 1, removed: 5, status: 'M' }]);
-  assert.deepEqual(scope.addedLines, { 'src/app.js': ['export const app = 29;'] });
-  assert.deepEqual([...scope.removedFiles], ['src/app.js']);
+  assert.deepEqual(scope.changes, files.map((file) => ({ file, added: 1, removed: 5, status: 'M' })));
+  assert.deepEqual(scope.addedLines, { __proto__: null, ...each(['export const app = 29;']) });
+  assert.deepEqual([...scope.removedFiles], files);
   assert.deepEqual(baseMergeOf(r.dir, merge, { priorHead: r.first, base: 'main' }), { clean: false, scope });
   assert.equal(remergeDiff(r.dir, r.first), null, 'a commit that is not a merge has no remerge diff');
 });

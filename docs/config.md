@@ -62,7 +62,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576, "untaggedDocBytes": null, "enforce": "warn", "baseline": {} }, "defaults": { "codeStyle": true } },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
-  "session": { "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3, "resumeTokens": null } },
+  "session": { "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3, "resumeTokens": null, "models": {} } },
   "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
   "names": { "human": "the Human", "ai": null },
@@ -202,6 +202,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `session.handoff.continue` | How the session goes on after its handoff: `"none"`, `"clear"`, `"compact"`, or `"background"`. The default follows `mode`: `"background"` with `mode: "auto"`, else `"none"`; a value set here wins. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). `"background"` is read from the base branch, never a worktree's copy, and each machine turns it on too, with `"handoff": { "background": "on" }` in `.aidrian.local.json`; without both it falls back to `"clear"` where the host has it: [The background route](handoff.md#the-background-route). |
 | `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0, or `"unlimited"`; `3` by default. On the background route it is the base branch's, and at most 5 for any number. `"unlimited"` lifts that cap, and then the progress check stops a chain: two background hops in a row with no change to the tree of the brief's branch and no new Done item fall back to the clear route ([The progress check](handoff.md#the-progress-check)); a chain floor still records at most 10,000 continuations, and a hop past that arms nothing: a person resumes the brief. `aidrian check` fails any other value. |
 | `session.handoff.resumeTokens` | The tokens a fresh session reads to resume from a brief, `B` of the [cost model](handoff.md#the-cost-model), a whole number above 0. When set it wins; `null`, the default, uses this project's measured median once 5 sessions resumed from a brief in the last 30 days, else 44,000 ([Resume tokens](handoff.md#resume-tokens)). `aidrian check` fails any other value. |
+| `session.handoff.models` | The model and effort, per host, a background continuation asks for when the handing-off session tells none: [Handoff models](#handoff-models). |
 | `lessons.auto` | `false` turns off the [automatic lessons](lessons.md#automatic-lessons) the hooks and `aidrian pr await-review` record. |
 | `lessons.maxOpen` | The open [lessons](lessons.md) past which the session-start line asks for triage; `0` turns this limit off. |
 | `lessons.maxAgeDays` | The age, in days, of the oldest open lesson past which the session-start line asks for triage; `0` turns this limit off. |
@@ -1119,6 +1120,23 @@ Neither host lets a project change the model or effort of a plugin skill, so `mo
 Claude Code reads a skill's `model` and `effort` only from its own `SKILL.md`, and Codex skills have neither.
 The plugin's skills set neither, so they run on the session's model and effort.
 
+## Handoff models
+
+A [background continuation](handoff.md#the-background-route) asks for the handing-off session's own model and effort.
+`session.handoff.models` names what it asks for when the host cannot tell one of them, per host and per field:
+
+```json
+{ "session": { "handoff": { "models": { "claude": { "model": "opus", "effort": "high" } } } } }
+```
+
+The hosts and their values are those of [Models](#models), with `model`, `effort`, or both beside the host's name;
+`{}`, the default, asks for nothing, so the new session starts in the host's default.
+Only the base branch's `config.json` counts, as for `maxChain`: the working copy's value is checked and never used, and
+`.aidrian.local.json` has no such key. `aidrian check` names an unknown host or key and a value the host does not take.
+On the base branch such an error drops that field alone and leaves the background route on, while any other error under
+`session.handoff` turns the route off. The host adapter holds the value to its own list again before it passes it on.
+A model is the team's or the person's cost choice, and it grants no permission. A project run's start takes none of it.
+
 ## Names
 
 Agent output that says "you" or "me" leaves the reader unsure who is meant.
@@ -1164,7 +1182,9 @@ A project that adopts the `session.handoff` group (`mode`, `costRatio`, `maxToke
 release that ships it: an older plugin reads only a string `session.handoff` and rejects the group.
 `session.handoff.continue` and `session.handoff.maxChain` came in a later release, so a project that sets either
 sets `requires.aidrian` to that release: an older plugin rejects them as unknown keys.
-`session.handoff.resumeTokens` came later still, and a project that sets it does the same.
+`session.handoff.resumeTokens` came later still, and a project that sets it does the same;
+so does one that sets `session.handoff.models`, which an older plugin rejects as an unknown key. A base branch that commits
+it turns the background route off on such a plugin, which reads the error as one of `session.handoff`.
 Since the release with the [background route](handoff.md#the-background-route), an existing `mode: "auto"` config
 with no `continue` hands off fully automatically: the brief, then a new session started in the background, with
 nothing typed, on a host that runs that route, once the base branch has that config and the machine sets
@@ -1279,7 +1299,7 @@ Set only the keys you change; a team sets them in `config.json`, and one develop
 | --- | --- |
 | `minSample` | Not a threshold: a signal with a smaller sample says "not enough data" and is never a problem. |
 | `redispatchPercent` | More than this share of an agent type's dispatches repeat a task already dispatched in the same session. |
-| `sentBackPercent` | More than this share of an agent type's runs were sent back by the [delivery check](hooks.md#delivery-check). |
+| `sentBackPercent` | More than this share of an agent type's runs were sent back by the subagent stop hook, for any of its [send-back causes](hooks.md#send-back-causes). |
 | `topDocPercent` | One knowledge doc takes more than this share of all the bytes of knowledge docs read. |
 | `reviewRounds` | The review bot takes more than this many rounds a pull request on average; 3 is the `autopilot` skill's cap. |
 | `lateFindingPercent` | More than this share of the late findings checked sat on a line the bot had already reviewed. |
@@ -2177,12 +2197,27 @@ or whose mark, run, or ledger cannot be read, stops. It runs on Claude Code, the
 Codex runs the same Stop hook, [not verified live](providers/codex.md#hooks).
 A session that meets a usage or rate limit pauses the run (`lib/project-limit.mjs`). `wait` asks the host adapter
 whether the session's last record is the host's own limit error, never a tool's output or the model's text, and writes
-a `limit` row whose `until` is the reset time the host named, read against the record's own time and held to between
-1 minute and 6 hours from now, so a reset already past waits 1 minute; or, when it named none, 15, then 30, then 60
-minutes for each pause in a row since the last result. A limit met while a pause lasts joins it: the same pause, its
-end moved later only by a named reset. Until the pause is over, `start` of any issue exits 1 with `paused until
-<time>`, `next` prints that line first and `--json` adds `pause`, and an idle `wait` waits with it, up to `--max-wait`.
-Time paused counts toward no issue's `issueHours`.
+a `limit` row whose `until` is the reset time the host named, read against the record's own time and held to at most 6
+hours after that time, or after now when the host gave none, and at least 1 minute from now: a driver that comes back
+4 hours after a limit that resets on another day waits 2 more, and a reset already past waits 1 minute. When the host
+named no reset, the pause is 15, then 30, then 60 minutes from now for each pause in a row since the last result. A
+limit met while a pause lasts joins it: the same pause, its end moved later only by a named reset. Until the pause is
+over, `start` of any issue exits 1 with `paused until <time>`, `next` prints that line first and `--json` adds
+`pause`, and an idle `wait` waits with it, up to `--max-wait`. Time paused counts toward no issue's `issueHours`.
+
+A pause ends early only when the host's own record shows the limit may be gone: the account signed in on the machine
+changed after the limit. While a pause lasts, the driver's `wait` and `start` read, with the adapter, the last limit
+of each session whose `limit` row set, extended, or joined the pause. When every one of them shows the change, dated
+after its limit and no later than now, and that limit is one the pause holds, since a newer one must first be recorded
+by `wait`, the gate writes one `lifted` row with the pause's `wait` number, the `key`, `attempt`, and `record` of its
+first limit, the `cause` in words, and `at`, and prints `lifted the pause until <time>: <cause>`; that `start`
+launches nothing, and the next one does. The pause is over at that time for everything that reads it: the paused time
+counted, and the 5 minutes an idle session stays held past a pause's end. Nothing a session wrote lifts a pause, and
+no answer of one does, the driver's included: an answer shows nothing of a limit on another model. A limit record with
+no time of its own lifts nothing, nor does a read that fails. A record's pause lifts once, so an account that is still
+limited pauses the run again, as a new pause that counts toward its 24. Claude Code's record shows the change only
+where Remote Control was on in the limited session; elsewhere, on Codex, and once the limited session answered again
+or its process ended before the change, the pause runs to its end.
 
 A session the host still lists running, on a host that continues its own session at the reset (Claude Code, started
 with `autoContinueAtUsageLimit`), keeps running for a usage limit while its pause runs, and 5 minutes past the later
@@ -2201,10 +2236,11 @@ clone of the issue's branch as the forge holds it, whose prompt says the attempt
 limited session had not pushed is lost, which the host's own continuation makes rarer. A run waits out 24 pauses at
 most: the next limit writes a `halt` row instead, which only `aidrian project resume` lifts.
 
-Neither host's limit record is verified live, and a host that reads none, or a record it does not recognise, leaves the
-backstop: the session ends with no result, or `issueHours` stops it. The driver session shares the account's limit,
-and nothing restarts a driver its own limit stopped: the run goes on when the driver's host continues it after the
-reset, which `autoContinueAtUsageLimit` in the user's own settings asks of the host.
+Of the limit records, only Claude Code's weekly limit was seen live, once, on 2.1.332, with its account-change entry.
+A host that reads none, or a record it does not recognise, leaves the backstop: the session ends with no result, or
+`issueHours` stops it. The driver session shares the account's limit, and nothing restarts a driver its own limit
+stopped: the run goes on when the driver's host continues it after the reset, which `autoContinueAtUsageLimit` in the
+user's own settings asks of the host.
 For the issue's own session, whose unattended mark names the run and the issue, its attempt clone takes the run's
 main checkout, named in the ledger's init row, as its own: the machine's switches and decisions come from that
 checkout's `.aidrian.local.json`, never the clone's. Any other reader, and a clone whose link cannot be read or whose

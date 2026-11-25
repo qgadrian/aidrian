@@ -43,7 +43,7 @@ the tracker write guard, and the question names check also record each block: se
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code; OpenCode by fixture only ([provider page](providers/opencode.md#limits)) | no |
 | The main session ends a turn | The [result hold](config.md#project-run) of a project run's issue session that has not handed its result over, first, then the [announce check](#announced-work), the [review-loop check](#review-loop-check), the [merge hand-back check](#merge-hand-back-check), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the result hold, announce, and hand-back checks also Codex ([not live](providers/codex.md#hooks)), the review-loop and merge hand-back checks Claude Code only; the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop, and each check once per turn ([send-backs](#send-backs-per-turn)); the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
-| A subagent stops | A `stop` row, then the [delivery check](#delivery-check), the [background check](#background-check), and the [evidence check](#check-runs) | Claude Code | once |
+| A subagent stops | A `stop` row, then the [delivery check](#delivery-check) with its marker check, the [background check](#background-check), and the [evidence check](#check-runs), for the five [send-back causes](#send-back-causes) | Claude Code | once |
 | A session ends | The main session's recorded issue reads for a [project run](config.md#project-run) removed. When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; OpenCode for a root session's delete alone, with no `session` row, by fixture only ([provider page](providers/opencode.md#session-end)); the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
 The Bash rules run in the order of their table, in one process.
@@ -1996,7 +1996,7 @@ Each such marker names one file: everything inside the backticks that open its v
 without the trailing `.`, `,`, `;`, `:`, or `)` that ends a sentence, as in `Handoff file: <path>.`.
 The whole value must be an absolute path in the state folder's `dispatch/` that ends in `.json`; prose after it is not read.
 A marker that names no path, or a path that is not one, such as `<state>/dispatch/...` left unexpanded or a relative
-path, cannot be filled by the hook. Unless this run wrote a regular file there, by the transcript's start time, the agent
+path, cannot be filled by the hook; the marker check finds it. Unless this run wrote a regular file there, by the transcript's start time, the agent
 is sent back once, on the first stop of its turn, with the marker and the reason, and with no "write it now" for that
 path even when its report claims it: it writes nothing at that path, which may lie outside the
 dispatch folder, and hands back its report as its last message, saying that the brief's path was rejected, so its
@@ -2040,6 +2040,23 @@ the corrected one. The file is the record its dispatcher reads:
 a subagent's handback can reach another session than the one that dispatched it, such as the main session for an agent
 a named teammate started, or none once that one has ended. A forked subagent's first prompt is its parent's, so the check finds nothing there.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
+
+## Send-back causes
+
+The subagent stop hook sends a subagent back for five causes, and its `stop` row lists those of each send-back in
+`sent_back_for` ([dispatch-log.md](dispatch-log.md#stop-when-a-subagent-ends)). `aidrian report` counts the runs each
+cause sent back in its words, and `aidrian report health` names the leading one with its check.
+
+| Cause | The report's words | When | Check |
+| --- | --- | --- | --- |
+| `background` | background task | A background shell or agent it started still runs. | the [background check](#background-check) |
+| `missing_file` | missing file | Its last message presents a file as written that does not exist. | the [delivery check](#delivery-check) |
+| `handoff` | handoff file | A handoff file its brief named is not written, and it gave no report to write there. | the [delivery check](#delivery-check) |
+| `marker` | handoff marker | Its brief's `Handoff file:` marker names a path the hook cannot fill. | the marker check, part of the [delivery check](#delivery-check) section |
+| `evidence` | test claim with no run | Its report says a test command passed, with no finished run of its own that shows it. | the [evidence check](#check-runs) |
+
+A send-back can have several causes, such as a missing file and a test claim at once. A row written before
+`sent_back_for` existed shows its send-back under `cause not recorded`.
 
 ## Background check
 
@@ -2503,11 +2520,27 @@ A key past 300 characters keeps its first 300 and a digest of the whole, so a ru
 A configured command is still matched as a prefix of the whole command, so a long `testing.changedCommand` with files after it is a run.
 A call stopped, started in the background, or moved there at its timeout records nothing: no hook sees it end.
 A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
-The row goes to the session folder of the project the call's folder is in. When that folder holds none, as when another
+The folder a run ran in is the call's own when nothing before it on its line moves it, else the one the line writes out:
+`env -C <path>` on the run, or a `cd <path>` or `pushd <path>` that opens the line and that `&&` alone joins to the run.
+Any other move leaves the folder unknown, since no variable's value is read and a run may outlive a `cd` that failed:
+`env -C "$W"`, `cd "$W" &&`, `cd ~/x &&`, a `cd` that does not open the line, a negated one, and one with a `;`, `||`, pipe,
+`&`, `!`, or subshell between it and the run, such as `cd <path> && true; node --test` or `cd <path> && x | node --test`.
+An absolute `env -C <path>` names the folder after any of those; a relative one is unknown when the shell's folder is.
+No redirection or substitution of the line is judged for it.
+Such a run's row has `folder: "unknown"`, null trees, and no untracked files, so it never holds the session's own
+checkout's. It supports no pull request body line, which is held to a tree: that refusal says the run's folder could not
+be told from its command, and to run it again with a literal absolute path.
+It still supports a subagent's report, which is read at any tree, since it finished in the session with that count.
+A row with no `folder` field ran in a known folder, or is from a version before the field, and reads by its trees.
+An accepted residual: a directory change the lexer does not read as one (`builtin cd`, `chdir`, or one inside `eval`,
+a sourced file, a function, or an alias) is not followed, so the run keeps the folder known before it.
+The row goes to the session folder of the project the call's folder is in, one whose folder is unknown too, so a refusal
+can name it. When that folder holds none, as when another
 session removed the worktree a session started in and the host sends the home folder as its cwd, each run goes to the
 project of the folder it runs in, such as the worktree of `cd <worktree> && node --test` or `env -C <worktree> npm test`,
 and is read with that project's `testing` config: another project's command on the line takes no run, and one project's
-test command is no run in another. The line's one count goes to a run only when it is the line's one run: every run any
+test command is no run in another. One whose folder is unknown goes nowhere, since no project is known to hold it.
+The line's one count goes to a run only when it is the line's one run: every run any
 config of the line, the defaults included, reads on it counts once, by its command and folder, so a run in no project,
 or one only another project's config reads, withholds the count.
 
@@ -2542,8 +2575,14 @@ The record keeps its newest rows within 64 KB.
 
 Two checks read it:
 
-- The [pull request body rule](#bash-rules) reads the `## Tests run` section outside fenced code, one list item or
-  paragraph at a time with its wrapped lines joined, split at `;` and sentence ends. A clause that names a test command,
+- The [pull request body rule](#bash-rules) reads the `## Tests run` section outside fenced code, one list item,
+  paragraph, or table row at a time with its wrapped lines joined, split at `;` and sentence ends. A table row is read
+  as its own item, each cell before its header cell, after the header and any line right above it, and apart from the
+  other rows. Every line after the delimiter row is a row, one with no `|` a row of one cell, to a blank line, a heading,
+  a block quote, a thematic break, or a list marker, which starts its own item; a number other than 1, as in `2.`, is
+  such a marker only when the table stands in a list item, its header indented or in the item's text, and a row
+  elsewhere. A line with a `|` and no delimiter row after it is a paragraph. A cell past the header's last is not read,
+  and one under "Commit" reads as "commit" and the cell. A clause that names a test command,
   in backticks or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or
   "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
   or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. An id of digits
@@ -2564,12 +2603,13 @@ Two checks read it:
   request's current body does not already hold.
   The deny ends with what the record shows for each of its first three claims: the facts of the nearest recorded run,
   which is a pass of the command at those files, else one of the same program with other words there, else the
-  command's last pass at other files, else its last run. It states that run's status, its pass and fail counts, zero
+  command's last pass at other files in a known folder, else its last run. It states that run's status, its pass and fail counts, zero
   recorded passes as such, and the full id of its commit: the one the claim names when the run matches its tree, else
   the one among HEAD's last 100 that holds its files, or that none was found or git could not list them; with no run,
   what leaves no row. For a run that can support a pass claim, at a commit found, one instruction follows: cite one
   finished run, with its command as written in the call that ran it, its counts, and its commit. For one whose
   commit was not found, it says to commit the files it ran on and cite that commit, or run it at the commit cited. For
+  one whose folder is unknown, it says so in place of the commit, and to run it again with a literal absolute path. For
   any other, as a failed or unjudged one, one of zero passes, or none, it says to report that outcome or get a passing
   run. The run's record key only names it, since a key drops quotes and a long one is cut.
 - The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its

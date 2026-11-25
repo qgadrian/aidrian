@@ -12,7 +12,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 
 import {
-  appendCheckRuns, checkRows, claimProblem, commandKey, fileTail, isFullSuite, mayRunTests, outputText, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims,
+  appendCheckRuns, checkRows, claimFacts, claimProblem, commandKey, fileTail, isFullSuite, mayRunTests, outputText, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims,
   workingTree,
 } from '../plugins/aidrian/lib/check-runs.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
@@ -258,6 +258,100 @@ test('a row a finished run, with the status the line carries', () => {
   assert.equal(row('repeat 0 npm test && npm run check', 'ℹ pass 4\nℹ fail 0').map((each) => each.command).join(), 'npm run check', 'the run that certainly ran keeps its row');
 });
 
+// The trees of the folder a run is read at, so a row names the folder it was read in.
+const treeOf = (folder) => ({ tree: `tree of ${folder}`, trackedTree: `tracked of ${folder}`, untrackedCode: ['lib/other.mjs'] });
+const runsOf = (command, { cwd = '/w', ...rest } = {}) => checkRows({ command, cwd, output: 'ℹ pass 12\nℹ fail 0\n', exitZero: true, tree: treeOf, at: 't', ...rest });
+
+test('a run whose folder the command does not tell records no tree, and any other is read where it ran', () => {
+  const unknown = { at: 't', agentId: null, command: 'node --test', tree: null, trackedTree: null, untrackedCode: [], status: 'passed', pass: 12, fail: 0, folder: 'unknown' };
+  for (const command of [
+    'env -C $W node --test',
+    'env -C "$W" node --test',
+    'env --chdir="$W" node --test',
+    'env -C "$(pwd)" node --test',
+    'W=/x; env -C $W node --test',
+    'W=/x && env -C "$W" node --test',
+    'cd $W && node --test',
+    'cd "$W" && node --test',
+    'cd ~/x && node --test',
+    'cd /x; node --test',
+    'true && cd /x && node --test',
+    '(cd /x && node --test)',
+    'popd && node --test',
+    'cd /x && cd "$W" && node --test',
+    // The run may outlive a `cd` that failed, and then it runs where the shell was.
+    'cd /other < /missing && true; node --test',
+    'cd /other || node --test',
+    '! cd /other < /missing && node --test',
+    'cd /x && true; node --test',
+    'cd /x && true | node --test',
+    'cd /x && (node --test)',
+    'cd /other < /missing && true; env -C sub node --test',
+    'command cd /b && node --test',
+  ]) assert.deepEqual(runsOf(command), [unknown], command);
+  // With no folder for the call itself, a run is in no known folder unless its own is written out.
+  assert.deepEqual(runsOf('node --test', { cwd: null }), [unknown]);
+  assert.equal(runsOf('env -C /x node --test', { cwd: null })[0].tree, 'tree of /x');
+  for (const [command, folder] of [
+    ['node --test', '/w'],
+    ['FOO=1 node --test', '/w'],
+    ['node --test && cd "$W"', '/w'],
+    ['env -C /x node --test', '/x'],
+    ['env -C "/x" node --test', '/x'],
+    ['cd /x && node --test', '/x'],
+    ['cd sub && node --test', '/w/sub'],
+    ['pushd /x && node --test', '/x'],
+    ['cd "$W"; env -C /x node --test', '/x'],
+    ['cd /other < /missing && true; env -C /x node --test', '/x'],
+    ['cd /other || env --chdir=/x node --test', '/x'],
+    ['cd /x && true && node --test', '/x'],
+    ['cd /x && env -C sub node --test', '/x/sub'],
+    ['env -C sub node --test', '/w/sub'],
+    ['true; node --test', '/w'],
+    ['node --test; cd /x', '/w'],
+    ['source x && node --test', '/w'],
+    ['eval "$(x)" && node --test', '/w'],
+  ]) {
+    const [row] = runsOf(command);
+    assert.deepEqual([row.tree, row.trackedTree, row.untrackedCode], [`tree of ${folder}`, `tracked of ${folder}`, ['lib/other.mjs']], command);
+    assert.ok(!('folder' in row), `${command}: a row of a known folder has no such field`);
+  }
+  // The count rule is the line's, whatever the folders: two runs take no count, and the agent is the call's own.
+  const two = runsOf('node --test && env -C "$W" node --test', { agentId: 'a1' });
+  assert.deepEqual(two.map(({ agentId, folder, pass, tree }) => [agentId, folder, pass, tree]), [['a1', undefined, null, 'tree of /w'], ['a1', 'unknown', null, null]]);
+  assert.deepEqual(runsOf('env -C "$W" node --test && env -C /x npm test', { keep: (folder) => folder !== null }).map(({ command }) => command), ['npm test'], '`keep` is told the folder is unknown');
+});
+
+test('a run in an unknown folder supports no claim held to a tree, whose refusal asks for a literal absolute path, and still a report', () => {
+  const claim = { clause: 'c', key: 'node --test', counts: [12], commits: [] };
+  const [unknown] = runsOf('env -C "$W" node --test');
+  const [placed] = runsOf('env -C /x node --test');
+  assert.equal(unsupportedClaims([claim], [unknown], { tree: 'tree of /w' }).length, 1, 'at no tree');
+  assert.deepEqual(unsupportedClaims([claim], [unknown]), [], 'a report, which is read at any tree, keeps it');
+  assert.equal(unsupportedClaims([{ ...claim, counts: [13] }], [unknown]).length, 1, 'with the count it states');
+  assert.deepEqual(unsupportedClaims([claim], [unknown, placed], { tree: 'tree of /x' }), [], 'and takes nothing from another run');
+  // A row from before the field: its trees say what it supports, as they did.
+  const older = { ...unknown, tree: 't1', trackedTree: 't1' };
+  delete older.folder;
+  assert.deepEqual(unsupportedClaims([claim], [older], { tree: 't1' }), []);
+  assert.deepEqual(unsupportedClaims([claim], [{ ...older, tree: null, trackedTree: null }]), [], 'a tree git could not read, for a report');
+
+  const said = claimProblem([claim], [unknown], { where: 'the body', byTree: true });
+  assert.match(said, /The record holds passed \(pass 12, fail 0\) in a folder its command does not tell\. A run's folder could not be told from its command, as with one a variable holds, so that run supports no claim here\. Run it again with a literal absolute path, `env -C <path> \.\.\.`\. Quote only/u);
+  assert.doesNotMatch(said, /Untracked code|git could not read/u);
+  const report = claimProblem([{ ...claim, counts: [13] }], [unknown], { where: 'the report' });
+  assert.match(report, /The record holds passed \(pass 12, fail 0\) in a folder its command does not tell\. Quote only/u, 'a report is not told to run it again for its folder');
+  const other = claimProblem([claim], [older, { ...older, tree: null }], { where: 'the body', byTree: true });
+  assert.match(other, /at tree t1; passed \(pass 12, fail 0\) at a tree git could not read\./u);
+  assert.doesNotMatch(other, /could not be told/u, 'an older row reads as before');
+  assert.match(claimProblem([claim], [{ ...placed, command: 'npm test' }], { where: 'the body' }), /holds no finished run of it/u);
+
+  const facts = (runs) => claimFacts(claim, runs, { tree: 't9', commitOf: (tree) => (tree === 'tree of /x' ? 'abc' : null), named: () => 'named' });
+  assert.equal(facts([unknown]), 'the nearest recorded run is of `node --test`: passed, 12 pass, 0 fail; its folder could not be told from its command. Run it again with a literal absolute path, `env -C <path> ...`.');
+  assert.match(facts([placed, unknown]), /at commit abc\. Cite one finished run/u, 'a pass in a known folder is the one to cite');
+  assert.match(facts([{ ...unknown, status: 'failed', pass: 11, fail: 1 }]), /its folder could not be told from its command\. Report that outcome, or get a passing run\.$/u);
+});
+
 const BODY = (lines) => `## Summary\n\n- x\n\n## Tests run\n\n${lines.join('\n')}\n`;
 
 test('a pass claim names a test command and a pass, and never a failure, an unfinished run, or CI', () => {
@@ -289,6 +383,109 @@ test('a pass claim names a test command and a pass, and never a failure, an unfi
   assert.deepEqual(passClaims('At 3854814, `npm test`: 12 pass', { section: null })[0].commits, ['3854814']);
   assert.equal(passClaims('`git status` is clean and `npm run lint` passed', { section: null }).length, 0, 'no test command');
   assert.deepEqual(passClaims('`npm test` on Node 22 pass', { section: null })[0].counts, [], 'a number after a word is a name');
+});
+
+// The claims of `lines` as a pull request body and as a subagent's report, which read the same here, as [key, counts] pairs.
+const claimPairs = (lines) => {
+  const body = passClaims(BODY(lines), { testing: TESTING });
+  const report = passClaims(lines.join('\n'), { section: null, ownOnly: true, testing: TESTING });
+  assert.deepEqual(report, body, 'a body and a report read it the same');
+  return body.map(({ key, counts }) => [key, counts]);
+};
+const TABLE_RUNS = [
+  { command: 'npm test', status: 'passed', pass: 35, fail: 0, tree: 't', trackedTree: 't' },
+  { command: 'vitest run', status: 'passed', pass: 34, fail: 0, tree: 't', trackedTree: 't' },
+];
+
+test('each row of a Markdown table is its own claim, held to its own counts', () => {
+  const table = (second) => ['| Command | Result |', '| --- | :-: |', '| `npm test` | 35 passed |', `| \`vitest run\` | ${second} passed |`];
+  assert.deepEqual(claimPairs(table(34)), [['npm test', [35]], ['vitest run', [34]]]);
+  for (const read of [(lines) => passClaims(BODY(lines)), (lines) => passClaims(lines.join('\n'), { section: null, ownOnly: true })]) {
+    assert.deepEqual(unsupportedClaims(read(table(34)), TABLE_RUNS, { tree: 't' }), [], 'two true rows');
+    assert.deepEqual(unsupportedClaims(read(table(99)), TABLE_RUNS, { tree: 't' }).map(({ key, counts }) => [key, counts]),
+      [['vitest run', [99]]], 'only the row whose count the record does not hold');
+  }
+  assert.deepEqual(claimPairs(['| Command | Result |', '|---|---|', '| `npm test` | 1 failed |', '| `vitest run` | 34 passed |', '', '`pytest` passed']),
+    [['vitest run', [34]], ['pytest', []]], 'a failure is its row\'s own, and a blank line ends the table');
+});
+
+test('a table row reads with its header cells, so a pass word in the header is a claim of each row', () => {
+  assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '| `npm test` | 35 |', '| `vitest run` | 34 |']), [['npm test', [35]], ['vitest run', [34]]]);
+  assert.deepEqual(claimPairs(['Command | Tests passed', '--- | ---', '`npm test` | 35']), [['npm test', [35]]], 'no outer pipes');
+  assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '| `npm test` |']), [['npm test', []]], 'a row short of a cell');
+  assert.deepEqual(claimPairs(['| Command | Pass/fail |', '| --- | --- |', '| `npm test` | 35/0 |']), [['npm test', [35]]], 'no failure is read of it');
+  assert.deepEqual(claimPairs(['| Command | Notes | Passed |', '| --- | --- | --- |', '| `npm test` | Run once. | 35 |']), [['npm test', [35]]],
+    'a cell\'s closing period ends no clause');
+  assert.deepEqual(claimPairs(['| Suite | `npm test` |', '| --- | --- |', '| Result | 35 passed |']), [['npm test', [35]]], 'a command in the header');
+  assert.deepEqual(claimPairs(['| `npm test` passed |', '| --- |']), [['npm test', []]], 'a claim in the header of a table of no rows');
+  assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '| `npm test \\| tail -5` | 35 |', '| `vitest run | cat` | 34 |']),
+    [['npm test', [35]], ['vitest run', [34]]], 'an escaped pipe and one inside backticks split no cell');
+});
+
+test('a table under a list item or a paragraph line reads with it, and a row with no delimiter row is a paragraph', () => {
+  const rows = ['| Command | Result |', '| --- | --- |', '| `npm test` | 35 passed |', '| `vitest run` | 34 passed |'];
+  const two = [['npm test', [35]], ['vitest run', [34]]];
+  assert.deepEqual(claimPairs(['The suites ran:', ...rows]), two);
+  assert.deepEqual(claimPairs(['- The suites ran:', ...rows.map((row) => `  ${row}`), '- `pytest` passed']), [...two, ['pytest', []]], 'a list marker ends it');
+  assert.deepEqual(claimPairs([`- ${rows[0]}`, ...rows.slice(1).map((row) => `  ${row}`)]), two, 'the header behind a list marker');
+  assert.deepEqual(claimPairs(['- `npm test`:', '  | Passed | Skipped |', '  | --- | --- |', '  | 35 | 0 |']), [['npm test', []], ['npm test', [35]]],
+    'the command above its table, whose header says a pass, and its row');
+  assert.deepEqual(claimPairs(['All passed:', '| Command | Tests |', '| --- | --- |', '| `npm test` | 35 |']), [['npm test', []]], 'the pass word above its table');
+  assert.deepEqual(claimPairs([rows[0], ...rows.slice(2)]), [['npm test', [35, 34]], ['vitest run', [35, 34]]], 'no delimiter row');
+});
+
+test('a `;` or a sentence end in a table header cuts no row', () => {
+  for (const label of ['Result; notes', 'Result. Notes']) {
+    assert.deepEqual(claimPairs([`| ${label} | Command |`, '| --- | --- |', '| 35 passed | `npm test` |']), [['npm test', [35]]], label);
+  }
+});
+
+test('a table row reads only as many cells as its header has', () => {
+  assert.deepEqual(claimPairs(['| Command | Result |', '| --- | --- |', '| `npm test` | 35 passed | 99 passed |']), [['npm test', [35]]]);
+});
+
+test('a line with no pipe is a table row of one cell', () => {
+  assert.deepEqual(claimPairs(['| `npm test` |', '| --- |', '35 passed']), [['npm test', [35]]], 'held with the command in the header');
+  assert.deepEqual(claimPairs(['| Passed | Command |', '| --- | --- |', '35', '| 12 | `npm test` |']), [['npm test', [12]]], 'the next row is still a row');
+});
+
+test('a thematic break ends a table, and the text after it is apart from the header', () => {
+  assert.deepEqual(claimPairs(['| `npm test` passed |', '| --- |', '---', 'The prior run failed']), [['npm test', []]]);
+  for (const rule of ['---', '***', '_ _ _']) {
+    assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '| `npm test` | 35 |', rule, '`vitest run` ran here:', '34 passed']),
+      [['npm test', [35]], ['vitest run', [34]]], rule);
+  }
+});
+
+test('a block quote ends a table', () => {
+  assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '| `npm test` | 35 |', '> `vitest run` | was not run']), [['npm test', [35]]]);
+});
+
+test('an empty list marker ends a table', () => {
+  for (const marker of ['-', '*', '+', '1.', '1)']) {
+    assert.deepEqual(claimPairs(['| `npm test` |', '| --- |', marker, '  `vitest run` 34 passed']), [['vitest run', [34]]], marker);
+  }
+});
+
+test('the next item of a numbered list ends the table in the item above it', () => {
+  assert.deepEqual(claimPairs(['1. The earlier run failed:', '   | Case | Count |', '   | --- | --- |', '   | a | 1 |', '2. ran `vitest run`: 34 passed']),
+    [['vitest run', [34]]]);
+});
+
+test('the next item of a numbered list ends a table a blank line sets apart from the item above it', () => {
+  assert.deepEqual(claimPairs(['1. The suites:', '', '   | Case | Failed |', '   | --- | --- |', '   | a | 1 |', '2. ran `vitest run`: 34 passed']),
+    [['vitest run', [34]]]);
+});
+
+test('a number other than 1 is a row of a table in no list item', () => {
+  assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '2. notes | 2', '| `npm test` | 35 |']), [['npm test', [35]]]);
+});
+
+test('an id of only digits under a Commit header is a commit id', () => {
+  for (const [label, id] of [['Commit', '3854814'], ['commit', '`3854814`']]) {
+    const [claim] = passClaims(BODY([`| Command | ${label} | Passed |`, '| --- | --- | --- |', `| \`npm test\` | ${id} | 35 |`]));
+    assert.deepEqual([claim.counts, claim.commits], [[35], ['3854814']], label);
+  }
 });
 
 test('a report\'s own claims leave out what it quotes from another source', () => {
@@ -445,16 +642,21 @@ function recorded(session) {
   return rows;
 }
 
-test('the PostToolUse hook records a finished run, and nothing for one stopped or in the background', () => {
+test('the PostToolUse hook records a finished run, and nothing for one stopped or in the background', async () => {
   const { dir, git } = repo();
   const tree = git('rev-parse', 'HEAD^{tree}');
   const ran = runScript('hook-bash-post.mjs', postPayload('npm run check 2>&1', { cwd: dir, session: 'rec-1', stdout: 'ℹ pass 7\nℹ fail 0\n' }));
   assert.deepEqual([ran.status, ran.stdout, ran.stderr], [0, '', '']);
   assert.deepEqual(recorded('rec-1').map(({ command, status, pass, fail, tree: at, trackedTree }) => ({ command, status, pass, fail, at, trackedTree })),
     [{ command: 'npm run check', status: 'passed', pass: 7, fail: 0, at: tree, trackedTree: tree }]);
-  runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'rec-2', response: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' } }));
-  runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'rec-2', response: { stdout: 'ℹ pass 1', stderr: '', interrupted: true } }));
+  const call = (input) => hookCall(path.join(SCRIPTS, 'hook-bash-post.mjs'), { input: JSON.stringify(input), env: ENV });
+  await call(postPayload('npm run check', { cwd: dir, session: 'rec-2', response: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' } }));
+  await call(postPayload('npm run check', { cwd: dir, session: 'rec-2', response: { stdout: 'ℹ pass 1', stderr: '', interrupted: true } }));
   assert.deepEqual(recorded('rec-2'), [], 'a run in the background or stopped records nothing');
+  // A run in a folder the command does not tell is filed with the session's own project, with no tree of its checkout.
+  await call(postPayload('W=/x; env -C "$W" npm run check', { cwd: dir, session: 'rec-3', stdout: 'ℹ pass 7\nℹ fail 0\n' }));
+  assert.deepEqual(recorded('rec-3').map(({ command, status, pass, tree: at, trackedTree, folder }) => ({ command, status, pass, at, trackedTree, folder })),
+    [{ command: 'npm run check', status: 'passed', pass: 7, at: null, trackedTree: null, folder: 'unknown' }]);
 });
 
 // Another session removed this session's starting worktree: the host sends the home folder as its cwd, and the session
@@ -484,7 +686,8 @@ test('a run after a cd is recorded when the call\'s own folder holds no project'
   assert.deepEqual(holders('moved-3'), [first], 'the run went to the project of the folder it ran in');
   // Each run is read with the config of the project it runs in: one project's test command is no run in another.
   const { dir: smoke } = repo({ config: { version: 1, testing: { fullSuite: ['make smoke'] } } });
-  await call(`git -C ${smoke} status && env -C ${other} make smoke && env -C ${dir} npm run check`, 'moved-4');
+  // One whose folder is unknown is filed nowhere, and takes no other run's row with it.
+  await call(`git -C ${smoke} status && env -C ${other} make smoke && env -C ${dir} npm run check && env -C "$W" npm run check`, 'moved-4');
   assert.deepEqual(holders('moved-4'), [first]);
   assert.deepEqual(recorded('moved-4').map(({ command }) => command), ['npm run check']);
   // Two runs on the line, each its own project's: the line's one summary is neither's count.
@@ -599,6 +802,9 @@ test('the pull request body rule refuses a pass the session record does not supp
   assert.match(judge([claim], [{ ...run, pass: 4031, fail: 40, status: 'failed' }]), /The record holds failed \(pass 4031, fail 40\)/u);
   assert.match(judge([claim], [{ ...run, pass: null, fail: null, status: 'unjudged' }]), /The record holds unjudged at tree/u);
   assert.match(judge([claim], [{ ...run, tree: null, trackedTree: null }]), /at a tree git could not read/u);
+  const unplaced = judge([claim], [{ ...run, tree: null, trackedTree: null, untrackedCode: [], folder: 'unknown' }]);
+  assert.match(unplaced, /^Blocked: the `## Tests run` section says `npm run check` passed.*Run it again with a literal absolute path, `env -C <path> \.\.\.`\./su);
+  assert.doesNotMatch(unplaced, /Untracked code/u);
   assert.match(judge([claim], [{ ...run, tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) }]), /the files of HEAD \(tree [0-9a-f]{12}\), or of the commit the line names/u);
   assert.equal(judge(['- `npm run check`: not finished (stopped under load)', '- CI `Check (Node 22)`: pass'], []), null);
   assert.equal(judge([claim], null), null, 'a session with no readable record is not judged');

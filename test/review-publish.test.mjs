@@ -883,6 +883,15 @@ test('inline: a blocking finding on an added line gets a thread; one on an uncha
   assert.ok(!JSON.stringify(copy).includes('finding R1-1') && !JSON.stringify(copy).includes('what is wrong'));
 });
 
+test('inline: with no diff to read, a finding in a file named as every object inherits goes in the body', () => {
+  const head = 'a'.repeat(40);
+  const state = inlineState(head, [listed('R1-1', { file: 'constructor' }), listed('R1-2', { file: '__proto__' })]);
+  const { forge, calls } = inlineForge();
+  const unread = { root: path.join(tmpdir(), 'aidrian-inline-no-folder'), base: 'b'.repeat(40), head };
+  const result = postInline({ ...inlineStep(unread, state, forge), paths: { tracked: () => true, lines: () => 9 } }, openOf(state));
+  assert.deepEqual([result.posted, result.threads, result.in_body, reviewOf(calls).comments], [true, [], ['R1-1', 'R1-2'], []]);
+});
+
 test('inline: one post per id, a finding listed twice posts once, and a later step posts nothing again', (t) => {
   const r = inlineRepo(t);
   const state = inlineState(r.head, [listed('R1-1')]);

@@ -19,7 +19,8 @@ import { cleanText, RESULT_CAP, validateResult, WAIT_MARGIN, waitRun } from '../
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
 import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
-import { LINGER_GRACE } from '../plugins/aidrian/lib/project-linger.mjs';
+import { detectHost } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { LINGER_GRACE, releaseAttempts } from '../plugins/aidrian/lib/project-linger.mjs';
 import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { recheckHalt } from '../plugins/aidrian/lib/project-recheck.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -297,27 +298,25 @@ test('an issue\'s session that stops with no result is sent back once; after its
   assert.equal(stop(CHILD), null);
 });
 
-test('wait records an issue whose sessions all ended with no result, and stops and records one past issueHours', (t) => {
-  const ended = started(t);
-  assert.deepEqual(ended.cmd(['wait', 'launch', '--max-wait', '0']).out, ['running ENG-1']);
-  ended.claude.states[CHILD] = 'done';
-  assert.deepEqual(ended.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', 'idle']);
-  assert.match(ended.cmd(['wait', 'launch'], { session: OTHER }).err[0], /this session is not the driver/u);
-
+test('wait stops and records an issue past issueHours, and names one it cannot stop with the host\'s own command', (t) => {
   const late = started(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 2 } });
   const later = Date.now() + 3 * 60 * 60 * 1000;
-  assert.deepEqual(late.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, ['ended ENG-1 timeout -> open', 'idle']);
-  assert.deepEqual(late.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [STARTED[0].id]);
   // One past issueHours that cannot be stopped is named with the host's own command that stops it by hand.
-  const stuck = started(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 2 } });
-  const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : stuck.claude.run(command, args, options));
-  assert.deepEqual(stuck.cmd(['wait', 'launch', '--max-wait', '0'], { now: later, spawn: failing }).out, [`overdue ENG-1 attempt 1: a session of it, ${STARTED[0].id}, could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`, 'running ENG-1']);
-
-  const settled = started(t);
-  settled.result({ status: 'blocked', stop: 'no token' });
-  assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 blocked -> parked blocked', 'lingering ENG-1 attempt 1']);
-  assert.match(settled.cmd(['wait', 'launch', '--max-wait', '9999']).err.at(-1), /takes --max-wait as whole seconds from 0 to 540/u);
+  const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : late.claude.run(command, args, options));
+  assert.deepEqual(late.cmd(['wait', 'launch', '--max-wait', '0'], { now: later, spawn: failing }).out, [`overdue ENG-1 attempt 1: a session of it, ${STARTED[0].id}, could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`, 'running ENG-1']);
+  assert.deepEqual(late.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, ['ended ENG-1 timeout -> open', 'idle']);
+  assert.deepEqual(stops(late), [STARTED[0].id]);
 });
+
+// The sessions the run `fx` asked its host to stop, in order, those a test's own spawn answered aside.
+const stops = (fx) => fx.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]);
+
+// The release `wait` and `end` run on each read (project-linger.mjs releaseAttempts), alone, on the run `fx` as its
+// ledger holds it: a wait's own reads of git and the forge prove nothing more about it.
+function release(fx, spawn = fx.claude.run) {
+  const host = detectHost({ env: fx.as(DRIVER) });
+  return releaseAttempts({ found: fx.run(), store: fx.store, cap: host.capabilities.projectStart, host, env: fx.as(DRIVER), spawn, now: Date.now() });
+}
 
 // The second session of ENG-1's chain: a continuation of the session the run started, with the start record its
 // handoff wrote, which the fixture's host lists working while it lists the first one ended.
@@ -348,66 +347,40 @@ test('a chain whose second session cannot be stopped is named by that session, o
   assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 failed -> open', 'lingering ENG-1 attempt 1']);
   const past = Date.now() + LINGER_GRACE + 60_000;
   assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0'], { now: past, spawn: failing(settled) }).out, [`lingered ENG-1 attempt 1: a session of it, ${NEXT.id}, ran on after its issue settled and could not be stopped; \`claude stop ${NEXT.id}\` stops it`, 'lingering ENG-1 attempt 1']);
+  assert.deepEqual(stops(settled), [], 'a lingering session the host holds is the linger path\'s alone: no release stops it');
+
+  // Once the chain ended, a host that still holds both members is asked to stop each, in the pass that records it gone.
+  settled.claude.states[NEXT.session] = 'done';
+  settled.claude.held.add(CHILD).add(NEXT.session);
+  assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0'], { now: past }).out, ['lingered ENG-1 attempt 1 ended', 'released ENG-1 attempt 1', 'idle']);
+  assert.deepEqual(stops(settled), [STARTED[0].id, NEXT.id]);
 });
 
-// A session the host lists as done while its plain listing still holds it, as the ledger and the listing of Claude Code
-// 2.1.331 showed: its `gone` row says it ended, so the linger path never stopped it (project-linger.mjs releaseAttempts).
-test('wait stops an attempt session the host still holds after the run recorded it gone, and prints released once', (t) => {
-  const stops = (fx) => fx.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]);
-  const ended = started(t);
-  ended.claude.states[CHILD] = 'done';
-  ended.claude.held.add(CHILD);
-  assert.deepEqual(ended.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', 'released ENG-1 attempt 1', 'idle']);
-  assert.deepEqual(ended.rows().filter((row) => row.event === 'gone').map((row) => [row.key, row.attempt, row.how]), [['ENG-1', 1, 'ended']]);
-  assert.deepEqual(stops(ended), [STARTED[0].id]);
-  assert.equal(ended.claude.held.has(CHILD), false, 'the host holds it no more');
-  assert.deepEqual(ended.cmd(['wait', 'launch', '--max-wait', '0']).out, ['idle'], 'nothing is released twice');
-  assert.deepEqual(stops(ended), [STARTED[0].id]);
-  // One the host lists as working again, as after a person typed into it, is never stopped.
-  ended.claude.states[CHILD] = 'working';
-  assert.deepEqual(ended.cmd(['wait', 'launch', '--max-wait', '0']).out, ['idle']);
-  assert.deepEqual(stops(ended), [STARTED[0].id], 'a working session is not released');
-  // One it holds but cannot say ended, its full listing down, is left alone with a note, and released once it can say.
-  ended.claude.states[CHILD] = 'done';
-  ended.claude.held.add(CHILD);
-  const blind = (command, args, options) => (args[0] === 'agents' && args.includes('--all') ? { status: 1, stdout: '', stderr: 'down' } : ended.claude.run(command, args, options));
-  assert.deepEqual(ended.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: blind }).out, ['note sessions: Claude Code: it holds a session of a settled attempt and cannot say now whether that session ended, so it was left alone', 'idle']);
-  assert.deepEqual(stops(ended), [STARTED[0].id], 'nothing stopped while the host cannot say');
-  assert.deepEqual(ended.cmd(['wait', 'launch', '--max-wait', '0']).out, ['released ENG-1 attempt 1', 'idle']);
-
-  // A session that lingers after its result, with no `gone` row yet, is the linger path's alone: no release stops it.
-  const settled = started(t);
-  settled.result({ status: 'failed', stop: 'gave up' });
-  assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 failed -> open', 'lingering ENG-1 attempt 1']);
-  assert.deepEqual(stops(settled), [], 'a lingering session is not released');
-  settled.claude.states[CHILD] = 'done';
-  settled.claude.held.add(CHILD);
-  assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0']).out, ['lingered ENG-1 attempt 1 ended', 'released ENG-1 attempt 1', 'idle']);
-  assert.deepEqual(stops(settled), [STARTED[0].id]);
-});
-
-// The host's answer for each chain member of each gone attempt is read from one list, in order: only attempt 2's
-// session is held, so only it is stopped and named.
-test('of two gone attempts, the release stops only the one whose session the host still holds', (t) => {
+// One run through the release of sessions the host still holds (project-linger.mjs releaseAttempts): a session the host
+// lists as done while its plain listing still holds it, as the ledger and the listing of Claude Code 2.1.331 showed. Its
+// `gone` row says it ended, so the linger path never stopped it.
+test('wait records an issue whose sessions all ended with no result, and stops each session the host still holds after its attempt ended', (t) => {
   const fx = started(t);
-  fx.claude.states[CHILD] = 'done';
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', 'idle']);
-  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  fx.claude.states[STARTED[1].session] = 'done';
-  fx.claude.held.add(STARTED[1].session);
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', 'released ENG-1 attempt 2', 'idle']);
-  assert.deepEqual(fx.rows().filter((row) => row.event === 'gone').map((row) => row.attempt), [1, 2]);
-  assert.deepEqual(fx.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [STARTED[1].id]);
-});
-
-test('while an issue runs, a held session that cannot be stopped ends no wait early, and its line prints once when the wait returns', (t) => {
-  const fx = started(t);
+  const stopped = [];
+  // The number of stops that fail before one goes through.
+  let fails = Infinity;
+  const failing = (command, args, options) => {
+    if (args[0] === 'stop') {
+      stopped.push(args[1]);
+      if (fails > 0) {
+        fails -= 1;
+        return { status: 1, stdout: '', stderr: 'no' };
+      }
+    }
+    return fx.claude.run(command, args, options);
+  };
+  const stuck = `not released ENG-1 attempt 1: a session of it, ${STARTED[0].id}, stayed with the host after its work ended and could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`;
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['running ENG-1']);
   fx.claude.states[CHILD] = 'done';
   fx.claude.held.add(CHILD);
-  const stopped = [];
-  const failing = (command, args, options) => (args[0] === 'stop' ? (stopped.push(args[1]), { status: 1, stdout: '', stderr: 'no' }) : fx.claude.run(command, args, options));
-  const stuck = `not released ENG-1 attempt 1: a session of it, ${STARTED[0].id}, stayed with the host after its work ended and could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`;
   assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, ['ended ENG-1 no_result -> open', stuck, 'idle'], 'the line keeps no wait from idle');
+  assert.deepEqual(fx.rows().filter((row) => row.event === 'gone').map((row) => [row.key, row.attempt, row.how]), [['ENG-1', 1, 'ended']]);
+  assert.match(fx.cmd(['wait', 'launch'], { session: OTHER }).err[0], /this session is not the driver/u);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   // A clock that moves when the wait pauses and on each call to the host, a second each, so every read costs time.
   const now = Date.now();
@@ -432,6 +405,37 @@ test('while an issue runs, a held session that cannot be stopped ends no wait ea
   const slowest = Math.max(...reads, elapsed - resumed);
   assert.ok(passes >= 4 && elapsed <= 120_000 && elapsed >= 120_000 - slowest - WAIT_MARGIN, `the wait ran its time out (${passes} pauses, ${elapsed} ms, reads of ${reads})`);
   assert.ok(stopped.length > 0 && stopped.every((id) => id === STARTED[0].id), 'the session of the attempt that runs is never stopped');
+  assert.deepEqual(release(fx), ['released ENG-1 attempt 1']);
+  assert.equal(fx.claude.held.has(CHILD), false, 'the host holds it no more');
+
+  // A session that lingers after its result, with no `gone` row yet, is the linger path's alone: no release stops it.
+  stopped.length = 0;
+  assert.equal(fx.result({ status: 'blocked', stop: 'no token' }, STARTED[1].session).exitCode, 0);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, ['result ENG-1 blocked -> parked blocked', 'lingering ENG-1 attempt 2']);
+  assert.match(fx.cmd(['wait', 'launch', '--max-wait', '9999']).err.at(-1), /takes --max-wait as whole seconds from 0 to 540/u);
+  assert.deepEqual(stopped, []);
+  // Attempt 2 ends held: of the two gone attempts, only the one whose session the host still holds is stopped.
+  fails = 0;
+  fx.claude.states[STARTED[1].session] = 'done';
+  fx.claude.held.add(STARTED[1].session);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, ['lingered ENG-1 attempt 2 ended', 'released ENG-1 attempt 2', 'idle']);
+  assert.deepEqual(stopped, [STARTED[1].id]);
+  assert.deepEqual(fx.rows().filter((row) => row.event === 'gone').map((row) => row.attempt), [1, 2]);
+
+  stopped.length = 0;
+  assert.deepEqual(release(fx, failing), [], 'nothing is released twice');
+  // One the host lists as working again, as after a person typed into it, is never stopped.
+  fx.claude.states[CHILD] = 'working';
+  assert.deepEqual(release(fx, failing), []);
+  assert.deepEqual(stopped, [], 'a working session is not released');
+  // One it holds but cannot say ended, its full listing down, is left alone with a note, and released once it can say.
+  fx.claude.states[CHILD] = 'done';
+  fx.claude.held.add(CHILD);
+  const blind = (command, args, options) => (args[0] === 'agents' && args.includes('--all') ? { status: 1, stdout: '', stderr: 'down' } : failing(command, args, options));
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: blind }).out, ['note sessions: Claude Code: it holds a session of a settled attempt and cannot say now whether that session ended, so it was left alone', 'idle']);
+  assert.deepEqual(stopped, [], 'nothing stopped while the host cannot say');
+  assert.deepEqual(release(fx, failing), ['released ENG-1 attempt 1']);
+  assert.deepEqual(stopped, [STARTED[0].id]);
 });
 
 test('wait holds --max-wait as best effort under slow reads: it starts no read the slowest so far would not fit, and returns at once on a settle', (t) => {

@@ -544,29 +544,16 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
     .map((each) => [placeKey({ title: each.already_ruled, file: each.file }), each.ruled_id]));
   const held = new Map(recordedFindings(state).filter((each) => isFindingId(each.id) && isMint(each.mint)).map((each) => [each.id, each]));
   // A carried ruling is the engine's own rebuild, and a pass's input shows no reviewer a mark (settled.mjs inputCopy), so
-  // it arrives with none: it takes the mark the record holds for what it repeats, an earlier ruling of its name and file,
-  // else the finding of that title and file, true over false where two disagree.
-  const marks = (ruled) => {
-    const out = new Map();
-    for (const each of recordedFindings(state)) {
-      if (typeof each.security !== 'boolean' || Boolean(trimmed(each.already_ruled)) !== ruled) continue;
-      const key = placeKey(ruled ? { title: each.already_ruled, file: each.file } : each);
-      out.set(key, out.get(key) === true || each.security);
-    }
-    return out;
-  };
-  const rulingMarks = marks(true);
-  const raisedMarks = marks(false);
-  const carriedMark = (finding) => {
-    const key = placeKey({ title: finding.already_ruled, file: finding.file });
-    return rulingMarks.get(key) ?? raisedMarks.get(key);
-  };
+  // it arrives with none. Its mark waits until its `ruled_id` is known, and comes from the finding that id names alone:
+  // that finding's true or false, or, with none, the pass's default (`waiting`, below).
+  const waiting = new Set();
   const taken = new Set();
   const dropped = [];
   const fresh = () => mintId(state);
   const one = (group) => (raw) => {
     const { id, mint: mark, aliases, ruled_id: _named, security: given, returned_id: returned, ...finding } = raw;
-    const security = given === undefined && group === 'carried' && trimmed(finding.already_ruled) ? carriedMark(finding) : given;
+    const security = given;
+    const deferred = given === undefined && group === 'carried' && Boolean(trimmed(finding.already_ruled));
     const kept = isFindingId(id) && isMint(mark) && held.get(id)?.mint === mark ? held.get(id) : null;
     // A ruling carries a prior ruling's id, and a finding a prior finding's: a ruling never takes the id of the finding
     // it repeats, whose title it shares, nor an id it returned.
@@ -581,11 +568,12 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
       ?? null;
     if (match) taken.add(match.id);
     const identity = match ? { id: match.id, mint: match.mint, ...(Array.isArray(match.aliases) && match.aliases.length ? { aliases: match.aliases.filter(isFindingId) } : {}) } : mint ? fresh() : null;
-    const marked = flagged(security) || match?.security === true || securitySeverity(finding.severity) || (securityPass && security !== false);
+    const marked = flagged(security) || match?.security === true || securitySeverity(finding.severity) || (securityPass && security !== false && !deferred);
     const out = { ...(identity ?? {}), ...finding, ...(marked ? { security: true } : security === false ? { security: false } : {}) };
+    const done = (value) => (deferred && !marked ? (waiting.add(value), value) : value);
     const name = identity?.id ?? 'a finding with no id';
     if (asked && !named && idLike(returned)) dropped.push(`${name}: its returned id is not an open finding its input listed, so it was read as no id`);
-    if (checked) return out;
+    if (checked) return done(out);
     const file = typeof out.file === 'string' && out.file.length <= MAX_PATH && out.file.trim() !== '' && paths?.tracked(out.file) === true ? out.file : null;
     if (out.file !== undefined && out.file !== null && file === null) dropped.push(`${name}: its file was not recorded`);
     const count = file === null ? null : paths.lines(file);
@@ -593,7 +581,7 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
     if (out.line !== undefined && out.line !== null && line === null) dropped.push(`${name}: its line was not recorded`);
     delete out.file;
     delete out.line;
-    return { ...out, ...(file !== null ? { file } : {}), ...(line !== null ? { line } : {}) };
+    return done({ ...out, ...(file !== null ? { file } : {}), ...(line !== null ? { line } : {}) });
   };
   const groups = Object.fromEntries(GROUPS.filter((key) => Array.isArray(result[key])).map((key) => [key, result[key].filter(isObject).map(one(key))]));
   const recorded = { ...result, ...groups, ...(dropped.length ? { dropped: [...(Array.isArray(result.dropped) ? result.dropped : []), ...dropped] } : {}) };
@@ -603,6 +591,11 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
     const key = placeKey({ title: ruling.already_ruled, file: ruling.file });
     const target = raised.find((each) => placeKey(each) === key)?.id ?? ruledBefore.get(key);
     if (target) ruling.ruled_id = target;
+  }
+  for (const ruling of listOf(groups.carried).filter((each) => waiting.has(each))) {
+    const source = isFindingId(ruling.ruled_id) ? (index[ruling.ruled_id] ?? held.get(ruling.ruled_id)) : null;
+    if (source?.security === true || (source?.security !== false && securityPass)) ruling.security = true;
+    else if (source?.security === false) ruling.security = false;
   }
   // The new findings take the mark of a twin in the record as it stood before this write, the result it replaces and
   // the index included, so a marked finding that lives only in that result or in a closed entry still ties its repeat.

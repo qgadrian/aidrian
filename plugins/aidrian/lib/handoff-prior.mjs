@@ -149,55 +149,58 @@ export function writeSnapshot(briefPath, bytes, { exclusive = false } = {}) {
 }
 
 // Copies what the coming write supersedes into the snapshot, or clears a stale snapshot when nothing is. A snapshot the
-// disk refuses to write or to clear, such as a folder at its name, is a problem: { source, problem }. The copy is
-// published only where nothing is at the snapshot's name, so a snapshot taken after the write never replaces the good
-// prior: a regular file there is kept, and is a problem unless it is another file with the same bytes, which is
-// { source, snapshot, unchanged: true }. A link planted at the name is the one entry removed first.
+// disk refuses to write or to clear, such as a folder at its name, is a problem: { source, problem }. A snapshot run
+// replaces nothing, so one taken after the write never copies the new text over the good prior: an entry already at
+// the snapshot's name is kept, and is a problem unless it is a regular file, not the brief's own, with the same bytes,
+// which is { source, snapshot, unchanged: true } with no write. Only a vacant name is written, by an exclusive publish;
+// only a passing check replaces the snapshot.
 export function takeSnapshot(briefPath, explicitPrior) {
   const snapshot = snapshotPath(briefPath);
   const source = explicitPrior ?? (existsSync(briefPath) ? briefPath : findSupersededBrief(briefPath));
-  const cannot = (error) => ({ source: source ?? briefPath, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` });
   if (!source) {
     try {
       if (!linkedPrior(briefPath)) rmSync(snapshot, { force: true });
     } catch (error) {
-      return cannot(error);
+      return { source: briefPath, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` };
     }
     return null;
   }
   const reason = unreadable(source);
   if (reason) return { source, problem: reason };
+  const cannot = (error) => ({ source, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` });
   let bytes;
   try {
     bytes = readFileSync(source);
-    if (!linkedPrior(briefPath) && isLink(snapshot)) rmSync(snapshot);
+    if (linkedPrior(briefPath)) throw Object.assign(new Error('.prior is a symlink'), { code: 'ESYMLINK' });
+    const kept = keptSnapshot(briefPath, source, bytes);
+    if (kept) return kept;
     writeSnapshot(briefPath, bytes, { exclusive: true });
     return { source, snapshot };
   } catch (error) {
-    if (error.code !== 'EEXIST' || bytes === undefined) return cannot(error);
-    return keptSnapshot(source, snapshot, bytes) ?? cannot(error);
+    // An entry that took the name after the look above is judged as one that was there before it.
+    return (error.code === 'EEXIST' && bytes !== undefined && keptSnapshot(briefPath, source, bytes)) || cannot(error);
   }
 }
 
-// Whether `file` is itself a symlink.
-function isLink(file) {
+// What a snapshot run says of the entry at the snapshot's name, which it keeps; null when the name is vacant.
+function keptSnapshot(briefPath, source, bytes) {
+  const snapshot = snapshotPath(briefPath);
+  let entry;
   try {
-    return lstatSync(file).isSymbolicLink();
-  } catch {
-    return false;
+    entry = lstatSync(snapshot);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    return { source, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` };
   }
-}
-
-// What a snapshot run says of the regular file it found at the snapshot's name and kept, or null for any other entry.
-// A file of other bytes, or one that cannot be read whole, is the prior: the next check compares with it.
-function keptSnapshot(source, snapshot, bytes) {
+  if (!entry.isFile()) return { source, problem: `cannot be saved: ${snapshot} is not a regular file, and a snapshot replaces nothing: remove it and run snapshot again` };
+  if (samePath(briefPath, snapshot)) return { source, problem: `cannot be saved: ${snapshot} is the brief's own file, a hard link, not a copy a refresh leaves alone: remove that link and run snapshot again` };
+  let held;
   try {
-    if (!lstatSync(snapshot).isFile()) return null;
-  } catch {
-    return null;
+    held = entry.size === bytes.length ? readFileSync(snapshot, { flag: constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) }) : null;
+  } catch (error) {
+    return { source, problem: `cannot be compared with the snapshot ${snapshot}, which cannot be read (${error.code ?? error.message}), so it is kept: restore read access to it, or run aidrian handoff check with --prior naming a known-good readable brief` };
   }
-  if (samePath(source, snapshot)) return { source, problem: `is the same file as the snapshot ${snapshot}, not a copy a refresh leaves alone: remove that link and run snapshot again` };
-  if (cappedRead(snapshot, bytes.length)?.equals(bytes)) return { source, snapshot, unchanged: true };
+  if (held?.equals(bytes)) return { source, snapshot, unchanged: true };
   return { source, problem: `differs from the snapshot ${snapshot}, the prior a refresh is checked against, so it is kept: write the brief and run aidrian handoff check, which compares with it; remove the snapshot only when that prior is known to be wrong` };
 }
 

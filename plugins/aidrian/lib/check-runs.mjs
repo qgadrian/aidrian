@@ -601,10 +601,11 @@ function ownClause(clause, { said, ends }) {
 
 const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])\s/u;
 // A line that ends a table, beside a blank line and a heading: a block quote, a bullet or a `1.` with text or none after
-// it, or a thematic break. Any other number ends one only in a list item, where it is the next item, and is a row elsewhere.
+// it, or a thematic break. Any other number ends one only in a list item (`nested`), where it is the next item, and is a
+// row elsewhere. A table stands in a list item when its header is indented or its header's string starts at a list marker.
 const TABLE_END = /^\s*(?:>|(?:[-*+]|1[.)])(?:\s|$)|([-*_])(?:\s*\1){2,}\s*$)/u;
 const NUMBER_MARKER = /^\s*\d+[.)](?:\s|$)/u;
-const endsTable = (line, above) => TABLE_END.test(line) || (NUMBER_MARKER.test(line) && LIST_MARKER.test(above));
+const endsTable = (line, nested) => TABLE_END.test(line) || (nested && NUMBER_MARKER.test(line));
 // The cells of a Markdown table row, split at each `|` but an escaped one, which reads as a plain `|`, and one inside
 // backticks.
 const cellsOf = (line) => line.trim().replace(/^\|/u, '').replace(/(?<!\\)\|$/u, '')
@@ -631,6 +632,7 @@ function units(lines) {
   const out = [];
   let open = null;
   let labels = null;
+  let nested = false;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     if (line.trim() === '' || /^\s{0,3}#/u.test(line)) {
@@ -638,7 +640,7 @@ function units(lines) {
       labels = null;
       continue;
     }
-    if (labels && !endsTable(line, out[open])) {
+    if (labels && !endsTable(line, nested)) {
       out.push(`${out[open]}, ${rowText(cellsOf(line), labels)}`);
       continue;
     }
@@ -652,6 +654,7 @@ function units(lines) {
     }
     if (line.includes('|') && isDelimiterRow(lines[index + 1])) {
       labels = cellsOf(line.replace(LIST_MARKER, ''));
+      nested = /^\s/u.test(line) || LIST_MARKER.test(out[open]);
       index += 1;
     }
   }

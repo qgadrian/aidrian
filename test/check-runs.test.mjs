@@ -472,6 +472,11 @@ test('the next item of a numbered list ends the table in the item above it', () 
     [['vitest run', [34]]]);
 });
 
+test('the next item of a numbered list ends a table a blank line sets apart from the item above it', () => {
+  assert.deepEqual(claimPairs(['1. The suites:', '', '   | Case | Failed |', '   | --- | --- |', '   | a | 1 |', '2. ran `vitest run`: 34 passed']),
+    [['vitest run', [34]]]);
+});
+
 test('a number other than 1 is a row of a table in no list item', () => {
   assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '2. notes | 2', '| `npm test` | 35 |']), [['npm test', [35]]]);
 });

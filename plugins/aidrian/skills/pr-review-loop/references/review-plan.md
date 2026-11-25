@@ -83,17 +83,32 @@ crosses them.
   to post that review with its `aidrian-approve:` line; a capture note is the capture's status, not a command.
 - Never hand the Human a terminal block while another route is open. In this order:
   1. A note says a reviewer's evidence does not count: dispatch that reviewer again to cite it. This closes the invariant.
-  2. An entry has `settle`, so this project allows unattended rulings: dispatch an independent read-only agent, such as
+  2. The proof is one the session can take itself: gather it, and never ask the Human how. That is so when the pull
+     request is a draft and the project's CI runs its end-to-end tests only once it is ready, or when the visual
+     reviewer opened the captures and reported an empty, logged-out, or data-less page; measured facts alone never say so.
+     Gather only when `aidrian pr resolve <PR>` succeeded and printed `limited: false`; any other result, limited,
+     an error, or a missing field, takes the next route. Run locally, or against a deploy preview when one exists.
+     Dispatch `e2e-runner` for the end-to-end run, and `designer` for screenshots at each width of
+     `review.visual.viewports`, each briefed to reach the product under the checks of the product-access workflow
+     the `persona-audit` skill runs, with the project's `product-access` knowledge (`personas`).
+     Post the run's command and result lines as a comment of the pull request. Ingest the screenshots with
+     `aidrian pr ingest`, which keeps them local, and dispatch the visual reviewer again to cite `capture:<key>`.
+     This route never posts them: publishing screenshots stays with the `pr-screenshot` skill and its own
+     confirmation. Never post a secret or a session token from the login. A local run never clears a flow's `checks`.
+     When `product-access` holds no way in, report that gap as a finding, and ask nothing. A sign-off the Human owes,
+     a `signoff: "human"` flow or a `harness-config` change, still stops at `human_required`.
+  3. An entry has `settle`, so this project allows unattended rulings: dispatch an independent read-only agent, such as
      the critic, as judge, with the diff and the invariant. It rules `accept` only when the diff shows the invariant
-     cannot be affected or a comment of the pull request holds the evidence, and `overrule` only when the reviewer that
-     holds is right. Post its ruling as a comment, and run `settle` with that comment's URL. A change that does alter
-     what is rendered gets a capture or `aidrian pr ingest`, never a ruling. On a refusal, go to the next route.
-  3. Ask the Human with AskUserQuestion, one question per decision, and run the printed long-form command on "Approve":
-     the question names the flow and the invariant in plain words, with `<owner>/<name>#<PR>` and the short head, and the
+     cannot be affected or a comment of the pull request holds the evidence, such as the run route 2 posted, and
+     `overrule` only when the reviewer that holds is right. Post its ruling as a comment, and run `settle` with the URL
+     of the comment that holds the evidence, else of that ruling. A change that does alter what is rendered gets a capture or
+     `aidrian pr ingest`, never a ruling. On a refusal, go to the next route.
+  4. Ask the Human with AskUserQuestion, one question per decision, whether to approve, never how to get the proof,
+     and run the printed long-form command on "Approve": the question names the flow and the invariant in plain words, with `<owner>/<name>#<PR>` and the short head, and the
      recommended option's label starts with "Approve" and names the exact id: `<flow>/<invariant>`, `<flow>/*` for every
      unverified invariant of the flow, `<flow>/signoff`, or `stage:<name>/signoff`, such as "Approve checkout/total-shown".
      That first answer runs the command: never ask again for the id. Write the command with no shell variables, one call per invariant.
-  4. Only on a host with no such question, hand the command over for the Human's own shell.
+  5. Only on a host with no such question, hand the command over for the Human's own shell.
 - Offer the Human only a sign-off command the step printed: an entry of `next[].commands`, `overrule`, `command`, or
   `tests_removed[].accept`, each starting with `aidrian pr signoff`, with its placeholders filled. Hand it over only
   after the same command with `--check` added exits 0 in your shell; `--check` records nothing. Never write a sign-off

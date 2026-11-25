@@ -16,6 +16,8 @@ A blocking hook exits 2 and tells the agent why on stderr.
 so a bridge host reads a script's answer the same way, nested output only when labeled with the event it ran on,
 and how it merges several hooks that match one call:
 any block wins, and two different rewrites refuse the call.
+OpenCode's bridge reads every answer through it, with a byte bound on each script's output, past which an exit 2 still
+refuses with no text of the hook's ([OpenCode](providers/opencode.md#hooks)).
 The Bash rules, the main-checkout rule, the review-disposition rule, the terms rule, the GitHub MCP hook, the agent gates, the config guard,
 the tracker write guard, and the question names check also record each block: see [Recorded blocks](#recorded-blocks).
 

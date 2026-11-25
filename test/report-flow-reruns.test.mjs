@@ -17,14 +17,15 @@ const checkout = (changes = {}, merged = []) => ({
 });
 const finding = (id = 'R1-1', pass = PASS) => ({ id, pass, title: 'A finding', severity: 'medium' });
 const round = (head, findings = [], at = `2026-11-0${head.at(-1)}T10:00:00.000Z`) => ({ head, at, open: findings.length, findings });
-// A record whose last round, at `h2`, the pass answered, over the delta from its result at `h1` that its dispatch names.
+// A record whose last round, at `h2`, the pass answered with nothing listed to it, after a finding it raised at `h1`.
 const record = (over = {}) => ({
-  pr: 7, repo: 'o/r', updatedAt: '2026-11-09T10:00:00.000Z', rounds: [round('h1'), round('h2')],
-  passes: { [PASS]: { head: 'h2', reviewer: 'product-manager', files: FILES } }, dispatched: { [PASS]: { head: 'h2', files: FILES, base: 'h1', listed: [] } }, ...over,
+  pr: 7, repo: 'o/r', updatedAt: '2026-11-09T10:00:00.000Z', rounds: [round('h1', [finding()]), round('h2')],
+  passes: { [PASS]: { head: 'h2', reviewer: 'product-manager', files: FILES } }, ...listing([]), ...over,
 });
-const withNote = (over) => ({ dispatched: { [PASS]: { head: 'h2', files: FILES, base: 'h1', listed: [], ...over } } });
-// The same pass's earlier run under another id, over other files, and no delta between the two.
-const regrouped = (files) => record({ ...withNote({ base: 'merge-base' }), passes: { ...record().passes, [WIDER]: { head: 'h1', files } } });
+const listing = (listed) => ({ dispatched: { [PASS]: { head: 'h2', files: FILES, base: 'h1', listed } } });
+const none = { dispatched: {} };
+// The flow's earlier run at `h1`, as another pass over `files`.
+const regrouped = (files, over) => record({ rounds: [round('h1'), round('h2')], passes: { ...record().passes, [WIDER]: { head: 'h1', files } }, ...over });
 const only = (rec, co = checkout()) => {
   const { reruns } = sortReruns(rec, co);
   assert.equal(reruns.length, 1);
@@ -33,64 +34,59 @@ const only = (rec, co = checkout()) => {
 
 test('a round of each kind goes to its own group, the first that holds', () => {
   const cases = [
-    ['open finding', record({ rounds: [round('h1', [finding()]), round('h2')] }), checkout({ 'h1..h2': [FILES[0]] })],
-    ['open finding', record(withNote({ listed: ['R1-1'] })), checkout()],
+    ['open finding', record(listing(['R1-1'])), checkout({ 'h1..h2': [FILES[0]] }, ['h1..h2'])],
+    ['open finding', record(none), checkout({ 'h1..h2': [FILES[0]] })],
     ['files touched', record(), checkout({ 'h1..h2': [FILES[0]] })],
-    ['files touched', record(), checkout({ 'h1..h2': [FILES[0]] }, ['h1..h2'])],
     ['file list changed', regrouped([FILES[0]]), checkout({ 'h1..h2': ['docs/x.md'] })],
-    // A resolution that keeps the pull request's side changes no file of the pass, and the engine still re-runs the pass.
-    ['base merged', record(), checkout({ 'h1..h2': ['src/from-main.mjs'] }, ['h1..h2'])],
-    ['none of these', record(), checkout({ 'h1..h2': ['docs/x.md'] })],
+    // A merge may touch a file of the pass by the base's edits alone, or none, as a resolution that keeps the branch's side.
+    ['base merged', record(), checkout({ 'h1..h2': [FILES[0]] }, ['h1..h2'])],
+    ['base merged', regrouped([FILES[0]]), checkout({}, ['h1..h2'])],
+    ['none of these', regrouped(FILES), checkout({ 'h1..h2': ['docs/x.md'] })],
   ];
   for (const [group, rec, co] of cases) assert.equal(only(rec, co).group, group);
   assert.deepEqual(new Set(cases.map(([group]) => group)), new Set(GROUPS));
   const reruns = cases.map(([, rec, co]) => only(rec, co));
   assert.deepEqual(totals(reruns).map(({ group, count, share }) => [group, count, share]),
-    [['open finding', 2, 2 / 6], ['files touched', 2, 2 / 6], ['file list changed', 1, 1 / 6], ['base merged', 1, null], ['none of these', 1, 1 / 6]],
+    [['open finding', 2, 2 / 5], ['files touched', 1, 1 / 5], ['file list changed', 1, 1 / 5], ['base merged', 2, null], ['none of these', 1, 1 / 5]],
     'a share is of the sorted re-runs, and the uncertain group has none');
 });
 
-test('a file the pass does not cover is no touch, and a finding of another reviewer is owed nothing', () => {
-  assert.equal(only(record(), checkout({ 'h1..h2': ['src/booking/from-main.mjs'] })).group, 'none of these');
-  for (const other of ['agent:code-reviewer', 'agent:security-engineer:booking', null]) {
-    assert.equal(only(record({ rounds: [round('h1', [finding('R1-1', other)]), round('h2')] })).group, 'none of these', other);
-  }
-  const shared = record({ rounds: [round('h1', [finding('R1-1', WIDER)]), round('h2')] });
-  assert.equal(sortReruns(shared, checkout()).reruns.find(({ pass }) => pass === PASS).group, 'open finding', 'a pass of the reviewer that shares a flow');
+test('what the dispatch listed settles the open finding, and with no list the reviewer\'s own findings on the flow do', () => {
+  const opened = (pass, over) => only(regrouped(FILES, { rounds: [round('h1', [finding('R1-1', pass)]), round('h2')], ...over })).group;
+  assert.equal(opened(WIDER), 'none of these', 'an empty list: no finding was owed this pass');
+  assert.equal(opened(WIDER, none), 'open finding', 'with no list, a pass of the reviewer that shares a flow');
+  for (const other of ['agent:code-reviewer', 'agent:security-engineer:booking', null]) assert.equal(opened(other, none), 'none of these', other);
 });
 
-test('only a run the record shows is one: a carried finding and a round with no result are not', () => {
-  const carried = record({ rounds: [round('h1', [finding()]), round('h2', [finding()]), round('h3', [finding(), finding('R3-2')])], passes: {}, dispatched: {} });
+test('only a run the record shows is one: a carried finding, a range start, and a round with no result are not', () => {
+  const carried = record({ rounds: [round('h1', [finding()]), round('h2', [finding()]), round('h3', [finding(), finding('R3-2')])], passes: {}, ...none });
   assert.deepEqual(sortReruns(carried, checkout()).reruns.map((each) => [each.round, each.group ?? each.unread]), [
     [3, 'open finding'], [2, 'only an open finding, which may be carried'],
   ]);
   assert.equal(sortReruns(carried, checkout()).first, 1);
-  // With no result at h1, the round before says nothing of a run there: it may be a first run.
-  const bare = record(withNote({ base: 'merge-base' }));
-  assert.match(only(bare).unread, /may be a first run/u);
-  assert.deepEqual(sortReruns(record({ rounds: [round('h1')], passes: { [PASS]: { head: 'h1', files: FILES } }, dispatched: {} }), checkout()), { reruns: [], first: 1 });
+  // The dispatch names h1 as the start of its range: no run is recorded there.
+  assert.match(only(record({ rounds: [round('h1'), round('h2')] })).unread, /may be a first run/u);
+  assert.deepEqual(sortReruns(record({ rounds: [round('h1')], passes: { [PASS]: { head: 'h1', files: FILES } }, ...none }), checkout()), { reruns: [], first: 1 });
   // A finding of a round a quiet push moved says not at which of its heads the pass ran.
-  const quiet = record({ rounds: [{ ...round('h3', [finding()]), quiet: [{ from: 'h1' }] }, round('h2')], ...withNote({ base: 'merge-base' }) });
+  const quiet = record({ rounds: [{ ...round('h3', [finding()]), quiet: [{ from: 'h1' }] }, round('h2')] });
   assert.deepEqual(sortReruns(quiet, checkout()).reruns.map(({ unread }) => Boolean(unread)), [true, true]);
 });
 
 test('what the record or git cannot say is sorted in no group', () => {
   const unread = (rec, co) => only(rec, co).unread;
-  const three = [round('h1', [finding()]), round('h2'), round('h3')];
-  const apart = { rounds: three, passes: { [PASS]: { head: 'h3', files: FILES } }, dispatched: {} };
-  assert.match(unread(record(apart)), /may lie between/u, 'two rounds apart, with no delta named');
-  assert.match(unread(record({ ...apart, rounds: [three[0], round('h3')] }), checkout({ 'h1..h3': [FILES[0]] })) ?? 'sorted', /sorted/u, 'one round apart, the finding is owed');
+  const apart = record({ rounds: [round('h1', [finding()]), round('h2'), round('h3')], passes: { [PASS]: { head: 'h3', files: FILES } }, ...none });
+  assert.match(unread(apart, checkout({ 'h1..h3': [FILES[0]] })), /may lie between/u);
   const { findings, ...bare } = round('h1');
-  assert.match(unread(record({ rounds: [bare, round('h2')], ...withNote({ listed: undefined }) })), /keeps no findings/u);
+  assert.match(unread(regrouped(FILES, { rounds: [bare, round('h2')], ...none })), /keeps no findings/u);
   assert.match(unread(record({ passes: { [PASS]: { head: 'h2' } } })), /keeps no file list/u);
-  assert.match(unread(regrouped(FILES)), /which files the pass covered before/u, 'an equal list is no proof of one list');
+  assert.match(unread(record(), checkout({ 'h1..h2': ['docs/x.md'] })), /which files the pass covered before/u);
   const broken = { changed: () => { throw new Error('bad object'); }, merges: () => 0 };
   assert.match(unread(record(), broken), /git cannot read/u);
   assert.throws(() => readCheckout(path.join(tmpdir(), 'no-such-folder')).merges('a', 'b'), /git cannot count the merges/u);
 });
 
 test('the report says what is a floor and what is an estimate, beside its counts', () => {
-  const reruns = [only(record()), only(record(), checkout({}, ['h1..h2'])), only(record(withNote({ base: 'merge-base' })))];
+  const reruns = [only(regrouped(FILES)), only(record(), checkout({}, ['h1..h2'])), only(record({ rounds: [round('h1'), round('h2')] }))];
   const lines = reportLines({ reviewer: 'product-manager', records: 3, withPass: 2, reruns, first: 1, groups: totals(reruns) });
   assert.match(lines[0], /1 re-runs sorted, 1 uncertain, 1 not sorted, and 1 runs in a first round, on 2 of 3 review records/u);
   assert.match(lines[1], /^a floor: /u);

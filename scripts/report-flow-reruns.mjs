@@ -3,15 +3,14 @@
 //
 //   node scripts/report-flow-reruns.mjs --state <state folder> --project <checkout> [--reviewer product-manager] [--json]
 //
-// A run is one the record shows: a pass's result, the earlier result a later dispatch named as its base, or a finding the
-// pass first raised in that round. A re-run is a run in a round after an earlier run. Each goes to the first group that
-// holds (GROUPS): an open finding of the reviewer's on the pass's flows was owed a re-check; a file of the pass's recorded
-// list changed, by name, as resultFor's delta counts it, so an edit of the base's to such a file counts; the recorded file
-// list changed, as of a pass that covers other flows; the base was merged, which is uncertain, since the merge's own
-// resolution may have touched the pass's files; none of these. What the record cannot settle is not sorted: whether a
-// round's finding was carried, whether a run the record no longer holds lies between, and which files the pass covered
-// then. So the counts are a floor, the shares are of the sorted re-runs alone, without the uncertain group, and the costs
-// are an estimate, matched by time, label, and session ledger.
+// A run is one the record shows: a pass's result, or a finding the pass first raised in that round. A re-run is a run in a
+// round after an earlier run. Each goes to the first group that holds (GROUPS): an open finding was owed a re-check, as the
+// dispatch listed it, or with no list as the reviewer's own findings on the pass's flows say; the base was merged, which is
+// uncertain, since the merge may have touched the pass's files or not, so it comes before what it would hide; a file of the
+// pass's recorded list changed; the recorded file list changed, as of a pass that covers other flows; none of these. What
+// the record cannot settle is not sorted: whether a round's finding was carried, whether a run the record no longer holds
+// lies between, and which files the pass covered then. So the counts are a floor, the shares are of the sorted re-runs
+// alone, without the uncertain group, and the costs are an estimate, matched by time, label, and session ledger.
 
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -38,21 +37,18 @@ const flowsOf = (id) => {
 const overlaps = (a, b) => a === b || flowsOf(a).some((flow) => flowsOf(b).includes(flow));
 const listKey = (files) => JSON.stringify(Array.isArray(files) ? [...files].sort() : null);
 
-// Each round's heads, the ones a quiet push moved it from first.
-const headsOf = (round) => [...(round.quiet ?? []).map(({ from }) => from), round.head];
-const roundOf = (record, head) => record.rounds.findIndex((round) => headsOf(round).includes(head));
+// The index of the round `head` is of, the heads a quiet push moved it from included.
+const roundOf = (record, head) => record.rounds.findIndex((round) => round.head === head || round.quiet?.some(({ from }) => from === head));
 
 // Whether `finding`, open in the round at `index`, was first raised there: its id names the round, and the first round carries none.
 const raisedIn = (finding, index) => index === 0 || String(finding.id).startsWith(`R${index + 1}-`);
 
-// The runs of the pass `id` the record shows, a Map from the round's index to the head: its result, the earlier result its
-// last dispatch named as `base`, and a finding it first raised in a round that no quiet push moved, which has one head.
+// The runs of the pass `id` the record shows, a Map from the round's index to the head: its result, and a finding it first
+// raised in a round that no quiet push moved, which has one head.
 function runsOf(record, id) {
-  const found = new Map();
-  for (const head of [record.passes[id]?.head, record.dispatched?.[id]?.base]) {
-    const index = roundOf(record, head);
-    if (index !== -1) found.set(index, head);
-  }
+  const head = record.passes[id]?.head;
+  const found = new Map([[roundOf(record, head), head]]);
+  found.delete(-1);
   record.rounds.forEach((round, index) => {
     const raised = (round.findings ?? []).some((finding) => finding.pass === id && raisedIn(finding, index));
     if (raised && !round.quiet?.length && !found.has(index)) found.set(index, round.head);
@@ -63,27 +59,19 @@ function runsOf(record, id) {
 // The group of the run of pass `id` at `head` in the round `index`: { from, group }, or { unread } with why the record cannot
 // tell. `earlier` is the last run before it, { id, index, head }, and `checkout` readCheckout's, or a stand-in.
 function groupOf({ record, id, index, head, earlier, checkout, mine }) {
-  const before = record.rounds[index - 1];
+  const { head: from } = earlier;
   const note = record.dispatched?.[id]?.head === head ? record.dispatched[id] : null;
-  const owed = (before.findings ?? []).some((finding) => mine(finding.pass) && overlaps(finding.pass, id));
-  if (owed || note?.listed?.length) return { from: before.head, group: 'open finding' };
-  // The dispatch names the head its delta ran from: the pass's result just before this run, over the same file list.
-  const base = note ? roundOf(record, note.base) : -1;
-  const exact = base !== -1 && base < index;
-  const from = exact ? note.base : earlier.head;
-  if (!exact && earlier.index !== index - 1) return { unread: 'a run the record no longer holds may lie between' };
+  const owed = Array.isArray(note?.listed) ? note.listed : record.rounds[index - 1].findings?.filter(({ pass }) => mine(pass) && overlaps(pass, id));
+  if (!owed) return { unread: 'the earlier round keeps no findings' };
+  if (owed.length) return { from, group: 'open finding' };
+  if (earlier.index !== index - 1) return { unread: 'a run the record no longer holds may lie between' };
+  if (checkout.merges(from, head) > 0) return { from, group: UNCERTAIN };
   const files = (record.passes[id]?.head === head ? record.passes[id] : note)?.files;
   if (files === undefined) return { unread: 'the record keeps no file list for this run' };
-  const changed = checkout.changed(from, head);
-  const merged = checkout.merges(from, head) > 0;
-  if (Array.isArray(files) ? changed.some((file) => files.includes(file)) : changed.length && !merged) return { from, group: 'files touched' };
-  const known = Array.isArray(before.findings) || Array.isArray(note?.listed);
-  if (!known) return { unread: 'the earlier round keeps no findings' };
-  const other = !exact && earlier.id !== id && record.passes[earlier.id]?.head === earlier.head ? record.passes[earlier.id] : null;
-  if (other && listKey(other.files) !== listKey(files)) return { from, group: 'file list changed' };
-  if (!exact) return { unread: 'the record does not say which files the pass covered before' };
-  if (merged) return { from, group: UNCERTAIN };
-  return { from, group: 'none of these' };
+  if (checkout.changed(from, head).some((file) => files?.includes(file) ?? true)) return { from, group: 'files touched' };
+  const other = earlier.id !== id && record.passes[earlier.id]?.head === from ? record.passes[earlier.id] : null;
+  if (!other) return { unread: 'the record does not say which files the pass covered before' };
+  return { from, group: listKey(other.files) === listKey(files) ? 'none of these' : 'file list changed' };
 }
 
 // The re-runs of `reviewer`'s passes on one review record: { reruns, first }, with `reruns` one row a pass and round, { pr,

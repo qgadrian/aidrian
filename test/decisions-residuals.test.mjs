@@ -1,7 +1,8 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -746,8 +747,9 @@ test('saveVerdicts keeps the newest verdicts, writes only what changes, and neve
   const [one, two] = ['a'.repeat(64), 'b'.repeat(64)];
   const residuals = [{ n: 1, residual: '- A.' }];
   const save = (record, extra) => saveVerdicts(store, record, { residuals, rows: [row('- A.')], clean: true, ...extra });
+  const saved = { lost: false, problem: null };
   const held = () => JSON.parse(readFileSync(store, 'utf8')).kept;
-  assert.equal(save(one, { clean: false, rows: [row('- A.', 'x')] }), null);
+  assert.deepEqual(save(one, { clean: false, rows: [row('- A.', 'x')] }), saved);
   assert.equal(existsSync(store), false, 'nothing to drop, nothing written');
   save(one, { at: 'first' });
   save(one, { at: 'second' });
@@ -776,6 +778,36 @@ test('a clean run writes only the residuals its rows judged, so it restores none
   saveVerdicts(store, record, { residuals, rows: [row('- A.', 'one', 'R.')], clean: false });
   saveVerdicts(store, record, { residuals, rows: [row('- B.')], clean: true });
   assert.deepEqual(kept(), [2]);
+  const marked = residuals.map((each) => ({ ...each, kept: true }));
+  const rows = [row('- A.'), row('- B.')];
+  assert.deepEqual(saveVerdicts(store, record, { residuals: marked, rows, clean: true }), { lost: false, problem: null }, 'a residual with its own row needs no kept verdict');
+  assert.deepEqual(kept(), [1, 2]);
+});
+
+test('a clean run whose kept verdict another run dropped before it answered exits 1, with rows to save or none', async (t) => {
+  const { dir, write, file, store } = await judgedProject(t);
+  const held = readFileSync(store, 'utf8');
+  const { record } = JSON.parse(held).kept[0];
+  const judged = write('judged.json', '');
+  const read = fs.readFileSync;
+  // Another run drops every verdict once this one has read the store, as it reads its judged file.
+  fs.readFileSync = function readFileSync(name, ...rest) {
+    if (name === judged) rmSync(store, { force: true });
+    return read.call(this, name, ...rest);
+  };
+  syncBuiltinESMExports();
+  t.after(() => {
+    fs.readFileSync = read;
+    syncBuiltinESMExports();
+  });
+  for (const rows of [{ record, rows: rowsOf(THREE.slice(0, 1)) }, { record, rows: [] }, []]) {
+    writeFileSync(store, held);
+    writeFileSync(judged, JSON.stringify(rows));
+    const out = await call(['--body', file, '--judged', judged], dir);
+    assert.equal(out.status, 1, JSON.stringify(rows));
+    assert.match(out.stdout, /^invalid: a kept verdict was dropped while this run judged: list again, and judge again$/mu);
+    assert.equal(existsSync(store), false, 'nothing is kept from it');
+  }
 });
 
 test('a residual the body holds twice is never kept, and with no project folder nothing is', async (t) => {

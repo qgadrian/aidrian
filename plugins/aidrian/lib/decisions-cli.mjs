@@ -498,10 +498,11 @@ function residuals(args) {
   // Rows judged against another record, as before a merge from the base branch, are no verdict on this one.
   const judgedRecord = named ? given.record ?? null : null;
   if (judgedRecord !== null && judgedRecord !== record) invalid.push('the judged file answers another record than this run read: list again, and judge again');
+  const clean = contradictions.length + invalid.length === 0;
+  const { lost, problem: unsaved } = store === null ? {} : saveVerdicts(store, record, { residuals: marked, rows, clean, named: judgedRecord !== null });
+  if (lost) invalid.push('a kept verdict was dropped while this run judged: list again, and judge again');
   const status = contradictions.length || invalid.length ? 1 : 0;
-  const unnamed = store !== null && status === 0 && judgedRecord === null;
-  const unsaved = store === null || unnamed ? null : saveVerdicts(store, record, { residuals: paired.residuals, rows, clean: status === 0 });
-  if (unnamed && owed.length) notes.push('no verdict was kept: the judged file does not name the record this run read');
+  if (store !== null && status === 0 && judgedRecord === null && owed.length) notes.push('no verdict was kept: the judged file does not name the record this run read');
   const keptCount = marked.length - owed.length;
   if (keptCount) notes.push(`${keptCount} residual${keptCount === 1 ? '' : 's'} kept from an earlier judgment of this record`);
   if (unsaved) notes.push(status === 0 ? `no verdict was kept: ${unsaved}` : `an earlier verdict may still be kept, so list with --rejudge: ${unsaved}`);

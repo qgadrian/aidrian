@@ -67,26 +67,29 @@ export const withKept = (rows, residuals) => (!Array.isArray(rows) ? rows
   : [...rows, ...residuals.filter(({ kept, residual }) => kept && rowsFor(rows, residual).length === 0).map(({ residual }) => ({ residual, contradicts: null }))]);
 
 // Takes a judged run into the store: with `clean`, a run that exited 0, the verdict of each residual with a row in `rows` is
-// kept, and otherwise the verdict of each one a row says contradicts something is dropped. A residual filled in from the
-// store has no row, so a run never restores what another dropped meanwhile. Returns null, or why the store was not written:
-// the run's answer stands either way.
-export function saveVerdicts(file, record, { residuals, rows, clean, at = new Date().toISOString() }) {
-  const judged = residuals.filter(({ residual }) => {
-    const own = Array.isArray(rows) ? rowsFor(rows, residual) : [];
-    return clean ? own.length > 0 : own.some(({ contradicts }) => contradicts !== null);
-  });
+// kept when the run is `named`, given its record, and otherwise the verdict of each one a row says contradicts something is
+// dropped. A residual filled in from the store has no row, so a run never restores what another dropped meanwhile. Returns
+// { lost, problem }: whether a verdict the run filled in is gone, so the run judged nothing in its place, and why the store
+// was not written, or null, which changes no answer.
+export function saveVerdicts(file, record, { residuals, rows, clean, named = true, at = new Date().toISOString() }) {
+  const own = ({ residual }) => (Array.isArray(rows) ? rowsFor(rows, residual) : []);
+  const judged = residuals.filter((each) => (clean ? named && own(each).length > 0 : own(each).some(({ contradicts }) => contradicts !== null)));
+  const filled = clean ? residuals.filter((each) => each.kept && own(each).length === 0) : [];
+  if (judged.length + filled.length === 0) return { lost: false, problem: null };
   const keys = new Set(judged.map(({ residual }) => residualHash(residual)));
-  if (keys.size === 0) return null;
   const ours = (each) => each.record === record && keys.has(each.residual);
+  const lostFrom = (held) => filled.some(({ residual }) => !held.some((each) => each.record === record && each.residual === residualHash(residual)));
   try {
     return withLocks([file], () => {
       const held = readVerdicts(file);
+      if (lostFrom(held)) return { lost: true, problem: null };
       const same = held.filter(ours).length;
-      if (same === (clean ? keys.size : 0)) return null;
+      if (same === (clean ? keys.size : 0)) return { lost: false, problem: null };
       const added = clean ? [...keys].map((residual) => ({ residual, record, at })) : [];
-      return writeJson(file, { version: VERSION, kept: [...held.filter((each) => !ours(each)), ...added].slice(-MAX_KEPT) });
+      return { lost: false, problem: writeJson(file, { version: VERSION, kept: [...held.filter((each) => !ours(each)), ...added].slice(-MAX_KEPT) }) };
     });
   } catch (error) {
-    return error.code ?? error.message;
+    // No lock, as in a folder this run may not write: what the store holds still answers.
+    return { lost: lostFrom(readVerdicts(file)), problem: judged.length ? error.code ?? error.message : null };
   }
 }

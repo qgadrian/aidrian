@@ -1,6 +1,7 @@
 // Who one OpenCode event's hooks run for, and where: for a tool event, the folder the script is spawned in, the folder the
 // call runs in, and who made the call (callOf), and for a session event, the session's root and the two folders its hooks
-// run in (sessionCall), from the event and the session reads. bridge.mjs and session-hooks.mjs build the payload and spawn
+// run in (sessionCall), from the event and the session reads, and for a session's end, whether it is a root and its last
+// folder, from what the bridge kept (endCall). bridge.mjs and session-hooks.mjs build the payload and spawn
 // from this. It imports node: built-ins alone, so it loads in OpenCode's Bun and under `node --test` alike.
 //
 // A blocking route (execute.before) never skips a call for a reason the call's input controls: a `workdir` that names no
@@ -99,7 +100,8 @@ export function folderOf(workdir, dir, home) {
 // is kept, so the next call reads again.
 // A kept root answers only a call whose own read gave the session: one whose read failed is a subagent's, kept or not,
 // with its kept root still as `root`, so a kept child's call keeps its root's session-keyed holds. A kept answer comes
-// only from a walk that reached its end for that same id, and a session's parent never changes, so it still holds.
+// only from a walk that reached its end for that same id, and a session's parent never changes, so it still holds. A
+// root's folder, from its latest read, is kept beside it for its end (endCall).
 async function sessionOf(runner, get, sessionID) {
   let current;
   try {
@@ -110,7 +112,10 @@ async function sessionOf(runner, get, sessionID) {
   const known = runner.roots.get(sessionID);
   if (!isSession(current, sessionID)) return { root: known?.root ?? sessionID, agent: sessionID, dir: null, failed: true };
   const dir = current.location?.directory ?? null;
-  if (known) return { ...known, dir };
+  if (known) {
+    if (known.agent === null) remember(runner, sessionID, dir);
+    return { ...known, dir };
+  }
   let id = sessionID;
   let ended = false;
   try {
@@ -132,8 +137,41 @@ async function sessionOf(runner, get, sessionID) {
   if (ended) {
     if (runner.roots.size >= ROOTS_MAX) runner.roots.clear();
     runner.roots.set(sessionID, answer);
+    if (answer.agent === null) remember(runner, sessionID, dir);
   }
   return { ...answer, dir, ...(ended ? {} : { failed: true }) };
+}
+
+// Keeps `dir`, the folder a read just gave the root session `root`, for its SessionEnd (endCall), which runs once the
+// session can no longer be read. Only an absolute path is kept, and the map is cleared whole at ROOTS_MAX, as the roots
+// map is.
+function remember(runner, root, dir) {
+  if (!absolute(dir)) return;
+  if (runner.folders.size >= ROOTS_MAX && !runner.folders.has(root)) runner.folders.clear();
+  runner.folders.set(root, dir);
+}
+
+// What a session's `session.deleted` event sends its SessionEnd routes: { base, cwd, root, agent: null }, or { skip }.
+// The event carries the session's id alone, and the session may no longer be readable, so the bridge reads nothing:
+// the session runs SessionEnd only when the roots it already keeps say it is a root, the end of its own walk, and its
+// folder, the last one a read gave, is on disk. `skip` is `session` for no id, `read` for a session whose root-ness
+// the bridge cannot tell, as one it never read or one the roots map forgot, `subagent` for a child, and `cwd` for a
+// root whose folder is not known or not on disk. A child's end never runs its root's SessionEnd, which would delete the
+// root's records while the root runs on.
+export function endCall(runner, sessionID) {
+  if (typeof sessionID !== 'string' || sessionID === '') return { skip: 'session' };
+  const known = runner.roots.get(sessionID);
+  if (!known) return { skip: 'read' };
+  if (known.agent !== null || known.root !== sessionID) return { skip: 'subagent' };
+  const dir = runner.folders.get(sessionID);
+  if (!isFolder(dir)) return { skip: 'cwd' };
+  return { base: dir, cwd: dir, root: sessionID, agent: null };
+}
+
+// Forgets what the bridge keeps of the session `sessionID`'s walk and folder, once its end ran.
+export function forgetSession(runner, sessionID) {
+  runner.roots.delete(sessionID);
+  runner.folders.delete(sessionID);
 }
 
 // Who a hook that is not a tool hook (start, stop, compaction, prompt) runs for, and in which folder, for the session
@@ -153,6 +191,7 @@ export async function sessionCall(runner, sessionID) {
       const root = await reads.get(session.root);
       if (!isSession(root, session.root)) return { skip: 'read' };
       rootDir = root.location?.directory;
+      if (runner.roots.get(session.root)?.agent === null) remember(runner, session.root, rootDir);
     }
     const folder = (dir) => (isFolder(dir) ? dir : null);
     return { root: session.root, agent: session.agent, dir: folder(session.dir), rootDir: folder(rootDir) };

@@ -1,11 +1,12 @@
 // The OpenCode bridge: a server plugin that runs the plugin's hook scripts on OpenCode's hooks, as hooks.json runs them
 // on a host that reads it. At setup it reads routes.generated.json, every hooks.json hook as `npm run build` writes it,
 // through route-select.mjs, and registers one callback for each OpenCode hook that EVENTS (routes.mjs) maps a standard
-// event to. On each tool call it reads the tool's standard name through lib/hosts/opencode-names.mjs, the one table the
-// adapter reads too, and runs every route of that event whose matcher fires on the name, in parallel, as Claude Code
-// runs matching hooks. It sends each script the standard hook envelope on stdin, with OpenCode's own tool name, input,
-// and result inside and a top-level `opencode` object, { version?, info }, that marks it as OpenCode's and holds the
-// part of the tool's `info` the leaf read, so lib/hosts/opencode.mjs maps the payload to the name the bridge picked.
+// event to, and listens for the `session.deleted` event SessionEnd maps to. On each tool call it reads the tool's
+// standard name through lib/hosts/opencode-names.mjs, the one table the adapter reads too, and runs every route of that
+// event whose matcher fires on the name, in parallel, as Claude Code runs matching hooks. It sends each script the
+// standard hook envelope on stdin, with OpenCode's own tool name, input, and result inside and a top-level `opencode`
+// object, { version?, info }, that marks it as OpenCode's and holds the part of the tool's `info` the leaf read, so
+// lib/hosts/opencode.mjs maps the payload to the name the bridge picked.
 // call.mjs finds the call's folders and who made it, output.mjs turns the scripts' answers into OpenCode's, and
 // session-hooks.mjs runs each session's start once and puts the plugin's text where it reaches the model. Through
 // environment.mjs it finds Node, writes the trace, and prepends the plugin's bin/ to every shell's PATH, so the `aidrian`
@@ -16,14 +17,22 @@
 // registered, and it refuses a subagent's call on a blocking route, while a root's runs. `setup` never throws. Only an
 // execute.before callback rejects, for a refusal (output.mjs); every other callback resolves, and a hook that cannot
 // run leaves the call as it would be without the plugin. EVENTS names the events no hook can block on (routes.mjs);
-// tests reach the blocking, stop, prompt, and compaction paths through the `events` seam. Every callback but the
-// shell's runs the session's start first (session-hooks.mjs started).
+// tests reach the blocking, stop, prompt, and compaction paths through the `events` seam. Every callback that runs
+// routes runs the session's start first (session-hooks.mjs started); the shell's callback, an execute.after registered
+// only to deliver a kept PreToolUse context, and a session's end run none.
+//
+// A tool call's hook context reaches the model at the end of that call's result, once it completed: a PreToolUse
+// context is kept from execute.before, under the calling session's id and the event's `id`, in a map cleared whole at
+// CONTEXTS_MAX, and taken out by that call's execute.after whatever its status; the PostToolUse context follows it, once
+// every after-route read the result as it came (afterCallback). So a routed before-hook registers the after-hook too.
 //
 // The stop path keeps `stop_hook_active` for each session: true once a Stop route sent that session back with a
 // `session.synthetic` message the session admitted, and dropped at the session's next idle, which reads it, and on its
 // `session.deleted` event, which also drops its start lines, and which the bridge listens for once it routes a start
-// or registered the idle hook. This state is one setup's: OpenCode 2.4.1 runs setup once for each Location, and again
-// when it loads the plugin anew.
+// or SessionEnd, or registered the idle hook. That event runs SessionEnd for a root session alone, known as one by the
+// roots the bridge kept, in its last known folder, before the root's state is dropped; a child's end, a session whose
+// root-ness the bridge cannot tell, and an archived session run none (call.mjs endCall). This state is one setup's:
+// OpenCode 2.4.1 runs setup once for each Location, and again when it loads the plugin anew.
 //
 // With AIDRIAN_OPENCODE_TRACE naming an absolute file, it appends one JSON line a step, { at, step, script?, status?,
 // count? }: `setup` once, `off` once at setup when it found no Node, `unregistered` for a hook OpenCode refused and for a
@@ -44,17 +53,21 @@ import { fileURLToPath } from 'node:url';
 
 import { HELD_BUDGET_MS } from '../lib/deadline.mjs';
 import { infoRead, standardToolName } from '../lib/hosts/opencode-names.mjs';
-import { callOf, lastAssistantText, markOf, sessionCall, skipped } from './call.mjs';
+import { callOf, endCall, forgetSession, lastAssistantText, markOf, sessionCall, skipped } from './call.mjs';
 import { absolute, addBin, nodeOf, tracer } from './environment.mjs';
-import { BLOCKING_HOOK, isFile, run, settle, transform } from './output.mjs';
+import { appendContext, BLOCKING_HOOK, isFile, run, settle, transform } from './output.mjs';
 import { readRoutes, selectRoutes } from './route-select.mjs';
-import { EVENTS } from './routes.mjs';
+import { DELETED_EVENT, EVENTS } from './routes.mjs';
 import { addChecklist, addPromptPart, compactionHook, contextHook, promptFields, sessionRoutes, started } from './session-hooks.mjs';
 
 // The OpenCode session hook that runs before a session goes idle, where a Stop route can send it back.
 const IDLE_HOOK = 'experimental.idle';
+// The OpenCode tool hook that runs once a call ended, completed or not.
+const AFTER_HOOK = 'execute.after';
 // The OpenCode hooks a call of a tool runs; every other hook of EVENTS is a session hook.
-const TOOL_HOOKS = new Set([BLOCKING_HOOK, 'execute.after']);
+const TOOL_HOOKS = new Set([BLOCKING_HOOK, AFTER_HOOK]);
+// How many calls' PreToolUse contexts the bridge keeps at most before it forgets them all, as the roots map does.
+export const CONTEXTS_MAX = 256;
 // The session hooks the plugin's text reaches the model on, registered after the others (registerAll).
 export const SESSION_HOOKS = Object.freeze(['context', 'compaction']);
 // A blocking route's script is killed no sooner than this long after its spawn: 1 s past the longest guard budget a
@@ -95,8 +108,13 @@ async function registerAll(context, seams) {
   // The environment of a start script: the service's, with bin/ on its PATH as a shell has it.
   const startEnv = { ...env };
   addBin({ env: startEnv }, bin);
-  const runner = { context, env, startEnv, node, spawn, trace, routes, events, notices, unguarded: 0, roots: new Map(), stops: new Map(), starts: new Map(), listening: false };
+  const runner = {
+    context, env, startEnv, node, spawn, trace, routes, events, notices, unguarded: 0,
+    roots: new Map(), folders: new Map(), contexts: new Map(), stops: new Map(), starts: new Map(), listening: false,
+  };
   const hooks = new Set(routes.map((route) => events[route.event]));
+  // A PreToolUse context reaches the model with its call's result, so a routed before-hook registers the after-hook too.
+  if (hooks.has(BLOCKING_HOOK)) hooks.add(AFTER_HOOK);
   const scriptsOf = (hook) => [...new Set(routes.filter((route) => events[route.event] === hook).map((route) => route.script))];
   let registered = 0;
   const add = async (domain, hook, callback, what) => {
@@ -111,9 +129,10 @@ async function registerAll(context, seams) {
     trace('off', { status: 'node' });
     notices.push('aidrian found no Node program (Node 22 on the PATH of the OpenCode service, or AIDRIAN_NODE as an absolute path), so no aidrian hook runs in this session.');
   } else {
-    if (hooks.has('context')) listen(runner);
-    for (const hook of [...hooks].filter((each) => !SESSION_HOOKS.includes(each))) {
-      await add(TOOL_HOOKS.has(hook) ? context.tool : context.session, hook, callbackOf(runner, hook));
+    if (hooks.has('context') || hooks.has(DELETED_EVENT)) listen(runner);
+    for (const hook of [...hooks].filter((each) => !SESSION_HOOKS.includes(each) && each !== DELETED_EVENT)) {
+      const only = hook === AFTER_HOOK && scriptsOf(hook).length === 0 ? "the context aidrian's hooks give before a tool call does not reach the model" : undefined;
+      await add(TOOL_HOOKS.has(hook) ? context.tool : context.session, hook, callbackOf(runner, hook), only);
     }
   }
   if (!await register(() => context.shell.hook('create.before', (event) => addBin(event, bin)))) lost(trace, notices, 'create.before', [], "aidrian's bin folder is not put on the shell's PATH");
@@ -130,7 +149,44 @@ async function registerAll(context, seams) {
 function callbackOf(runner, hook) {
   if (hook === IDLE_HOOK) return transform(hook, idleSteps(runner, hook));
   if (hook === 'prompt') return sessionRoutes(runner, hook, 'UserPromptSubmit', { fields: promptFields, apply: addPromptPart });
+  if (hook === AFTER_HOOK) return afterCallback(runner, hook);
   return transform(hook, toolSteps(runner, hook));
+}
+
+// The execute.after callback. First it takes the call's kept PreToolUse context out of the map, whatever the call's
+// status and whether or not a route runs on it, then it runs the call's PostToolUse routes, each on the result as it
+// came, and only then, on a completed call, appends the kept context and the routes' merged context, in that order, to
+// the result (output.mjs appendContext). An errored call's result is left as it was. It never rejects.
+function afterCallback(runner, hook) {
+  const given = new WeakMap();
+  const routed = runner.routes.some((route) => runner.events[route.event] === hook) ? transform(hook, toolSteps(runner, hook, given)) : null;
+  return settle(async (event) => {
+    const kept = takeContext(runner, event);
+    await routed?.(event);
+    if (event?.status !== 'completed') return;
+    appendContext(event, [kept, given.get(event)]);
+  });
+}
+
+// The key of a call's kept context: the calling session's id and the event's `id`, or null when either is no string.
+const contextKey = (event) => (typeof event?.sessionID === 'string' && typeof event?.id === 'string' ? JSON.stringify([event.sessionID, event.id]) : null);
+
+// Keeps the PreToolUse context `text` of the call `event` until its execute.after, in a map cleared whole once it holds
+// CONTEXTS_MAX calls, so a call whose after event never comes costs a bounded amount.
+function keepContext(runner, event, text) {
+  const key = contextKey(event);
+  if (key === null || typeof text !== 'string' || text === '') return;
+  if (runner.contexts.size >= CONTEXTS_MAX && !runner.contexts.has(key)) runner.contexts.clear();
+  runner.contexts.set(key, text);
+}
+
+// The kept PreToolUse context of the call `event`, deleted from the map, or null.
+function takeContext(runner, event) {
+  const key = contextKey(event);
+  if (key === null) return null;
+  const text = runner.contexts.get(key) ?? null;
+  runner.contexts.delete(key);
+  return text;
 }
 
 // The routes of `file` whose event `events` names, each with its script's absolute `file`. A route file that cannot be
@@ -163,12 +219,16 @@ function lost(trace, notices, hook, scripts, what) {
 
 // The steps (output.mjs transform) of the OpenCode tool hook `hook`, for one tool event: the session's start, the
 // routes it selects for the leaf's name, the call they are sent, read once before any spawn under its own cap
-// (call.mjs), and each script under its own time from its own spawn. A PostToolUse answer changes nothing of the call:
-// its result stays as it was.
-function toolSteps(runner, hook) {
+// (call.mjs), and each script under its own time from its own spawn. On execute.before it first drops any context kept
+// under the call's key, then a PreToolUse context of a call no hook refused is kept for that call's execute.after
+// (keepContext); a PostToolUse context goes into `given`, keyed by the event, for afterCallback to append once every
+// route ran. Neither blocks, and neither changes the call before then.
+function toolSteps(runner, hook, given) {
   const blocking = hook === BLOCKING_HOOK;
   return {
     async select(event) {
+      // A context kept for an earlier call of the same key, whose execute.after never came, never reaches this one.
+      if (blocking) takeContext(runner, event);
       await started(runner, event?.sessionID);
       // One read of info, which picks the routes and reaches the scripts, so the adapter reads the name the bridge picked.
       const info = infoRead(event?.info);
@@ -186,7 +246,10 @@ function toolSteps(runner, hook) {
       return { ...call, payload: (route) => toolPayload(runner.context, route, call) };
     },
     run: (route, call) => run(runner, route, call, blocking ? Math.max(route.timeoutMs, BLOCKING_KILL_MS) : route.timeoutMs),
-    apply: () => {},
+    apply(event, verdict) {
+      if (blocking) keepContext(runner, event, verdict.context);
+      else if (typeof verdict.context === 'string') given?.set(event, verdict.context);
+    },
     trace: runner.trace,
   };
 }
@@ -225,19 +288,44 @@ function idleSteps(runner, hook) {
   };
 }
 
-// Drops a session's `stop_hook_active` and its start lines on its `session.deleted` event, for as long as OpenCode's
-// event stream runs, listening once a setup. A stream that fails ends the listening and nothing else.
+// On a session's `session.deleted` event, runs its SessionEnd routes when it is a root (endSteps), then drops its
+// `stop_hook_active`, its start lines, and its kept walk and folder, for as long as OpenCode's event stream
+// runs, listening once a setup. Events are read one at a time, so a root's end has run before the next event is read.
+// Only `session.deleted` runs anything: an archived session is not ended, and runs no hook. A stream that fails ends
+// the listening and nothing else.
 function listen(runner) {
   if (runner.listening) return;
   runner.listening = true;
-  const drop = settle((event) => {
-    if (event?.type !== 'session.deleted') return;
-    runner.stops.delete(event.data?.sessionID);
-    runner.starts.delete(event.data?.sessionID);
+  const end = transform(DELETED_EVENT, endSteps(runner));
+  const drop = settle(async (event) => {
+    if (event?.type !== DELETED_EVENT) return;
+    const sessionID = event.data?.sessionID;
+    await end(event);
+    runner.stops.delete(sessionID);
+    runner.starts.delete(sessionID);
+    forgetSession(runner, sessionID);
   });
   (async () => {
-    for await (const event of runner.context.event.subscribe({ types: ['session.deleted'] })) await drop(event);
+    for await (const event of runner.context.event.subscribe({ types: [DELETED_EVENT] })) await drop(event);
   })().catch(() => {});
+}
+
+// The steps of a session's end, on its `session.deleted` event: the SessionEnd routes of `events`, sent the deleted
+// session's id and its last known folder, for a root alone, by what the bridge kept of it (call.mjs endCall). The
+// session may no longer be readable, so no start runs and no session is read. Its payload carries no `reason`, since
+// the event gives none, and no `transcript_path`.
+function endSteps(runner) {
+  return {
+    select: () => ({ routes: runner.routes.filter((route) => route.event === 'SessionEnd' && runner.events[route.event] === DELETED_EVENT) }),
+    call(event, { routes }) {
+      const call = endCall(runner, event?.data?.sessionID);
+      if (call.skip) return skipped(runner, routes, call);
+      const mark = markOf(runner.context, {});
+      return { ...call, payload: (route) => ({ hook_event_name: route.event, opencode: mark, session_id: call.root, cwd: call.cwd }) };
+    },
+    run: (route, call) => run(runner, route, call, route.timeoutMs),
+    trace: runner.trace,
+  };
 }
 
 // The standard envelope of the call for `route`: a subagent's call carries its root as session_id and its own id as

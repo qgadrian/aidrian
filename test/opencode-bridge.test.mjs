@@ -26,7 +26,8 @@ import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { canBlock, OVERFLOW_REASON, REWRITE_CONFLICT } from '../plugins/aidrian/lib/hook-result.mjs';
 import { ANNOUNCE_LEAD } from '../plugins/aidrian/lib/stop-announce.mjs';
-import { BLOCKING_KILL_MS, setup } from '../plugins/aidrian/opencode/bridge.mjs';
+import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
+import { BLOCKING_KILL_MS, CONTEXTS_MAX, setup } from '../plugins/aidrian/opencode/bridge.mjs';
 import { folderOf, lastAssistantText, READ_MS } from '../plugins/aidrian/opencode/call.mjs';
 import { nodeOf } from '../plugins/aidrian/opencode/environment.mjs';
 import { CAPTURE_BYTES, capture, CODEMODE_REFUSAL, settle as resolving, SPAWN_REFUSAL, transform } from '../plugins/aidrian/opencode/output.mjs';
@@ -186,7 +187,7 @@ const ENOENT = () => Object.assign(new Error('spawn node ENOENT'), { code: 'ENOE
 const traceLines = (file) => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 
 test('EVENTS is every event of HOOKS no hook can block on, by hook-result`s reading, frozen: no guard runs on OpenCode yet', () => {
-  assert.deepEqual(EVENTS, { SessionStart: 'context', SubagentStart: 'context', PostToolUse: 'execute.after' });
+  assert.deepEqual(EVENTS, { SessionStart: 'context', SubagentStart: 'context', PostToolUse: 'execute.after', SessionEnd: 'session.deleted' });
   assert.deepEqual(EVENTS, Object.fromEntries(Object.entries(OPENCODE_HOOKS).filter(([event]) => !canBlock(event))), 'hook-result is the one source');
   for (const event of ['PreToolUse', 'UserPromptSubmit', 'PreCompact', 'Stop']) {
     assert.ok(Object.hasOwn(OPENCODE_HOOKS, event) && !Object.hasOwn(EVENTS, event), `${event} has a hook and stays unrouted`);
@@ -894,7 +895,7 @@ for (const when of ['at', 'since']) {
     const context = fakeContext({ sessions: { ses_child: { parentID: 'ses_main', location: { directory: SESSION_DIR } } } });
     const { calls } = await bridge({ context, scripts, routes: routesFile(`gone-${when}-setup.json`, [preRoute({ script: 'hook-pre.mjs' })]), events: BLOCKING, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
     const noticed = when === 'at' ? ['context', 'compaction'] : [];
-    assert.deepEqual(Object.keys(context.hooks), ['execute.before', 'create.before', ...noticed], 'its route stays registered, and a missing script`s notice is given');
+    assert.deepEqual(Object.keys(context.hooks), ['execute.before', 'execute.after', 'create.before', ...noticed], 'its route stays registered, with the after-hook its context reaches the model on, and a missing script`s notice is given');
     if (when === 'since') rmSync(path.join(scripts, 'hook-pre.mjs'));
     await assert.rejects(context.hooks['execute.before'](beforeEvent({ sessionID: 'ses_child' })), { message: SPAWN_REFUSAL });
     assert.equal(await context.hooks['execute.before'](beforeEvent()), undefined, 'the root session`s call runs');
@@ -1192,7 +1193,7 @@ function hookRows(page) {
 }
 
 test('the bridge can run the session start and the after-hooks of the tools the leaf names alone on OpenCode', () => {
-  assert.deepEqual(DELIVERED, ['hook-agent-post.mjs', 'hook-bash-post.mjs', 'hook-markdown-wrap.mjs', 'hook-session-start.mjs', 'hook-tracker-post.mjs']);
+  assert.deepEqual(DELIVERED, ['hook-agent-post.mjs', 'hook-bash-post.mjs', 'hook-markdown-wrap.mjs', 'hook-session-end.mjs', 'hook-session-start.mjs', 'hook-tracker-post.mjs']);
 });
 
 test('the OpenCode page`s Hooks table has a row for each hooks.json script, and its yes rows are the scripts the bridge can run', () => {
@@ -1200,10 +1201,11 @@ test('the OpenCode page`s Hooks table has a row for each hooks.json script, and 
   assert.deepEqual(rows.map((row) => row.script).sort(), [...hooksJsonScripts()].sort());
   assert.equal(new Set(rows.map((row) => row.script)).size, rows.length, 'one row a script');
   assert.deepEqual(rows.filter((row) => row.runs === 'yes').map((row) => row.script).sort(), DELIVERED);
-  // The scripts a test runs for real on a payload in the bridge's shape: hook-bash-post.mjs's fixture, and the four of
-  // test/opencode-adapter.test.mjs. Every other route is run with a fake spawn alone.
+  // The scripts a test runs for real on a payload in the bridge's shape: hook-bash-post.mjs's fixture, the four of
+  // test/opencode-adapter.test.mjs, and hook-session-end.mjs, run in this process on what the bridge sends on a root's
+  // `session.deleted`. Every other route is run with a fake spawn alone.
   assert.deepEqual(rows.filter((row) => row.verified === 'fixture only').map((row) => row.script).sort(),
-    ['hook-agent-post.mjs', 'hook-bash-post.mjs', 'hook-markdown-wrap.mjs', 'hook-session-start.mjs', 'hook-tracker-post.mjs']);
+    ['hook-agent-post.mjs', 'hook-bash-post.mjs', 'hook-markdown-wrap.mjs', 'hook-session-end.mjs', 'hook-session-start.mjs', 'hook-tracker-post.mjs']);
   for (const row of rows) {
     assert.ok(['yes', 'no'].includes(row.runs), row.script);
     assert.ok(row.verified === '-' || row.verified === 'fixture only' || row.verified === 'script not run' || /^live on OpenCode \d+\.\d+\.\d+/u.test(row.verified), `${row.script}: ${row.verified}`);
@@ -1625,13 +1627,158 @@ test('a subagent`s call fails closed on a blocking route when a script does not 
   assert.equal(spawn.calls.length, 2, 'the root`s code-mode call and the subagent`s plain call run');
 });
 
-test('a PostToolUse answer gives no block and leaves the result as it was', async () => {
+test('a PostToolUse answer gives no block, and its context, an exit 2`s stderr, is appended to the completed call`s result', async () => {
   const answer = { status: 2, stderr: 'context for the model', stdout: '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"x"}}' };
   const { fire } = await bridge({ spawn: fakeSpawn(writes(answer)) });
   const event = shellEvent();
   const before = structuredClone(event);
   assert.equal(await fire(event), undefined);
-  assert.deepEqual(event, before);
+  // The content was an empty list, which OpenCode reads from `output`: that text stays first, then the context.
+  const content = [{ type: 'text', text: JSON.stringify(before.result.output) }, { type: 'text', text: 'context for the model' }];
+  assert.deepEqual(event, { ...before, result: { ...before.result, content } });
+});
+
+// A PostToolUse or PreToolUse answer that gives `text` as its context.
+const contextAnswer = (event, text) => ({ status: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } }) });
+// The execute.after event of a shell call that errored: `status` error, an `error`, and no `result`, as 2.4.1 types it.
+const erroredEvent = (fields = {}) => {
+  const event = { ...shellEvent(fields), status: 'error', error: { message: 'exit 1' } };
+  delete event.result;
+  return event;
+};
+
+test('every after-route reads the result as it came, and their contexts follow the content OpenCode reads, in route order, on a completed call alone', async () => {
+  const scripts = scriptsFolder('post-context-scripts', ['hook-one.mjs', 'hook-two.mjs']);
+  const spawn = fakeSpawn((child, call) => answers(child, contextAnswer('PostToolUse', path.basename(call.args[0]) === 'hook-one.mjs' ? 'first' : 'second')));
+  const trace = path.join(ROOT, 'trace-post-context.jsonl');
+  const { calls, fire } = await bridge({ spawn, scripts, routes: routesFile('post-context.json', [bashRoute('hook-one.mjs'), bashRoute('hook-two.mjs')]), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  const event = shellEvent();
+  const given = event.result;
+  const original = structuredClone(given);
+  await fire(event);
+  assert.deepEqual(calls.map((call) => sent(call).tool_response), [original, original], 'neither route`s payload holds a context');
+  assert.deepEqual(given, original, 'the result OpenCode gave is replaced, never changed in place');
+  assert.deepEqual(event.result, { ...original, content: [{ type: 'text', text: JSON.stringify(original.output) }, { type: 'text', text: 'first\n\nsecond' }] });
+  // A text content is one text part, and a list that is not empty stays as it is, as OpenCode reads each.
+  const text = shellEvent({ result: { output: { exitCode: 0 }, content: 'all done' } });
+  await fire(text);
+  assert.deepEqual(text.result, { output: { exitCode: 0 }, content: [{ type: 'text', text: 'all done' }, { type: 'text', text: 'first\n\nsecond' }] });
+  const file = { type: 'file', uri: 'file:///tmp/a.png', mime: 'image/png' };
+  const listed = shellEvent({ result: { content: [file] } });
+  await fire(listed);
+  assert.deepEqual(listed.result, { content: [file, { type: 'text', text: 'first\n\nsecond' }] });
+  // An errored call runs no route, and its event is left as it was.
+  const errored = erroredEvent();
+  const copy = structuredClone(errored);
+  const spawned = calls.length;
+  await fire(errored);
+  assert.deepEqual([errored, calls.length], [copy, spawned]);
+  assert.ok(!readFileSync(trace, 'utf8').includes('first'), 'no context is written to the trace');
+});
+
+test('a PreToolUse context is kept for its call and ends its completed result; an errored call`s result is left as it was, and the kept context is gone', async () => {
+  const warn = 'This command reads a file the project marks as secret.';
+  const spawn = fakeSpawn((child, call) => answers(child, contextAnswer('PreToolUse', warn)));
+  const trace = path.join(ROOT, 'trace-pre-context.jsonl');
+  const context = fakeContext();
+  const { calls } = await bridge({ context, spawn, routes: routesFile('pre-context.json', [preRoute()]), events: BLOCKING, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  const [before, after] = [context.hooks['execute.before'], context.hooks['execute.after']];
+  assert.equal(typeof after, 'function', 'a routed before-hook registers the after-hook, with no after-route of its own');
+  assert.equal(await before(beforeEvent({ id: 'call_ok' })), undefined);
+  const done = shellEvent({ sessionID: 'ses_main', id: 'call_ok' });
+  const original = structuredClone(done.result);
+  await after(done);
+  assert.deepEqual(done.result, { ...original, content: [{ type: 'text', text: JSON.stringify(original.output) }, { type: 'text', text: warn }] });
+  assert.equal(calls.length, 1, 'the after-hook runs no route');
+
+  // An errored call: its event is left as it was, and its kept context is gone, so a completed event of the same id
+  // gets none.
+  await before(beforeEvent({ id: 'call_err' }));
+  const errored = erroredEvent({ sessionID: 'ses_main', id: 'call_err' });
+  const copy = structuredClone(errored);
+  await after(errored);
+  assert.deepEqual(errored, copy);
+  const again = shellEvent({ sessionID: 'ses_main', id: 'call_err' });
+  const unchanged = structuredClone(again);
+  await after(again);
+  assert.deepEqual(again, unchanged, 'nothing was left in the map');
+  // A call with no string id keeps nothing, and another session's call of the same id gets nothing.
+  await before(beforeEvent({ id: undefined }));
+  const unnamed = shellEvent({ sessionID: 'ses_main', id: undefined });
+  const plain = structuredClone(unnamed);
+  await after(unnamed);
+  assert.deepEqual(unnamed, plain);
+  await before(beforeEvent({ id: 'call_x' }));
+  const other = shellEvent({ sessionID: 'ses_other', id: 'call_x' });
+  const otherCopy = structuredClone(other);
+  await after(other);
+  assert.deepEqual(other, otherCopy);
+  // A refused call keeps nothing.
+  const refusing = fakeContext();
+  await bridge({ context: refusing, spawn: fakeSpawn((child) => answers(child, { status: 2, stderr: 'no', stdout: '' })), routes: routesFile('pre-context-refused.json', [preRoute()]), events: BLOCKING });
+  await assert.rejects(refusing.hooks['execute.before'](beforeEvent({ id: 'call_no' })), { message: 'no' });
+  const refused = shellEvent({ sessionID: 'ses_main', id: 'call_no' });
+  const refusedCopy = structuredClone(refused);
+  await refusing.hooks['execute.after'](refused);
+  assert.deepEqual(refused, refusedCopy);
+  assert.ok(!readFileSync(trace, 'utf8').includes('secret'), 'no context is written to the trace');
+});
+
+test(`the kept PreToolUse contexts are cleared whole once ${CONTEXTS_MAX} calls hold one: an earlier call's is lost, the next call's kept`, async () => {
+  const spawn = fakeSpawn((child, call) => answers(child, contextAnswer('PreToolUse', `context of ${sent(call).tool_use_id}`)));
+  const context = fakeContext();
+  await bridge({ context, spawn, routes: routesFile('pre-context-bound.json', [preRoute()]), events: BLOCKING });
+  const [before, after] = [context.hooks['execute.before'], context.hooks['execute.after']];
+  const ended = async (id) => {
+    const event = shellEvent({ sessionID: 'ses_main', id });
+    await after(event);
+    return event.result.content.at(-1)?.text ?? null;
+  };
+  for (let n = 0; n < CONTEXTS_MAX; n += 1) await before(beforeEvent({ id: `call_${n}` }));
+  assert.equal(await ended('call_1'), 'context of call_1', `${CONTEXTS_MAX} calls are held`);
+  await before(beforeEvent({ id: 'call_1' }));
+  await before(beforeEvent({ id: `call_${CONTEXTS_MAX}` }));
+  assert.equal(await ended('call_0'), null, 'cleared with the map: the result is left as it was');
+  assert.equal(await ended(`call_${CONTEXTS_MAX}`), `context of call_${CONTEXTS_MAX}`);
+});
+
+test('a call with a PreToolUse context and an after-route: the route reads the result as it came, and the result ends with the PreToolUse context, then the PostToolUse one', async () => {
+  const scripts = scriptsFolder('pre-post-context-scripts', ['hook-bash.mjs', 'hook-one.mjs']);
+  const spawn = fakeSpawn((child, call) => answers(child, path.basename(call.args[0]) === 'hook-bash.mjs' ? contextAnswer('PreToolUse', 'before') : contextAnswer('PostToolUse', 'after')));
+  const context = fakeContext();
+  const { calls } = await bridge({ context, spawn, scripts, routes: routesFile('pre-post-context.json', [preRoute(), bashRoute('hook-one.mjs')]), events: { ...AFTER_ONLY, ...BLOCKING } });
+  await context.hooks['execute.before'](beforeEvent({ id: 'call_both' }));
+  const event = shellEvent({ sessionID: 'ses_main', id: 'call_both' });
+  const original = structuredClone(event.result);
+  await context.hooks['execute.after'](event);
+  assert.deepEqual(sent(calls.at(-1)).tool_response, original, 'the after-route read the result as it came, with no context');
+  assert.deepEqual(event.result.content, [{ type: 'text', text: JSON.stringify(original.output) }, { type: 'text', text: 'before' }, { type: 'text', text: 'after' }]);
+});
+
+test('a refused call keeps no context, though another of its before-routes gave one', async () => {
+  const scripts = scriptsFolder('pre-refuse-context-scripts', ['hook-bash.mjs', 'hook-warn.mjs']);
+  const spawn = fakeSpawn((child, call) => answers(child, path.basename(call.args[0]) === 'hook-warn.mjs' ? contextAnswer('PreToolUse', 'warned') : { status: 2, stderr: 'no' }));
+  const context = fakeContext();
+  await bridge({ context, spawn, scripts, routes: routesFile('pre-refuse-context.json', [preRoute(), preRoute({ script: 'hook-warn.mjs' })]), events: BLOCKING });
+  await assert.rejects(context.hooks['execute.before'](beforeEvent({ id: 'call_no' })), { message: 'no' });
+  const event = shellEvent({ sessionID: 'ses_main', id: 'call_no' });
+  const copy = structuredClone(event);
+  await context.hooks['execute.after'](event);
+  assert.deepEqual(event, copy);
+});
+
+test('a later call of the same session and id drops a context kept for an earlier one whose execute.after never came', async () => {
+  let speak = true;
+  const spawn = fakeSpawn((child) => answers(child, speak ? contextAnswer('PreToolUse', 'the earlier call`s') : { status: 0 }));
+  const context = fakeContext();
+  await bridge({ context, spawn, routes: routesFile('pre-context-again.json', [preRoute()]), events: BLOCKING });
+  await context.hooks['execute.before'](beforeEvent({ id: 'call_k' }));
+  speak = false;
+  await context.hooks['execute.before'](beforeEvent({ id: 'call_k' }));
+  const event = shellEvent({ sessionID: 'ses_main', id: 'call_k' });
+  const copy = structuredClone(event);
+  await context.hooks['execute.after'](event);
+  assert.deepEqual(event, copy, 'the later call`s result gets no text of the earlier call`s');
 });
 
 // The bridge with one Stop route on the idle hook, through the `events` seam: `idle(sessionID)` runs its callback.
@@ -1641,18 +1788,27 @@ async function stopBridge(name, { context, spawn, env = ENV, scripts }) {
   return { ...made, idle: (sessionID, background = []) => context.hooks['experimental.idle']({ sessionID, background }) };
 }
 // A controllable event stream, as context.event.subscribe gives one: `push` an event, then `next` to let it be read.
+// `send(events)` pushes each and resolves once the reader has handled them all and asks for the next: the bridge reads
+// one event at a time, so by then each one's work has ended.
 function eventStream() {
   const queue = [];
   let wake = null;
+  let drained = null;
   const iterable = {
     async *[Symbol.asyncIterator]() {
       for (;;) {
         while (queue.length > 0) yield queue.shift();
+        drained?.();
         await new Promise((resolve) => { wake = resolve; });
       }
     },
   };
-  return { iterable, push: (event) => { queue.push(event); wake?.(); } };
+  const push = (event) => { queue.push(event); wake?.(); };
+  const send = (events) => new Promise((resolve) => {
+    drained = () => { drained = null; resolve(); };
+    for (const event of events) push(event);
+  });
+  return { iterable, push, send };
 }
 
 test('no callback but execute.before ever rejects: a throw in any step of the context, prompt, compaction, idle, event, shell, or execute.after callback resolves', async (t) => {
@@ -1675,7 +1831,8 @@ test('no callback but execute.before ever rejects: a throw in any step of the co
   assert.deepEqual(applied, Array(5).fill(['back', null, null]).flat(), 'a callback whose steps all work applies its verdict, and a runner that fails is a script that gave no answer');
   // On execute.before a step that fails lets the call run, and a trace that fails keeps the refusal.
   const pre = { ...good, select: () => ({ routes: [{ event: 'PreToolUse', script: 'hook-x.mjs' }] }), run: () => ({ exit: 0, stdout: '' }) };
-  for (const step of ['select', 'call', 'run']) assert.equal(await transform('execute.before', { ...pre, [step]: fails.rejects(step) })({}), undefined, step);
+  for (const step of ['select', 'call', 'run', 'apply']) assert.equal(await transform('execute.before', { ...pre, [step]: fails.rejects(step) })({}), undefined, step);
+  assert.equal(await transform('execute.before', { ...pre, apply: fails.throws('apply') })({}), undefined, 'apply throws');
   await assert.rejects(transform('execute.before', { ...pre, run: () => ({ exit: 2, stderr: 'no' }) })({}), { message: 'no' });
   assert.equal(await resolving(fails.throws('one'))(), undefined);
 
@@ -2009,4 +2166,108 @@ test('a root session whose own folder is not on disk runs no Stop route, never o
   await idle('ses_main');
   assert.equal(calls.length, 0);
   assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest).at(-1), { step: 'skip', script: 'hook-stop.mjs', status: 'cwd' });
+});
+
+// SessionEnd on a session's `session.deleted` event: the generated route, through EVENTS, with hook-session-end.mjs run
+// in this process on what the bridge sends, in a state folder of its own.
+const END_ROUTE = Object.freeze(GENERATED.find((route) => route.event === 'SessionEnd'));
+const SESSION_END = path.join(PLUGIN, 'scripts/hook-session-end.mjs');
+const END_ENV = Object.freeze({ ...ENV, XDG_STATE_HOME: path.join(ROOT, 'end-state') });
+// What hook-session-end.mjs deletes of a session's that a child's end must leave: its gate snapshot, the `.gated` mark
+// beside it, and its tracker record.
+const endFiles = (sessionID) => {
+  const file = snapshotPath(sessionID, { env: END_ENV });
+  return [file, file.replace(/\.json$/u, '.gated'), file.replace(/\.json$/u, '.tracker.json')];
+};
+const writeEndFiles = (sessionID) => {
+  for (const file of endFiles(sessionID)) {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, '{}\n');
+  }
+};
+const present = (sessionID) => endFiles(sessionID).map((file) => existsSync(file));
+const ends = (calls) => calls.filter((call) => path.basename(call.args[0]) === 'hook-session-end.mjs');
+
+// The bridge with the SessionEnd route and a record-only shell route, whose calls make the bridge read each session:
+// `stream.send` delivers OpenCode events, and `fire` an execute.after event.
+async function endBridge(name, { sessions, trace }) {
+  const stream = eventStream();
+  const context = fakeContext({ sessions, subscribe: () => stream.iterable });
+  const spawn = fakeSpawn((child, call) => {
+    if (path.basename(call.args[0]) !== 'hook-session-end.mjs') return closes()(child);
+    hookCall(SESSION_END, { input: call.stdin, cwd: call.options.cwd, env: call.options.env }).then((result) => answers(child, result));
+  });
+  const routes = [END_ROUTE, bashRoute('hook-bash-post.mjs')];
+  const scripts = scriptsFolder(`${name}-scripts`, routes.map((route) => route.script));
+  const events = { PostToolUse: EVENTS.PostToolUse, SessionEnd: EVENTS.SessionEnd };
+  const made = await bridge({ context, spawn, env: { ...END_ENV, ...(trace ? { AIDRIAN_OPENCODE_TRACE: trace } : {}) }, scripts, routes: routesFile(`${name}.json`, routes), events });
+  return { ...made, stream };
+}
+
+const ROOT_AND_CHILD = Object.freeze({ ses_end: { location: { directory: PROJECT_DIR } }, ses_kid: { parentID: 'ses_end', location: { directory: CHILD_DIR } } });
+
+test('deleting or archiving a child session runs no SessionEnd: the root`s gate snapshot, .gated mark, and tracker record stay', async () => {
+  const trace = path.join(ROOT, 'trace-end-child.jsonl');
+  const { calls, fire, stream } = await endBridge('end-child', { sessions: ROOT_AND_CHILD, trace });
+  await fire(shellEvent({ sessionID: 'ses_end' }));
+  await fire(shellEvent({ sessionID: 'ses_kid' }));
+  writeEndFiles('ses_end');
+  await stream.send([{ type: 'session.archived', data: { sessionID: 'ses_kid' } }, { type: 'session.deleted', data: { sessionID: 'ses_kid' } }]);
+  assert.deepEqual(ends(calls), [], 'a child`s end sends nothing, though its payload would carry its root`s id');
+  assert.deepEqual(present('ses_end'), [true, true, true]);
+  // A session the bridge never read cannot be told a root: it runs nothing either.
+  await stream.send([{ type: 'session.deleted', data: { sessionID: 'ses_never_read' } }]);
+  assert.deepEqual(ends(calls), []);
+  assert.deepEqual(traceLines(trace).filter((line) => line.script === 'hook-session-end.mjs').map(({ step, status }) => [step, status]), [['skip', 'subagent'], ['skip', 'read']]);
+});
+
+test('archiving then unarchiving a root runs no SessionEnd and leaves all three; its delete then runs it once, in its folder, and they go', async () => {
+  const { calls, fire, stream } = await endBridge('end-root', { sessions: ROOT_AND_CHILD });
+  await fire(shellEvent({ sessionID: 'ses_end' }));
+  writeEndFiles('ses_end');
+  await stream.send([{ type: 'session.archived', data: { sessionID: 'ses_end' } }, { type: 'session.unarchived', data: { sessionID: 'ses_end' } }]);
+  assert.deepEqual([ends(calls), present('ses_end')], [[], [true, true, true]]);
+  await stream.send([{ type: 'session.deleted', data: { sessionID: 'ses_end' } }]);
+  const [end] = ends(calls);
+  assert.deepEqual(sent(end), { hook_event_name: 'SessionEnd', opencode: {}, session_id: 'ses_end', cwd: PROJECT_DIR });
+  assert.equal(end.options.cwd, PROJECT_DIR, 'run in the root`s last known folder');
+  assert.deepEqual(present('ses_end'), [false, false, false], 'hook-session-end.mjs deleted them');
+  // The root is forgotten once it ended, so a second delete of the id, as a replayed event, runs nothing.
+  await stream.send([{ type: 'session.deleted', data: { sessionID: 'ses_end' } }]);
+  assert.equal(ends(calls).length, 1);
+});
+
+test('a root whose last known folder is gone runs no SessionEnd, never in the plugin`s folder', async () => {
+  const gone = path.join(ROOT, 'end-gone-folder');
+  mkdirSync(gone);
+  const trace = path.join(ROOT, 'trace-end-gone.jsonl');
+  const { calls, fire, stream } = await endBridge('end-gone', { sessions: { ses_end: { location: { directory: gone } } }, trace });
+  await fire(shellEvent({ sessionID: 'ses_end' }));
+  rmSync(gone, { recursive: true });
+  await stream.send([{ type: 'session.deleted', data: { sessionID: 'ses_end' } }]);
+  assert.deepEqual(ends(calls), []);
+  assert.deepEqual(traceLines(trace).at(-1), { at: traceLines(trace).at(-1).at, step: 'skip', script: 'hook-session-end.mjs', status: 'cwd' });
+});
+
+test('a session no session.created announced has its gate snapshot before its first tool call`s routes run', async () => {
+  const file = snapshotPath('ses_main', { env: END_ENV });
+  rmSync(file, { force: true });
+  const seen = [];
+  // The start writes the snapshot a turn after its spawn and only then answers, as hook-session-start.mjs saves it
+  // before it prints; the before-route's spawn notes whether the snapshot is there.
+  const spawn = fakeSpawn((child, call) => {
+    if (path.basename(call.args[0]) === 'hook-session-start.mjs') {
+      setImmediate(() => {
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, '{}\n');
+        answers(child, startAnswer(call));
+      });
+      return;
+    }
+    seen.push(existsSync(file));
+    answers(child, { status: 0 });
+  });
+  const { context } = await startBridge('start-snapshot', { spawn, routes: [preRoute()], events: { ...EVENTS, ...BLOCKING } });
+  await context.hooks['execute.before'](beforeEvent());
+  assert.deepEqual(seen, [true]);
 });

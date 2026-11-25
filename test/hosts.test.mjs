@@ -12,7 +12,7 @@ import { createInterface } from 'node:readline';
 import test from 'node:test';
 
 import { SESSION_HOOKS } from '../plugins/aidrian/opencode/bridge.mjs';
-import { EVENTS } from '../plugins/aidrian/opencode/routes.mjs';
+import { DELETED_EVENT, EVENTS } from '../plugins/aidrian/opencode/routes.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PLUGIN = path.join(ROOT, 'plugins/aidrian');
@@ -236,6 +236,9 @@ test('OpenCode loads the plugin folder as a package from its config, and the bri
   assert.notEqual(found.length, 0, `no models --standalone of ${ATTEMPTS} ran the bridge's setup within OpenCode 2.4.0's 5-second plugin.list wait`);
   assert.equal(found.length, 1, 'models --standalone ran the bridge\'s setup once');
   // One hook for each OpenCode hook of EVENTS, `context` among them for the start, and `compaction`, which carries the
-  // start lines too (bridge.mjs SESSION_HOOKS).
-  assert.equal(found[0].status, new Set([...Object.values(EVENTS), ...SESSION_HOOKS]).size, 'setup registered one hook for each OpenCode hook of EVENTS, and the session hooks');
+  // start lines too (bridge.mjs SESSION_HOOKS). SessionEnd's `session.deleted` is an event the bridge reads from the
+  // event stream, not a hook it registers, so it is no part of the count; the count stays exact, so a hook lost fails.
+  const hooks = Object.values(EVENTS).filter((hook) => hook !== DELETED_EVENT);
+  assert.ok(Object.values(EVENTS).includes(DELETED_EVENT) && hooks.length > 0, 'EVENTS names SessionEnd`s event and the hooks the count holds');
+  assert.equal(found[0].status, new Set([...hooks, ...SESSION_HOOKS]).size, 'setup registered one hook for each OpenCode hook of EVENTS, and the session hooks');
 });

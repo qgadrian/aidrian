@@ -250,8 +250,8 @@ export default {
   // no table prices is reported as unpriced, at $0. Its price page is https://developers.openai.com/api/docs/pricing;
   // rows come with a transcript reader, as the model-prices skill of this repository says.
   modelPrices: { models: [], rows: [] },
-  identityVars: ['CODEX_THREAD_ID'],
-  detectVars: ['CODEX_THREAD_ID', 'PLUGIN_ROOT'],
+  identityVars: ['CODEX_SESSION_ID', 'CODEX_THREAD_ID'],
+  detectVars: ['CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'PLUGIN_ROOT'],
   // A tool hook's payload holds `turn_id`, a plugin hook has PLUGIN_ROOT equal to CLAUDE_PLUGIN_ROOT, and a shell Codex runs
   // has CODEX_THREAD_ID (hooks/src/schema.rs, hooks/src/engine/discovery.rs:314-316, core/src/exec_env.rs at rust-v0.166.0).
   // PLUGIN_ROOT alone may be inherited from anywhere, and CODEX_THREAD_ID alone by a Claude Code started from a Codex shell,
@@ -262,7 +262,11 @@ export default {
   // The payload's own mark, which detectHost asks every host for before any environment is read: `turn_id`, which no
   // other host's hook payload holds.
   payloadMark: (input) => typeof input?.turn_id === 'string',
-  sessionId: (env) => env.CODEX_THREAD_ID || null,
+  // A shell call gets CODEX_SESSION_ID, the root session's id that every thread it starts shares and its hooks' payloads
+  // carry as `session_id`, and CODEX_THREAD_ID, the running thread's own id, which differs in a subagent's thread
+  // (core/src/exec_env.rs `inject_session_env`, session/session.rs `session_id` at rust-v0.172.0). In a root thread the two
+  // are equal, so the thread's id stands in only where a Codex sets no CODEX_SESSION_ID. docs/providers/codex.md#session-ids.
+  sessionId: (env) => env.CODEX_SESSION_ID || env.CODEX_THREAD_ID || null,
   agentName: () => null,
   effort: () => null,
   // No payload or definition this adapter reads tells a subagent's effort.

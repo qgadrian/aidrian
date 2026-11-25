@@ -96,6 +96,43 @@ export function resolvedPath(file) {
   }
 }
 
+// The variables a guard reads in a target, from the hook's environment, which the session's shell starts with.
+const EXPANDED = Object.freeze(['HOME', 'XDG_CONFIG_HOME', 'ZDOTDIR', 'TMPDIR']);
+
+// `text` with each of EXPANDED expanded from `env`, an absolute value alone, unless the command `command` sets that
+// variable itself; a leading `~` is the home folder `env` names. The rest is kept as spelled.
+export function expandKnown(text, env, command) {
+  const sets = (name) => new RegExp(String.raw`(?<![\w$])${name}\+?=|\b(?:export|unset|declare|typeset|local|readonly|read)\b[^;&|\n]*\b${name}\b`, 'u').test(command);
+  const value = (name) => (EXPANDED.includes(name) && typeof env[name] === 'string' && path.isAbsolute(env[name]) && !sets(name) ? env[name] : null);
+  const out = text.replace(/\$\{(\w+)\}|\$(\w+)/gu, (whole, braced, bare) => value(braced ?? bare) ?? whole);
+  return /^~(?=\/|$)/u.test(out) && value('HOME') ? `${value('HOME')}${out.slice(1)}` : out;
+}
+
+// The path `text` from the folder `dir` as a command or a tool spells it, with no `..` folded away: `text` itself when it
+// is absolute. Every guard that judges it folds it as text too (path.resolve, canonical) and, where it reads links,
+// asks systemPath where the system lands.
+export const joinSpelled = (dir, text) => (path.isAbsolute(text) ? text : `${dir.endsWith(path.sep) ? dir : `${dir}${path.sep}`}${text}`);
+
+// Where the system lands for the absolute path `file` as it is spelled, each `..` taken after the links before it, as
+// the system takes it, never folded as text first: the real path of its longest leading part that resolves
+// (realpathSync.native, which climbs from a link's target), then the parts below it that are not there yet, folded as
+// text, since a `..` there names no folder. Null for a path that is not absolute, or whose lookup loops. A guard that
+// judges a write target by its folded text (path.resolve) judges this spelling too, and refuses when either is refused:
+// `<clone>/a/link/../../x` folds into the clone while the write may land wherever the link leads.
+export function systemPath(file) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  const { root } = path.parse(file);
+  const parts = file.slice(root.length).split(path.sep).filter(Boolean);
+  for (let count = parts.length; count >= 0; count -= 1) {
+    try {
+      return path.join(realpathSync.native(`${root}${parts.slice(0, count).join(path.sep)}`), ...parts.slice(count));
+    } catch (error) {
+      if (error?.code === 'ELOOP') return null;
+    }
+  }
+  return null;
+}
+
 // The first of `checkouts` whose real path holds the real path `real`, compared in the case the disk folds to, or
 // undefined. The continuation store and the session folder refuse a state folder inside a checkout by it.
 export function checkoutHolding(real, checkouts) {
@@ -231,6 +268,26 @@ export function tailObjects(file, bytes) {
 
 export function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// `name`, a key or value a file gave, as a quoted string for one line of output: JSON's quoting, which escapes C0
+// controls, with DEL, the C1 controls and the line and paragraph separators escaped too, as `\uXXXX`, since JSON leaves them raw and a
+// terminal may read them as a line break or a control sequence.
+export function quoteName(name) {
+  return (JSON.stringify(name) ?? String(name)).replace(/[\u007f-\u009f\u2028\u2029]/gu, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+// The fields of the object `value`, at `at` in `file`, that `fields` names, as a new object. Each other field adds
+// `<file>: unknown key "<at>.<field>"` to `errors`, which the local settings file reads as a warning and ignores
+// (config-local.mjs splitUnknownKeys), so a field a newer release adds to a group fails no older plugin. The path is
+// quoted (quoteName), so a name with a newline or a control character cannot write a line of its own into the output.
+export function knownFields(value, fields, at, file, errors) {
+  const kept = {};
+  for (const [key, field] of Object.entries(value)) {
+    if (fields.includes(key)) kept[key] = field;
+    else errors.push(`${file}: unknown key ${quoteName(`${at}.${key}`)}`);
+  }
+  return kept;
 }
 
 // A glob as a regular expression over a `/`-separated relative path: `*` matches within one path segment, `**` across

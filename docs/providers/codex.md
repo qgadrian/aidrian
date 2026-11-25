@@ -344,18 +344,21 @@ Verified by `node --test` on a stand-in process table (`test/adapters.test.mjs`)
 
 ## Session ids
 
-Read in Codex's source at `rust-v0.166.0` on 2026-11-18, not live:
+Read in Codex's source at `rust-v0.166.0` on 2026-11-18, and again at `rust-v0.172.0` on 2026-11-25, not live:
 
 - A shell call gets `CODEX_THREAD_ID`, the id of the thread that runs it (`codex-rs/core/src/exec_env.rs`, `create_env`),
-  and `CODEX_SESSION_ID`, "the shared root-session identity" (`inject_session_env` there).
+  and `CODEX_SESSION_ID`, "the shared root-session identity" (`inject_session_env` there, which the shell tool's
+  `unified_exec/process_manager.rs` and the user shell's `tasks/user_shell.rs` both call).
 - A hook's payload carries `session_id: sess.session_id()` (`codex-rs/core/src/hook_runtime.rs`, the PreToolUse and
   PostToolUse requests), and `session_id()` is "the identity shared by the root thread and all descendant threads",
   equal to the root thread's id (`codex-rs/core/src/session/session.rs`).
 - So in the root thread `CODEX_THREAD_ID` equals the hooks' `session_id`, and in a subagent's thread it does not: it is
-  the subagent's own thread id. The adapter reads `CODEX_THREAD_ID` as a command's session (`sessionId`), so a command
-  that would file a row for a session reads the wrong one in a subagent. That is why the snapshot's
-  [worktree links](adding-a-host.md#session-links) are written by the PostToolUse Bash hook, under the payload's
-  `session_id`, and not by `aidrian worktree new`.
+  the subagent's own thread id. `CODEX_SESSION_ID` equals the hooks' `session_id` in every thread.
+- The adapter reads `CODEX_SESSION_ID` as a command's session (`sessionId`), and `CODEX_THREAD_ID` only where a Codex
+  sets no `CODEX_SESSION_ID`, so a command run in a subagent, such as `aidrian worktree new`, files its row under the
+  session its hooks file theirs. A project start drops both variables from the session it starts, which gets its own.
+  Verified by `node --test` (`test/host-detect.test.mjs`, `test/project-start-codex.test.mjs`); no live Codex
+  subagent has run it.
 
 ## Limits
 

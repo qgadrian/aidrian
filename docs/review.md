@@ -74,7 +74,8 @@ diff. `depth: "split"` cuts the change into slices that run in parallel, then on
   severity, in `findings_merged`.
 - **Failures**: a slice that times out runs as two halves on the next step, and a half that times out splits again,
   down to one file; every slice that times out in a step splits on the next. A slice that fails for another reason
-  splits after its second failure. A one-file slice or the cross pass that keeps failing is `stuck` on its third attempt.
+  splits after its second failure. A one-file slice or the cross pass that keeps failing is `stuck` on its third attempt,
+  and so is a plan command's own slice pass, which is never cut: its failure reason never says it runs as two halves.
   A review with a slice or the cross pass missing is never `received`.
 - **Steps**: at most `review.split.parallel` (4) slices run per step, so a step fits one shell call; `running` asks
   for the next. After a fix, only the slices the fix touches run again, and the cross pass.
@@ -219,7 +220,15 @@ pull request's own config can only add flows, rules, and reviewers under new nam
 plan command it adds, take effect once they are merged. The plan command runs from a temporary checkout of the base,
 so editing its script changes nothing until the merge. A flow the pull request adds reads its invariants from the
 pull request, and takes its invariants' `approvers` from there too, so the config change that adds it waits for the
-Human's `harness-config` sign-off. A change to any of these triggers the built-in `harness-config` flow, which the Human signs off. A
+Human's `harness-config` sign-off. A change to any of these triggers the built-in `harness-config` flow, which the Human signs off.
+A change to one of the config's review settings that the step compares, `engine`, `rules`, `ignore`, `nonBehaviour`,
+`flows`, `planCommand`, `reviewers`, `split`, `visual`, `approvals`, or `unattendedSignoff`, is still reviewed under that
+flow, as on main; any other edit of the config follows the usual file rules.
+The flow's reviewer signs it in place of the Human only when the pull request's base commits
+`github.autoMerge.includePolicyFiles` with `includeGuardedPaths` ([Auto-merge](config.md#auto-merge)) and merge trust's
+rule asks the Human no sign-off for these files.
+The step reads only the base: an unattended merge also needs the default branch to hold both keys, so with only the base
+opted in, the merge still asks the Human. A
 flow's deleted test stops the review even when the change touches nothing else in the flow.
 
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no
@@ -312,8 +321,16 @@ request, and an acceptance with no reason. Like every sign-off, it is an audit e
 #### Answering in the session
 
 A long-form sign-off, `--accept`, `--overrule`, or `--stage` runs from the session once the Human answered it with AskUserQuestion:
-the question names `<owner>/<name>#<PR>` of the repository the command acts on, the short head, and `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
-`stage:<name>/signoff`, and the chosen option starts with "Approve". The latest answer naming it decides, and a push asks
+the question names `<owner>/<name>#<PR>` of the repository the command acts on and the short head, the chosen option starts with "Approve",
+and the option or the question names what is signed: `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
+`stage:<name>/signoff`. So the session asks once: the question names the flow and the invariant in plain words, and the
+recommended option's label carries the exact id, such as "Approve checkout/total-shown". The rule reads an option's id only
+as the word right after "Approve", whole, so "Approve ui/fit.js" names `ui/fit.js` and "Approve o/r.js#9" names none.
+An option that names an id decides alone, so "Approve ui/wrap" under a question naming `ui/fit` and `ui/wrap` approves
+`ui/wrap` only, and an option naming another invariant approves nothing. An "Approve" whose label names no id counts only
+for what its question names, never for an id that only an option the Human did not choose names. A refusal, such as "Keep it open", counts
+for every id its question names or its offered "Approve" options name. The latest answer that counts
+decides, so a refusal after an approval under the same question refuses, and a push asks
 again. The command is one plain `aidrian pr` call run from the pull request's checkout, with no shell variables, repeated flags, `cd`, `env -C`, or chain.
 Before it asks, a session on a host that offers a tool to send the Human a push notification sends one, so a Human away from the session, such as on a phone, sees that a decision waits.
 `--last` stays in the Human's shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
@@ -676,9 +693,19 @@ marker lines such as `<!-- pr-await-review: head=<sha> -->`. Without the exempti
 a finding on every pull request, and no fix to the change could close it. Any other comment that asks to change the
 review, broader or narrower, is still a finding, even one that opens with `@codex review`, quotes the request, or adds
 text to it: who posted a comment does not show in how it opens.
-The review bot's receipt, whose first line is `<!-- codex-review-receipt:v1 -->`, may end with a stock sign-off
-such as "Another round soon, please!": the prompt says that sign-off asks nothing of the review.
-Any other request a receipt carries is still a finding.
+The review bot's own receipt and status card carry stock text, such as a sign-off like "Another round soon, please!"
+or a footer that tells readers to comment "@codex address that feedback", which a reviewer read as a request and raised
+as the round's only finding on a clean head. The review step finds those comments itself, in the conversation it reads
+through the forge, and the reviewer reads nothing to judge who posted one. A comment counts when its author is the bot
+account of the base branch's `github.reviewer`, the login with the `[bot]` suffix or the bare login with the author type
+Bot, and its first line is the receipt's marker, `<!-- codex-review-receipt:v1 -->`, or the card's,
+`<!-- codex-pull-request-review-summary -->`. A person's account with the bare login is not the bot, and the login comes
+from the base branch, so a pull request cannot rename it. The pass input lists those comments as `botComments`, each with
+its id and link, and the prompt names them: their stock text is left out of the review, and any other request in them is
+still a finding. A comment that fails a check, such as a maintainer's that quotes a marker, is only not exempt: it reads
+like any other comment, a finding only when it asks to change the review. The step reads the conversation under
+`review.record: "local"` too, for this alone: it still writes nothing there. When that read fails, or no review bot is
+set, `botComments` is null and no comment is exempt this way.
 
 `codex-local`'s Codex run also serves plans: the `quorum` skill runs it as a plan's adversary, and the `plan-review`
 skill runs the quorum on high-stakes plans ([quorum ledgers](project-folder.md#local-state)).
@@ -712,7 +739,7 @@ A project adds its own in `review.reviewers`:
   git variables in its environment, in its own process group, with a time limit: SIGTERM, then SIGKILL.
   Output that does not parse is a failure, never a pass; malformed findings are dropped and named.
   A failure is `incomplete` and retried; the third is `stuck`; a split slice that times out splits instead ([Split](#split)).
-  A finished pass's record entry holds `seconds`, the whole seconds it ran, and a failure's reason ends `after <seconds> s`.
+  A finished pass's record entry holds `seconds`, the whole seconds it ran, and a failure's reason holds `after <seconds> s`.
 - Settled findings: an exec pass's `priorFindings` add every finding the record holds as accepted that no longer
   blocks, with the pass that accepted it as `settled_by`, and the pass's own last rulings on such a finding; only an
   entry with a file and a severity the disposition table knows can settle a repeat. A pass's own last findings and a
@@ -788,7 +815,10 @@ A project adds its own in `review.reviewers`:
   through git: a pull request that edits its script cannot run its own version, and the edit triggers
   `harness-config`. The checkout's installed dependency folders (`node_modules`, `vendor`, `.venv`) are linked in, so
   the base code runs with this machine's packages. A reviewer the pull request adds runs once it is merged.
-  `codex-local` reads the checkout at the head.
+  `codex-local` reads the checkout at the head. Before a step runs any exec reviewer, it checks the checkout it was run
+  from: at a commit other than the head, or with changes to tracked files (untracked files do not count), it runs none
+  and returns `incomplete` with `checkout_head`, the head to check out, and `retry_recommended: true`; when the hold
+  would refuse that head, it returns `retry_recommended: false` with the hold's reason and no `checkout_head`.
 - `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result with
   `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <the file the step's record names> --verdicts -`, its
   findings one by one in the file, which the dispatching session writes from the `findings` array of the agent's final
@@ -929,7 +959,13 @@ receipt. A comment the status card vouches for answers the card's full commit, c
 that gives fewer than 40 hex vouches for nothing. The newest answer is the one judged: a later review of an older
 head hides an earlier answer for this one, so the wait asks again or times out, and never records a pass for it. The
 receipt's footer quotes "@codex review", and like the status card it is never a request, nor is a 👀 on it an
-acknowledgement. Any other answer holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
+acknowledgement. A run the bot reports failed on its side is no answer: its notice, which opens with "Codex Review:
+Something went wrong", and a status card whose code review is `failed` are neither a finding nor a request, though the
+notice quotes "@codex review" in its help text. The wait goes on as if the bot had not answered and ends `timed_out`,
+so the failure uses no round and records no finding. That timeout carries `retry_recommended: true`, and the loop
+waits once more, only when the bot acknowledged the request for the head or a receipt still waits on its status card;
+without either, the step reports `timed_out` with `retry_recommended: false` and no follow-up wait.
+Any other answer holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
 at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the
 bot's stage, after the earlier stages, as before. An answer for a commit other than the one under review counts for
 nothing. A flow's required checks are read for that commit too.
@@ -1076,11 +1112,15 @@ owed, the skill's re-check run, then `status` once more. On any other exit the d
 
 A `## Accepted residuals` item, or an item of the section config.json `github.pullRequest.residuals.section` names, is a defect
 the branch ships on purpose. Before the body ships, `pr-write` sets each one against the decisions on record:
-`aidrian decisions residuals --body <file>` lists each item beside every decision marker in the indexed docs (id, status, wording,
+`aidrian decisions residuals --body <file>` sets each item against every decision marker in the indexed docs (id, status, wording,
 doc and line), a marker whose class no list holds included and a `rejected` one left out, since it is no rule, and the
 `## Consequences` lines of each ADR in `docs/adr/`, or the folder `--adr` names, an ADR whose Status starts `Superseded` skipped
 with a note; no `docs/adr/` is an empty list, an `--adr` that is no folder fails, and with no project folder the record is the ADR
-lines alone. An ADR, or an ADR folder, that is there but does not read is a problem of the record, never an empty list.
+lines alone. It lists each decision and each ADR line once, then each residual by its number, and every residual is set
+against the whole record, so the listing grows with the residuals plus the record, never their product; `--json` prints it
+pretty, one value a line. `--residual <n>` lists one residual, and `--path <doc or folder>` every decision and ADR line there,
+with no cap; neither goes with `--judged`, which checks rows against the whole record.
+An ADR, or an ADR folder, that is there but does not read is a problem of the record, never an empty list.
 It reads the branch's working copy, so a marker or wording the branch changes must already show in the body's
 Decisions. That part is deterministic. When the list holds no decision and no ADR line, it ends
 `nothing on record: no judgment owed` and exits 0, `--judged` or not, unless part of the record did not read (an index problem, a
@@ -1591,7 +1631,9 @@ for both: the waiver's read serves merge trust.
    state, a dismissed one included, keeps it off. A clean receipt or a 👍 never counts. The receipt names a 10-hex short commit, which a commit ground to
    share it matches (about 2^40 hashes), and the forge gives no push time of a fast-forward push that would bind it to
    the head: GraphQL's `Commit.pushedDate` is always null and a pull request's commits carry no date. The 👍 names no
-   commit, and lands seconds after the receipt, so after a push it answers the head before it. A pull request the bot
+   commit, and lands seconds after the receipt, so after a push it answers the head before it. A review list the forge
+   gave only in part keeps it off, as a review of the head in another state may lie past it, so `aidrian pr
+   auto-merge` and the guard judge the bot alike. A pull request the bot
    passed only with a receipt is the Human's to merge. The check holds whatever the record's outcome: a `none_needed`
    pull request merges unattended only once the bot is requested on it, with `aidrian pr await-review <PR> --request`,
    and has passed. With no bot set, the check is off with no route: a session no Human attends merges nothing, and the
@@ -1619,7 +1661,8 @@ for both: the waiver's read serves merge trust.
      content;
    - any flow whose `tests` match a deleted file;
    - `harness-config` when a changed file is a policy file of aidrian, a file either branch's config was read from, or a
-     doc a flow's invariants cite, or one of those commands is set;
+     doc a flow's invariants cite, or one of those commands is set; a policy file or a file a config was read from asks
+     none while both branches commit `github.autoMerge.includePolicyFiles` with `includeGuardedPaths`;
    - every such flow when the list holds a rename or is cut short.
    A sign-off kept from an earlier head ([Sign-off by the Human](#sign-off-by-the-human)) does not count here: the Human
    signs off the head that merges. A sign-off given on another machine is not in this machine's store.

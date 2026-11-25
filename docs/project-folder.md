@@ -91,14 +91,16 @@ It writes nothing at all when a symlink would take a write outside the project, 
   These two are the only `github` keys the file takes; an error in that group reads both `"off"`.
   `reviewApprovals`, the machine's [review approvals](review.md#sign-off-by-the-human) choice, must be `"on"` or `"off"`;
   anything else is an error, and it reads `"off"`.
-  `handoff`, the machine's [background handoff](handoff.md#the-background-route) choice, takes only `background`,
-  `"on"` or `"off"`; anything else is an error, and it reads `"off"`. Unset is off, unless the team sets
+  `handoff`, the machine's [background handoff](handoff.md#the-background-route) choice, reads only `background`,
+  `"on"` or `"off"`; another value is an error, and it reads `"off"`. Unset is off, unless the team sets
   [`solo`](config.md#solo).
   When git tracks `.aidrian.local.json`, in any case, a branch could carry it,
   so `github.autoMerge`, `github.unattendedWaiver`, `reviewApprovals`, and `handoff.background` read `"off"` and check names the
   error, with the fix `git rm --cached .aidrian.local.json`. So does a checkout where git cannot say whether it tracks the file.
   `review.productFeedback` takes only `auto`, true or false. In the main checkout's file, a tracked copy, or a checkout where git
   cannot say, has its value ignored and the same error: [Product feedback](config.md#product-feedback).
+  A key the plugin does not read, such as one a newer release adds, top-level or a field inside a setting, is a warning,
+  and the check passes; the key is ignored, and the rest of the file applies: [Plugin version](config.md#plugin-version).
 - `.gitignore`: git ignores `.aidrian.local.json`, and the worktrees and state folders when they are inside the repository.
 
 On success it also prints the state folder, and the size of the `always` docs against their [budget](config.md#knowledge-budgets):
@@ -178,6 +180,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
+- Agents write into the state folder by its absolute path. The main-checkout guard lets that write through when its target is outside the main checkout, and not when the state folder is inside it or a link there leads back in: [The state folder](hooks.md#the-state-folder).
 - Beside `projects/`, the state root `$XDG_STATE_HOME/aidrian/` holds what no config.json moves: `sessions/`, the gates
   each session started with ([hooks.md](hooks.md#agent-gates)), `unattended/`, the marks of the sessions the
   [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days, with each project run

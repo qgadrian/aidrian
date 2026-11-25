@@ -4,11 +4,21 @@
 import { merge } from './config-merge.mjs';
 import { DECISIONS_SCHEMA, LOCAL_DECISIONS_SCHEMA } from './config-schema.mjs';
 import { lowerMode } from './decisions.mjs';
-import { isObject } from './fs.mjs';
+import { isObject, knownFields } from './fs.mjs';
 // A cycle: project.mjs imports config.mjs, which re-exports this file. It is benign while each uses the other's exports
 // only inside functions.
 import { mayFollowTeamDefault } from './project.mjs';
 import { PUBLISH_DEFAULTS } from './review/config.mjs';
+
+// `messages`, the errors of the local settings file `file`, split into { errors, warnings }: an unknown key, top-level or
+// nested (fs.mjs knownFields), and an unknown agent in `models`, are warnings, and ignored, unless the message is one of
+// `kept`, such as a gate error (checkAgents). The file is per machine and git-ignored, written once for the newest
+// plugin while older ones still run on the same machine, so a key a newer release reads must not fail an older one's
+// check (docs/config.md#plugin-version).
+export function splitUnknownKeys(messages, file, kept = new Set()) {
+  const unknown = (message) => (message.startsWith(`${file}: unknown key "`) || message.startsWith(`${file}: unknown agent "`)) && !kept.has(message);
+  return { errors: messages.filter((message) => !unknown(message)), warnings: messages.filter(unknown) };
+}
 
 // `team`, the `decisions` of config.json, with the local file's `decisions` over it, as `project.localDecisions` holds
 // it. The local file may set `mode` and `domains`, each held to the team's `maxMode`; `unreviewed.remind`; and
@@ -27,6 +37,9 @@ export function localDecisions(team, project, errors) {
   const teamOnly = (key) => Object.hasOwn(DECISIONS_SCHEMA, key) && !Object.hasOwn(LOCAL_DECISIONS_SCHEMA, key);
   for (const key of Object.keys(local).filter(teamOnly)) errors.push(`${file}: "decisions.${key}" is the team's: set it in config.json`);
   const own = Object.fromEntries(Object.entries(local).filter(([key]) => !teamOnly(key)));
+  // A pause limit is read whole, so a field a newer release adds to it is an unknown key here, never a bad limit; config.json keeps it strict.
+  const pause = isObject(own.unreviewed) ? own.unreviewed.pauseDomainAt : undefined;
+  if (isObject(pause)) own.unreviewed = { ...own.unreviewed, pauseDomainAt: knownFields(pause, ['pending', 'oldestDays'], 'decisions.unreviewed.pauseDomainAt', file, errors) };
   const read = merge(LOCAL_DECISIONS_SCHEMA, team, own, 'decisions.', file, errors);
   // `merge` keeps the team's value for a key that is unset or refused, so `read` holds the local value only when `set` is it.
   const capped = (set, mode) => (set !== mode || mode === 'inherit' ? mode : lowerMode(mode, team.maxMode));
@@ -101,16 +114,16 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/u;
 
 // The local file's `projectRun.forgeTokenKeychain`, `{ service, account }`: the macOS keychain entry the driver reads a
 // project run's forge token from, before the forge CLI's own login (lib/project-token.mjs). Null when unset. `projectRun`
-// takes that one key, and the entry exactly a non-empty `service` and `account`, each text with no control character;
-// anything else is an error in `errors`, named for the local file `file`, and reads null, so the next source gives it.
+// is an object, and the entry a non-empty `service` and `account`, each text with no control character. Any other field
+// of either is an unknown key in `errors`, which the local file reads as a warning (knownFields); anything else is an
+// error there, named for the local file `file`, and reads null, so the next source gives it.
 export function localForgeTokenKeychain(raw, errors, file = 'the local file') {
   if (!isObject(raw) || !Object.hasOwn(raw, 'projectRun')) return null;
-  const given = raw.projectRun;
-  const entry = isObject(given) ? given.forgeTokenKeychain : undefined;
+  const given = isObject(raw.projectRun) ? knownFields(raw.projectRun, ['forgeTokenKeychain'], 'projectRun', file, errors) : null;
+  if (given && !Object.hasOwn(given, 'forgeTokenKeychain')) return null;
+  const entry = isObject(given?.forgeTokenKeychain) ? knownFields(given.forgeTokenKeychain, ['service', 'account'], 'projectRun.forgeTokenKeychain', file, errors) : null;
   const name = (value) => typeof value === 'string' && value.trim() !== '' && value.length <= KEYCHAIN_NAME_MAX && !CONTROL.test(value);
-  const onlyKey = isObject(given) && Object.keys(given).every((key) => key === 'forgeTokenKeychain');
-  const shaped = onlyKey && isObject(entry) && Object.keys(entry).sort().join(',') === 'account,service' && name(entry.service) && name(entry.account);
-  if (shaped) return { service: entry.service, account: entry.account };
+  if (entry && name(entry.service) && name(entry.account)) return { service: entry.service, account: entry.account };
   errors.push(`${file}: "projectRun" must be { "forgeTokenKeychain": { "service": "<name>", "account": "<name>" } }, each name text of at most ${KEYCHAIN_NAME_MAX} characters`);
   return null;
 }

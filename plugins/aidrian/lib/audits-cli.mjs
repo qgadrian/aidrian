@@ -18,6 +18,7 @@ import { commandConfig } from './config.mjs';
 import { isObject } from './fs.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { projectAt, stateDir } from './project.mjs';
+import { shellQuote } from './review/dispatch.mjs';
 import { usageLines } from './usage.mjs';
 
 const OPTIONS = {
@@ -194,12 +195,12 @@ function importReport({ values, rest: [name], dir }) {
 // The end of a plain import: the command that writes the sidecar, ready to edit. With a replaced report, its findings
 // first, each led by its title, then the key the flags take: a key appears here only because the command needs it.
 function nextStep(report, replaced) {
-  if (!replaced.length) return `Next: once the Human approves the draft, write it:\n  aidrian audits import ${report} --write`;
+  if (!replaced.length) return `Next: once the Human approves the draft, write it:\n  aidrian audits import ${shellQuote(report)} --write`;
   return [
     'Next: sort the earlier run\'s findings with the Human, then write the sidecar. Each finding, with the key the flags take:',
     ...replaced.map(({ id, title }) => `  - "${title}": key ${id}`),
     'Move the key of each finding a finding of this run covers to --carried-forward, and keep the rest in --not-rechecked:',
-    `  aidrian audits import ${report} --not-rechecked ${replaced.map(({ id }) => id).join(',')} --carried-forward '' --write`,
+    `  aidrian audits import ${shellQuote(report)} --not-rechecked ${shellQuote(replaced.map(({ id }) => id).join(','))} --carried-forward '' --write`,
   ].join('\n');
 }
 
@@ -217,8 +218,9 @@ function pending({ values, rest: [name], dir, triage }) {
     const what = item.kind === 'not_reached' ? 'not reached' : item.kind === 'doc_gap' ? 'persona doc gap' : 'finding';
     item.source = `Source: ${item.report_title ?? reportTitle(item.report)}, ${what} ${itemWords(item)} (${path.join(dir, item.report)})`;
     item.audit_key = `${item.report}#${item.id}`;
-    // The exact command that records this item, through the report under triage, with the decision still to add.
-    item.record = `aidrian audits record ${report} '${item.audit_key}'`;
+    // The exact command that records this item, through the report under triage, with the decision still to add;
+    // each value is one shell argument, whatever its file name holds.
+    item.record = `aidrian audits record ${shellQuote(report)} ${shellQuote(item.audit_key)}`;
     // A line of an older report that names a task by its number: the session says which task in words.
     const numbered = taskNumbers(item.title ?? item.text ?? '');
     if (numbered.length) item.numbered_task = numbered;

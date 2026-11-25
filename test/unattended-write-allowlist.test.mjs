@@ -896,8 +896,8 @@ test('a copy, move, or link into a folder is judged by the name it makes there, 
     ['cp stage/opencode.json .', later], ['cp stage/.mcp.json .', later], ['cp -R stage/.agents .', later], ['git mv pkg/.claude .', later],
     // rsync makes the same names, a destination from a variable the hook expands included.
     [`rsync -a ${wt}/pkg/.claude ${wt}/`, later], [`rsync -a ${wt}/pkg/.opencode $TMPDIR/x/`, temp], [`rsync -a ${wt}/pkg/opencode.json ${x}/`, temp],
-    // A `..` right after the variable is not folded into it before the hook expands it.
-    [`cp ${wt}/pkg/opencode.json $TMPDIR/../${path.basename(fx.temp)}/x/`, temp], [`rsync -a ${wt}/pkg/.opencode $TMPDIR/../${path.basename(fx.temp)}/x/`, temp],
+    // A `..` right after the variable climbs from the folder it names: refused before it is placed.
+    [`cp ${wt}/pkg/opencode.json $TMPDIR/../${path.basename(fx.temp)}/x/`, /a path that climbs with `\.\.`/u], [`rsync -a ${wt}/pkg/.opencode $TMPDIR/../${path.basename(fx.temp)}/x/`, /a path that climbs with `\.\.`/u],
     // rsync never renames a folder source: a destination not there yet gets it inside.
     [`rsync -a ${wt}/pkg/.opencode ${path.join(fx.temp, 'new')}`, temp],
     // rsync -R and cp --parents make the source's relative path there; a remote-spelled source lands by its last part.
@@ -1021,8 +1021,12 @@ test('the start record scan checks the guards\' deadline on each file it reads',
   recordStart(fx, { cwd: fx.worktree });
   const store = openStore(fx.state, { checkouts: fx.project.checkouts, maxChain: fx.config.session.handoff.maxChain });
   assert.deepEqual(startedFolders(store, SESSION), [fx.worktree]);
-  // startedFolders checks the deadline only on each file of the store it reads, so a spent budget meets it there.
+  // startedFolders checks the deadline on each entry of the store it reads, so a spent budget meets it there.
   assert.throws(() => withinDeadline(performance.now() - 1, () => startedFolders(store, SESSION)), PastDeadline);
+  // And before the store is listed at all: an empty store meets a spent budget too.
+  const empty = openStore(mkdtempSync(path.join(fx.root, 'empty-state-')), { checkouts: fx.project.checkouts, maxChain: fx.config.session.handoff.maxChain });
+  assert.deepEqual(startedFolders(empty, SESSION), []);
+  assert.throws(() => withinDeadline(performance.now() - 1, () => startedFolders(empty, SESSION)), PastDeadline);
   // And the places read through it give the deadline's refusal, never a worktree.
   assert.throws(() => withinDeadline(performance.now() - 1, () => unattendedPlaces({ cwd: fx.worktree, mark: { root: fx.dir }, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION })), PastDeadline);
 });
@@ -1644,4 +1648,51 @@ test('a script whose text names a home dot path is refused with the file tool as
   // The route it names: the file tool writes the brief, whatever path its text quotes.
   assert.equal(fx.ask(write(brief, { tool_input: { file_path: brief, content: `Run ${quoted} report --since 24h.\n` } })), null);
   assert.equal(fx.ask({ tool_name: 'Edit', tool_input: { file_path: brief, old_string: 'old', new_string: `run ${quoted} report` } }), null);
+});
+
+// A file tool's target is judged both folded as text and where the system lands (fs.mjs systemPath): a `..` after a
+// link climbs from the link's target, so `<worktree>/a/out/../x`, with `out` a link outside the places, lands outside
+// while its folded text stays in the worktree.
+test('a Write or an Edit through a link and a `..` that lands outside the places is refused, and one that stays in passes', (t) => {
+  const fx = fixture(t);
+  const outside = path.join(fx.root, 'outside', 'deep');
+  mkdirSync(outside, { recursive: true });
+  mkdirSync(path.join(fx.worktree, 'a'));
+  symlinkSync(outside, path.join(fx.worktree, 'a', 'out'));
+  const ask = fx.steady();
+  const through = `${fx.worktree}/a/out/../x.txt`;
+  assert.equal(path.resolve(through), path.join(fx.worktree, 'a', 'x.txt'), 'the text folds into the worktree');
+  // Any reader's target that climbs from a folder it names is refused before it is placed, a link there or not: a
+  // file tool's, a literal or variable shell target's, a glob's, a removal's, a mode change's, and a link's.
+  for (const input of [
+    write(through), { tool_name: 'Edit', tool_input: { file_path: through, old_string: 'a', new_string: 'b' } }, write('a/out/../x.txt'),
+    bash(`rm -f ${fx.worktree}/a/out/../*.txt`), bash(`rm -rf ${fx.worktree}/a/out/../gone`), bash(`chmod 600 ${fx.worktree}/a/out/../gone`),
+    bash('d=a/out; echo x > "$d/../x.txt"'), bash(`ln -s ${fx.worktree}/a/out/../x link`), bash(`echo x > ~/lnk/../x.txt`), write(`${fx.worktree}/a/b/../y.txt`),
+    write(`${fx.worktree}/a/out /../x.txt`), bash(`echo x > '${fx.worktree}/a/it"s/../x.txt'`),
+    write(`${fx.worktree}/a/out/./../x.txt`), write(`${fx.worktree}/a/out//../x.txt`),
+    bash(`python3 -c "open('${fx.worktree}/a/out/../x.txt', 'w').write('x')"`), bash(`python3 -c "open('a/out./../x.txt', 'w')"`),
+    bash(`python3 -c "open('a/out /../x.txt', 'w')"`), bash(`python3 -c "open('../../x.txt', 'w')"`),
+  ]) assert.match(ask(input)?.reason ?? '', /a path that climbs with `\.\.` from a folder it names.*name the path without `\.\.`/u, JSON.stringify(input));
+  assert.equal(ask(write(path.join(fx.worktree, 'a', 'x.txt'))), null, 'the same file named without the link');
+  // A path that climbs from the call's own folder, which the host names as the system resolves it, is placed as usual.
+  assert.equal(ask(write('../wt/a/x.txt')), null);
+  assert.equal(ask(bash('cat ../notes/a/../b > a/x.txt')), null, 'a climb in what the command reads, not writes');
+  // In an interpreter's code, where an escape may spell a slash, any `/..` counts, a name that starts with two dots too.
+  for (const code of ["open('a/..\\x2fb', 'w')", "open('a/..draft', 'w')"]) assert.match(ask(bash(`python3 -c "${code}"`))?.reason ?? '', /climbs with `\.\.`/u, code);
+});
+
+// A folder that holds a checkout of the repository git lists, wherever it lies, is refused to a removal or move: the
+// checkout and its `.git` pointer would go with it.
+test('removing or moving a temporary folder above a sibling worktree is refused, and removing a plain folder passes', (t) => {
+  const fx = fixture(t);
+  const work = path.join(fx.temp, 'work');
+  mkdirSync(work);
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/sib', path.join(work, 'sib'));
+  mkdirSync(path.join(fx.temp, 'other'));
+  mkdirSync(path.join(fx.worktree, 'node_modules', 'x'), { recursive: true });
+  const ask = fx.steady();
+  for (const command of [`rm -rf ${work}`, `mv ${work} ${fx.temp}/moved`, `rm -rf ${fx.temp}/work/`]) {
+    assert.match(ask(bash(command))?.reason ?? '', /a folder that holds a checkout of the repository/u, command);
+  }
+  for (const command of [`rm -rf ${fx.temp}/other`, 'rm -rf node_modules', `touch ${work}/note.txt`]) assert.equal(ask(bash(command)), null, command);
 });

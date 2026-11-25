@@ -556,25 +556,27 @@ export function supersededAdr(adrText) {
   return false;
 }
 
-// One pair per residual item, in body order: { residual, decisions: [{ id, status, wording, doc, line }], adrs: [{ path, line, text }] }.
-// Every pair carries the whole record, so a judge reads one block per residual. `decisions` are scanDecisions' (each with `doc`),
-// and `adrs` [{ path, lines }] with `lines` from consequenceLines. A wording that did not parse, or none, reads `wording at
-// <doc>:<line>`, where the judge reads it. A `rejected` decision is no rule, so it is not on the record a residual can contradict.
+// The record once, and each residual item in body order: { decisions: [{ id, status, wording, doc, line }],
+// adrs: [{ path, line, text }], residuals: [{ n, residual }] }. Every residual is set against the whole record, so it is listed
+// once, and the output grows with the residuals plus the record, never their product. `decisions` are scanDecisions' (each
+// with `doc`), and `adrs` [{ path, lines }] with `lines` from consequenceLines. A wording that did not parse, or none, reads
+// `wording at <doc>:<line>`, where the judge reads it. A `rejected` decision is no rule, so it is not on the record a residual
+// can contradict.
 export function pairResiduals(items, decisions, adrs) {
   const record = decisions.filter(({ status }) => status !== 'rejected')
     .map(({ id, status, newWording, doc, line }) => ({ id, status, wording: typeof newWording === 'string' ? newWording : `wording at ${doc}:${line}`, doc, line }));
   const lines = adrs.flatMap(({ path: file, lines: found }) => found.map(({ line, text }) => ({ path: file, line, text })));
-  return items.map(({ text }) => ({ residual: text, decisions: record.map((each) => ({ ...each })), adrs: lines.map((each) => ({ ...each })) }));
+  return { decisions: record, adrs: lines, residuals: items.map(({ text }, index) => ({ n: index + 1, residual: text })) };
 }
 
 // The first 60 characters of a residual, for a message.
 const excerpt = (text) => (text.length > 60 ? `${text.slice(0, 60)}…` : text);
 
-// The judgment on `pairs`: `rows` the judged file's rows, each { residual, contradicts, evidence }, with `contradicts` null or a
-// decision id or ADR `path:line` the pair listed, and `evidence` the wording it contradicts. Returns { contradictions, invalid }:
-// each contradiction { residual, contradicts, evidence, place }, and each invalid row as a reason. Residuals and `contradicts`
-// compare trimmed. An item the body holds twice is invalid: one row per residual cannot tell the two apart.
-export function judgeResiduals(pairs, rows) {
+// The judgment on `paired`, pairResiduals' result: `rows` the judged file's rows, each { residual, contradicts, evidence }, with
+// `contradicts` null or a decision id or ADR `path:line` on the record, and `evidence` the wording it contradicts. Returns { contradictions, invalid }: each contradiction { residual, contradicts,
+// evidence, place }, and each invalid row as a reason. Residuals and `contradicts` compare trimmed. An item the body holds twice is invalid: one row per residual cannot tell the two apart.
+export function judgeResiduals(paired, rows) {
+  const pairs = paired.residuals;
   if (!Array.isArray(rows)) return { contradictions: [], invalid: ['the judged file is not a JSON array of rows'] };
   const contradictions = [];
   const invalid = [];
@@ -602,13 +604,13 @@ export function judgeResiduals(pairs, rows) {
     if (own.length !== 1 || !wellFormed(own[0]) || own[0].contradicts === null) continue;
     const contradicts = own[0].contradicts.trim();
     const { evidence } = own[0];
-    const holders = pair.decisions.filter(({ id }) => id === contradicts);
+    const holders = paired.decisions.filter(({ id }) => id === contradicts);
     if (holders.length > 1) {
       invalid.push(`residual "${short}" contradicts "${contradicts}", an ambiguous id: ${holders.length} markers hold it`);
       continue;
     }
     const [decision] = holders;
-    const adr = pair.adrs.find(({ path: file, line }) => `${file}:${line}` === contradicts);
+    const adr = paired.adrs.find(({ path: file, line }) => `${file}:${line}` === contradicts);
     if (!decision && !adr) {
       invalid.push(`residual "${short}" contradicts "${contradicts}", which is no decision id and no ADR path:line on record`);
       continue;

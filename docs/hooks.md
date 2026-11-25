@@ -348,8 +348,8 @@ What each rule matches:
   one. A background session that rewrote its brief through a Python heredoc was refused three times in one run, told
   only to stop, then split the command's words to get past the rule. Text piped into a shell keeps the refusal alone. A subagent and a session no Human attends are refused these shapes outside a project too.
   When the session holds answers and none approves the call, the deny names the nearest miss: a word the shell builds,
-  no question naming `<owner>/<name>#<PR>`, the head, or the `<flow>/<invariant>` written as one word, an answer that
-  is not "Approve", or a checkout whose remotes need `--repo`. A subagent is told to return `status: needs_input` with
+  no question naming `<owner>/<name>#<PR>` or the head, no question or chosen option naming the `<flow>/<invariant>`
+  written as one word, a chosen option naming another invariant, an answer that is not "Approve", or a checkout whose remotes need `--repo`. A subagent is told to return `status: needs_input` with
   the sign-off question and the command for its dispatcher, which has the answer route. The rule's message stops the session; at `human_required` naming one flow,
   once `--last --check` exits 0, it hands the Human the short form, `aidrian pr signoff <PR> --last`, short enough to
   type from a phone, which refuses any other stop. A long form runs on the Human's AskUserQuestion answer naming
@@ -469,13 +469,23 @@ What each rule matches:
   request, body file, or subcommand it cannot read is refused while a record holds a post; so is text fed to a shell, `xargs`,
   `parallel`, or a command it did not judge, such as `npx`, whose words name `product-feedback` and `post`, and a post in the same
   command as `record` or an aidrian call it cannot read. The deny says the Human can run `post` in their own shell.
-- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, and with quotes or
-  backslashes the shell takes out anywhere in its words (`r""eady`), but `--undo` with no value or a true one, and a
+- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, and with quotes,
+  backslashes, or a line continuation the shell takes out anywhere in its words (`r""eady`, a backslash and a line break
+  inside `ready`), but a last `--undo` with no value or a true one, read only when every word is written out, as the merge
+  guard's entry below says, and a
   `gh api` call to any spelling of the graphql endpoint that names `markPullRequestReadyForReview` ([Ready hold](#ready-hold)).
 - Ready checks: the same `gh pr ready` calls, but not the `gh api` form, and a `gh pr edit` with `--title`, `--body`, or
   `--body-file` (`-t`, `-b`, `-F`), or any `gh pr create`, in the same command as one ([Ready checks](#ready-checks)).
 - Merge guard: `gh pr merge` but `--disable-auto` and a read of its `--help` or `-h`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
-  sent as a PUT or a POST ([Merge guard](#merge-guard)).
+  sent as a PUT or a POST ([Merge guard](#merge-guard)). A switch is read only when every word of the gh command is written
+  out. A word the shell fills in or expands, quoted or not, anywhere in it, a `--body "$BODY"` included, may be any option, a
+  cluster, or a value that eats one, so then no switch exempts and `--auto` counts as on. With every word written out, gh's
+  reading holds: the last of a switch given twice wins, and `-h` anywhere prints help. So `--help`, `-h`, and
+  `--disable-auto` exempt when on; `gh pr merge 7 --help=false`, `gh pr merge 7 "$X" --help`, and
+  `gh pr merge 7 --help --body "$B"` are judged as `gh pr merge 7`; `gh pr merge 7 --auto --auto=false` merges at once; and
+  `gh pr merge 7 "$X"` and `gh pr merge 7 --auto=false --body "$BODY"` count as `--auto`. To merge a body the shell builds,
+  write it to a file and pass `--body-file` with a literal path. This is no unread input: the guard reads the command, and
+  a switch the shell may still fill in is a possible auto-merge, which it refuses on purpose.
 - Push first: a command of `testing.fullSuite` as written, through wrappers such as `rtk` and redirects, in the folder a leading
   `cd` names; `npm test -- <file>` runs no full suite. [Push first](#push-first) says when it refuses.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
@@ -531,6 +541,11 @@ to a shell; the last four refuse text piped or scripted into a shell that names 
 The ready hold reads them too, and refuses text fed to a shell, or a shell's `-c` string or `eval` words built by a command
 substitution, that holds the word `gh` and a word close to `ready` (`"ready"`, `re""ady`, printf's `re%sdy`), or names
 `markPullRequestReadyForReview`, in a project where git says product feedback is on.
+The quick look of the ready hold, the ready checks, and the product feedback answer and post rules, which spares every other
+command the full read, and the reads of fed text of the merge guard, the ready hold, and the product feedback answer and post
+rules, read the text as the shell reads its words (`shellPlain` in `lib/shell-lex.mjs`): a backslash and the line break after
+it are dropped, then every quote and backslash, so `r""eady` and `r`, a backslash, a line break, and `eady` each read `ready`,
+and `aid""rian pr prod""uct-feedback answer` names the answer call.
 A command reached only through a script or an interpreter such as `python -c` is out of their sight.
 
 The product feedback answer rule has limits it accepts, so a reader does not take it for more than it is:
@@ -593,7 +608,8 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   `"telemetry": { "hookDenies": false }` turns the row off. `aidrian report` lists the rows by rule and agent.
 - A count toward an [automatic lesson](lessons.md#automatic-lessons): when one rule blocks the same agent run a third time
   for the same cause, the rule's own words for what it matched, an agent that keeps trying was not shown the allowed way.
-  The count does not depend on telemetry.
+  The count does not depend on telemetry. A refusal because the guards or the project run rule ran out of their
+  [time budget](#agent-gates) never counts: it is the machine's load, and its message already gives the retry steps.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
 `shell-init-install`, `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
@@ -662,7 +678,8 @@ It reads only this machine's [review record](review.md#the-record), and decides 
 2. No record from the review step, no outcome and no round, lets it run: the guard holds a review that is open or
    asked for, not that one happens. A review run outside `aidrian pr review` leaves no record and is not guarded.
 3. Otherwise the head needs an `outcome` of `received` or `none_needed` on that very head. An outcome on an earlier
-   head, or any other status, `running` and `error` included, refuses it.
+   head, or any other status, `running` and `error` included, refuses it. The reason quotes the record's status, its
+   reason, and the time of each entry owed, each on one line and clipped to its first 300 characters.
 
 It never reads pull request comments. Outside the unattended waiver below, its one network call is
 `gh pr view --json number,headRefOid,baseRefName,url`, made only when the
@@ -795,7 +812,8 @@ alone: a confined session can write the review records. The guard holds it to th
 start folder, else its main checkout, wherever its call runs, so a git folder of its own makes no hole; a mark that
 names no project the guard can read refuses, and so does a main checkout that does not resolve to a project, whatever
 the start folder; the start folder gives only the project's folder in the repository and its record folders. A project
-run's driver is held the same way, from its driver mark. Its `gh pr merge --auto`, and any `gh api` call whose `query`
+run's driver is held the same way, from its driver mark. Its `gh pr merge --auto`, read as the [Bash rules](#bash-rules) list
+says, and any `gh api` call whose `query`
 field names `mergePullRequest`, `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or a GraphQL call
 (`graphql`, `/graphql`, `graphql/`, `graphql?x=1`, or an absolute URL whose path is GraphQL's, or an endpoint the
 shell builds) whose query is in a file it names or the shell builds, and fed text naming one, are refused: each leaves
@@ -819,8 +837,10 @@ once rather than leave the merge to auto-merge or a merge queue. For a pull requ
 issue, the issue its mark names, or, for any other mark such as the driver's, the issue whose snapshot branch, or a branch any attempt of it recorded, is the
 pull request's head, the merge also keeps [`closes`](config.md#when-it-is-on): its title, body, and every commit
 message, as the same read gives them at merge time, and the merge's own subject and body (`-t`, `-b`, `commit_title`,
-`commit_message`), close or name no other issue of a team the run knows. A body from a file (`-F`, `@file`,
-`--input`) or a variable refuses, and so do commit messages the forge gave only in part. A read that fails or runs out of time refuses, and says
+`commit_message`), close or name no other issue of a team the run knows, and the issues the forge links to the pull
+request to close at the merge, one linked by hand in its sidebar included, are the run's own alone, as `aidrian pr
+auto-merge` reads them through the same check. A body from a file (`-F`, `@file`,
+`--input`) or a variable refuses, and so do commit messages or closing issues the forge gave only in part. A read that fails or runs out of time refuses, and says
 one more try is safe. Whether GitHub keeps `--match-head-commit` when a push lands between the guard's read and the
 merge is not verified live; the guard's read is of the same head it names. An attended session's merges are unchanged,
 and read nothing more.
@@ -869,7 +889,8 @@ and merges leaves the guard its own time. It decides in this order:
 
 1. `AIDRIAN_ALLOW_UNHELD_READY=1` in the hook's own environment lets it run. Only this rule reads it, so a setter in the
    command, `AIDRIAN_ALLOW_UNHELD_READY=1 gh pr ready 7` or an `export` before it, lifts nothing. `gh pr ready --undo` runs
-   when its last `--undo` has no value or one gh reads as true; `--undo=false` and `--undo=0` are held.
+   when its last `--undo` has no value or one gh reads as true, and every word is written out; `--undo=false`, `--undo=0`,
+   `--undo "$U"`, and `--undo -R "$REPO"` are held.
 2. Each call is judged in the project of the folder gh runs in, read by the product feedback answer rule's folder rules.
    A folder it cannot read, as after `cd "$PWD"`, is the session's project: gh resolves the branch there. A folder in no
    project lets a call run unless it names its repository. A call that names its repository (a URL, `-R`, `GH_REPO`, a
@@ -918,8 +939,8 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
 - A GitHub MCP server installed under a name that holds no "github", such as a plugin `gh` with a server `gh`, or a connector
   Codex suffixes with a hash: the merge guard and the review gate share this gap
   ([A GitHub MCP server from a plugin](providers/claude-code.md#a-github-mcp-server-from-a-plugin)).
-- An `AIDRIAN_ALLOW_UNHELD_READY` entry in a host's settings `env` reaches every later session, as it does for every override;
-  a follow-up covers them all.
+- An `AIDRIAN_ALLOW_UNHELD_READY` entry the Human puts in a host's settings `env` reaches every later session, as it does
+  for every override; a session's own write of one is refused ([Agent gates](#agent-gates)).
 - `origin/HEAD` names the default branch for the call `status` skips: a session that rewrites it, on a pull request stacked
   on its own branch, chooses both branches whose config is read.
 - An off read from stale or rewritten git refs: [The commands](config.md#the-commands) names both limits, which the hold
@@ -1013,8 +1034,23 @@ The deny reason names `aidrian worktree new <branch>`, which creates one.
 The rule blocks a write to a file git tracks, or would track, in the main checkout.
 It allows a git-ignored path, a path in `git.mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
 A target that is a link is judged as itself too, wherever it points ([The state folder](#the-state-folder)).
+Every target is read both folded as text and where the system lands, where a `..` after a link climbs from the link's
+target, so `<state>/inner/../src/x`, with `inner` a link to the repository's `src`, is a write in the repository; a
+path spelled in another letter case than git's root, on a disk that folds case, lands there too.
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
+The git folder is never tracked, so git calls it ignored: a write inside the main checkout's `.git`, as
+`echo x > .git/refs/heads/main`, is blocked anyway, since only git writes there, unless it lies in the project's state
+folder or `git.mainCheckout.allowWrites` names it. A removal or move (`rm`, `unlink`, `mv`, `git rm`, `git mv`) of the
+main checkout's top folder, or of a folder above it, as `rm -rf <main>` or `rm -rf ..` from inside it, is blocked too,
+from a linked worktree of the same repository as well.
+A target built from a variable is read with `$HOME`, `$TMPDIR`, `$XDG_CONFIG_HOME`, and `$ZDOTDIR` expanded from the
+hook's environment, which the session's shell starts with, unless the command sets that variable itself, so
+`"$TMPDIR/a"` is judged where it leads. One that still holds a `$` or a backtick, such as `cat > "$S/x"`, a loop's
+variable, or `$(…)`, is blocked while the shell may be in the main checkout, unless the literal path before its first `$`
+is an absolute folder outside it, as `/tmp/$x` is: it may name a tracked file. A variable the line assigns is not read,
+`S=/tmp/x; echo x > "$S/a"` included, since whether an assignment runs, and in which shell, the text does not say:
+name the path literally.
 A file edit whose payload names no file the host's adapter can read, such as a Write with no path or a patch it cannot
 parse, is blocked from the main checkout too, since the rule cannot tell it writes no tracked file.
 
@@ -1051,8 +1087,11 @@ A `cd` can fail and still return 0: a shell alias or function for `cd` can. The 
 and what follows runs there. So from a session in a guarded main checkout, the rule reads each `cd`, `pushd`, and
 `popd` on the command line, `builtin cd` included, its folder taken past one `--` (`cd -- X` names `X`), and sorts it:
 
-- **Into a linked worktree** of the same repository, a folder that exists: trusted. Nothing after it is judged, as
-  before; this is the documented `cd <worktree> && …` workflow.
+- **Into a linked worktree** of the same repository, a folder that exists: trusted. What follows is judged there, as
+  a line that starts in that worktree is: a relative write there passes, which is the documented
+  `cd <worktree> && …` workflow, and a return trip into the main checkout is judged as one, whether a later `cd` names
+  it, `cd -` or `popd` goes back, `git -C`, `--git-dir`, `--work-tree`, or `GIT_DIR` names it, or a subshell ends,
+  as in `(cd <worktree> && …) && echo x > src/app.js`.
 - **Inside the main checkout**, a folder that exists (`cd src`, `cd .`): trusted. The shell is in the main checkout
   whether the `cd` works or not, so what follows is judged by the rules above, at the folders before and after it.
   A write that reaches the main checkout only when the `cd` fails, such as `cd build && echo x > a.txt` into the
@@ -1060,7 +1099,10 @@ and what follows runs there. So from a session in a guarded main checkout, the r
   which fails closed: if the `cd` fails, it runs at the folder before it.
 - **Any other `cd`**: untrusted. It leaves the repository's checkouts (`cd /tmp`, `cd ..` above the root), names a
   folder that does not exist (`cd wt/typo`), or names one the rule cannot read (`cd "$S"`, `cd`, `cd -`, `popd`,
-  `cd ~/x`). For the rest of the line, a second `cd` included, what follows is judged against the folders before it:
+  `cd ~/x`). For the rest of the line, a second `cd` included, what follows is judged where the shell was before it
+  and at each folder it, or a later `cd`, names literally, so `cd <repo>/.git && echo x > ../src/app.js` is a write in
+  the repository; after one that names no folder (`cd -`, `popd`, `cd "$S"`), at every folder the shell has been in on
+  the line:
   - a relative write, as the rules above judge it there, and a relative glob (`rm -rf *`), which is blocked outright;
   - the same inside `sh -c` and `bash -c`, and, for the git calls below, in a heredoc or here-string fed to a shell:
     such a shell starts where its command runs;
@@ -1074,6 +1116,8 @@ and what follows runs there. So from a session in a guarded main checkout, the r
     an unknown one included, counts as a change.
   - a git call whose subcommand an expansion hides (`git "$sub"`, `git $opts commit`).
 
+A `cd` inside a subshell, `( … )`, moves nothing after the subshell ends, by the lexer's unquoted parentheses, and a
+later literal `cd` after an untrusted one still moves the folders what follows is judged at.
 A `builtin cd` skips a shell alias or function, so it fails loudly, but it can still fail, as on a missing folder: it is
 sorted the same, and its reason says only that it may fail.
 A `cd` or `pushd` through `command`, as in `command cd <worktree>`, is untrusted: zsh's `command` runs no builtin, so the shell stays where it was.
@@ -1089,6 +1133,8 @@ What it does not stop:
   Only a commit is refused, by the [commit guard](#commit-guard) where the project installs it.
 - After an untrusted `cd`, a git folder held in an expansion (`git -C "$PWD"`, `git -C "$(pwd)"`, `--git-dir="$D"`)
   is not read, although after a failed `cd` it may name the main checkout.
+- A subshell's end is read from its unquoted `)`: a quoted `)` glued to it, as in `(cd x; echo "a)")`, may end it early,
+  which only judges more of the line where it began; and a redirect after it, as `(cd x) > log`, is judged inside.
 - A write reached only through a heredoc fed to a shell is not read, with or without a `cd`.
 
 From a guarded main checkout, `cd <other repository> && git pull` is blocked as well; `git -C <other repository> pull`
@@ -1107,12 +1153,10 @@ blocks a tracked or new file there, and `rm` of a tracked link in the main check
 A state folder that is, holds, or sits in the main checkout (config.json `state.dir` set to `.`, `..`, or `~` around
 the repository) is judged as the main checkout and the folders around it are.
 
-Not covered: a target held in an expansion (`cat > "$S/x.md"`) is not read, so it passes, wherever it points; a state
-folder inside the git folder (`state.dir` under `.git`) takes writes, since a write inside the git folder is not judged,
-and after `cd <state>` there, a relative write that climbs back (`../../src/app.js`) is judged from the folder before
-the `cd` and passes. A link whose text climbs out of another link (`<state>/inner -> <repo>/src`, then
-`<state>/x -> inner/../src/app.js`) is read with `..` taken from the text, not after the link, so its target may be
-misjudged. A chain of links not made yet is followed for 40 links at most, as Linux does.
+A state folder inside the git folder (`state.dir` under `.git`) takes writes, and after `cd <state>` there, a relative
+write that climbs back (`../../src/app.js`) is judged where it lands, in the repository. Not covered: a link whose text climbs out of another link (`<state>/inner -> <repo>/src`, then
+`<state>/x -> inner/../src/app.js`) is judged where the system lands while its target is there; one whose target is
+not there yet is read with `..` taken from the text, not after the link, so the file it would make may be misjudged. A chain of links not made yet is followed for 40 links at most, as Linux does.
 
 ## Agent gates
 
@@ -1149,8 +1193,20 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   A glob counts when it may match one of the files, and so does a bracket class, such as `conf[i]g.json`, which the shell expands.
   A glob from a folder the guard knows also counts when a link already on disk, in any part it expands, leads to one of
   the files or a folder that holds it, as `printf x | tee out/alias*` does when `out/alias` links to config.json.
+  A glob's folder is read folded as text and where the system lands, so `sub/lnk/../alias*`, with `lnk` a link, is read
+  from the folder the link's target is in too. Accepted residual: a `..` after the glob's first wildcard part is a plain
+  part to the link walk, which cannot tell where it climbs from a link a wildcard matched.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
+- With or without gates, no session, attended or not, nor any subagent, may write an [override](#overrides) into a
+  host settings file whose `env` reaches every later session's hooks: a Write, Edit, or apply_patch whose input names
+  `AIDRIAN_ALLOW_`, a JSON escape such as `\u0041` read as its letter, or a Bash command that names it and writes that
+  file, by its path or by a name an interpreter's code gives. The host adapter names the files
+  (`capabilities.envSettings`): on Claude Code, `.claude/settings.json` and `.claude/settings.local.json` of each
+  checkout of the project, and the user's `settings.json` in its config folder, outside a project too; Codex and
+  OpenCode name none. An edit that only removes one is refused as well: the Human sets and lifts overrides, in their
+  own shell. The block is recorded as `config-guard`. Its known limits, as the command text alone shows: a name built at
+  run time, and a copy or move of a file that already holds one.
 - With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes a machine switch,
   or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`, whether it names the file, a glob
   that matches it, such as `.aidrian.local.js*`, or a glob that passes a link to it already on disk, such as `tee out/alias*`:
@@ -1162,6 +1218,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   names the file and writes to a word built from a variable or a bracket glob. A read, such as `cat`, or a plain copy
   from it, runs. Its known limits: a link already on disk under another name, and a program that deletes what it
   finds, such as `find -delete`.
+  An interpreter's code that names the file anywhere, in a quoted text or a comment, counts as naming it, as the
+  interpreter rule above says: code can derive the path from any text, as `'see .aidrian.local.json'.split()[1]` does.
+  So a docs or test file edit written from Python or Node whose new text mentions the file and a switch is refused, and
+  the refusal says to make it with the Edit or Write tool, which this rule judges by the file it writes. A shell heredoc
+  to that file, as `cat > docs/x.md <<'EOF'`, writes that file alone and runs too, and so does a read-only search, such
+  as a `grep` of a transcript for the key and the file.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's. So does
@@ -1404,7 +1466,14 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   builds in its temporary folder or a state work folder link nothing; so must its git folder hold no `commondir` or
   `config.worktree` but the gate's placeholders. Any other reader, and a clone that fails a check, read every machine switch off.
 - **The write allowlist of a session no Human attends** (`lib/unattended-write.mjs`). A session its own unattended
-  mark holds, read by the hook payload's session id, and every subagent of it, writes only:
+  mark holds, read by the hook payload's session id, and every subagent of it, writes only the places below. A call that
+  writes anything and names a target that climbs with `..` from a folder it names, as `<worktree>/a/out/../x`,
+  `"$d/../x"`, or `~/a/../x`, by a file tool, a redirect, a writer, a glob, a removal, a mode change, or a link, is
+  refused first, whatever the folder is: the system takes that `..` from where a link there leads, and the guard's
+  readers fold it as text, so it names the path without `..` instead. A target that starts with `..` climbs from the
+  call's own folder, which the host names as the system resolves it, and is placed as usual. In an interpreter's code,
+  where a quote or an escape may end a path anywhere, any `/..` counts, `../../x` and `a/..draft` included. It writes
+  only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names: a linked worktree from any folder inside it, such as a package of a
     monorepo, and the main checkout only from its own top, so a removed worktree's folder left as a plain one inside the
@@ -1426,7 +1495,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - each task worktree `aidrian worktree new` made in the session, so an orchestrator that started in one worktree
     dispatches an editing subagent to another it made: the command records the worktree's real path for the session its
     caller's host names (verified on Claude Code, whose `CLAUDE_CODE_SESSION_ID` a subagent's shell shares with its main
-    session; on Codex it is `CODEX_THREAD_ID`, and a grant holds only where that is the hook payload's session id), as
+    session; on Codex it is `CODEX_SESSION_ID`, the root session's id that a subagent's shell shares and the hook
+    payload carries, read from Codex's source and not live), as
     `worktree-<session id>.<hash>.json` in the continuation store the hook opens for the session: the store of the
     project at its unattended mark's root, under that project's config, so neither a worktree whose own config moves
     `state.dir` nor another project of the same repository, as in a monorepo, changes where it goes; a session with no
@@ -1494,8 +1564,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   the real path's parts and by the path as written, so a `.git` that is a link counts, by a glob part that may name
   `.git` (`.g*`), and, for a session its own mark holds, by a `.git` named in a folder no path gives; the pointer of each
   checkout of the repository nested in the worktree is refused too when a write, a delete, a move, or a glob reaches a
-  folder that holds it, the worktree itself included, as `rm -rf .claude/worktrees` does; a glob is judged from its
-  folder as written. A removal, move, or glob that reaches the `.git` of a standalone repository nested in a place, which
+  folder that holds it, the worktree itself included, as `rm -rf .claude/worktrees` does; so is a write, a delete, or a
+  move of any folder that holds a checkout git lists for the repository, wherever it lies, as `rm -rf /tmp/work` over a
+  sibling worktree in it; a glob is judged from its folder as written. A removal, move, or glob that reaches the `.git` of a standalone repository nested in a place, which
   no git listing names, without naming `.git` itself, such as `rm -rf vendor`, is not refused; `~/.gitconfig`, the `git` folder of `$XDG_CONFIG_HOME`
   and of `~/.config`, and the global and system git config files git itself names (`git var GIT_CONFIG_GLOBAL` and
   `GIT_CONFIG_SYSTEM`, such as a package manager's `etc/gitconfig`, asked only for a write that would otherwise pass);
@@ -1696,8 +1767,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   program the session runs, or `curl` with the token, can still push or call the forge, a command an earlier call left
   running in the background can still commit between the hook's read and the push, and git in the session's own
   checkout can move its copy of origin's default branch, the base the workflow diff starts from; the forge itself holds
-  that, so `aidrian project preflight` blocks a run whose default branch asks the signed-in user, admin or not, for no
-  pull request, or whose tags no rule that user cannot bypass stops being created or moved, unless the team sets
+  that, so `aidrian project preflight` blocks, and every start halts, read with the token the session gets, a run whose
+  default branch asks the signed-in user, admin or not, for no pull request, or whose tags no rule that user cannot
+  bypass stops being created or moved, or whose user administers the repository, which no rule holds, unless the team sets
   `projectRun.forgeProtectionAccepted`, which removes that backstop, so a script the session runs can push to the
   default branch or a tag; and one whose workflows see CI secrets, whatever that token's `workflow` scope, unless the
   team sets `projectRun.workflowSecretsAccepted`, which accepts all current and future workflow secret exposure for
@@ -2087,7 +2159,7 @@ sends it back once (`lib/stop-handback.mjs` `mergeHandBack`). The gate stopped a
 comment, and review checks, so the pull request waits for the Human's review and merge, and a report that ended on
 "ready, not merged" left the Human to find that out. The agent adds the item the `pr-auto-merge` skill's step 2 gives,
 `needs your review and merge: #<n> touches <path>, which auto-merge never merges`, with the Human's name in place of
-"your", and a rating. It sends a turn back at most once ([Send-backs per turn](#send-backs-per-turn)).
+"your", and a rating. It sends a turn back at most once a refusal ([Send-backs per turn](#send-backs-per-turn)).
 It runs on the stop that ends a continuation another check started too, such as the review loop a direct run runs after
 the review-loop check sends it back, where `pr-auto-merge` refuses the pull request; a refusal that send-back held off,
 earlier in the turn, is read there as well.
@@ -2107,7 +2179,10 @@ earlier in the turn, is read there as well.
   An `echo` of the line, an error exit with no verdict, and a path that holds the command text count as no gate run.
 - The last gate run or merge of each pull request in the turn counts: a later run that passed, or refused for another
   reason, and a `gh pr merge` of that pull request whose result is no error clear an earlier refusal. `gh pr merge` with
-  `--help`, `-h`, `--auto`, or `--disable-auto` merges nothing and clears nothing. A merge with no target, or one this
+  `--help`, `-h`, `--auto`, or `--disable-auto` merges nothing and clears nothing. gh reads the last `--auto` and the last
+  `--disable-auto` only when every word is written out, as the merge guard does ([Bash rules](#bash-rules)): one with a
+  false value, as in `--auto --auto=false`, merges, and a command with a word the shell fills in, as `gh pr merge 401 "$X"`
+  or `--disable-auto=false --body "$B"`, counts as a toggle. A merge with no target, or one this
   cannot read as a number, counts for the number gh printed in its `merged pull request` line; gh prints that line on a
   terminal only, so one that printed no number clears a refusal only when it is the one refusal that stands then.
   A refused or failed merge clears nothing.
@@ -2120,8 +2195,12 @@ earlier in the turn, is read there as well.
   matched, so the named form passes. A sentence outside such a list does not. A wake, such as a task notification,
   does not start a new turn, so a report before it still counts, and a short reply after it with no item before it is
   sent back.
+- It asks once per refusal: a refusal that one of its own send-backs after it names is not asked for again.
+  A session no Human types into, woken only by other sessions' messages and task notifications, has one turn that spans every reply.
+  There an item added in a form the check does not read was asked for again on every later stop.
+  A later refusal of the same pull request is a new one, and is asked for, on the stop that ends the continuation its send-back started too.
 - With several pull requests refused and not handed over, the one send-back names each, with its path, and asks for
-  one item per pull request: after it the check is spent for the turn.
+  one item per pull request: after it the check is spent for each of them.
 - The path is branch text. The reason quotes it as one JSON string that holds printable ASCII alone, every other
   character and `<`, `>`, and the backtick written `\uXXXX`, cut at 200 characters, and calls it data.
 - A background task still running holds it, as it holds the announce check, and so does a stop with no final message.
@@ -2144,6 +2223,11 @@ do it, and how critical it is. It sends a turn back at most once ([Send-backs pe
 - A list counts when a label addressed to the Human comes before it: a heading, a bold line, or a line that ends in a colon,
   such as "For Adrian", "Needs the Human", "Open items for the user", "Waiting on Adrian", or "Adrian's to-do", where the
   Human is the name from [names](config.md#names), "the Human", "the user", or "you". Text after the label's colon is an item too.
+  A run of emoji a label or its line opens with, such as "🙋", a flag, or a keycap, is not part of it.
+  So "### 🙋 For the Human", "**🙋 For Adrian**", and "🙋 **Needs Adrian:**" read.
+  The label is tried as written, then without one more whole emoji at a time, so a configured name such as "⭐ Adrian" matches, even behind "🙋".
+  Past the first 8 emoji, only the whole run is dropped.
+  Nothing else is dropped: a quoted (`>`) line is no label, and a name that opens with a digit, such as "7 of 9", is matched whole.
 - An item is a top-level list entry with its continuation lines. The list ends at a heading, or at a paragraph after a blank line
   that is neither an entry nor indented under one.
 - A fenced code block, read as the pull request body rule reads one (`lib/markdown-sections.mjs`), is skipped:
@@ -2167,11 +2251,13 @@ stop that ends its continuation, unless this check sent the turn back already.
 
 ## Send-backs per turn
 
-The announce, review-loop, merge hand-back, and hand-back checks each send a turn back at most once.
+The announce, review-loop, and hand-back checks each send a turn back at most once, and the merge hand-back check once a refusal.
 Claude Code marks every stop after a turn's first send-back with `stop_hook_active: true`, and writes each send-back's
 reason into the transcript as a `user` entry marked `isMeta` whose text starts `Stop hook feedback:`
 (`lib/transcript.mjs` `turnActions`). On such a stop the hook runs the checks that have not sent the turn back yet,
-when the turn's last send-back is one of theirs. A send-back is a check's when a line of it starts with that check's
+when the turn's last send-back is one of theirs.
+The merge hand-back check runs on it even after its own send-back, and asks only for a refusal no send-back of its own named.
+A send-back is a check's when a line of it starts with that check's
 reason's fixed opening, after `Stop hook feedback:` or the `[<command>]: ` the host writes before a reason, when it
 writes one. Text a reason quotes, such as a pull request's path or an item of the report, sits inside its one line,
 so it marks no check. So the stop that ends the continuation one check
@@ -2181,7 +2267,8 @@ the Human; after the announce check, a draft the continuation opens with no revi
 A stop whose last send-back is another hook's, the session-length reminder's, or the [result hold](config.md#project-run)'s,
 which runs only on a stop no hook sent back, a transcript that shows none, a payload
 without `stop_hook_active`, and Codex, whose rollout is not read, run none. Each send-back is in the transcript by the
-next stop, so a chain of stops gets at most four from these checks, and nothing can loop.
+next stop, so a chain of stops gets at most three from the other checks, and one from the merge hand-back check per refusal a new gate run printed.
+Nothing can loop.
 
 ## Session length
 
@@ -2204,6 +2291,9 @@ Two hooks weigh what continuing the main session costs against a fresh session s
   nothing is typed, and still counts a Human who is not watching. A background route this machine or the base branch
   has not turned on is worded as the clear route the gate falls back to, read only on a stop that fires.
   With `none`, or a route the host does not list, the text is as above.
+- Neither asks for a handoff when the session's chain is at the `maxChain` of every route the gate could take, which
+  the gate would continue by no route: they read the gate's own check ([At the chain cap](handoff.md#the-reminder)), and the Stop hook records the
+  firing without sending the turn back.
 - Both price a fresh session with this project's resume tokens, and the Stop hook records a sample for each session
   that resumed from a brief, once, at its first stop after its first edit or dispatch, in any `mode`
   ([Resume tokens](handoff.md#resume-tokens)).
@@ -2545,6 +2635,8 @@ A project whose CI cannot run the suite leaves `testing.pushFirstMinutes` at 0, 
 An override is for a human, and agents must never set one, `AIDRIAN_ALLOW_UNHELD_READY` of the [ready hold](#ready-hold) included.
 A Bash rule's override is read by the hook, which runs in the session's environment,
 so the Human sets it in their own shell before they start the session.
+The agent gate hook refuses a session's write of an `AIDRIAN_ALLOW_*` name into a host settings file whose `env`
+reaches later sessions ([Agent gates](#agent-gates)), which would turn a guard off for each of them unseen.
 
 `AIDRIAN_ALLOW_MAIN_COMMIT=1` is different: git runs the [commit guard](#commit-guard) inside the commit, so it reads the
 commit's own environment. The Human puts it in front of one command in their own terminal,

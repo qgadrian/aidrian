@@ -40,7 +40,7 @@
 ## Prerequisites
 
 - Node 22 or later, and git.
-- Claude Code, Codex CLI, or both. OpenCode 2.0 or later runs the session ledger alone, with no guard, and its hook
+- Claude Code 2.1.314 or later, Codex CLI, or both. OpenCode 2.0 or later runs the session ledger alone, with no guard, and its hook
   scripts need Node 22 on its service's PATH ([Running aidrian](docs/providers/opencode.md#running-aidrian)).
 - The GitHub CLI, signed in with `gh auth login`. The `aidrian pr`, `aidrian report`, and `aidrian worktree` commands,
   and the `pr-*` skills, call `gh`.

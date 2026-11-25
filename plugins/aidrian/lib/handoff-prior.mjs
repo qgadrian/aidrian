@@ -10,7 +10,7 @@
 // the check would ask the driver, which no sandbox holds, to carry its steps.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const BRIEF_NAME = /^(\d{4}-\d{2}-\d{2})-(.+)\.md$/;
@@ -127,26 +127,35 @@ const linkedPrior = (briefPath) => {
   }
 };
 
-// Writes `bytes` as the brief's snapshot, by a temporary file and a rename. Throws what the disk refuses. The temporary
-// name is random and created exclusively before the try, so the cleanup only ever removes this call's own file.
-export function writeSnapshot(briefPath, bytes) {
+// Writes `bytes` as the brief's snapshot, by a temporary file and a rename over whatever is at its name, as a passing
+// check replaces the snapshot. With `exclusive`, a hard link publishes the file only where nothing is at its name, and
+// an entry there throws EEXIST and stays as it is. Throws what the disk refuses. The temporary name is random and
+// created exclusively before the try, so the cleanup only ever removes this call's own file.
+export function writeSnapshot(briefPath, bytes, { exclusive = false } = {}) {
   const snapshot = snapshotPath(briefPath);
   mkdirSync(path.dirname(snapshot), { recursive: true, mode: 0o700 });
   if (linkedPrior(briefPath)) throw Object.assign(new Error('.prior is a symlink'), { code: 'ESYMLINK' });
   const temporary = path.join(path.dirname(snapshot), `.${path.basename(snapshot)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
   writeFileSync(temporary, bytes, { flag: 'wx', mode: 0o600 });
   try {
-    renameSync(temporary, snapshot);
+    if (exclusive) linkSync(temporary, snapshot);
+    else renameSync(temporary, snapshot);
   } catch (error) {
     rmSync(temporary, { force: true });
     throw error;
   }
+  if (exclusive) rmSync(temporary, { force: true });
   return snapshot;
 }
 
 // Copies what the coming write supersedes into the snapshot, or clears a stale snapshot when nothing is. A snapshot the
-// disk refuses to write or to clear, such as a folder at its name, is a problem: { source, problem }.
-export function takeSnapshot(briefPath, explicitPrior) {
+// disk refuses to write or to clear, such as a folder at its name, is a problem: { source, problem }. A snapshot run
+// replaces nothing, so one taken after the write never copies the new text over the good prior: an entry already at
+// the snapshot's name is kept, and is a problem unless it is a regular file, not the brief's own, with the same bytes,
+// which is { source, snapshot, unchanged: true } with no write. Only a vacant name is written, by an exclusive publish;
+// only a passing check replaces the snapshot. `beforeOpen`, run between the look at the snapshot's entry and its open,
+// is the test seam.
+export function takeSnapshot(briefPath, explicitPrior, { beforeOpen = () => {} } = {}) {
   const snapshot = snapshotPath(briefPath);
   const source = explicitPrior ?? (existsSync(briefPath) ? briefPath : findSupersededBrief(briefPath));
   if (!source) {
@@ -159,12 +168,56 @@ export function takeSnapshot(briefPath, explicitPrior) {
   }
   const reason = unreadable(source);
   if (reason) return { source, problem: reason };
+  const cannot = (error) => ({ source, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` });
+  let bytes;
   try {
-    writeSnapshot(briefPath, readFileSync(source));
+    bytes = readFileSync(source);
+    if (linkedPrior(briefPath)) throw Object.assign(new Error('.prior is a symlink'), { code: 'ESYMLINK' });
+    const kept = keptSnapshot(briefPath, source, bytes, beforeOpen);
+    if (kept) return kept;
+    writeSnapshot(briefPath, bytes, { exclusive: true });
+    return { source, snapshot };
   } catch (error) {
+    // An entry that took the name after the look above is judged as one that was there before it.
+    return (error.code === 'EEXIST' && bytes !== undefined && keptSnapshot(briefPath, source, bytes, beforeOpen)) || cannot(error);
+  }
+}
+
+// What a snapshot run says of the entry at the snapshot's name, which it keeps; null when the name is vacant.
+function keptSnapshot(briefPath, source, bytes, beforeOpen) {
+  const snapshot = snapshotPath(briefPath);
+  const notRegular = { source, problem: `cannot be saved: ${snapshot} is not a regular file, and a snapshot replaces nothing: remove it and run snapshot again` };
+  try {
+    if (!lstatSync(snapshot).isFile()) return notRegular;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
     return { source, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` };
   }
-  return { source, snapshot };
+  if (samePath(briefPath, snapshot)) return { source, problem: `cannot be saved: ${snapshot} is the brief's own file, a hard link, not a copy a refresh leaves alone: remove that link and run snapshot again` };
+  beforeOpen(snapshot);
+  const held = readHeld(snapshot, bytes.length + 1);
+  if (held.code) return { source, problem: `cannot be compared with the snapshot ${snapshot}, which cannot be read (${held.code}), so it is kept: restore read access to it, or run aidrian handoff check with --prior naming a known-good readable brief` };
+  if (!held.bytes) return notRegular;
+  if (held.bytes.equals(bytes)) return { source, snapshot, unchanged: true };
+  return { source, problem: `differs from the snapshot ${snapshot}, the prior a refresh is checked against, so it is kept: write the brief and run aidrian handoff check, which compares with it; remove the snapshot only when that prior is known to be wrong` };
+}
+
+// At most `cap` bytes of `file`, read to its end or the cap, opened with no link followed and no wait on a pipe: { bytes }, { bytes: null } when
+// what was opened is not a regular file, or { code } when it cannot be opened or read.
+function readHeld(file, cap) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    if (!fstatSync(fd).isFile()) return { bytes: null };
+    const buffer = Buffer.alloc(cap);
+    let length = 0;
+    for (let read = 1; read > 0 && length < cap; length += read) read = readSync(fd, buffer, length, cap - length, length);
+    return { bytes: buffer.subarray(0, length) };
+  } catch (error) {
+    return { code: error.code ?? error.message };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 // Why a path cannot be read as a brief, or null.

@@ -5,6 +5,8 @@ The install commands are in the [README](../../README.md#claude-code).
 
 ## Install
 
+- The plugin needs Claude Code 2.1.314 or later, the first version whose hooks matched to Bash get the Monitor tool's
+  shell commands, so the [Bash rules](../hooks.md#bash-rules) run on them ([Monitor](#shell-commands-of-the-monitor-tool)).
 - Claude Code clones the plugin's short name over SSH.
 - Inside a session, type the same commands after `/plugin`, such as `/plugin install aidrian@aidrian-harness`.
 - Agents appear as `aidrian:<agent>`, and skills as `/aidrian:<skill>`.
@@ -88,7 +90,6 @@ real hook, not with a live plugin install.
 A hook adds the project's `models.claude` choice to each Agent tool call, from the next call on.
 [config.md](../config.md#models) has the keys.
 
-- An `effort` choice needs Claude Code 2.1.292 or later, the first version whose Agent tool call takes `effort`.
 - The Agent tool takes only the four `claude` model names in config.md, never a full model id or `inherit`.
 - A model or effort the dispatching agent passes for one call still wins.
 - Another hook in the project that rewrites Agent calls may override the choice.
@@ -137,8 +138,9 @@ session with the fork-subagent mode turned off.
 
 The Monitor tool runs its `command` in a shell, in the background, under Bash's permission rules, and a subagent may
 call it ([tools reference](https://code.claude.com/docs/en/tools-reference#monitor-tool)). From Claude Code 2.1.314, a hook
-whose matcher is Bash gets those commands as Bash calls; before that version the [Bash rules](../hooks.md#bash-rules),
-which hooks.json matches to Bash, skip a Monitor command. A hook whose matcher takes every tool, as the agent gates hook's
+whose matcher is Bash gets those commands as Bash calls, so the [Bash rules](../hooks.md#bash-rules), which hooks.json
+matches to Bash, run on them; that is why the plugin needs 2.1.314 or later, since an older version skips the Bash rules
+for a Monitor command. A hook whose matcher takes every tool, as the agent gates hook's
 does, gets the Monitor call itself on every version ([hooks reference](https://code.claude.com/docs/en/hooks#match-monitor-commands)).
 So the adapter's `hookInput` reads a Monitor call with a `command` as `Bash`, with `raw_tool_name: "Monitor"`, and the
 handoff guard, the config guard, and the machine-switch guard of the [agent gates hook](../hooks.md#agent-gates) read it
@@ -771,6 +773,10 @@ Before `verified` changes, a live Claude Code must show every one of these, each
 23. Claude Code's file tools expand a leading `~` and `~/` to the home folder of the user the host runs as, as the
     adapter's `filePath` does, as text, for every guard of a file tool; and a Glob pattern's `..` reaches above its path. A `..`
     past the pattern's first glob character is bounded by no folder, so the adapter reads it as the file system's root.
+24. Whether Claude Code's Write and Edit open a path such as `<folder>/link/../x` as spelled, where the system climbs
+    from the link's target, or fold its `..` as text first. Until it is shown, the main-checkout rule judges such a
+    target both ways and refuses when either is refused (`lib/fs.mjs` systemPath), and the unattended write allowlist
+    refuses it outright, so the answer only removes a refusal.
 
 ### The sandbox proof
 

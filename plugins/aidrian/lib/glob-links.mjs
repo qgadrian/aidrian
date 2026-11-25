@@ -10,7 +10,7 @@ import { lstatSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkDeadline } from './deadline.mjs';
-import { foldCase, globParts, isWithin, partsReach } from './fs.mjs';
+import { foldCase, globParts, isWithin, joinSpelled, partsReach, systemPath } from './fs.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 
 // A path part a shell expands as a glob.
@@ -31,16 +31,29 @@ const walks = new WeakMap();
 
 // Each spelling of a glob `{ text, dirs }`, as a guard reads it from a command, as { start, rest }: `start` is the
 // folder of its parts before the first that holds a wildcard, and `rest` its parts from there on, each a glob or a plain
-// name. A relative glob is spelled from each of `dirs`; one with no wildcard part has none.
+// name. A relative glob is spelled from each of `dirs`; one with no wildcard part has none. Each spelling is read twice
+// when the two differ: folded as text, and as spelled with its folder where the system lands (fs.mjs systemPath), where
+// a `..` after a link climbs from the link's target, its later parts as written; a guard refuses what either reaches.
+// Accepted residual: a `..` after the first wildcard part is a plain part to the link walk, which cannot tell where it
+// climbs from a link a wildcard matched; the unattended write allowlist refuses such a glob outright.
 export function globStarts({ text, dirs = [] }) {
-  const spelled = path.isAbsolute(text) ? [text] : dirs.map((dir) => path.join(dir, text));
-  return spelled.flatMap((each) => {
-    const parts = path.resolve(each).split(path.sep);
+  const spelled = path.isAbsolute(text) ? [text] : dirs.map((dir) => joinSpelled(dir, text));
+  const split = (parts) => {
     const at = parts.findIndex((part) => GLOB_WORD.test(part));
-    if (at <= 0) return [];
+    if (at <= 0) return null;
     // The root splits to an empty part, or a drive's name, that needs its separator back.
     const head = parts.slice(0, at).join(path.sep);
-    return [{ start: at === 1 ? `${head}${path.sep}` : head, rest: parts.slice(at) }];
+    return { folder: at === 1 ? `${head}${path.sep}` : head, rest: parts.slice(at) };
+  };
+  return spelled.flatMap((each) => {
+    const folded = split(path.resolve(each).split(path.sep));
+    const starts = folded ? [{ start: folded.folder, rest: folded.rest }] : [];
+    const raw = split(each.split(path.sep));
+    const system = raw ? systemPath(raw.folder) : null;
+    const rest = raw?.rest.filter((part) => part !== '' && part !== '.');
+    const same = folded && foldCase(system ?? '') === foldCase(canonical(folded.folder)) && rest.join(path.sep) === folded.rest.join(path.sep);
+    if (system && !same) starts.push({ start: system, rest });
+    return starts;
   });
 }
 

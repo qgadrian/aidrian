@@ -1,6 +1,8 @@
 // `aidrian pr await-review`: wait, deterministically, for the Codex review bot (config.json `github.reviewer`) to finish
 // with a pull request, then report what it left behind. The bot reviews once per "@codex review" comment, 5 to 25
-// minutes later; opening a pull request or marking it ready triggers nothing; a later push is not re-reviewed; and a
+// minutes later; with Codex's automatic reviews off, as docs/config.md (`github.reviewer`) says to set them, opening a
+// pull request or marking it ready triggers nothing, and with them on, each is one more review and round; a later
+// push is not re-reviewed; and a
 // clean pass is no review: the bot posts its receipt, a comment naming the commit it reviewed, then adds a 👍 to the pull
 // request a few seconds later. The 👍 names no commit and may land after a push, so it is never the signal; the receipt
 // is. A prose rule cannot hold that, so this command does:
@@ -94,6 +96,17 @@ export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds, revi
 // The bot's out-of-credits reply: an ordinary comment, by the same author, that names the condition.
 export const QUOTA_NOTICE_PATTERN = /codex usage limits?/i;
 export const isQuotaNotice = (body) => typeof body === 'string' && QUOTA_NOTICE_PATTERN.test(body);
+
+// The bot's notice that its run failed on its side: "Codex Review: Something went wrong. Try again later by commenting
+// “@codex review”.", with the error below it. Matched on its lead, after the receipt marker when it has one, so a
+// comment that quotes the phrase is no failure. It is no answer, and its help text, which quotes the trigger, is no
+// request: the wait goes on as if the bot had not answered, and ends `timed_out` as a run with no answer does.
+const FAILURE_LEAD = /^Codex Review: Something went wrong\b/u;
+export const isFailureNotice = (body) => {
+  if (typeof body !== 'string' || isQuotaNotice(body)) return false;
+  const text = body.trimStart();
+  return FAILURE_LEAD.test(text.startsWith(RECEIPT_MARKER) ? text.slice(RECEIPT_MARKER.length).trimStart() : text);
+};
 
 // The bot's review-summary status card and its machine state (review/bot-card.mjs).
 export { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER };
@@ -230,9 +243,10 @@ export const postedTriggerInstant = (posted) =>
 // The pre-POST fallback boundary, floored to the second, as GitHub floors `created_at`.
 export const flooredInstant = (epochMs) => new Date(Math.floor(epochMs / 1000) * 1000).toISOString();
 
-// A trigger: an "@codex review" comment, ours or a person's. The status card and the bot's receipt quote the phrase in
-// their help text, so neither is ever one. Opening a pull request or marking it ready triggers nothing.
-const isTrigger = (body) => typeof body === 'string' && !isReviewSummaryCard(body) && !isReceipt(body) && body.toLowerCase().includes(REQUEST_COMMENT);
+// A trigger: an "@codex review" comment, ours or a person's. The status card, the bot's receipt, and its failure notice
+// quote the phrase in their help text, so none is ever one. An automatic review, on opening a pull request or marking it ready, has
+// no trigger comment: the bot's automatic reviews are meant to be off (docs/config.md `github.reviewer`).
+const isTrigger = (body) => typeof body === 'string' && !isReviewSummaryCard(body) && !isReceipt(body) && !isFailureNotice(body) && body.toLowerCase().includes(REQUEST_COMMENT);
 
 // The latest trigger: the last trigger comment.
 const latestTriggerComment = ({ issueComments }) => {
@@ -254,7 +268,7 @@ export const reviewedCommit = (body) => (typeof body === 'string' ? body.match(R
 // vouches for it, or null. A 👍 is never a signal: it names no commit, the receipt it follows is the answer, and one
 // alone may belong to an earlier head's review whose receipt came before the trigger, or whose receipt this read
 // missed. The usage-limit notice is classified `quota_exhausted` here and the status card dropped, so no caller can
-// mistake either for feedback.
+// mistake either for feedback; a card whose run failed is dropped with it. The failure notice is no signal at all.
 export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], reviewer, since }) => {
   const after = (iso) => Number.isFinite(ms(iso)) && (!since || ms(iso) >= ms(since));
   const review = reviews
@@ -267,6 +281,7 @@ export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], r
       (c) =>
         c.user?.login === reviewer &&
         !isReviewSummaryCard(c.body) &&
+        !isFailureNotice(c.body) &&
         after(c.created_at) &&
         (since || reviewedCommit(c.body) || isQuotaNotice(c.body)),
     )

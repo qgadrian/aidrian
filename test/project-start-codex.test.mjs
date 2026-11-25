@@ -57,7 +57,7 @@ function codexConfig({ trusted = 'all', off = null, network = true, roots = null
   return `[plugins."${id}"]\nenabled = true\n${trusted === 'none' ? '' : trust}${sandbox}${extra}`;
 }
 
-// A fake `codex` in `bin`. It records its arguments, folder, pid, inherited session id, and the cache variables it got
+// A fake `codex` in `bin`. It records its arguments, folder, pid, inherited session and thread ids, and the cache variables it got
 // (project-registries.mjs cacheVars) in `<bin>/codex-call.json`,
 // prints the first event `mode.event` names ('thread', 'other', or 'none'), a to-do list item first when `mode.todo`,
 // and a `turn.failed` event with the message `mode.failed`; then, unless `mode.tool` is false, after `mode.slow`
@@ -72,7 +72,7 @@ function fakeCodex(t, bin, mode) {
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const mode = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(bin, 'codex-mode.json'))}, 'utf8'));
-fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), pid: process.pid, inherited: process.env.CODEX_THREAD_ID ?? null, caches: Object.fromEntries(Object.entries(process.env).filter(([name]) => ${JSON.stringify(Object.keys(cacheVars('/c', {}, { registries: ['npm'] })))}.includes(name))) }));
+fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), pid: process.pid, inherited: [process.env.CODEX_SESSION_ID ?? null, process.env.CODEX_THREAD_ID ?? null], caches: Object.fromEntries(Object.entries(process.env).filter(([name]) => ${JSON.stringify(Object.keys(cacheVars('/c', {}, { registries: ['npm'] })))}.includes(name))) }));
 if (mode.reject) {
   console.error(mode.reject);
   process.exit(1);
@@ -147,7 +147,7 @@ function adapterStart(t, fx, { beacon = () => true, wait = shortWait, limits, id
   const log = path.join(fx.root, 'issue.1.jsonl');
   const hold = ({ cwd: folder, known }) => markPending(DRIVER, { cwd: folder, root: fx.dir, known, env: fx.env }) !== null;
   const prompt = 'Project run launch, issue ENG-1, attempt 1: work the issue.';
-  const env = { ...fx.env, CODEX_THREAD_ID: DRIVER };
+  const env = { ...fx.env, CODEX_SESSION_ID: DRIVER, CODEX_THREAD_ID: DRIVER };
   return { cwd, grant, log, prompt, result: startProject({ cwd, prompt, name: 'launch · ENG-1 · 1', env, hold, identify, log, beacon, grants: [grant], domains, cacheVars: caches, wait, limits }) };
 }
 
@@ -283,7 +283,7 @@ test('the adapter runs codex exec with the sandbox pinned and each granted folde
     '--cd', resolvedPath(cwd), '--add-dir', resolvedPath(grant), prompt]);
   assert.ok(argv.every((arg) => arg === prompt || !BYPASS.test(arg)), 'no flag that bypasses the sandbox or the approvals');
   assert.equal(ran, resolvedPath(cwd));
-  assert.equal(inherited, null, 'the driver\'s session id is not the new session\'s');
+  assert.deepEqual(inherited, [null, null], 'the driver\'s session and thread ids are not the new session\'s');
   assert.equal(result.session, THREAD);
   assert.match(result.id, new RegExp(`^pid-${pid}-[0-9a-f]{16}$`, 'u'));
   assert.deepEqual(order[0], ['identify', THREAD], 'the floor and mark are filed as soon as the id is known, before the beacon');

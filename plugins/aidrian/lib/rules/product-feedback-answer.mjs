@@ -29,7 +29,7 @@ import { reportName } from '../audits.mjs';
 import { cleanTitle, heldFolders, listRecords, PERSONA } from '../feedback-record.mjs';
 import { isDirectory } from '../fs.mjs';
 import { findProject, stateDir, stateRoot } from '../project.mjs';
-import { aidrianArgs, inlineShellCommand, lexPipeline, readInvocation, readsShellInput, walkCommands } from '../shell-lex.mjs';
+import { aidrianArgs, inlineShellCommand, lexPipeline, quotedScalar, readInvocation, readsShellInput, shellPlain, walkCommands } from '../shell-lex.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 const HUMAN_LEAD = 'Blocked: `aidrian pr product-feedback answer` or `aidrian audits record` with `--by human` records the Human\'s own word on a product feedback item';
@@ -45,6 +45,7 @@ const UNKNOWN_PROJECT = 'Blocked: this runs `aidrian pr product-feedback answer`
 export const UNKNOWN = Symbol('unknown project');
 
 // Only a command holding one of these can be a call: every other Bash call pays for this one look, and reads no disk.
+// It looks at the command as the shell reads its words (shell-lex shellPlain), so `aid""rian` hides nothing.
 const CANDIDATE = /aidrian|cli\.mjs|product-feedback|audits|[$`]/u;
 // `answer` takes no --project today, and refuses one; the rule reads it all the same, so the folder it names is judged.
 const ANSWER_VALUES = new Set(['--by', '--reason', '--issue', '--url', '--doc', '--project']);
@@ -58,8 +59,6 @@ const GIT_TEXT = new Set(['commit', 'log', 'grep', 'show', 'notes', 'tag']);
 const GH_TEXT = new Set(['pr', 'issue']);
 const FEEDS_BLIND = new Set(['xargs', 'parallel']);
 
-// A dynamic word that stays one word whatever it holds: quoted, and no list expansion.
-const quotedScalar = ({ text, dynamic, splits }) => dynamic && !splits && /[$`]/u.test(text) && !/\$@|\[@\]|\[\*\]/u.test(text);
 
 // A word the rule cannot take as written: dynamic, or one the shell expands (shell-lex `expands`: an unquoted glob
 // character, or a brace list or range, wherever in the word, quoted parts around it included).
@@ -207,9 +206,14 @@ function judgeRecord(call, input, project) {
   return asks.map((ask) => judgeAsk(ask, call.decision, input)).find(Boolean) ?? null;
 }
 
-// Whether `text` names the answer call, whatever it holds besides.
-const namesAnswer = (text) => text.includes('--by') && /\bhuman\b/u.test(text) && /\bproduct-feedback\b/u.test(text) && /\banswer\b/u.test(text);
-const namesRecord = (text) => text.includes('--by') && /\bhuman\b/u.test(text) && /\baudits\b/u.test(text) && /\brecord\b/u.test(text);
+// Whether `text` names the answer call, or the record call, whatever it holds besides: `--by`, `human`, and the call's two
+// words, read as the shell reads its words.
+const namesHumanCall = (text, words) => {
+  const plain = shellPlain(text);
+  return plain.includes('--by') && [/\bhuman\b/u, ...words].every((word) => word.test(plain));
+};
+const namesAnswer = (text) => namesHumanCall(text, [/\bproduct-feedback\b/u, /\banswer\b/u]);
+const namesRecord = (text) => namesHumanCall(text, [/\baudits\b/u, /\brecord\b/u]);
 
 // Whether one command only handles text, by its program and arguments: its output is data, unless a pipe says otherwise.
 function handlesText({ program, args, environment }) {
@@ -314,7 +318,7 @@ export function projectReader(command, cwd, env, { on = keepsFeedback, unknownWh
 // The deny reason for `command`, or null. On only inside a project whose state folder holds `product-feedback/`. `input` is
 // the hook payload, for its `agent_id` and its transcript; `env` the environment its shell inherits, for its CDPATH.
 export function check(command, { cwd = process.cwd(), input = {}, env = process.env } = {}) {
-  if (!CANDIDATE.test(command)) return null;
+  if (!CANDIDATE.test(shellPlain(command))) return null;
   const subagent = typeof input.agent_id === 'string' && input.agent_id !== '';
   const projectIn = projectReader(command, cwd, env);
   const entries = walkCommands(command, cwd);
@@ -325,7 +329,9 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
   const chained = chainedRecord(null);
   const judged = new Set();
   for (const entry of entries) {
-    const { unread, folder } = entry;
+    const { folder } = entry;
+    // Fed text read as the shell reads its words, so `prod""uct-feedback answer` names the call too.
+    const unread = entry.unread === undefined ? undefined : shellPlain(entry.unread);
     if (chained && unread !== undefined && /\bproduct-feedback\s+answer\b|\baudits\s+record\b/u.test(unread) && /--by\b/u.test(unread)) return subagent ? SUBAGENT : CHAINED;
     if (unread !== undefined) {
       const project = /\bproduct-feedback\s+answer\b|\baudits\s+record\b/u.test(unread) ? projectIn(folder) : null;

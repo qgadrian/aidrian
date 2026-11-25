@@ -83,6 +83,10 @@ test('search prints path and summary for the best 8, --all prints every hit, and
 
   const none = run(['search', 'zebra']);
   assert.deepEqual([none.status, none.stdout, none.stderr], [1, '', 'no match\n']);
+
+  // A word after `--` may start with "-", as an option's name does; before it, such a word is an unknown option.
+  assert.deepEqual(paths(run(['search', '--', '-ownership']).stdout), ['docs/knowledge/engineering/docs-ownership.md']);
+  assert.match(run(['search', '-ownership']).stderr, /unknown option: -ownership/u);
 });
 
 test('search needs a word, and --all belongs to search only', () => {

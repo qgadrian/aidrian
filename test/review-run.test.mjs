@@ -9,6 +9,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
+import { harnessSignoff } from '../plugins/aidrian/lib/review/step.mjs';
 import { EXIT, recordAccept, recordOverrule, recordPass, recordSignoff, remoteState, reviewInForce } from '../plugins/aidrian/lib/review/run.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -91,6 +92,35 @@ test('zero config: codex-local reviews once; a finding is fix_required until a n
   assert.equal(second.round, 2);
   assert.equal(r.comments.length, 1, 'one summary comment, edited in place');
   assert.equal(stateFromComment(r.comments[0].body, 7).rounds.length, 2);
+});
+
+test('the local pass reads the review bot`s own comments the step found by the base branch`s bot, not one the pull request names', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { reviewer: 'review-bot[bot]' } }, headConfig: { version: 1, github: { reviewer: 'someone' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const receipt = "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!";
+  r.comments.push(
+    { id: 101, user: { login: 'review-bot[bot]', type: 'Bot' }, body: receipt, html_url: 'https://github.com/o/r/pull/7#issuecomment-101' },
+    { id: 102, user: { login: 'someone', type: 'User' }, body: receipt, html_url: 'https://github.com/o/r/pull/7#issuecomment-102' },
+    { id: 103, user: { login: 'review-bot', type: 'Bot' }, body: '<!-- codex-pull-request-review-summary -->\n\n## Codex Review Summary' },
+  );
+  const seen = [];
+  const exec = async (_reviewer, input) => (seen.push(input.botComments), clean());
+  await r.step({ exec });
+  assert.ok(seen.length > 0, 'a pass ran');
+  assert.deepEqual(seen, seen.map(() => [{ id: 101, url: 'https://github.com/o/r/pull/7#issuecomment-101' }, { id: 103 }]), 'every pass reads the base branch bot`s own comments');
+});
+
+test('under review.record "local" the step still reads the review bot`s own comments for the pass, and a failed read leaves none exempt', async (t) => {
+  const receipt = "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!";
+  for (const fails of [false, true]) {
+    const r = repo(t, { baseConfig: { version: 1, review: { record: 'local' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+    r.comments.push({ id: 201, user: { login: 'chatgpt-codex-connector[bot]', type: 'Bot' }, body: receipt, html_url: 'https://github.com/o/r/pull/7#issuecomment-201' });
+    if (fails) r.forge.conversationComments = () => { throw new Error('gh: HTTP 502'); };
+    const seen = [];
+    await r.step({ exec: async (_reviewer, input) => (seen.push(input.botComments), clean()) });
+    assert.ok(seen.length > 0, 'a pass ran');
+    assert.deepEqual(seen.at(-1), fails ? null : [{ id: 201, url: 'https://github.com/o/r/pull/7#issuecomment-201' }], fails ? 'a failed read: none exempt' : 'the genuine receipt is listed');
+    assert.equal(r.comments.length, 1, 'nothing is posted under a local record');
+  }
 });
 
 test('a comment-, doc-, or test-only push keeps its round, and the passes it touches re-review it in delta context', async (t) => {
@@ -358,6 +388,47 @@ test('a pull request cannot weaken the review it is under: a removed flow still 
   assert.deepEqual(human.flows, ['harness-config']);
   recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'harness-config', head: first.head, by: 'Tester' });
   assert.equal((await r.step({ exec: clean })).status, 'received');
+});
+
+test('a base that commits github.autoMerge.includePolicyFiles with includeGuardedPaths still reviews a config-only change under harness-config, and its reviewer signs it in place of the Human', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const lifted = { autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } };
+  // The config sorts as no behaviour, and no other file changes: the harness-config flow alone keeps the review.
+  const review = { flows, nonBehaviour: ['.aidrian/**'] };
+  const r = repo(t, { baseConfig: { version: 1, github: lifted, review }, headConfig: { version: 1, github: lifted, review: { nonBehaviour: ['.aidrian/**'] } }, change: () => {} });
+  const first = await r.step({ exec: clean });
+  assert.deepEqual([first.plan.flows, first.plan.depth === 'none'], [['harness-config'], false], 'reviewed, never none_needed');
+  assert.ok(first.dispatch.length > 0, 'a pass reviews it');
+  for (const pass of first.dispatch) {
+    const ids = pass.flows.flatMap((flow) => flow.invariants.map((each) => [flow.id, each.id]));
+    recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0,
+      verdictsText: JSON.stringify(ids.map(([flow, invariant]) => ({ flow, invariant, verdict: 'holds', evidence: '.aidrian/config.json:1' }))) });
+  }
+  assert.equal((await r.step({ exec: clean })).status, 'received', 'no sign-off of the Human');
+  assert.deepEqual(readLocalState(r.project, 7, 'o/r').signoffable.flows, [], 'nothing for the Human to sign off');
+});
+
+test('harnessSignoff asks merge trust\'s floor who signs the harness-config flow: the reviewer only where the floor asks the Human nothing', () => {
+  const lifted = { autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } };
+  const config = '.aidrian/config.json';
+  const ask = (committed, changes = [{ file: config, status: 'M' }]) => harnessSignoff({ changes, committed, config });
+  const flows = { booking: { files: ['src/booking/**'], invariants: 'docs/flows/booking.md' } };
+  assert.equal(ask({ github: lifted, review: { flows } }), 'reviewer', 'lifted on the base');
+  assert.equal(ask({ github: { autoMerge: { includeGuardedPaths: true } }, review: { flows } }), 'human', 'not lifted');
+  assert.equal(ask({ github: { autoMerge: { includePolicyFiles: true } }, review: { flows } }), 'human', 'without includeGuardedPaths');
+  // The config cited by a flow's invariants, and a review command the project configures, keep the Human, as the floor does.
+  const cited = { booking: { files: ['src/booking/**'], invariants: [{ id: 'c1', text: 'rounds stay', cite: `${config}#review` }] } };
+  assert.equal(ask({ github: lifted, review: { flows: cited } }), 'human', 'a cited config');
+  assert.equal(ask({ github: lifted, review: { flows, planCommand: 'node plan.mjs' } }), 'human', 'a plan command');
+  assert.equal(ask({ github: lifted, review: { flows, reviewers: { lint: { command: ['node', 'lint.mjs'] } } } }), 'human', 'an exec reviewer');
+  assert.equal(ask({ github: lifted, review: { flows, visual: { login: 'node login.mjs' } } }), 'human', 'a visual login');
+  assert.equal(ask({ github: lifted, review: { flows } }, [{ file: config, status: 'M' }, { file: 'docs/flows/booking.md', status: 'M' }]), 'human', 'a flow\'s invariants doc');
+  assert.equal(ask({ github: lifted, review: { flows } }, [{ file: config, status: 'X' }]), 'human', 'a change type the floor cannot read');
+  // Without the keys it stays the Human's, as on main, even for a change the floor asks nothing of, such as a source file.
+  for (const github of [{}, { autoMerge: { includeGuardedPaths: true } }]) {
+    assert.equal(ask({ github, review: { flows } }, [{ file: 'src/app.js', status: 'M' }]), 'human', JSON.stringify(github));
+  }
+  assert.equal(ask({ review: { flows } }, [{ file: 'src/app.js', status: 'M' }]), 'human', 'no github group');
 });
 
 test('reviewInForce: rules add up, flows and ignore lists come from the base, and every change is named', () => {
@@ -784,6 +855,31 @@ test('the review bot`s clean comment on a draft records no open finding, and the
   assert.equal(received.status, 'received');
   const bot = Object.values(readLocalState(r.project, 7).passes).find((result) => result.head === received.head && result.bot);
   assert.deepEqual([bot.open, bot.findings, bot.bot.kind], [0, 0, 'comment']);
+});
+
+test('a failed review bot run records no finding: the step times out for a retry, in the same round', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const { latestBotSignal, DEFAULT_REVIEWER } = await import('../plugins/aidrian/lib/pr-await-review.mjs');
+  const user = { login: DEFAULT_REVIEWER };
+  const notice = { id: 1, user, created_at: '2026-11-12T12:30:19Z', body: 'Codex Review: Something went wrong. Try again later by commenting \u201c@codex review\u201d.\n\n```\nUnknown error\n```' };
+  const card = (head) => ({ id: 2, user, created_at: '2026-11-12T12:01:00Z', updated_at: '2026-11-12T12:31:00Z', body: `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"commit_sha":"${head}","has_any_findings":null,"has_unresolved_findings":null,"status":"failed"}} -->` });
+  // The wait as pr-await-review.mjs reads the pull request: an answer when the signal is one, else a timeout to retry.
+  const wait = (comments) => async ({ head }) => {
+    const signal = latestBotSignal({ reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: '2026-11-12T12:00:00Z', issueComments: comments(head) });
+    return signal ? { status: 'received', head_sha: head, signal } : { status: 'timed_out', head_sha: head, requested: true, requested_head: head, signal: null, retry_recommended: true };
+  };
+  const state = () => readLocalState(r.project, 7);
+  const botPasses = () => Object.values(state().passes ?? {}).filter((pass) => pass.bot);
+  const byNotice = await r.step({ codex: off, awaitBot: wait(() => [notice]) });
+  assert.equal(byNotice.status, 'timed_out', byNotice.reason);
+  assert.deepEqual(botPasses(), [], 'the failure notice is no answer and holds no finding');
+  assert.equal(state().rounds.at(-1).floor, undefined, 'the round history reads no open finding');
+  const rounds = state().rounds.length;
+  const byCard = await r.step({ codex: off, awaitBot: wait((head) => [card(head)]) });
+  assert.equal(byCard.status, 'timed_out', byCard.reason);
+  assert.deepEqual(botPasses(), [], 'a failed status card is no answer either');
+  assert.equal(state().rounds.length, rounds, 'the retry runs in the same round');
 });
 
 test('the review bot`s clean receipt beside its status card of the head that still holds a finding is open work, never a pass', async (t) => {
@@ -1231,10 +1327,13 @@ test('the project`s engine wins over this machine`s local one, and the bot stage
   assert.match(result.engine.reason, /set by the project config/u);
 });
 
-test('review.record "local": the record stays in the state folder, and nothing on the pull request is read, posted, or edited', async (t) => {
+test('review.record "local": the record stays in the state folder, no record is read from the pull request, and nothing there is posted or edited', async (t) => {
   const r = repo(t, { baseConfig: { version: 1, review: { record: 'local' } }, change: (write) => write('src/app.js', 'l\n') });
   const touched = [];
-  for (const call of ['conversationComments', 'postComment', 'editComment']) r.forge[call] = () => (touched.push(call), assert.fail(`gh ${call} must not run`));
+  for (const call of ['postComment', 'editComment']) r.forge[call] = () => (touched.push(call), assert.fail(`gh ${call} must not run`));
+  // The conversation is read once a step, for the review bot's own comments alone (step.mjs botComments).
+  const reads = [];
+  r.forge.conversationComments = () => (reads.push('conversationComments'), []);
   const first = await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) });
   assert.equal(first.status, 'fix_required');
   assert.equal(first.summary_error, undefined);
@@ -1242,6 +1341,7 @@ test('review.record "local": the record stays in the state folder, and nothing o
   r.commit();
   assert.equal((await r.step({ exec: clean })).status, 'received');
   assert.deepEqual(touched, []);
+  assert.deepEqual(reads, ['conversationComments', 'conversationComments'], 'one read a step, for the bot`s own comments');
   assert.equal(readLocalState(r.project, 7).rounds.length, 2, 'the second step read the first one`s record from the state folder');
   const config = loadConfig(projectAt(r.dir)).config;
   assert.equal(remoteState('o/r', 7, { conversationComments: () => assert.fail('the pull request is not read') }, config), null);

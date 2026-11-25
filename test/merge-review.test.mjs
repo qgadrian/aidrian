@@ -134,6 +134,18 @@ test('the head needs a finished outcome on itself', (t) => {
   assert.match(r.run('gh pr merge 9') ?? '', /no finished review of head abcdef1/u, 'rounds from before outcomes were kept');
 });
 
+test('the deny quotes record text clipped, so a long reason keeps the message short and still names the pull request and the next step', (t) => {
+  const r = repo(t);
+  r.record(5, (state) => (state.outcome = { status: 'error', head: HEAD, at: '2026-11-03T14:00:00.000Z', reason: `boom ${'x'.repeat(5000)}` }));
+  const text = r.run('gh pr merge 5') ?? '';
+  assert.match(text, /pull request #5 at abcdef1, and the review of head abcdef1 is `error` \(boom x{295}\): run `aidrian pr review 5`/u);
+  assert.doesNotMatch(text, /x{301}/u);
+  r.record(6, (state) => (state.outcome = { status: 'error', head: HEAD, at: '2026-11-03T14:00:00.000Z', reason: '<!--'.repeat(200) }));
+  const reason = /is `error` \((.*?)\): run/u.exec(r.run('gh pr merge 6') ?? '')?.[1] ?? '';
+  assert.equal(reason.length, 300, 'the bound holds after a marker is escaped');
+  assert.doesNotMatch(reason, /<!--/u);
+});
+
 test('a head the guard cannot read refuses the merge, and --match-head-commit needs no gh', (t) => {
   const r = repo(t);
   r.record(5, (state) => outcome(state, 'received'));
@@ -153,6 +165,19 @@ test('a head the guard cannot read refuses the merge, and --match-head-commit ne
   assert.equal(r.run('gh pr merge -h', { head: null }), null);
   assert.equal(r.run('gh pr merge 5 --squash --help', { head: null }), null, 'gh prints the help and merges nothing, whatever else is given');
   assert.deepEqual(r.views, [], 'a help read asks gh nothing');
+  assert.equal(r.run('gh pr merge 5 --help=true', { head: null }), null, 'a help gh reads as on');
+  assert.equal(r.run('gh pr merge 5 --help=false -h', { head: null }), null, 'gh prints the help for a `-h` anywhere');
+  // A switch gh reads as off merges: `--help=false` and `--disable-auto=false` run the merge, and are judged as one.
+  // So does any switch of a command with a word the shell fills in or expands, quoted or not, before or after the switch:
+  // it may be another, false, one, a cluster, or a value that eats it.
+  for (const command of ['gh pr merge 5 --help=false', 'gh pr merge 5 --help --help=0', 'gh pr merge 5 --disable-auto=false', 'gh pr merge 5 --help="$H"',
+    'gh pr merge 5 --help "$X"', 'gh pr merge 5 --disable-auto $X', 'gh pr merge 5 --help *.md', 'gh pr merge 5 "$X" --help', 'gh pr merge 5 -h "$X"',
+    'gh pr merge 5 --body "$@" --help', 'gh pr merge 5 -t $T --help', 'gh pr merge 5 --help --body "$B"', 'gh pr merge 5 -sb"$B" --help',
+    'gh pr merge 5 --body "${@}" -h']) {
+    assert.match(r.run(command, { head: null }) ?? '', /could not read its head commit/u, command);
+  }
+  // A backslash and a line break inside a word, which the shell drops: `gh pr merge 5`.
+  assert.match(r.run('gh pr m\\\nerge 5', { head: null }) ?? '', /could not read its head commit/u);
   assert.equal(r.run('gh pr merge 5 -R other/repo', { head: null }), null, 'another repository is not this record`s');
 });
 
@@ -1004,7 +1029,9 @@ test('a merge inside a shell string, eval, or a heredoc fed to a shell is guarde
 
 test('a merge fed to a shell as text the rule cannot read is refused; other text fed to a shell runs', (t) => {
   const r = repo(t);
-  for (const command of ['echo "gh pr merge 5 --squash" | bash', "printf 'gh api -X PUT repos/acme/notes/pulls/5/merge' | sh -s"]) {
+  // The fed text read as the shell reads its words: a line continuation or quotes inside a word hide no merge.
+  for (const command of ['echo "gh pr merge 5 --squash" | bash', "printf 'gh api -X PUT repos/acme/notes/pulls/5/merge' | sh -s",
+    "echo 'gh pr m\\\nerge 5' | bash", 'echo \'gh pr "merge" 5\' | bash']) {
     assert.match(r.run(command) ?? '', /feeds a shell text the merge guard cannot read as commands/u, command);
   }
   assert.equal(r.run('cat setup.sh | bash'), null, 'a pipe into a shell naming no merge');

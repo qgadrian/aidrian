@@ -18,7 +18,7 @@ import path from 'node:path';
 
 import { cleanTitle, listRecords } from '../feedback-record.mjs';
 import { stateDir } from '../project.mjs';
-import { aidrianArgs, lexCommand, readInvocation, walkCommands } from '../shell-lex.mjs';
+import { aidrianArgs, lexCommand, readInvocation, shellPlain, walkCommands } from '../shell-lex.mjs';
 import { projectReader, pullRequestOf, readCall, readWords, textDenial, UNKNOWN, unreadable, writesUnseen } from './product-feedback-answer.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
@@ -36,6 +36,7 @@ const UNKNOWN_PROJECT = 'Blocked: `aidrian pr product-feedback post` waits for t
   `Write the folder out in the command, such as a plain cd <folder> && right before the post. ${OWN_SHELL}`;
 
 // Only a command holding one of these can be a call: every other Bash call pays for this one look, and reads no disk.
+// It looks at the command as the shell reads its words (shell-lex shellPlain), so `aid""rian` hides nothing.
 const CANDIDATE = /aidrian|cli\.mjs|product-feedback|[$`]/u;
 const POST_VALUES = new Set(['--body-file']);
 // The whole label the chosen option must be.
@@ -129,13 +130,18 @@ function judgePost(call, project, folder, input, subagent, alone) {
 // The deny reason for `command`, or null. `input` is the hook payload, for its `agent_id` and its transcript; `env` the
 // environment its shell inherits, for its CDPATH.
 export function check(command, { cwd = process.cwd(), input = {}, env = process.env } = {}) {
-  if (!CANDIDATE.test(command)) return null;
+  if (!CANDIDATE.test(shellPlain(command))) return null;
   const subagent = typeof input.agent_id === 'string' && input.agent_id !== '';
   const projectIn = projectReader(command, cwd, env);
   // A project that holds a post, or one it cannot read while this machine keeps product feedback.
   const holds = (folder) => {
     const project = projectIn(folder);
     return project === UNKNOWN || (Boolean(project) && heldRecords(project).length > 0);
+  };
+  // Whether text names a post, read as the shell reads its words, in a project that holds one.
+  const names = (text, folder) => {
+    const plain = shellPlain(text);
+    return /\bproduct-feedback\b/u.test(plain) && /\bpost\b/u.test(plain) && holds(folder);
   };
   const entries = walkCommands(command, cwd);
   // The folder a post call itself runs in: the walk's, else a `cd <folder> &&` right before it, which counts after a
@@ -148,7 +154,7 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
   for (const entry of entries) {
     const { unread, folder } = entry;
     if (unread !== undefined) {
-      if (/\bproduct-feedback\b/u.test(unread) && /\bpost\b/u.test(unread) && holds(folder)) return subagent ? SUBAGENT : UNREAD;
+      if (names(unread, folder)) return subagent ? SUBAGENT : UNREAD;
       continue;
     }
     const call = posts.get(entry);
@@ -163,6 +169,5 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
     const denied = judgePost(call, project, where, input, subagent, postAlone(command, entries));
     if (denied) return denied;
   }
-  const names = (text, folder) => /\bproduct-feedback\b/u.test(text) && /\bpost\b/u.test(text) && holds(folder);
   return textDenial(entries, judged, subagent ? SUBAGENT : UNREAD, names);
 }

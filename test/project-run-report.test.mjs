@@ -13,13 +13,18 @@ import test from 'node:test';
 
 import { slugOf } from '../plugins/aidrian/lib/audits.mjs';
 import { cleanText, textProblem } from '../plugins/aidrian/lib/clean-text.mjs';
+import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { RUN_RULE_PAST_BUDGET } from '../plugins/aidrian/lib/deadline.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { baseReader } from '../plugins/aidrian/lib/handoff-guard.mjs';
+import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { SETUP_DOC, SETUP_SECTIONS, setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
 import { pluginRepository } from '../plugins/aidrian/lib/config-version.mjs';
 import { owedReports, reportBody, reportCalls, reportPolicy, runWriter, startedWrites } from '../plugins/aidrian/lib/project-report.mjs';
 import { appendToRun, planRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { commitProblem } from '../plugins/aidrian/lib/project-start.mjs';
+import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
 import { markDriver, markPending, markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -28,7 +33,7 @@ import { drivesRun, droveRun } from '../plugins/aidrian/lib/run-driver.mjs';
 import { startHeld } from '../plugins/aidrian/lib/session-start-gate.mjs';
 import { gitLog } from './git-call-log.mjs';
 import { hookCall } from './hook-call.mjs';
-import { DRIVER, ISSUES, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { DRIVER, FIXTURE_TOKEN, ISSUES, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const CHILD = STARTED[0].session;
 const PRE = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-tracker-pre.mjs');
@@ -283,6 +288,16 @@ test('past the guards\' time budget, the hook refuses a run\'s sessions every ca
     assert.equal((await hook(fx, session, 'mcp__linear__get_issue', { id: 'ENG-1' }, fx.dir, late)).status, 0, `${session}: a read by its name`);
   }
   assert.equal((await hook(fx, OTHER, 'mcp__linear__save_comment', { issueId: 'ENG-2', body: 'x' }, fx.dir, late)).status, 0, 'an attended session');
+  // The issue's session refused a third time for the same cause: each refusal is logged by it, and the machine's load
+  // files no lesson (lesson-signals.mjs noteDenial).
+  for (let n = 0; n < 2; n += 1) assert.equal((await hook(fx, CHILD, 'mcp__linear__save_comment', { issueId: 'ENG-1', body: 'progress' }, fx.dir, late)).status, 2);
+  const found = findProject(fx.dir);
+  const { config } = loadConfig(found);
+  const denies = readFileSync(logPath(found, config), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+    .filter((row) => row.event === 'hook_deny' && row.session_id === CHILD);
+  assert.deepEqual(denies.map((row) => [row.rule, row.reason]), Array(3).fill(['tracker-guard', RUN_RULE_PAST_BUDGET]));
+  const filed = [...lessons(inboxPath(found, config)), ...lessons(pluginInboxPath(fx.env))].filter((lesson) => String(lesson.key).startsWith('hook-deny:'));
+  assert.deepEqual(filed, [], 'a time budget\'s refusal files no lesson');
 });
 
 test('the hook holds the driver to the exact writes the report owes, from any folder', async (t) => {
@@ -537,8 +552,12 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: true }));
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({ projects: { [ready.state]: { hasTrustDialogAccepted: true } } }));
   let asked = null;
-  Object.assign(ready.forge, { reviewerSeen: (repo, login, options) => ((asked = options), { changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED, workflowSecrets: () => NO_SECRETS, tokenReads: () => ({ missing: [], unverified: [], unanswered: [] }) });
+  const tokens = [];
+  const readWith = (answer) => (repo, options) => (tokens.push([repo, options?.host, options?.token]), answer);
+  Object.assign(ready.forge, { reviewerSeen: (repo, login, options) => ((asked = options), { changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: readWith(GUARDED), workflowSecrets: readWith(NO_SECRETS), tokenReads: () => ({ missing: [], unverified: [], unanswered: [] }) });
   const ok = ready.cmd(['preflight']);
+  // The forge rules and the secrets are read with the very token the issue sessions get, on the pinned host.
+  assert.deepEqual(tokens, [['acme/widgets', 'github.com', FIXTURE_TOKEN], ['acme/widgets', 'github.com', FIXTURE_TOKEN]]);
   assert.equal(asked?.counts?.('You have reached your Codex usage limits for code reviews.'), false, 'a usage-limit notice shows no review');
   assert.equal(asked?.counts?.('<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn\'t find any major issues.'), true, 'a clean receipt counts');
   const card = (status) => `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"status":"${status}"}} -->\n\n## Codex Review Summary`;
@@ -759,6 +778,10 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   ]) assert.ok(blocker(lines({ ...GUARDED, tags }), 'release-tags'), JSON.stringify(tags));
   const held = lines(GUARDED);
   assert.deepEqual([blocker(held, 'branch-protection'), blocker(held, 'release-tags'), blocker(held, 'workflow-secrets')], [null, null, null]);
+  // An administrator's token is held by no rule, whatever the rules say: it can turn them off.
+  const admin = lines({ ...GUARDED, protected: false, admin: true, why: 'the signed-in user administers the repository, and that token can turn off or edit any rule on it, its bypass list included' });
+  assert.match(blocker(admin, 'branch-protection'), /\(the signed-in user administers the repository, and that token can turn off or edit any rule on it, its bypass list included\), so a script it runs could push to it; give the issue sessions the token of an account that may push but does not administer the repository/u);
+  assert.match(blocker(admin, 'release-tags'), /^blocker release-tags: no tag rule on the forge holds the signed-in user, whose token an issue's session keeps, since the signed-in user administers the repository/u, 'a tag rule that names every tag is no hold either');
   assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments held for a reviewer who prevents self-review or is not the signed-in user; an environment limited to protected branches or branch patterns counts as open, since a deployment branch rule is no hold against code the run pushes; projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable; a token without the workflow scope keeps the session from changing a workflow file, not from changing the tests and scripts a workflow runs;.*the hook refuses an issue session's writes to the workflow files and a push whose commits change them/u);
   assert.doesNotMatch(held.find((line) => line.startsWith('note workflows:')), /turn that bypass off|once the team has checked|has checked those environments/u, 'the bypass is counted, and the key accepts every secret, not checked environments');
   // A cloud role trusted for any ref of the repository is named: any branch's workflow can assume it.
@@ -770,7 +793,7 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   });
   // A read that fails, or an answer the adapter does not recognize, names the option the team has, as every other line does.
   for (const name of ['branch-protection', 'release-tags']) {
-    assert.match(blocker(failed, name), /the forge cannot say what guards the default branch and the tags \(gh: Not Found \(HTTP 404\)\); check them on the forge and add the rules the run needs, or the default branch sets projectRun\.forgeProtectionAccepted \(setup: \S+\/docs\/project-run-setup\.md#forge-rules\)$/u, name);
+    assert.match(blocker(failed, name), /the forge cannot say what guards the default branch and the tags \(gh: Not Found \(HTTP 404\)\); a fine-grained token needs Administration: Read-only, Secrets: Read-only, and Environments: Read-only for these reads; check them on the forge and add the rules the run needs, or the default branch sets projectRun\.forgeProtectionAccepted \(setup: \S+\/docs\/project-run-setup\.md#forge-rules\)$/u, name);
   }
   // Workflow secrets: a blocker whatever the token's scopes, since the workflows run the branch's own code; the scope
   // only widens or narrows what the blocker says.
@@ -784,7 +807,7 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   assert.equal(secrets({ secrets: 0, workflowPush: true }), null, 'no secret');
   assert.match(secrets(() => {
     throw new Error('gh: Forbidden (HTTP 403)');
-  }), /the forge cannot say which CI secrets the repository's workflows see \(gh: Forbidden \(HTTP 403\)\); projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable \(setup: \S+\/docs\/project-run-setup\.md#forge-rules\)$/u);
+  }), /the forge cannot say which CI secrets the repository's workflows see \(gh: Forbidden \(HTTP 403\)\); a fine-grained token needs Administration: Read-only, Secrets: Read-only, and Environments: Read-only for these reads; projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable \(setup: \S+\/docs\/project-run-setup\.md#forge-rules\)$/u);
 });
 
 test('preflight takes the team\'s acceptance of workflow secrets only when the default branch sets it on the forge and the local ref', (t) => {

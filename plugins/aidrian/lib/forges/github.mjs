@@ -468,6 +468,7 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
       headRefOid
       headRefName
       baseRefName
+      baseRefOid
       title
       body
       isDraft
@@ -476,6 +477,7 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
       baseRef { name target { ... on Commit { ${POLICY_FILES} } } }
       latestReviews(first: ${TRAIL_PAGE}) { nodes { author { login } state } }
       history: commits(first: ${TRAIL_PAGE}) { totalCount nodes { commit { oid message } } }
+      closingIssuesReferences(first: ${TRAIL_PAGE}) { totalCount nodes { number repository { name owner { login } } } }
       commits(last: 1) {
         nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion checkSuite { matchingPullRequests(first: 2) { totalCount nodes { number } } workflowRun { databaseId event workflow { databaseId } } } } ... on StatusContext { context state } } } } } }
       }
@@ -729,6 +731,9 @@ function branchHold(read, admin, viewer) {
   return { held: true, why: null };
 }
 
+// Why no rule of a repository holds a user who administers it (refProtection).
+const ADMIN_HOLDS_NOTHING = 'the signed-in user administers the repository, and that token can turn off or edit any rule on it, its bypass list included';
+
 // The adapter for the repository at `cwd`. `run` is gh, the test seam: the adapter's methods call it, and it stays in
 // this closure, so no caller of the facade gets a raw gh. Every method returns GitHub's payload, parsed, and throws
 // what gh throws. A method that names no `repo` reads gh's default repository for `cwd`.
@@ -741,6 +746,15 @@ function branchHold(read, admin, viewer) {
 // A method that takes `{ host }` names that host to every REST call it makes (`--hostname`), as `aidrian pr auto-merge`
 // does with the host of the pull request's URL; without one, gh picks its default host.
 export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null, probe = receivePackStatus, readProbe = apiStatus } = {}) {
+  // This adapter with every gh call made with `token` in each variable gh reads one from (TOKEN_VARS), and GH_HOST
+  // unset, so gh takes no other login whichever variable it picks for the host; only for a read that names its `host`,
+  // so the token goes to that host alone.
+  const asToken = (token, host) => {
+    if (typeof token !== 'string' || token === '' || typeof host !== 'string' || host === '') throw new Error('a read with a token names the token and its host');
+    const env = { ...process.env, ...Object.fromEntries(TOKEN_VARS.map((name) => [name, token])) };
+    delete env.GH_HOST;
+    return createGithubForge({ cwd, run: (args, options) => run(args, { ...options, env }), mediaType, timeoutMs, killSignal, probe, readProbe });
+  };
   const gh = (args, { timeoutMs: limit = timeoutMs, input } = {}) =>
     run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }) });
   const json = (args) => JSON.parse(gh(args));
@@ -934,16 +948,23 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // each active tag ruleset (tagRule). A repository whose plan offers neither rulesets nor branch protection, GitHub's
     // 403 for a private repository on the free plan, has none: `protected` false, `plan` true, no tag rule, and a `why`
     // that names the plan the owner's kind of account needs (planWhy).
-    refProtection: (repo, { host } = {}) => {
+    // With `token`, every read is made with that token, on `host` alone (asToken). An administrator of the repository,
+    // `permissions.admin` on its read, a missing one counting as admin, is held by no rule: that token can turn off
+    // branch protection's "include administrators" and edit any ruleset's bypass list, so `protected` is false, `admin`
+    // true, and `why` says so, whatever the rules say, and `tags` still lists them.
+    refProtection: (repo, { host, token = null } = {}) => {
+      if (token !== null) return asToken(token, host).refProtection(repo, { host });
       const about = rest(`repos/${repo}`, { host });
       const branch = about?.default_branch;
       if (typeof branch !== 'string' || branch === '') throw new Error('GitHub named no default branch');
+      let read;
       try {
-        return guards(repo, branch, about, host);
+        read = guards(repo, branch, about, host);
       } catch (error) {
         if (planGated(error)) return { branch, protected: false, plan: true, why: planWhy(about?.owner?.type), tags: [] };
         throw error;
       }
+      return about?.permissions?.admin !== false ? { ...read, protected: false, admin: true, why: ADMIN_HOLDS_NOTHING } : read;
     },
     // What a project run's issue session's token could run with the repository's secrets, for the run's preflight:
     // { secrets, workflowPush }. `secrets` counts the Actions secrets of the repository, those its organization
@@ -954,7 +975,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // its deployment branch policy (openEnvironments). `workflowPush` is whether the signed-in token's scopes include
     // `workflow`, which GitHub asks of a push that changes a workflow file, or null for a token that names no scopes, as
     // a fine-grained one.
-    workflowSecrets: (repo, { host } = {}) => {
+    // With `token`, every read is made with that token, on `host` alone (asToken).
+    workflowSecrets: (repo, { host, token = null } = {}) => {
+      if (token !== null) return asToken(token, host).workflowSecrets(repo, { host });
       const count = (route) => {
         const total = rest(route, { host })?.total_count;
         if (!Number.isSafeInteger(total)) throw new Error('GitHub answered no count of secrets');
@@ -1248,6 +1271,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     },
     // What an unattended merge of pull request `n` of `repo` confirms on the forge, in the facade's shape: { viewer, head,
     // base, author, draft, reviewDecision, latestReviews: [{ author: { login }, state }], checks: { head, rows, complete },
+    // closingIssues: [{ number, repo }], closingIssuesComplete,
     // files: [{ path, changeType }], filesTotal, filesComplete, reviews: [{ login, bot, association, state, commit, at }], reviewsComplete,
     // comments: [{ id, login, bot, association, body, at, editors, editsComplete }], commentsComplete, branches: { default,
     // base } }. `reviews` are the newest TRAIL_PAGE, `comments` and `files` the first TRAIL_PAGE; `editors` holds the
@@ -1285,6 +1309,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const comments = trailNodes(pr.comments);
       const commit = pr.commits?.nodes?.at(-1)?.commit ?? null;
       const history = trailNodes(pr.history);
+      const closing = trailNodes(pr.closingIssuesReferences);
       const contexts = trailNodes(commit?.statusCheckRollup?.contexts);
       const association = (each) => (typeof each?.authorAssociation === 'string' ? each.authorAssociation : null);
       return {
@@ -1296,7 +1321,16 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
         // Every commit's message, for the closing-word check (lib/closing-words.mjs); complete only when all are here.
         messages: history.nodes.map((each) => ({ oid: each?.commit?.oid ?? null, message: typeof each?.commit?.message === 'string' ? each.commit.message : null })),
         messagesComplete: history.complete,
+        // The issues GitHub says the merge closes, linked by a closing keyword or by hand in the sidebar, for the
+        // closing-issue check (lib/closing-words.mjs forgeClosingProblem); complete only when all are here.
+        closingIssues: closing.nodes.map((each) => ({
+          number: Number.isSafeInteger(each?.number) ? each.number : null,
+          repo: typeof each?.repository?.owner?.login === 'string' && typeof each?.repository?.name === 'string' ? `${each.repository.owner.login}/${each.repository.name}`.toLowerCase() : null,
+        })),
+        closingIssuesComplete: closing.complete,
         base: typeof pr.baseRefName === 'string' ? pr.baseRefName : null,
+        // The base branch's tip as GitHub gives it, for a compare by commit (pr-auto-merge.mjs headPolicyProblem).
+        baseOid: typeof pr.baseRefOid === 'string' ? pr.baseRefOid : null,
         author: typeof pr.author?.login === 'string' ? pr.author.login : null,
         draft: pr.isDraft === true,
         reviewDecision: typeof pr.reviewDecision === 'string' ? pr.reviewDecision : '',
@@ -1336,7 +1370,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     commit: (repo, sha) => rest(`repos/${repo}/commits/${sha}`),
     // The check runs of one commit, every page.
     checkRuns: (repo, sha) => (list(`repos/${repo}/commits/${sha}/check-runs`) ?? []).flatMap((page) => page.check_runs ?? []),
-    compare: (repo, base, head) => rest(`repos/${repo}/compare/${base}...${head}`),
+    compare: (repo, base, head, { host } = {}) => rest(`repos/${repo}/compare/${base}...${head}`, { host }),
     // The web link that shows the commits from `from` to `to` of `repo` (R9), on the forge's own identity of that
     // repository: the `html_url` GitHub answers for it, read once per repository, so a GitHub Enterprise repository
     // links to its own host. Built only from two full-hex SHAs, an owner login and a repository name GitHub accepts, and

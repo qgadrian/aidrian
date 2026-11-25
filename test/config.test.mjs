@@ -113,21 +113,22 @@ test('github.reviewLoop: "auto" by default, so the review loop starts after pr-w
 });
 
 test('github.autoMerge: the team ceiling is off by default, with no strategy and no cleanup', () => {
-  assert.deepEqual(DEFAULTS.github.autoMerge, { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false, unreviewedPaths: [] });
+  assert.deepEqual(DEFAULTS.github.autoMerge, { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false, includePolicyFiles: false, unreviewedPaths: [] });
   assert.deepEqual(resolveAutoMerge(DEFAULTS.github, 'off'), { effective: false, reason: 'team' });
 });
 
 test('github.autoMerge: strategy is null, "squash", "merge", or "rebase"; a team sets any key of the group', (t) => {
   for (const strategy of [null, 'squash', 'merge', 'rebase']) {
     const { config, errors } = loadConfig(project(t, { version: 1, github: { autoMerge: { allow: true, strategy } } }));
-    assert.deepEqual([errors, config.github.autoMerge], [[], { allow: true, default: 'off', strategy, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false, unreviewedPaths: [] }]);
+    assert.deepEqual([errors, config.github.autoMerge], [[], { allow: true, default: 'off', strategy, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false, includePolicyFiles: false, unreviewedPaths: [] }]);
   }
-  const bad = loadConfig(project(t, { version: 1, github: { autoMerge: { strategy: 'fast-forward', deleteBranch: 'yes', when: 'green', includeGuardedPaths: 'yes' } } }));
+  const bad = loadConfig(project(t, { version: 1, github: { autoMerge: { strategy: 'fast-forward', deleteBranch: 'yes', when: 'green', includeGuardedPaths: 'yes', includePolicyFiles: 1 } } }));
   assert.deepEqual(bad.errors, [
     '.aidrian/config.json: unknown key "github.autoMerge.when"',
     '.aidrian/config.json: "github.autoMerge.strategy" must be null, "squash", "merge", or "rebase"',
     '.aidrian/config.json: "github.autoMerge.deleteBranch" must be true or false',
     '.aidrian/config.json: "github.autoMerge.includeGuardedPaths" must be true or false',
+    '.aidrian/config.json: "github.autoMerge.includePolicyFiles" must be true or false',
   ]);
   assert.deepEqual(bad.config.github.autoMerge, DEFAULTS.github.autoMerge);
 });
@@ -527,9 +528,17 @@ test('.aidrian.local.json review.productFeedback may set only auto', (t) => {
   };
   assert.deepEqual(at({ auto: true }), []);
   assert.deepEqual(at({ auto: false }), []);
-  assert.deepEqual(at({ files: ['src/**'] }), ['.aidrian.local.json: unknown key "review.productFeedback.files"; only "review.productFeedback.auto" is a machine setting']);
-  assert.deepEqual(at({ maxPersonas: 5 }), ['.aidrian.local.json: unknown key "review.productFeedback.maxPersonas"; only "review.productFeedback.auto" is a machine setting']);
-  assert.deepEqual(at({ allWidths: { files: ['src/**'] } }), ['.aidrian.local.json: unknown key "review.productFeedback.allWidths"; only "review.productFeedback.auto" is a machine setting']);
+  // A key the team sets is one the local file does not read: a warning, and ignored.
+  const warned = (productFeedback) => {
+    const found = project(t, { version: 1 });
+    writeFileSync(path.join(found.root, '.aidrian.local.json'), JSON.stringify({ review: { productFeedback } }));
+    const { config, errors, warnings } = loadConfig(findProject(found.root));
+    return [errors, warnings, config.review.productFeedback.maxPersonas];
+  };
+  const only = (key) => `.aidrian.local.json: unknown key "review.productFeedback.${key}"; only "review.productFeedback.auto" is a machine setting`;
+  assert.deepEqual(warned({ files: ['src/**'] }), [[], [only('files')], DEFAULTS.review.productFeedback.maxPersonas]);
+  assert.deepEqual(warned({ maxPersonas: 5 }), [[], [only('maxPersonas')], DEFAULTS.review.productFeedback.maxPersonas]);
+  assert.deepEqual(warned({ allWidths: { files: ['src/**'] } }), [[], [only('allWidths')], DEFAULTS.review.productFeedback.maxPersonas]);
   assert.deepEqual(at({ auto: 'on' }), ['.aidrian.local.json: "review.productFeedback.auto" must be true or false']);
   assert.deepEqual(at(true), ['.aidrian.local.json: "review.productFeedback" must be { "auto": true } or { "auto": false }']);
 });
@@ -1017,20 +1026,20 @@ test('decisions: the local file caps only the keys it sets, so a team value abov
   assert.equal(bad.config.decisions.domains.ux, 'decide-reversible', 'a refused local value sets nothing');
 });
 
-test('decisions: the local file names no team key, and unknown local keys are errors, each keeping the team value', (t) => {
+test('decisions: the local file names no team key, an error, and an unknown local key is a warning, each keeping the team value', (t) => {
   const team = project(t, { version: 1, decisions: { maxMode: 'ask', escalate: ['copy'] } });
   writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({
     decisions: { maxMode: 'decide-reversible', escalate: [], escalateDocs: [], secondLook: null, record: { queue: 'report' }, other: 1 },
   }));
-  const { config, errors } = loadConfig(findProject(team.root));
+  const { config, errors, warnings } = loadConfig(findProject(team.root));
   assert.deepEqual(errors, [
     '.aidrian.local.json: "decisions.maxMode" is the team\'s: set it in config.json',
     '.aidrian.local.json: "decisions.escalate" is the team\'s: set it in config.json',
     '.aidrian.local.json: "decisions.escalateDocs" is the team\'s: set it in config.json',
     '.aidrian.local.json: "decisions.secondLook" is the team\'s: set it in config.json',
     '.aidrian.local.json: "decisions.record" is the team\'s: set it in config.json',
-    '.aidrian.local.json: unknown key "decisions.other"',
   ]);
+  assert.deepEqual(warnings, ['.aidrian.local.json: unknown key "decisions.other"']);
   assert.equal(config.decisions.maxMode, 'ask');
   assert.deepEqual(config.decisions.escalate, ['copy']);
   assert.deepEqual(config.decisions.secondLook, DEFAULTS.decisions.secondLook);
@@ -1038,7 +1047,7 @@ test('decisions: the local file names no team key, and unknown local keys are er
 
   writeFileSync(path.join(team.root, '.aidrian.local.json'), '{"decisions": {"__proto__": {"mode": "decide-reversible"}}}');
   const inherited = loadConfig(findProject(team.root));
-  assert.deepEqual(inherited.errors, ['.aidrian.local.json: unknown key "decisions.__proto__"']);
+  assert.deepEqual([inherited.errors, inherited.warnings], [[], ['.aidrian.local.json: unknown key "decisions.__proto__"']]);
   assert.equal(inherited.config.decisions.mode, 'ask');
 });
 
@@ -1139,10 +1148,44 @@ test('models: .aidrian.local.json wins over config.json one field at a time, and
   assert.throws(() => { config.models.claude.agents.explorer.model = 'opus'; }, TypeError);
 });
 
+// A setting a newer release extends: the local file warns on what this plugin does not read, and keeps the rest.
+// config.json, the team's, keeps each an error, read with `requires.aidrian`.
+const localUnknownCases = [
+  ['an agent this plugin does not ship, in models', { models: { claude: { agents: { 'next-agent': { model: 'opus' }, explorer: { model: 'haiku' } } } } },
+    /^\.aidrian\.local\.json: unknown agent "models\.claude\.agents\.next-agent"; the plugin's agents are /u, (config) => config.models.claude.agents.explorer, { model: 'haiku' }],
+  ['a field of review.visual', { review: { visual: { baseUrl: 'http://localhost:3000', viewport: 1024 } } },
+    /^\.aidrian\.local\.json: unknown key "review\.visual\.viewport"$/u, (config) => config.reviewVisual, { baseUrl: 'http://localhost:3000' }],
+];
+test('.aidrian.local.json decisions.unreviewed.pauseDomainAt warns on a field a newer release adds, and keeps its limits; config.json stays strict', (t) => {
+  const team = project(t, { version: 1 });
+  writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({ decisions: { unreviewed: { pauseDomainAt: { pending: 3, oldestDays: 2, weekdays: true } } } }));
+  const { config, errors, warnings } = loadConfig(findProject(team.root));
+  assert.deepEqual([errors, warnings], [[], ['.aidrian.local.json: unknown key "decisions.unreviewed.pauseDomainAt.weekdays"']]);
+  assert.deepEqual(config.decisions.unreviewed.pauseDomainAt, { pending: 3, oldestDays: 2 }, 'the lower limits apply');
+  writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({ decisions: { unreviewed: { pauseDomainAt: { pending: 0, oldestDays: 2, weekdays: true } } } }));
+  const bad = loadConfig(findProject(team.root));
+  assert.match(bad.errors.join('\n'), /^\.aidrian\.local\.json: "decisions\.unreviewed\.pauseDomainAt" must be null, or/u, 'a bad limit stays an error');
+  assert.deepEqual(bad.config.decisions.unreviewed.pauseDomainAt, DEFAULTS.decisions.unreviewed.pauseDomainAt);
+  const strict = project(t, { version: 1, decisions: { unreviewed: { pauseDomainAt: { pending: 3, oldestDays: 2, weekdays: true } } } });
+  assert.match(loadConfig(strict).errors.join('\n'), /^\.aidrian\/config\.json: "decisions\.unreviewed\.pauseDomainAt" must be null, or/u, 'the team file keeps it strict');
+});
+
+for (const [name, local, warning, read, kept] of localUnknownCases) {
+  test(`.aidrian.local.json warns on ${name}, and keeps the rest`, (t) => {
+    const team = project(t, { version: 1 });
+    writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify(local));
+    const { config, errors, warnings } = loadConfig(findProject(team.root));
+    assert.deepEqual(errors, []);
+    assert.equal(warnings.length, 1, warnings.join('\n'));
+    assert.match(warnings[0], warning);
+    assert.deepEqual(read(config), kept);
+  });
+}
+
 test('names: "the Human" and the host\'s name by default; .aidrian.local.json wins over config.json one name at a time', (t) => {
   assert.deepEqual(DEFAULTS.names, { human: 'the Human', ai: null });
   const team = project(t, { version: 1, names: { human: 'the team lead', ai: 'the agent' } });
-  assert.deepEqual(loadConfig(team), { config: { ...DEFAULTS, names: { human: 'the team lead', ai: 'the agent' } }, errors: [], gateErrors: [], current: true });
+  assert.deepEqual(loadConfig(team), { config: { ...DEFAULTS, names: { human: 'the team lead', ai: 'the agent' } }, errors: [], warnings: [], gateErrors: [], current: true });
   const local = path.join(team.root, '.aidrian.local.json');
   writeFileSync(local, JSON.stringify({ names: { human: 'the product owner', ai: ' ' } }));
   const { config, errors } = loadConfig(findProject(team.root));
@@ -1186,7 +1229,7 @@ test('agents: no gates by default; .aidrian.local.json wins over config.json one
   assert.deepEqual(DEFAULTS.agents, {});
   const agents = { '*': { deny: ['mcp__slack__*'] }, main: { deny: ['Bash(git push)'] }, explorer: { allow: ['Read', 'Grep'], deny: ['Bash'] } };
   const team = project(t, { version: 1, agents });
-  assert.deepEqual(loadConfig(team), { config: { ...DEFAULTS, agents }, errors: [], gateErrors: [], current: true });
+  assert.deepEqual(loadConfig(team), { config: { ...DEFAULTS, agents }, errors: [], warnings: [], gateErrors: [], current: true });
   writeFileSync(
     path.join(team.root, '.aidrian.local.json'),
     JSON.stringify({ agents: { explorer: { allow: ['Read', 'Glo*b', 'Bash(git log)'] }, 'aidrian:architect': { deny: ['Edit'] } } }),

@@ -11,7 +11,7 @@
 import path from 'node:path';
 
 import { DEFAULTS, deepFreeze } from './config-defaults.mjs';
-import { localDecisions } from './config-local.mjs';
+import { localDecisions, splitUnknownKeys } from './config-local.mjs';
 import { checkAgents, checkModels, handoffContinueDefault, legacyHandoff, merge } from './config-merge.mjs';
 import { NO_REVIEWER, SCHEMA } from './config-schema.mjs';
 import { older, pluginVersion, versionProblem } from './config-version.mjs';
@@ -24,7 +24,8 @@ export { localDecisions, machineSwitch, resolveAutoMerge, resolveUnattendedWaive
 export { AUDIT_LABEL_FIELDS, COMMIT_FIELDS, MAX_PLAN_OBJECTIONS, NO_REVIEWER, PR_FIELDS, VERSION } from './config-schema.mjs';
 export { pluginRepository, pluginVersion, versionProblem } from './config-version.mjs';
 
-// Returns { config, errors, gateErrors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one
+// Returns { config, errors, warnings, gateErrors, current }. `warnings` names each key of the local file the plugin does
+// not read, which is ignored; it is empty when `current` is false. `config` is frozen and always complete: the file's values over DEFAULTS, one
 // group at a time, with the default kept for any value that is missing or invalid. The local file's `models`, `names`,
 // `telemetry`, and `agents` (`project.localModels`, `project.localNames`, `project.localTelemetry`, `project.localAgents`) then
 // go over the file's. A hook can use it even when `errors` is not empty. `current` is false when the file is missing,
@@ -36,24 +37,30 @@ export function loadConfig(project) {
   const gateErrors = [];
   const file = project.paths.config;
   const raw = readJson(project.root, file, errors);
-  if (!raw) return { config: DEFAULTS, errors, gateErrors, current: false };
+  if (!raw) return { config: DEFAULTS, errors, warnings: [], gateErrors, current: false };
   const problem = versionProblem(file, raw.version);
-  if (problem) return { config: DEFAULTS, errors: [problem], gateErrors, current: false };
+  if (problem) return { config: DEFAULTS, errors: [problem], warnings: [], gateErrors, current: false };
   const { version, ...rest } = raw;
   const values = legacyHandoff(rest, file, errors);
   const config = merge(SCHEMA, DEFAULTS, values, '', file, errors, gateErrors);
   config.session = { ...config.session, handoff: handoffContinueDefault(config.session.handoff, values) };
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
-  if (project.localModels !== undefined) config.models = checkModels(project.localModels, project.paths.local, errors, config.models);
-  for (const [key, local] of [['names', project.localNames], ['telemetry', project.localTelemetry]]) {
-    if (local !== undefined) config[key] = merge({ [key]: SCHEMA[key] }, config, { [key]: local }, '', project.paths.local, errors)[key];
+  const local = [];
+  if (project.localModels !== undefined) config.models = checkModels(project.localModels, project.paths.local, local, config.models);
+  for (const [key, value] of [['names', project.localNames], ['telemetry', project.localTelemetry]]) {
+    if (value !== undefined) config[key] = merge({ [key]: SCHEMA[key] }, config, { [key]: value }, '', project.paths.local, local)[key];
   }
   // The machine's review engine, from the local file; config.json `review.engine`, when set, wins (lib/review/reviewers.mjs).
-  config.reviewEngine = project.localReview === undefined ? 'auto' : checkLocalReview(project.localReview, project.paths.local, errors);
-  config.reviewVisual = checkLocalVisual(project.localReview, project.paths.local, errors);
-  if (project.localAgents !== undefined) config.agents = checkAgents(project.localAgents, project.paths.local, errors, config.agents, gateErrors);
-  config.decisions = localDecisions(config.decisions, project, errors);
-  return { config: deepFreeze(config), errors, gateErrors, current: true };
+  config.reviewEngine = project.localReview === undefined ? 'auto' : checkLocalReview(project.localReview, project.paths.local, local);
+  config.reviewVisual = checkLocalVisual(project.localReview, project.paths.local, local);
+  if (project.localAgents !== undefined) config.agents = checkAgents(project.localAgents, project.paths.local, local, config.agents, gateErrors);
+  config.decisions = localDecisions(config.decisions, project, local);
+  // An unknown key in the local file is a warning, and ignored, but one in an agent's gates stays an error: a misspelt
+  // `deny` would lift a gate.
+  const gates = new Set(gateErrors.map(({ file: at, problem: why }) => `${at}: ${why}`));
+  const split = splitUnknownKeys(local, project.paths.local, gates);
+  errors.push(...split.errors);
+  return { config: deepFreeze(config), errors, warnings: split.warnings, gateErrors, current: true };
 }
 
 // The `code` of the error commandConfig throws; cli.mjs prints its message and exits with its `exitCode`.

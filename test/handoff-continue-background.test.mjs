@@ -38,6 +38,8 @@ const NEW_SESSION = 'abcd1234-0000-4000-8000-000000000001';
 const SWITCH_ON = { handoff: { background: 'on' } };
 const UNREADABLE_MARK = 'this session\'s unattended mark cannot be read, so whether it works an issue of a project run cannot be told; it starts no continuation, and a person resumes the brief';
 const noWait = () => {};
+// Whether a folder named `~` was in the working folder before this file ran (the last test).
+const TILDE_BEFORE = existsSync(path.join(process.cwd(), '~'));
 
 // A git repository whose committed config asks for `committed`, its working copy for `handoff` when it differs, its
 // state folder outside it, this machine's local file `local`, a fresh brief, a `claude` on PATH that only exits, and a
@@ -61,7 +63,10 @@ function setup(t, { handoff = { continue: 'background' }, committed = handoff, l
   git('commit', '-q', '-m', 'config');
   if (handoff !== committed) writeFileSync(path.join(dir, '.aidrian/config.json'), config(handoff));
   if (local) writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(local));
-  const state = set ?? stateDir(findProject(dir));
+  // A state.dir under `~` names the test's own temporary HOME, `<root>/home`, which env carries too: the setup makes that
+  // store itself, so a literal `~` never becomes a folder of that name in the folder the tests run from.
+  const home = set?.startsWith('~/') ? path.join(root, 'home') : null;
+  const state = set === null ? stateDir(findProject(dir)) : home ? path.join(home, set.slice(2)) : set;
   t.after(() => rmSync(state, { recursive: true, force: true }));
   const handoffs = path.join(state, 'handoffs');
   mkdirSync(handoffs, { recursive: true });
@@ -77,7 +82,7 @@ function setup(t, { handoff = { continue: 'background' }, committed = handoff, l
     const lines = [{ type: 'permission-mode', permissionMode: 'manual', sessionId: SESSION }, { type: 'user', message: { content: 'go' } }, { type: 'permission-mode', permissionMode: mode, sessionId: SESSION }];
     writeFileSync(path.join(transcripts, `${SESSION}.jsonl`), `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
   }
-  const env = { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: SESSION, CLAUDE_CONFIG_DIR: claudeConfig, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  const env = { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: SESSION, CLAUDE_CONFIG_DIR: claudeConfig, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ...(home ? { HOME: home } : {}) };
   const store = openStore(state, { checkouts: [dir], maxChain: 3 });
   return { root, dir, state, file, store, env, git, bin, transcripts };
 }
@@ -962,6 +967,7 @@ test('a store the command\'s own environment moves goes on by the clear route an
   const home = setup(t, { stateIn: () => '~/.aidrian-test-state-never-written' });
   const fake = path.join(home.root, 'home');
   const moved = path.join(fake, '.aidrian-test-state-never-written');
+  assert.equal(home.state, moved, 'the setup made its store under the temporary HOME, not under a folder named ~ where the tests run');
   mkdirSync(path.join(moved, 'handoffs'), { recursive: true });
   const file = path.join(moved, 'handoffs/2026-11-15-widget.md');
   writeFileSync(file, brief());
@@ -2089,4 +2095,10 @@ test('`aidrian handoff owner` follows a stale say line\'s id to the session that
   const cli = spawnSync(CLI, ['handoff', 'owner', 'bb0a9173'], { cwd: setting.dir, encoding: 'utf8', env: setting.env });
   assert.equal(cli.status, 0, cli.stderr);
   assert.match(cli.stdout, /^owner: a9a64642$/mu);
+});
+
+// Last in the file: no test above left a folder named `~` in the folder the tests run from, as a `~` taken as a plain
+// folder name once did. A folder an earlier run left there is not this run's, so the check holds only when none was.
+test('no test in this file leaves a folder named ~ in the working folder', { skip: TILDE_BEFORE && 'a folder named ~ was there before this file ran' }, () => {
+  assert.equal(existsSync(path.join(process.cwd(), '~')), false);
 });

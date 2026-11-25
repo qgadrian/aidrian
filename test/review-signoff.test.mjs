@@ -7,7 +7,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { repoName } from '../plugins/aidrian/lib/remotes.mjs';
-import { check, REASON, SUBAGENT_REASON, TEXT_ROUTE, textReason, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
+import { transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
+import { check, REASON, signoffMiss, SUBAGENT_REASON, TEXT_ROUTE, textReason, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 
 // A deny of the sign-off: REASON, and after it the miss, when the session holds answers to go by.
 const denies = (got, why = '') => assert.ok(typeof got === 'string' && got.startsWith(REASON), `${why}: ${got}`);
@@ -168,6 +169,78 @@ test('only an Approve answer counts, the latest wins, and a flow-wide answer cov
   denies(check(overrule, { cwd, input: wide }), 'a ruling names its invariant');
   assert.equal(check(`aidrian pr signoff 9 --flow ui --head ${HEAD}`, { cwd, input: transcript(t, [{ 'o/r#9 at abc1234: ui/signoff?': 'Approve' }]) }), null);
   denies(check(accept, { cwd, input: { transcript_path: '/no/such/file' } }), 'no transcript, so the Human`s own shell');
+});
+
+// A session asked each sign-off twice: once in plain words, then again with the id, since only the question was read.
+// One case runs the hook end to end; the rest ask signoffMiss in the test's process, with no git call.
+test('a plain-words question whose chosen option names the id lets that sign-off run on the first answer', (t) => {
+  const accept = `aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`;
+  const q = 'Does the page still fit on a phone screen? Pull request o/r#9 at abc1234, evidence linked.';
+  assert.equal(check(accept, { cwd: project(t), input: transcript(t, [{ [q]: 'Approve ui/fit (Recommended)' }]) }), null, 'end to end');
+  const words = (command) => command.split(' ').slice(1).map((text) => ({ text, dynamic: false }));
+  const miss = (command, label, question = q) => signoffMiss(words(command), [{ question, answer: label }], { repo: 'o/r' });
+  assert.equal(miss(accept, 'Approve ui/*'), null, 'the flow-wide id covers --accept');
+  assert.equal(miss(`aidrian pr signoff 9 --flow ui --head ${HEAD}`, 'Approve ui/signoff'), null);
+  assert.equal(miss(`aidrian pr signoff 9 --stage independent --head ${HEAD}`, 'Approve stage:independent/signoff'), null);
+  for (const [why, command, label] of [
+    ['an option that is no approval', accept, 'Keep ui/fit open'],
+    ['an option naming another invariant', accept, 'Approve ui/fit-more'],
+    ['an option naming another flow', accept, 'Approve pay/fit'],
+    ['an option naming no id under a plain question', accept, 'Approve'],
+    ['another head', accept.replace(HEAD, 'fff1234def'), 'Approve ui/fit'],
+    ['another pull request', accept.replace('signoff 9', 'signoff 91'), 'Approve ui/fit'],
+    ['another repository', `${accept} --repo other/repo`, 'Approve ui/fit'],
+    ['another stage', `aidrian pr signoff 9 --stage local --head ${HEAD}`, 'Approve stage:independent/signoff'],
+  ]) assert.notEqual(miss(command, label), null, why);
+  // The option decides when it names an id: approving one invariant of a question naming two approves only that one.
+  const both = 'o/r#9 at abc1234: ui/fit and ui/wrap?';
+  assert.equal(miss(accept, 'Approve ui/wrap', both), 'the option the Human chose names `ui/wrap`, not `ui/fit`');
+  assert.equal(miss(accept.replace('--accept fit', '--accept wrap'), 'Approve ui/wrap', both), null);
+  assert.equal(miss(accept, 'Approve o/r#9', both), null, 'a repository is no sign-off id');
+  // Only the word right after "Approve" is read, whole: a dotted path or a dotted repository is no prefix of an id.
+  assert.equal(miss(accept, 'Approve ui/fit.js', both), 'the option the Human chose names `ui/fit.js`, not `ui/fit`');
+  assert.equal(miss(accept, 'Approve o/r.js#9 at abc1234', 'o/r#9 at abc1234: ui/fit?'), null, 'a dotted owner/repo#PR names no id, so the question decides');
+  assert.notEqual(miss(accept, 'Approve o/r.js#9'), null, 'and under a plain question it approves nothing');
+  assert.equal(miss(accept, 'Approve "ui/fit".'), null, 'a quoted id with closing punctuation');
+  assert.equal(miss(accept, 'Approve, ui/fit-more is fine', both), null, 'an id not right after "Approve" is not read');
+});
+
+// A later refusal under the same plain-words question carries no id of its own: the offered options scope it, so it
+// outweighs the approval before it for every kind of sign-off.
+test('a refusal after an approval under a plain-words question denies, whichever sign-off it is', () => {
+  const q = 'Does the page still fit on a phone screen? Pull request o/r#9 at abc1234.';
+  const words = (command) => command.split(' ').slice(1).map((text) => ({ text, dynamic: false }));
+  for (const [command, id] of [
+    [`aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`, 'ui/fit'],
+    [`aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`, 'ui/*'],
+    [`aidrian pr signoff 9 --flow ui --overrule fit --reason ok --head ${HEAD}`, 'ui/fit'],
+    [`aidrian pr signoff 9 --flow ui --head ${HEAD}`, 'ui/signoff'],
+    [`aidrian pr signoff 9 --stage independent --head ${HEAD}`, 'stage:independent/signoff'],
+  ]) {
+    const options = [`Approve ${id} (Recommended)`, 'Keep it open'];
+    const approve = { question: q, answer: options[0], options };
+    assert.equal(signoffMiss(words(command), [approve], { repo: 'o/r' }), null, `${id} approved`);
+    assert.equal(signoffMiss(words(command), [approve, { question: q, answer: 'Keep it open', options }], { repo: 'o/r' }),
+      'the Human picked "Keep it open", not the option that starts with "Approve"', `${id} refused later`);
+    const elsewhere = ['Approve pay/fit', 'Keep it open'];
+    assert.equal(signoffMiss(words(command), [approve, { question: q, answer: 'Keep it open', options: elsewhere }], { repo: 'o/r' }), null, `${id}: a refusal offered for another id`);
+    // An approval names its target by its own label or the question, never through an option the Human did not pick.
+    const generic = ['Approve (Recommended)', `Approve ${id}`, 'Keep it open'];
+    assert.notEqual(signoffMiss(words(command), [{ question: q, answer: generic[0], options: generic }], { repo: 'o/r' }), null, `${id}: an unchosen option names it`);
+  }
+  // With the options as the host writes them to the transcript, read in the test's process: the hook reads them so.
+  const asked = [{ question: q, options: [{ label: 'Approve ui/fit (Recommended)' }, { label: 'Keep it open' }] }];
+  const entry = (answer) => JSON.stringify({ type: 'user', toolUseResult: { questions: asked, answers: { [q]: answer } }, timestamp: '2026-11-09T00:00:00Z' });
+  const accept = words(`aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`);
+  const read = (...answers) => signoffMiss(accept, transcriptAnswers(answers.map(entry).join('\n')), { repo: 'o/r' });
+  assert.equal(read('Approve ui/fit (Recommended)'), null);
+  assert.equal(read('Approve ui/fit (Recommended)', 'Keep it open'), 'the Human picked "Keep it open", not the option that starts with "Approve"');
+});
+
+test('the deny tells the session to keep the question in plain words and put the id in the option label', () => {
+  assert.match(REASON, /ask the Human first with AskUserQuestion, once: a question in their terms that names the flow and what is signed in plain words/u);
+  assert.match(REASON, /a recommended option whose label starts with "Approve" and names the exact id, `<flow>\/<invariant>`/u);
+  assert.match(SUBAGENT_REASON, /options whose recommended one starts with "Approve" and names `<flow>\/<invariant>`/u);
 });
 
 test('a stage sign-off runs on an answer naming that stage, and --last still needs the long form', (t) => {

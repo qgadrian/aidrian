@@ -266,6 +266,9 @@ export function passInput(s, pass, stage) {
     // `git --literal-pathspecs diff <from> <earlierBase> -- <file>`, each file name one argument quoted for the shell
     // (reviewers.mjs QUOTED_NAMES), as `-- 'name'`.
     pr: n, repo, base: merged ? merged.base : from, head, context: from === base ? 'full' : 'delta', files, flows,
+    // The review bot's own receipt and status card, which the reviewer leaves out (reviewers.mjs botCommentsOf): null when
+    // the step could not tell them, and then none is.
+    botComments: s.botComments ?? null,
     ...(merged ? { baseMerged: { base: merged.base, from, earlierBase: merged.earlierBase, merges: merged.merges, rolledBack: (merged.rolledBack ?? []).filter((file) => files.includes(file)) } } : {}),
     // Only the ids listed to this pass show: the only ones a finding it returns may take.
     priorFindings: residuals ? [...contextFindings(earlier, listed), ...recordSettled(state, prior, residuals)] : earlier.map((finding) => idCopy(finding, listed)),
@@ -355,7 +358,7 @@ export function dispatchFor(s, pass, stage) {
     // release dispatched.
     // The findings file is the one path the command carries, as one shell argument: a state folder may hold a space
     // or a quote. The pass id and the reviewer are names of the config's name format, and `<file.json>` a placeholder.
-    record: `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings-file ${shellQuote(file)}${input.flows.length ? ' --verdicts <file.json>' : ''}`,
+    record: `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings-file ${shellQuote(file)}${input.flows.length ? ' --verdicts -' : ''}`,
   };
 }
 

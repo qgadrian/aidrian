@@ -7,7 +7,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { configWriteDenial, OPAQUE_WORDS } from '../plugins/aidrian/lib/config-guard.mjs';
+import { configWriteDenial, machineSwitchWriteDenial, OPAQUE_WORDS } from '../plugins/aidrian/lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { defaultSessionsFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
@@ -447,6 +447,67 @@ test('a subagent may not set the auto-merge switch, with or without gates; other
   }
 });
 
+test('a docs or test file that mentions the local file and a switch is edited with Edit or Write, which run, as a read-only search does; interpreter code that names it is refused and pointed there', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const found = findProject(dir);
+  const denial = (tool, toolInput) => machineSwitchWriteDenial(subagent(dir, tool, toolInput), found, { names: { human: 'the owner' } });
+  const judge = (command) => denial('Bash', { command })?.match ?? null;
+  const L = '.aidrian.local.json';
+  const py = (code) => `python3 - <<'PY'\n${code}\nPY`;
+  const js = (code) => `node - <<'JS'\n${code}\nJS`;
+  for (const command of [
+    // A read-only search of a transcript whose pattern names the key and the file, as the issue reports.
+    `grep -n 'github.autoMerge' ~/.claude/projects/x/s.jsonl | grep ${L}`,
+    `rg -n 'github\\.autoMerge.*${L}' ~/.claude/projects/x/`,
+  ]) assert.equal(judge(command), null, command);
+  // The Write and Edit tools are judged by the file they write, so a docs or test file whose text names both runs.
+  for (const [tool, toolInput] of [
+    ['Edit', { file_path: path.join(dir, 'docs/config.md'), old_string: 'x', new_string: `Set \`github.autoMerge\` in \`${L}\` to "on".` }],
+    ['Write', { file_path: path.join(dir, 'test/x.test.mjs'), content: `writeFileSync(path.join(dir, '${L}'), JSON.stringify({ github: { autoMerge: 'on' } }));\n` }],
+  ]) assert.equal(denial(tool, toolInput), null, JSON.stringify(toolInput));
+  // A docs edit written from code, as the issue's subagent ran, stays refused, a mention in a comment as well, and the
+  // refusal says how to make it.
+  for (const command of [
+    py(`import pathlib\np = pathlib.Path('docs/config.md')\nt = p.read_text()\nt = t.replace('x', 'Set \`github.autoMerge\` in \`${L}\` to "on".')\np.write_text(t)`),
+    py(`open('docs/x.md', 'a').write('the ${L} file')`),
+    py(`# See **${L}**.\nopen('docs/x.md', 'a').write('github.autoMerge')`),
+    js(`/* writes docs, not ${L}*/\nrequire('fs').appendFileSync('docs/x.md', 'github.autoMerge')`),
+  ]) assert.match(denial('Bash', { command })?.reason ?? '', /to edit a doc or test file that mentions \.aidrian\.local\.json, use the Edit or Write tool, which the guard judges by the file it writes/u, command);
+  for (const [command, match] of [
+    // Code can derive the path from any text: a bare word split, replaced, or sliced out, or a wrapped name stripped.
+    [py(`open('see ${L} here'.split()[1], 'w').write('autoMerge')`), /sets github\.autoMerge/u],
+    [py(`open('the ${L} file'.replace('the ', '').replace(' file', ''), 'w').write('autoMerge')`), /sets github\.autoMerge/u],
+    [py(`p = 'x ${L}'[2:]\nopen(p, 'w').write('{}')`), /changes \.aidrian\.local\.json/u],
+    [js(`const p = 'see ${L} here'.split(' ')[1]\nrequire('fs').writeFileSync(p, 'autoMerge')`), /sets github\.autoMerge/u],
+    [py(`open('see \`${L}\` here'.split('\`')[1], 'w').write('autoMerge')`), /sets github\.autoMerge/u],
+    [py(`open('(${L})'.strip('()'), 'w').write('{}')`), /changes \.aidrian\.local\.json/u],
+    [py(`open('docs/x.md', 'a').write('Notes on **${L}**, and its keys.')  # autoMerge`), /sets github\.autoMerge/u],
+    [py(`open('${L}', 'w').write('{"github": {"autoMerge": "on"}}')`), /sets github\.autoMerge/u],
+    [py(`import json\np = '${L}'\nd = json.load(open(p))\nd['github'] = {'autoMerge': 'on'}\njson.dump(d, open(p, 'w'))`), /sets github\.autoMerge/u],
+    [py(`import shutil\nshutil.copy('prepared.json', '${L}')`), /changes \.aidrian\.local\.json/u],
+    [py(`import os\nos.system('cp prepared.json ${L}')  # autoMerge`), /sets github\.autoMerge/u],
+    [py(`import os\ncmd = 'cp x'\nos.system(f"{cmd} ${L}")  # autoMerge`), /sets github\.autoMerge/u],
+    [py(`import os\nopen(f"{os.path.join('.', "${L}")}", 'w').write('autoMerge')`), /sets github\.autoMerge/u],
+    [py(`open('notes.md', 'w').write('see ${L} or ~/${L}')  # autoMerge`), /sets github\.autoMerge/u],
+    [py(`open('x', 'w').write('a'); open("""${L}""", 'w')  # autoMerge`), /sets github\.autoMerge/u],
+    [`python3 - ${L} <<'PY'\nimport sys, json\njson.dump({'github': {'autoMerge': 'on'}}, open(sys.argv[1], 'w'))\nPY`, /sets github\.autoMerge/u],
+    [`python3 -c "open('${L}','w').write('autoMerge')"`, /sets github\.autoMerge/u],
+    // A path quoted inside a longer text, as a test fixture written from code holds, still names the file.
+    [js(`require('fs').writeFileSync('test/x.test.mjs', "writeFileSync(path.join(dir, '${L}'), JSON.stringify({ github: { autoMerge: 'on' } }))")`), /sets github\.autoMerge/u],
+    [js(`require('child_process').execSync('echo autoMerge | tee ${L}')`), /sets github\.autoMerge/u],
+    ['node -e "require(\'fs\').writeFileSync(`${process.cwd()}/' + L + '`, \'autoMerge\')"', /sets github\.autoMerge/u],
+    [`ruby -e 'File.write("${L}", "autoMerge")'`, /sets github\.autoMerge/u],
+    [`perl -e 'open(F, ">${L}"); print F "autoMerge"'`, /sets github\.autoMerge/u],
+    // The shell's own writes are read as before, a copy over the file among them.
+    [`echo autoMerge | tee ${L}`, /sets github\.autoMerge/u],
+    [`sed -i '' 's/off/on/' ${L}  # autoMerge`, /sets github\.autoMerge/u],
+    [`perl -pi -e 's/off/on/' ${L}`, /changes \.aidrian\.local\.json/u],
+    [`cp prepared.json ${L}`, /changes \.aidrian\.local\.json/u],
+    [`mv prepared.json ${L}`, /changes \.aidrian\.local\.json/u],
+    [`echo '{}' > ${L}`, /changes \.aidrian\.local\.json/u],
+  ]) assert.match(judge(command) ?? 'allowed', match, command);
+});
+
 test('a subagent may not set the review approvals switch, with or without gates; other local writes and the main session stay allowed', async (t) => {
   const { dir } = project(t, { version: 1 });
   const local = path.join(dir, '.aidrian.local.json');
@@ -714,10 +775,12 @@ test('a subagent may not change the keychain entry a project run takes its forge
   writeFileSync(local, `${JSON.stringify({ names: { human: 'off' }, projectRun: { forgeTokenKeychain: { service: 'aidrian-forge', account: 'me' } } }, null, 2)}\n`);
   const edit = (from, to) => ['Edit', { file_path: local, old_string: from, new_string: to }];
   const patch = (file, ...lines) => ({ command: `*** Begin Patch\n*** Update File: ${file}\n@@\n${lines.join('\n')}\n*** End Patch\n` });
+  // A field the reader does not know, beside projectRun's key or the entry's, is ignored, so the entry stays as it was.
   for (const [tool, toolInput] of [
-    // A sibling under projectRun makes the reader drop the whole setting, so the token falls to the next source.
     edit('"projectRun": {', '"projectRun": {\n    "x": 1,'),
     edit('"service": "aidrian-forge"', '"service": "aidrian-forge", "extra": 1'),
+  ]) assert.equal((await run(subagent(dir, tool, toolInput))).status, 0, JSON.stringify(toolInput));
+  for (const [tool, toolInput] of [
     edit('"account": "me"', '"account": "other"'),
     ['Write', { file_path: local, content: JSON.stringify({ names: { human: 'off' } }) }],
     // A patch is not applied: while the file selects an entry, any line it adds or removes counts.
@@ -1714,4 +1777,20 @@ test('the session-folder guard`s checkout read stops at what is left of the guar
   const over = await timed('*"worktree list"*') - baseline;
   // git's own 2 s limit would show as well over a second; the guards' 0.6 s budget as less.
   assert.ok(over < 1200, `the stalled checkout read cost ${over} ms over the ${baseline} ms baseline`);
+});
+
+// A glob is read both folded as text and with its folder where the system lands (glob-links.mjs globStarts): a `..`
+// after a link climbs from the link's target, which the folded text does not show.
+test('a subagent\'s glob whose folder climbs out of a link to a config file is refused, and one that stays clear runs', async (t) => {
+  const { dir } = project(t);
+  mkdirSync(path.join(dir, 'a'));
+  mkdirSync(path.join(dir, 'sub'));
+  symlinkSync(path.join(dir, 'a'), path.join(dir, 'sub', 'lnk'));
+  const run = (command) => inHook({ input: JSON.stringify(subagent(dir, 'Bash', { command })), cwd: dir, encoding: 'utf8' });
+  // An innocently named link in the folder the system lands in, which only that folder's walk finds.
+  symlinkSync(path.join(dir, '.aidrian', 'config.json'), path.join(dir, 'notes-alias'));
+  const climbed = await run('printf x | tee sub/lnk/../notes-al*');
+  assert.equal(climbed.status, 2, climbed.stderr);
+  assert.match(climbed.stderr, /config\.json/u);
+  assert.equal((await run('printf x | tee sub/lnk/../other*')).status, 0, 'a glob that reaches no guarded file');
 });

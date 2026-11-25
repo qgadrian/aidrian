@@ -33,7 +33,8 @@ export const sameBot = (login, reviewer) => botName(login) !== null && botName(l
 // reviewTrail of the pull request; `reviewer` the default branch's `github.reviewer`, read from the forge. A review or a
 // comment counts only when its author is a bot account of that name. Passed: an approving review of exactly `head`, or
 // the bot's status card, whose every edit the bot made, saying its code review of exactly `head` completed with
-// `has_any_findings` and `has_unresolved_findings` both false; and no review of `head` by the bot in any other state.
+// `has_any_findings` and `has_unresolved_findings` both false; and no review of `head` by the bot in any other state,
+// in a review list the forge gave whole (`reviewsComplete`), so the guard and `aidrian pr auto-merge` judge it alike.
 // The two flags are the bot's ledger of its findings that still stand at that commit, equal on every card seen: the bot
 // clears both itself on a later run once its findings are fixed, and neither a receipt nor a resolved thread clears
 // them. A card that names `head` with a flag not false says so in the refusal. A clean receipt or a 👍 never
@@ -44,6 +45,8 @@ export function botProblem(trail, head, reviewer) {
   const sha7 = head.slice(0, 7);
   if (typeof reviewer !== 'string' || reviewer === '') return NO_BOT;
   if (typeof trail?.head !== 'string' || trail.head.toLowerCase() !== head.toLowerCase()) return `the forge gives its head as ${String(trail?.head ?? 'none').slice(0, 7)}, not ${sha7}`;
+  // A review of `head` in another state may lie past a list the forge gave only in part (the trail reads the newest 100).
+  if (trail.reviewsComplete !== true) return `the forge gave only part of its reviews, so whether ${reviewer} reviewed head ${sha7} in a state that does not pass cannot be told`;
   const onHead = (trail.reviews ?? []).filter((review) => review.bot && sameBot(review.login, reviewer) && typeof review.commit === 'string' && review.commit.toLowerCase() === head.toLowerCase());
   const other = onHead.find((review) => review.state !== 'APPROVED');
   if (other) return `${reviewer} reviewed head ${sha7} as ${String(other.state ?? 'unknown').toLowerCase()}, so its review of that commit did not pass`;
@@ -76,6 +79,12 @@ const runsCommand = (review) => (typeof review.planCommand === 'string' && revie
   || Object.values(isObject(review.reviewers) ? review.reviewers : {}).some((reviewer) => Array.isArray(reviewer?.command) && reviewer.command.length > 0)
   || (isObject(review.visual) && ['login', 'preview'].some((key) => typeof review.visual[key] === 'string' && review.visual[key] !== ''));
 
+// Whether every one of `configs`, as the forge holds each branch's, commits github.autoMerge.includePolicyFiles with
+// includeGuardedPaths: the team's explicit acceptance, on the default branch and the base alike, that a policy file
+// merges with no sign-off of the Human (pr-auto-merge.mjs includesPolicyFiles reads the same two keys). None lifts nothing.
+export const policyFilesLifted = (configs) => configs.length > 0
+  && configs.every((config) => config?.github?.autoMerge?.includeGuardedPaths === true && config.github.autoMerge.includePolicyFiles === true);
+
 // The flows whose Human sign-off a merge of these changed files needs, by what the forge alone gives: { flows, reasons },
 // a Set of flow ids and why each is in it. `files` are { path, changeType } from the top of the repository, `complete`
 // whether they are every changed file, `configs` the default branch's and the base's configs as the forge holds them,
@@ -87,7 +96,8 @@ const runsCommand = (review) => (typeof review.planCommand === 'string' && revie
 //   of the project's (runsCommand), its `added` patterns, or its `content` tracing may select;
 // - any flow whose `tests` match a deleted file: the review asks the Human to accept the deletion;
 // - the built-in harness-config flow when a changed file is a policy file of aidrian (POLICY_PATHS), one the configs
-//   were read from, or a doc a flow cites, or a command of the project's may name the files that decide the review;
+//   were read from, unless every config lifts that (policyFilesLifted), or a doc a flow cites, or a command of the
+//   project's may name the files that decide the review;
 // - every one of those flows when the list is not whole, or a change type hides a path (a rename).
 export function flowsFloor({ files, complete = true, configs, prefix = '', policyFiles = [] }) {
   const flows = new Set();
@@ -100,6 +110,7 @@ export function flowsFloor({ files, complete = true, configs, prefix = '', polic
   const changed = files.map((file) => ({ ...file, rel: fromRoot(file.path, prefix) }));
   const matches = (globs, rel) => rel !== null && (globs ?? []).map(pathPattern).some((pattern) => pattern.test(rel));
   const read = new Set(policyFiles.map((each) => each.toLowerCase()));
+  const lifted = policyFilesLifted(configs);
   for (const config of configs) {
     const review = config?.review ?? {};
     const commanded = runsCommand(review);
@@ -117,7 +128,7 @@ export function flowsFloor({ files, complete = true, configs, prefix = '', polic
     const cited = [...citedDocs(flowsOf).keys()];
     if (!known) add(HARNESS_FLOW, 'the forge did not give every changed file with its path');
     if (commanded) add(HARNESS_FLOW, 'a command of the project\'s review may name the files that decide the review');
-    if (changed.some((file) => POLICY_PATHS.test(file.path) || read.has(file.path.toLowerCase()))) add(HARNESS_FLOW, 'it changes the review config');
+    if (!lifted && changed.some((file) => POLICY_PATHS.test(file.path) || read.has(file.path.toLowerCase()))) add(HARNESS_FLOW, 'it changes the review config');
     if (changed.some((file) => file.rel !== null && cited.includes(file.rel))) add(HARNESS_FLOW, 'it changes a doc a flow\'s invariants cite');
   }
   return { flows, reasons };

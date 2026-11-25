@@ -12,14 +12,15 @@ const TAG = /^[a-z][a-z0-9_]*$/;
 // Every summary is read in search results and in the index, so it stays one short line.
 const SUMMARY_MAX = 160;
 
-// Returns { config, buckets, errors } for a project from lib/project.mjs, reading every knowledge source in order.
-// `errors` also holds the problems of the root files and of config.json, so one call checks everything an agent reads.
+// Returns { config, buckets, errors, warnings } for a project from lib/project.mjs, reading every knowledge source in order.
+// `errors` also holds the problems of the root files and of config.json, so one call checks everything an agent reads,
+// and `warnings` each key of the local file the plugin does not read.
 // A project doc's path is relative to the project root; a local source's doc has its absolute path and its `source`.
 export function loadKnowledge(project) {
-  const { config, errors: configErrors, current } = loadConfig(project);
+  const { config, errors: configErrors, warnings: configWarnings, current } = loadConfig(project);
   const errors = [...project.errors, ...configErrors];
   const buckets = [];
-  const warnings = [];
+  const warnings = [...project.warnings, ...configWarnings];
   // A folder of another version may hold indexes of another shape; config.json already reports it.
   if (!current) return { config, buckets, errors, warnings };
   // The index file that defines each bucket id, as errors show it.

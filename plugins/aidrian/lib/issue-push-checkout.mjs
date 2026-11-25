@@ -7,6 +7,7 @@
 // beside the push, or after the guard read it, could commit into the push. Every git call runs within the guards' budget,
 // and one that fails, or does not answer in time, refuses the push.
 
+import { maskSecrets } from './clean-text.mjs';
 import { checkDeadline, remainingMs } from './deadline.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { runGit } from './git.mjs';
@@ -42,8 +43,9 @@ function ownCloneProblem(folder, root, pushUrl, fold) {
   if (url.status !== 0) return `it pushes, and ${SLOW} where origin pushes`;
   const pushes = url.stdout.split('\n').filter((line) => line !== '');
   if (pushes.length === 1 && pushes[0] === pushUrl) return null;
-  const elsewhere = pushes.find((each) => each !== pushUrl) ?? pushes.join(', ');
-  return `it pushes to ${elsewhere.slice(0, 120) || 'no URL'}${pushes.length > 1 ? `, one of the ${pushes.length} URLs origin pushes to` : ''}, and origin pushes only to ${pushUrl.slice(0, 120)}, the URL its issue's start pinned`;
+  // Each URL masked (clean-text.mjs maskSecrets) before its cut: a remote URL may carry a token.
+  const elsewhere = maskSecrets(pushes.find((each) => each !== pushUrl) ?? pushes.join(', '));
+  return `it pushes to ${elsewhere.slice(0, 120) || 'no URL'}${pushes.length > 1 ? `, one of the ${pushes.length} URLs origin pushes to` : ''}, and origin pushes only to ${maskSecrets(pushUrl).slice(0, 120)}, the URL its issue's start pinned`;
 }
 
 // Why the commits a push from `folder` carries change a host config or instruction file (GUARDED_PATHS), or a policy

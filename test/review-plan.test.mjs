@@ -238,12 +238,15 @@ test('checkReview: review.visual and a flow content block are checked, and a bad
   assert.match(noLogin.join('\n'), /review\.visual\.login/u);
 });
 
-test('checkLocalVisual: the base URL is a machine setting; anything else there is an error', () => {
+test('checkLocalVisual: the base URL is a machine setting; a bad one is an error, and another field an unknown key', () => {
   assert.deepEqual(checkLocalVisual({ engine: 'self' }, 'local', []), { baseUrl: null });
   assert.deepEqual(checkLocalVisual({ visual: { baseUrl: 'http://localhost:3000/' } }, 'local', []), { baseUrl: 'http://localhost:3000' });
   const errors = [];
   assert.deepEqual(checkLocalVisual({ visual: { baseUrl: 'ftp://x', token: 'y' } }, 'local', errors), { baseUrl: null });
-  assert.equal(errors.length, 1);
+  assert.deepEqual(errors, ['local: unknown key "review.visual.token"', 'local: "review.visual" must be { "baseUrl": "http(s)://host[:port]" }']);
+  const unknown = [];
+  assert.deepEqual(checkLocalVisual({ visual: { baseUrl: 'http://localhost:3000', token: 'y' } }, 'local', unknown), { baseUrl: 'http://localhost:3000' });
+  assert.deepEqual(unknown, ['local: unknown key "review.visual.token"']);
   assert.equal(checkLocalReview({ engine: 'self', visual: { baseUrl: 'http://localhost:3000' } }, 'local', []), 'self');
 });
 

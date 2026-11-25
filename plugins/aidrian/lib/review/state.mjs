@@ -57,7 +57,7 @@ const CLIP = 300;
 const MAX_REASONS = 25;
 // Free text as the visible summary shows it: one line, at most CLIP characters, and no HTML comment opened or closed,
 // so a reason cannot carry a record marker of its own into the comment.
-export const clip = (text) => String(text).replace(/\s+/gu, ' ').slice(0, CLIP).replaceAll('<!--', '&lt;!--').replaceAll('-->', '--&gt;');
+export const clip = (text) => String(text).replace(/\s+/gu, ' ').replaceAll('<!--', '&lt;!--').replaceAll('-->', '--&gt;').slice(0, CLIP);
 
 // The note a visual capture's reason ends with when images were ingested for its head (lib/review/visual.mjs).
 export const INGEST_NOTE = 'ingested, not captured: ';

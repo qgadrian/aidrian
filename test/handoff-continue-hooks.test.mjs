@@ -7,13 +7,13 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { chainOf, checkBrief } from '../plugins/aidrian/lib/handoff-brief.mjs';
-import { continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { CLEAR_STEP, CLEAR_WAIT, continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { arm, openStore, promote, readArmed, readFrom, readHop } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { TEST_HOME } from './fixtures/test-home.mjs';
 
@@ -21,6 +21,7 @@ const SCRIPTS = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts');
 const START = path.join(SCRIPTS, 'hook-session-start.mjs');
 const END = path.join(SCRIPTS, 'hook-session-end.mjs');
 const PROMPT = path.join(SCRIPTS, 'hook-prompt.mjs');
+const WAITS = path.resolve(import.meta.dirname, 'fixtures/waits.mjs');
 const ADVICE = 'Advice from Claude, not a spec: check each claim against the docs and code before building on it.';
 // Text only the brief holds: no hook output may carry it.
 const SECRET = 'Ship the widget behind the purple flag.';
@@ -66,13 +67,16 @@ const armMarker = (setting, extra = {}) =>
   arm(setting.store, { route: 'clear', session: 'old', brief: setting.file, slug: 'widget', chain: 1, sha256: sha(BRIEF), ...extra });
 
 // Runs `script` with the payload `input`, as a child of this process, or through a shell when `shell`, so its parent differs.
-function run(script, input, { shell = false, env = ENV } = {}) {
+// With `waits`, a file, the script runs under test/fixtures/waits.mjs, which records each wait it starts there.
+function run(script, input, { shell = false, env = ENV, waits = null } = {}) {
   const payload = JSON.stringify(input);
   const result = shell
     ? spawnSync('/bin/sh', ['-c', '"$0" "$1"; exit $?', process.execPath, script], { input: payload, encoding: 'utf8', env })
-    : spawnSync(process.execPath, [script], { input: payload, encoding: 'utf8', env });
+    : spawnSync(process.execPath, waits ? ['--import', WAITS, script] : [script], { input: payload, encoding: 'utf8', env: waits ? { ...env, WAIT_LOG: waits } : env });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
+// The waits a script run with `waits` started, each { kind, ms }.
+const waitsIn = (file) => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 
 function runAsync(script, input) {
   return new Promise((resolve) => {
@@ -132,13 +136,24 @@ test('the clear route: the gate arms, the session end promotes, and the session 
   assert.equal(start(setting).stdout, before, 'taken once: a second start prints the plain lines');
 });
 
+// "At once" is a start that never waits, counted in the hook's own process (test/fixtures/waits.mjs), not its wall time,
+// which a loaded machine stretches past any bound: the start's one wait is takeCleared's look for a late promotion.
 test('with nothing armed, a start after a clear prints byte for byte what a start without a source prints, at once', (t) => {
   const setting = setup(t);
-  const at = Date.now();
-  const result = start(setting);
+  const waits = path.join(path.dirname(setting.dir), 'waits.jsonl');
+  const result = start(setting, {}, { waits });
   assert.deepEqual(result, { status: 0, stdout: plain(setting), stderr: '' });
-  assert.ok(Date.now() - at < 2000);
+  assert.deepEqual(waitsIn(waits), [], 'the start waited on nothing');
   assert.equal(existsSync(setting.continueDir), false, 'a plain clear writes nothing');
+});
+
+test('a start after a clear while another session holds a clear marker armed waits for its promotion, and the count shows it', (t) => {
+  const setting = setup(t);
+  armMarker(setting, { session: 'other' });
+  const waits = path.join(path.dirname(setting.dir), 'waits.jsonl');
+  const before = plain(setting);
+  assert.equal(start(setting, {}, { waits }).stdout, before, 'nothing ready: the plain lines');
+  assert.deepEqual(waitsIn(waits), Array(CLEAR_WAIT / CLEAR_STEP).fill({ kind: 'sleep', ms: CLEAR_STEP }), 'it looked again each step, then gave up');
 });
 
 test('only the host process that cleared takes the marker, and only in the main session', (t) => {

@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { after } from 'node:test';
+import test, { after, mock } from 'node:test';
 
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
 import * as githubCalls from '../plugins/aidrian/lib/rules/github/session-calls.mjs';
@@ -599,11 +599,13 @@ test('a line that reads a shell file into the shell, or runs cd through builtin,
 test('a line of thousands of gh calls is read in linear time', () => {
   // 8,000 calls: about 60 ms read in one pass, about 5 s if each call were checked against every other.
   const line = Array.from({ length: 8000 }, (_, at) => `gh pr view ${at + 1}`).join('; ');
-  const started = Date.now();
+  // Processor time, which a busy machine does not stretch as it stretches the wall clock.
+  const before = process.cpuUsage();
   const recorded = unit(line, '/w', fakeGit(ORIGIN).read);
-  const took = Date.now() - started;
+  const { user, system } = process.cpuUsage(before);
+  const took = (user + system) / 1000;
   assert.equal(recorded.length, MAX_ROWS);
-  assert.ok(took < 2000, `${took} ms`);
+  assert.ok(took < 2000, `${took} ms of processor time`);
 });
 
 test('the ledger takes no row for a folder that is not on disk, and keeps its newest rows past the cap', { skip: !POSIX }, () => {
@@ -703,8 +705,18 @@ const blockedLine = (branch) => JSON.stringify({ status: 'blocked', phase: 'vali
 
 // The rows the hook appended to the session's links.jsonl, in each project's state folder, for `command` run in `cwd`
 // with `stdout`, by the project id they were filed under.
+// The hook runs with Date.now stepping 1 ms each read, so the links' 1 s budget (hook-bash-post.mjs LINKS_BUDGET_MS),
+// which a loaded machine spends on git's start-ups alone, holds for the reads of one line however slowly they run: these
+// tests check which rows land where, and the stalled-git tests below check the budget on the real clock. A clock that
+// steps, not one that stands, still ends a lock's wait (lib/session-folder.mjs exclusive).
 async function linkRowsByProject(command, cwd, { stdout = '', session = nextSession(), env = {} } = {}) {
-  await runHook(payload(command, { cwd, session, stdout }), env);
+  let clock = Date.now();
+  const stepped = mock.method(Date, 'now', () => (clock += 1));
+  try {
+    await runHook(payload(command, { cwd, session, stdout }), env);
+  } finally {
+    stepped.mock.restore();
+  }
   const projects = path.join(STATE, 'aidrian/projects');
   return Object.fromEntries(readdirSync(projects).map((id) => [id, path.join(projects, id, 'sessions', session, 'links.jsonl')]).filter(([, file]) => existsSync(file))
     .map(([id, file]) => [id, readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line))]));

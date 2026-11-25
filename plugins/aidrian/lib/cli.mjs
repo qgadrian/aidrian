@@ -28,6 +28,7 @@ const COMMANDS = {
   project: './project-run-cli.mjs',
   'shell-init': './shell-init.mjs',
   test: './test-changed.mjs',
+  wait: './wait-cli.mjs',
 };
 
 // The switch only test code sets (test/cli-in-process.mjs), before it imports this module, to call runCli in its own

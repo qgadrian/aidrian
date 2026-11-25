@@ -237,25 +237,34 @@ export const pauseSync = (ms) => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
 };
 
-// The JSON objects of the last `bytes` of the regular file `file`, one a whole line, in order, read without following a
-// link: a line cut at the start of the read, or that is no JSON object, is left out. null when it cannot be read.
-export function tailObjects(file, bytes) {
+// The last `bytes` of the regular file `file`, as { text, start }, `start` the byte it begins at, read without following
+// a link or waiting on a FIFO, or null when it cannot be read, or is not the file of user `uid` where one is given.
+function readTail(file, bytes, uid) {
   let fd;
-  let text;
   try {
     fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const stat = fstatSync(fd);
-    if (!stat.isFile()) return null;
+    if (!stat.isFile() || (uid !== undefined && stat.uid !== uid)) return null;
     const start = Math.max(0, stat.size - bytes);
     const buffer = Buffer.alloc(stat.size - start);
     const read = readSync(fd, buffer, 0, buffer.length, start);
-    text = buffer.subarray(0, read).toString('utf8');
-    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+    return { text: buffer.subarray(0, read).toString('utf8'), start };
   } catch {
     return null;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+// The text of the last `bytes` of the regular file `file` of user `uid`, whose first line may be cut, or null (readTail).
+export const tailText = (file, bytes, uid) => readTail(file, bytes, uid)?.text ?? null;
+
+// The JSON objects of the last `bytes` of the regular file `file`, one a whole line, in order, read without following a
+// link: a line cut at the start of the read, or that is no JSON object, is left out. null when it cannot be read.
+export function tailObjects(file, bytes) {
+  const tail = readTail(file, bytes);
+  if (tail === null) return null;
+  const text = tail.start > 0 ? tail.text.slice(tail.text.indexOf('\n') + 1) : tail.text;
   return text.split('\n').flatMap((line) => {
     try {
       const value = JSON.parse(line);

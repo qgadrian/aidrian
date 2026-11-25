@@ -1,7 +1,8 @@
 // The characters no display text keeps: every character of the Unicode categories Cc, Cf, Zl, Zp, and Cs, which are C0,
 // C1, DEL, the line and paragraph separators, the bidi controls and marks, zero-width and tag characters, and lone
-// surrogates. One pattern for the snapshot, which removes them (session-snapshot.mjs displayText), and the session
-// ledger, which writes no row holding one (session-prs.mjs, forges/github.mjs changeRef). No dependencies: hooks load it.
+// surrogates. One pattern for the snapshot and `aidrian wait`, which remove them (session-snapshot.mjs displayText,
+// wait-cli.mjs), and the session ledger, which writes no row holding one (session-prs.mjs, forges/github.mjs changeRef).
+// No dependencies: hooks load it.
 
 const HIDDEN_CLASS = String.raw`[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]`;
 

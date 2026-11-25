@@ -36,7 +36,7 @@ An idle notice is not a result: before you act on one, check the branch and pull
 with `git ls-remote --heads origin <branch>` and `gh pr view <n>`, and read its handoff file. A replayed handoff is stale.
 An agent that ends its turn while a command or agent it started in the background still runs goes idle, and nothing wakes it.
 So every brief to an agent that pushes, waits on CI, or starts a reviewer says to wait in the foreground:
-the push or CI wait as a foreground command with a timeout, repeated until it ends, and the reviewer in the foreground.
+start a long push or CI wait, wait for it before the turn ends when the host moves it to the background, and run the reviewer in the foreground.
 
 **Briefs.** Read `references/briefs.md` before the first brief, before a retraction, and before several pull
 requests land: the handoff file, decisions on record, pushes, logs, and landing order.

@@ -32,7 +32,7 @@
       "tags": []
     },
     "hooks.md": {
-      "summary": "Bash rules: pr-body, main-checkout, commits, amend, gates, merge guard, product feedback, ready hold, AIDRIAN_ALLOW_UNHELD_READY, announce, review-loop, bridge.",
+      "summary": "Bash rules: pr-body, main-checkout, commits, amend, gates, merge guard, feedback, ready hold, AIDRIAN_ALLOW_UNHELD_READY, announce, review-loop, aidrian wait.",
       "tags": []
     },
     "project-folder.md": {
@@ -84,7 +84,7 @@
       "tags": []
     },
     "providers/claude-code.md": {
-      "summary": "Claude Code host: install, update, from a local checkout, running aidrian, hooks, models and effort, agent gates, push permission in auto mode, limits.",
+      "summary": "Claude Code host: install, update, local checkout, running aidrian, hooks, models and effort, agent gates, push permission in auto mode, aidrian wait, limits.",
       "tags": []
     },
     "providers/codex.md": {

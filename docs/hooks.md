@@ -78,7 +78,12 @@ At the start of every session and subagent, the hook prints:
   `.claude/settings.json`, and the user's `settings.json` that sets it holds no such line, or, with none set,
   `includeCoAuthoredBy` is `false`. `{ "attribution": { "pr": "" } }` in `.claude/settings.json` settles it for a project;
 - one `Commands:` line when the first `aidrian` on the PATH is another copy of the plugin, such as an installed
-  release while a branch is tried: it names this copy's `aidrian` by its path, so the session runs the code it loaded;
+  release while a branch is tried: it names this copy's `aidrian` by its path, so the session runs the code it loaded.
+  The knowledge line, the `Lessons` reminder, the `Long commands:` line, and the
+  [background check](#background-check)'s message name a command by its bare name only when that runs this copy's, and
+  by its path otherwise;
+- in a subagent, on a host that may move a long foreground command to the background, one `Long commands:` line
+  ([Waiting for a long command](#waiting-for-a-long-command));
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
 - in the main session only, while [`session.handoff.mode`](handoff.md#the-reminder) is `"auto"`, one `Handoff:` line:
@@ -2064,8 +2069,10 @@ A subagent that ends its turn goes idle. Claude Code wakes it with a notice when
 but a background agent it started, such as a reviewer resumed with SendMessage, cannot hand its report back to an idle
 agent, and the work waiting on that report stalls until someone messages it.
 So when a subagent stops while one of its own background tasks still runs, the stop hook sends it back, naming each task,
-to wait for it in the foreground: poll it with a foreground command whose loop ends on its own before the command's timeout,
-and repeat the call until the task ends, or stop it with `TaskStop` when it should not outlive the turn.
+to wait for it in the foreground, or stop it with `TaskStop` when it should not outlive the turn. For a shell on a host
+whose output `aidrian wait` can read, the message names `aidrian wait <id>` ([Waiting for a long command](#waiting-for-a-long-command));
+any other task is polled with a foreground command whose loop ends on its own before the command's timeout, repeated
+until the task ends. On a host that declares one, the message names the limit past which it may move a foreground command.
 
 One send-back did not hold. A foreground wait that outlives its timeout is moved to the background, so at the next stop it
 is one more running task, and some agents answered the send-back by arming a Monitor, another task, and ending the turn.
@@ -2102,6 +2109,42 @@ it started in the background or was moved there at its timeout; an async Agent l
 `resumedAgentId`. A result's text never counts, so a command's output or an agent's report that quotes a launch line claims nothing.
 Reading, waiting on, or stopping another agent's task, such as tailing its output file, does not make it the subagent's own.
 A peer teammate is never a child: a message wakes it. A payload without `background_tasks`, such as Codex's, checks nothing.
+
+## Waiting for a long command
+
+A host may move a subagent's foreground command to the background once it ran for a while, whatever timeout the call asks
+for. Such a host declares it in its adapter (`capabilities.foregroundLimit` and `capabilities.waitCall`), and every subagent
+on it gets one `Long commands:` [start line](#start-lines): the limit, that a long push or CI wait is expected to land
+there, and how to wait for it. The line says "may", since a host can move the commands of one kind of subagent only. The
+agent sources and skills name no number, but for the project run's loop, which a test holds to the adapter's. Claude Code
+is the one host that declares it ([Long commands](providers/claude-code.md#long-commands)).
+
+`aidrian wait <task id> [--max-wait SECONDS]` waits in one call for such a shell to end, for at most the host's
+`waitCall`, 150 seconds on Claude Code, by default. Its first line is `ended <id>`, or
+`running <id>: run the command again to keep waiting, unless the host says the task ended`; an ended task's second is
+`exit code: N`, `exit code: none, it was killed`, or `exit code: unknown` when the host wrote none. Then come the last
+lines of the output, at most 40, each after `| ` and without its hidden characters but tabs, since a task can print
+anything, such as a line that says it ended. It starts no process and writes nothing.
+
+| Exit | When |
+| --- | --- |
+| 0 | The task ended, whatever its own exit code |
+| 3 | It still runs when the wait is over: run the command again |
+| 2 | The id is no task id, the host has no output of it in this session or none that can be read, or the host gives no way to read one: wait for it with the host's own tools |
+| 1 | Wrong arguments |
+
+It finds a task through the host's adapter alone (`capabilities.taskOutput`), and only in the output folder of the session
+its environment names, not of another one in the same project. It reads a regular file of this user's, reached through no
+link, and only its end. Its limits:
+
+- What it prints is a report, never evidence for a gate: its environment and the output file are the user's own to write.
+- Another agent of the same session can read a task's output by its id: the host's file does not say which agent started it.
+- A running command whose latest output is the host's own last line, such as `[exited with code 0]`, reads as ended.
+- A task the host never wrote an end for, as when the host itself ended, reads as running, and so does a killed one that
+  printed more as it shut down, since the host's line is then not the last. An end line in the middle of the file never
+  counts: a running command can print one. So an agent also stops waiting once the host says the task ended.
+- A test run the host moved to the background still leaves no row on the [check-run record](#check-runs), so a report
+  cannot claim it passed, whatever the wait printed.
 
 ## Announced work
 

@@ -44,6 +44,9 @@ const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to
 const MAIN = (ai) => `${NAMES(ai)}\n${VOICE()}\n${FORMAT}\n`;
 const FOOTER = 'Pull requests: a body here never carries the "Generated with [Claude Code]" line. This project rule takes ' +
   "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
+const LONG = 'Long commands: Claude Code may move a command still running after 180 seconds to the background, whatever timeout the call asks for; ' +
+  `expect it for a long push or CI wait. Then wait with \`${path.join(BIN, 'aidrian')} wait <task id>\` in calls of at most 150 seconds each, ` +
+  'with a tool timeout of 170 seconds, until its first line starts with `ended`, or the host says the task ended.';
 // An empty Claude Code user settings folder, so a developer's own settings never reach these tests.
 const USER_SETTINGS = mkdtempSync(path.join(tmpdir(), 'aidrian-start-claude-'));
 test.after(() => rmSync(USER_SETTINGS, { recursive: true, force: true }));
@@ -102,8 +105,16 @@ test('at subagent start, the same lines but the format line come as SubagentStar
   const { status, stdout } = await hook({ args: ['--subagent'], input: JSON.stringify({ cwd: EXAMPLE, agent_type: 'Explore' }), CLAUDECODE: '1' });
   assert.equal(status, 0);
   assert.deepEqual(JSON.parse(stdout), {
-    hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}` },
+    hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}\n${LONG}` },
   });
+});
+
+test('only a subagent on a host that declares a foreground limit hears how to wait for a long command', async () => {
+  const input = JSON.stringify({ cwd: EXAMPLE, agent_type: 'Explore' });
+  assert.doesNotMatch((await hook({ args: ['--subagent'], input })).stdout, /Long commands:/u, 'Codex declares none');
+  assert.doesNotMatch((await hook({ args: ['--subagent'], input, PLUGIN_ROOT: null })).stdout, /Long commands:/u, 'nor does an unknown host');
+  assert.doesNotMatch((await hook({ input, CLAUDECODE: '1' })).stdout, /Long commands:/u, 'the main session is not moved');
+  assert.match((await hook({ args: ['--subagent'], input, CLAUDECODE: '1', PATH: `${BIN}${path.delimiter}${WITHOUT_BIN}` })).stdout, /wait with `aidrian wait <task id>`/u);
 });
 
 test('in Claude Code, a line settles the pull request footer, unless its own attribution settings already drop it', async (t) => {
@@ -560,6 +571,14 @@ test('when another copy of the plugin\'s aidrian comes first on PATH, one line n
   assert.deepEqual(first.stdout.split('\n').slice(3, 5), [line, FORMAT], 'after the voice line, in the main session');
   const subagent = JSON.parse((await hook({ input, args: ['--subagent'], PATH: `${other}${path.delimiter}${WITHOUT_BIN}` })).stdout);
   assert.match(subagent.hookSpecificOutput.additionalContext, new RegExp(`\n${line.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}$`, 'u'), 'and in a subagent');
+  // Every command a subagent is told to run is this copy's then, each by its bare name where this copy's comes first.
+  const told = async (PATH) => JSON.parse((await hook({ input, args: ['--subagent'], CLAUDECODE: '1', PATH })).stdout).hookSpecificOutput.additionalContext;
+  const behind = await told(`${other}${path.delimiter}${BIN}${path.delimiter}${WITHOUT_BIN}`);
+  assert.ok(behind.startsWith(LINE('aidrian-knowledge')) && behind.includes(line) && behind.endsWith(`\n${LONG}`), behind);
+  writeFileSync(path.join(other, 'aidrian-knowledge'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  assert.ok((await told(`${other}${path.delimiter}${BIN}${path.delimiter}${WITHOUT_BIN}`)).startsWith(LINE(path.join(BIN, 'aidrian-knowledge'))));
+  const ahead = await told(`${BIN}${path.delimiter}${other}${path.delimiter}${WITHOUT_BIN}`);
+  assert.ok(ahead.startsWith(LINE('aidrian-knowledge')) && ahead.includes('wait with `aidrian wait <task id>`'), ahead);
   assert.doesNotMatch((await hook({ input, PATH: `${BIN}${path.delimiter}${other}${path.delimiter}${WITHOUT_BIN}` })).stdout, /^Commands:/mu, 'this copy first: nothing');
   assert.doesNotMatch((await hook({ input })).stdout, /^Commands:/mu, 'no aidrian on PATH: nothing');
 });

@@ -41,24 +41,23 @@ import { blockingChildren, checkDelivery, runningChildren, sendsBack, stopAgent,
 import { deliverHandoffs, finalReport } from '../lib/delivery-check.mjs';
 import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../lib/check-runs.mjs';
 import { deny, isMain, runHook } from '../lib/hook-io.mjs';
+import { detectHost } from '../lib/hosts/index.mjs';
 import { deliverySignal, idleChildrenSignal, recordSignal } from '../lib/lesson-signals.mjs';
 import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
 import { sessionFolder } from '../lib/session-folder.mjs';
 import { readText } from '../lib/transcript.mjs';
+import { movedWords, waitWords } from '../lib/wait-advice.mjs';
 
 // What the subagent is told when a background task it started still runs, on send-back `round` of CHILD_SEND_BACKS.
-const childrenReason = (children, round) =>
+const childrenReason = (host, children, round) =>
   `You started background work that is still running: ${children
     .map((child) => `\`${child.id}\` (${child.type}${child.description ? `: ${child.description}` : ''})`)
     .join(', ')}. ` +
   'Ending your turn now leaves you idle, and a subagent task cannot hand its result back to an idle agent. ' +
-  'Wait for it in the foreground before you end the turn: poll it with a foreground command whose loop ends on its own ' +
-  'before the command\'s timeout, such as at most two minutes of an until-loop on its output file or process, and repeat ' +
-  'the call until it finishes. A command that outlives its timeout is moved to the background and counts as one more task, ' +
-  'and a Monitor or another background command is one too, so neither is a wait. ' +
+  `Wait for it in the foreground before you end the turn: ${waitWords(host, children)}${movedWords(host)}. ` +
+  'A Monitor or another background command is one more task too, so neither is a wait. ' +
   'If a task should not outlive this turn, such as a wait loop of yours that the host moved to the background, stop it with TaskStop. ' +
-  `This is send-back ${round} of ${CHILD_SEND_BACKS}. ` +
-  'Next time, run a long push or CI wait as a foreground command with a timeout, and a reviewer agent in the foreground.';
+  `This is send-back ${round} of ${CHILD_SEND_BACKS}.`;
 
 // What the subagent is told when its brief asked for a handoff file it has not written.
 const handoffReason = (files) =>
@@ -184,7 +183,7 @@ export async function handle(input) {
     if (unwritten.length) reasons.push(handoffReason(unwritten));
   }
   if (forMarker) reasons.push(rejectedReason(checked.rejected));
-  if (forChildren) reasons.push(childrenReason(children, made + 1));
+  if (forChildren) reasons.push(childrenReason(detectHost({ input }), children, made + 1));
   if (forEvidence) {
     reasons.push(`${claimProblem(unsupported, unsupported[0].runs, { where: 'Your report' })} ` +
       'Correct the report: quote the output a finished run returned, or say which runs did not finish.');

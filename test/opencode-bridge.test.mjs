@@ -554,6 +554,21 @@ test('a kept root answers only a call whose own read gave the session: one that 
   assert.deepEqual(traceLines(trace).filter((line) => line.step === 'skip').map(({ script, status }) => [script, status]), Array(3).fill(['hook-stop.mjs', 'subagent']));
 });
 
+test('a kept child`s call whose own read fails, comes late, or gives none keeps its kept root as session_id and itself as agent_id', { timeout: 10_000 }, async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let read = () => ({ parentID: 'ses_top', location: { directory: SESSION_DIR } });
+  const context = fakeContext({ sessions: { ses_kid: () => read(), ses_top: {} } });
+  const { calls, fire } = await bridge({ context });
+  await capped(t, context, () => fire(shellEvent({ sessionID: 'ses_kid' })));
+  assert.deepEqual([sent(calls[0]).session_id, sent(calls[0]).agent_id], ['ses_top', 'ses_kid'], 'the child`s root is now kept');
+  for (const [name, misread] of Object.entries(MISREADS)) {
+    read = misread;
+    await capped(t, context, () => fire(shellEvent({ sessionID: 'ses_kid' })));
+    assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_top', 'ses_kid'], name);
+  }
+  assert.deepEqual(context.reads, ['ses_kid', 'ses_top', 'ses_kid', 'ses_kid', 'ses_kid'], 'a failed read walks no parent: the kept root answers');
+});
+
 test(`session reads that never settle end at their own ${READ_MS} ms cap, and the call is sent as a subagent's from the plugin's folder`, { timeout: 10_000 }, async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const trace = path.join(ROOT, 'trace-stalled.jsonl');

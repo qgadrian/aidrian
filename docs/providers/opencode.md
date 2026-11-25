@@ -306,7 +306,9 @@ pull request. None means no OpenCode hook or session read gives the field, and t
   session as `agent_id`, never as the root session's own call, and that answer is not kept, so the next call reads
   again. A kept root saves the walk alone: the calling session's folder is read on every call, and a kept root answers
   only a call whose own read gave the session, so a call whose read fails is sent with `agent_id` even when its
-  session's root is kept.
+  session's root is kept. That call still carries the kept root as `session_id`, so a kept child's call keeps its root
+  session's holds: a root is kept only from a walk that reached its end for that same session, and a session's
+  parent never changes.
 - A subagent's own shell names the child session in `OPENCODE_SESSION_ID`, so that command run there shows none of
   the root session's pull requests.
 - A command in an OpenCode that was itself started from a Claude Code or Codex shell reads the outer host's session:

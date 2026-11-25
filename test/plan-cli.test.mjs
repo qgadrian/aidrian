@@ -335,6 +335,15 @@ test('record refuses an empty text, a forged line, two sections, and a plan that
   }
 });
 
+test('set --plan in-progress starts only from a plan that is ready or already in progress', async (t) => {
+  for (const status of ['open-questions', 'blocked', 'complete']) {
+    const fx = fixture(t, PLAN.replace('status: "ready"', `status: "${status}"`));
+    await refused(fx, ['set', fx.file, '--plan', 'in-progress'], /in-progress is taken from ready or in-progress/u);
+  }
+  const fx = fixture(t, PLAN.replace('status: "ready"', 'status: "in-progress"'));
+  await accepted(fx, 'set', fx.file, '--plan', 'in-progress');
+});
+
 test('set refuses an unknown status, a slice the plan lacks or holds twice, and a block it cannot read', async (t) => {
   const fx = fixture(t);
   for (const status of ['done', 'in-progress', 'ready', 'Complete', '']) await refused(fx, ['set', fx.file, 'S1', status], /a slice's status is pending, in_progress, complete, blocked/u);

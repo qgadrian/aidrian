@@ -521,7 +521,7 @@ A decision that changes what any slice must do is content, so it never goes in a
 | Command | What it changes |
 | --- | --- |
 | `aidrian plan set <file> <slice> pending\|in_progress\|complete\|blocked [--note TEXT]` | The slice's `status:` line, and with `--note` its `notes:` field, added after the status when the slice has none. |
-| `aidrian plan set <file> --plan in-progress\|complete\|blocked` | The frontmatter's `status:` line. `complete` needs every slice `complete`. |
+| `aidrian plan set <file> --plan in-progress\|complete\|blocked` | The frontmatter's `status:` line. `in-progress` is taken from `ready` or `in-progress` alone; `complete` needs every slice `complete`. |
 | `aidrian plan record <file> --by <who> (--text TEXT \| --text-file FILE)` | One entry, `- <date>, <who>: <text>`, at the end of `## Revision history`, or that section added at the end of the file. The date is today's in UTC. |
 
 - A slice is found by the first word after `### Slice `, outside every code fence, without a colon after it.

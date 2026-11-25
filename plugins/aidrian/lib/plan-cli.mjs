@@ -273,12 +273,17 @@ const oneLine = (name) => `${name} is one line of text: no line break, tab, or o
 
 function planEdit(plan, value) {
   if (!plan.front) refuse('the plan has no frontmatter');
+  const status = statusOf(plan, plan.front, 'the frontmatter');
+  // `in-progress` reads as ready to implement, so it starts only from a plan that is.
+  if (value === 'in-progress' && !['ready', 'in-progress'].includes(status.value)) {
+    refuse(`--plan in-progress is taken from ready or in-progress, not ${JSON.stringify(status.value)}; planning-agent sets ready`);
+  }
   if (value === 'complete') {
     const open = slices(plan).filter((slice) => statusOf(plan, ownBlock(plan, slice), sliceName(slice)).value !== 'complete');
     if (open.length) refuse(`not complete: ${open.map(sliceName).join(', ')}`);
     if (slices(plan).length === 0) refuse('the plan has no slice to read as complete');
   }
-  return apply(plan, statusEdit(statusOf(plan, plan.front, 'the frontmatter'), value));
+  return apply(plan, statusEdit(status, value));
 }
 
 function sliceEdit(plan, id, value, note) {

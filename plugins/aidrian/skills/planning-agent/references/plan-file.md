@@ -123,6 +123,9 @@ If any condition fails, return `status: open-questions` or `status: blocked` and
 Tools that resume execution from a plan (e.g., `issue-implement`) treat the plan file as the durable source of truth for slice state:
 
 - Re-read the plan at the start of each slice iteration.
+- Mark a local plan with `aidrian plan`, which changes the lines it names and no other byte: `aidrian plan set <plan> <slice> <status> [--note TEXT]`
+  for a slice's `status` and `notes`, and `aidrian plan record <plan> --by <who> (--text TEXT | --text-file FILE)` for a `## Revision history` entry
+  that changes no slice. A plan git tracks takes its edits as the `issue-implement` skill's phases 3 and 7 say.
 - Update `slice.status` to `in_progress` before dispatch.
 - Update `slice.status` to `complete` just before the slice's commit; a plan file git tracks goes in that commit.
   Record no commit SHA: `git log` finds the commit by its `planned_commit_subject`.
@@ -142,4 +145,5 @@ Tools that resume execution from a plan (e.g., `issue-implement`) treat the plan
   Re-runs of `design-import` against the same slug keep `plan_kind: technical-design` (never flip to `revision`), bump `generated_at`, and append a
   `## Revision history` entry.
 - Revisions: keep the same file; bump `generated_at`; record what changed in a top-level `## Revision history` section if the change is material.
-- Completed plans (all slices `complete`, PR merged): set frontmatter `status: complete` but do not delete the file — it remains the durable record.
+- Completed plans (all slices `complete`, PR merged): set frontmatter `status: complete`, a local plan's with
+  `aidrian plan set <plan> --plan complete`, but do not delete the file — it remains the durable record.

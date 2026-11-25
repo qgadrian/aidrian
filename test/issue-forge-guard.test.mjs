@@ -648,6 +648,15 @@ test('an issue session writes no workflow file, no handoff brief or snapshot, no
   }
 });
 
+test('an issue session marks with aidrian plan only the plan named for its own issue, as its file tools write only that one', (t) => {
+  const fx = issueFixture(t);
+  const call = (name, lead = '') => fx.ask(bash(`${lead}aidrian plan set ${path.join(fx.state, 'plans', name)} S1 complete`));
+  assert.equal(call('eng-1-implementation.md'), null);
+  for (const name of ['eng-2-implementation.md', 'eng-10-implementation.md', 'billing-plan.md']) {
+    for (const lead of ['', 'env -u CLAUDE_CODE_SESSION_ID ']) assert.match(call(name, lead)?.reason ?? '', /an issue session writes only plans\/eng-1-\.\.\. there/u, lead + name);
+  }
+});
+
 test('with no running start to name its issue, an issue session writes none of the shared plans, tmp, or dispatch files', (t) => {
   const fx = issueFixture(t);
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'parked', at: new Date().toISOString() }] }));

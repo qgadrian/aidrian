@@ -12,8 +12,8 @@ This plugin's agents named here, such as `integrator`, are spawned as `aidrian:<
 **Who writes git.** The agent that implements a slice or fixes a finding commits and pushes it, the first push with `-u`.
 The `integrator` pushes the task branch it lands. You write no git: you read it, check the remote with `git ls-remote`,
 and run `gh` and `aidrian`.
-You write files only under `<state>`. A plan git tracks, such as a design import's, gets its status edits from `planning-agent`,
-and the slice's commit carries them, as the `issue-implement` skill's phases 3 and 7 say.
+You write files only under `<state>`; mark a local plan with `aidrian plan`. A plan git tracks gets its status edits from
+`planning-agent`, and the slice's commit carries them, by `issue-implement` phases 3 and 7.
 
 ## 1. The task worktree
 

@@ -36,7 +36,7 @@
       "tags": []
     },
     "project-folder.md": {
-      "summary": ".aidrian/ init, check, lint, state/sessions/runs/hook-counts, local sources, decision markers, decisions list/set, quorum route, quorum provisional, migrating",
+      "summary": ".aidrian/ init, check, lint, state/sessions/hook-counts/plan, local sources, decision markers, decisions list/set, quorum route, quorum provisional, migrating",
       "tags": []
     },
     "personas.md": {

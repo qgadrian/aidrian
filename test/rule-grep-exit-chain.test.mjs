@@ -385,7 +385,7 @@ test('a count of the text the sed -i right before it writes into the same file r
     "sed -i '' \"s/'remotes', 'review-gate',/'remotes', 'resume-tokens', 'review-gate',/\" lib/project.mjs && grep -c \"'resume-tokens'\" lib/project.mjs",
     "sed -i '' 's/state: .failed./state: \"parked\"/g' test/a.test.mjs && grep -c 'parked' test/a.test.mjs && node --test test/a.test.mjs",
     "sed -i '' -e \"342s/\\['launch'\\]/['launch', '--kind']/\" t.mjs && grep -c \"'--kind'\" t.mjs",
-    "sed -i 's#@127.0.0.1:54329/taxyvo#@127.0.0.1:54339/taxyvo#' .env && grep -c '127.0.0.1:54339' .env",
+    "sed -i 's#@127.0.0.1:54329/app#@127.0.0.1:54339/app#' .env && grep -c '127.0.0.1:54339' .env",
     "sed -i.bak -E 's/a+/new text/' f && grep -ci 'NEW TEXT' f",
     "sed --in-place -e 's/a/x &y/' f && grep -cF 'x ' f",
     "cd w && sed -i '' 's/a/b c/' f && grep -c 'b c' f",

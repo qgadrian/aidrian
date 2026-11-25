@@ -433,8 +433,8 @@ through the `events` seam. None means no OpenCode hook or session read gives the
   most 8 steps, and sends the root as `session_id` and the calling session as `agent_id`, as a subagent's rows land on
   Claude Code. A read counts as the session only when it gives an object whose `id` is the id asked for, as 2.4.1's
   `Session.Info` always carries, so `{}` or an error object is no session.
-  The bridge reads a session's parents on each call, with its folder, and keeps each parent link a read gave, at most 256
-  before it forgets them all. A session a read once named a parent for stays a subagent for that setup: its delete event
+  The bridge reads a session's parents on each call, with its folder, and keeps each parent link a read gave, the 256 used
+  last. A session a read once named a parent for stays a subagent for that setup: its delete event
   keeps its link, so a late call of it, or of its own child, stays under its root.
   A walk finishes at a session whose read names no parent and that holds no link, and that session is the root: the call
   is the root session's own only when the walk finished without a step. A read that fails, comes past the 2 s cap, or

@@ -17,8 +17,8 @@ import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-// How many sessions the root walk reads at most, how many parent links and root folders the bridge keeps before it forgets
-// them all, and how long all the session reads of one call may take together: past that the call is sent with what was read.
+// How many sessions the root walk reads at most, how many parent links, the last used, and root folders the bridge keeps,
+// and how long all the session reads of one call may take together: past that the call is sent with what was read.
 const PARENT_STEPS = 8;
 const ROOTS_MAX = 256;
 export const READ_MS = 2000;
@@ -102,7 +102,7 @@ export function folderOf(workdir, dir, home) {
 // that ends at a linked session, sets `failed`: the call is sent as a subagent's, with `agent` the calling id and `root`
 // where the links lead, never as the root session's own. A link drops any folder kept for the child as a root, and a
 // finished walk keeps its root's for its end (endCall). A walk is resolved by the links held with its own, and only then,
-// past ROOTS_MAX, are all but its own forgotten. Nothing is awaited between the last read and the last store, so two calls
+// past ROOTS_MAX, do the least recently stored or followed go. Nothing is awaited between the last read and the last store, so two calls
 // in flight cannot undo each other's.
 async function sessionOf(runner, get, sessionID) {
   const own = await readOf(get, sessionID);
@@ -115,14 +115,14 @@ async function sessionOf(runner, get, sessionID) {
     last = links.length < PARENT_STEPS ? await readOf(get, id) : null;
   }
   for (const [child, parent] of links) {
-    runner.roots.set(child, parent);
+    use(runner, child, parent);
     runner.folders.delete(child);
   }
   const finished = last !== null && !runner.roots.has(id);
   const root = finished ? id : linkedRoot(runner, sessionID);
-  if (runner.roots.size > ROOTS_MAX) {
-    runner.roots.clear();
-    for (const [child, parent] of links) runner.roots.set(child, parent);
+  for (const oldest of runner.roots.keys()) {
+    if (runner.roots.size <= ROOTS_MAX) break;
+    runner.roots.delete(oldest);
   }
   const dir = own?.dir ?? null;
   if (!finished) return { root, agent: sessionID, dir, rootDir: null, failed: true };
@@ -144,16 +144,26 @@ async function readOf(get, id) {
   }
 }
 
-// Where the kept links lead from the session `id`, PARENT_STEPS of them at most: `id` itself when it holds none.
+// Where the kept links lead from the session `id`, PARENT_STEPS of them at most, each then the last used: `id` itself when
+// it holds none.
 function linkedRoot(runner, id) {
   let root = id;
-  for (let step = 0; step < PARENT_STEPS && runner.roots.has(root); step += 1) root = runner.roots.get(root);
+  for (let step = 0; step < PARENT_STEPS && runner.roots.has(root); step += 1) {
+    const parent = runner.roots.get(root);
+    use(runner, root, parent);
+    root = parent;
+  }
   return root;
 }
 
+// Keeps the link from `child` to `parent` as the last used, the newest of the map's order.
+function use(runner, child, parent) {
+  runner.roots.delete(child);
+  runner.roots.set(child, parent);
+}
+
 // Keeps `dir`, the folder a finished walk gave the root session `root`, for its SessionEnd (endCall), which runs once the
-// session can no longer be read. Only an absolute path is kept, and the map is cleared whole at ROOTS_MAX, as the links'
-// is.
+// session can no longer be read. Only an absolute path is kept, and the map is cleared whole at ROOTS_MAX.
 function remember(runner, root, dir) {
   if (!absolute(dir)) return;
   if (runner.folders.size >= ROOTS_MAX && !runner.folders.has(root)) runner.folders.clear();

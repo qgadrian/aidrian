@@ -539,7 +539,7 @@ function misread(context, ...ids) {
   context.session.get = async (input) => { if (ids.includes(input.sessionID)) throw new Error('read'); return get(input); };
 }
 
-test('the kept links are cleared whole once the next would pass 256: an earlier child`s root is lost, the walker`s own kept', async () => {
+test('past 256 kept links the least recently used one goes: the oldest is lost, one followed lately and the walker`s own are kept', async () => {
   const sessions = { ses_top: {} };
   for (let n = 0; n <= 256; n += 1) sessions[`ses_kid${n}`] = { parentID: 'ses_top' };
   const context = fakeContext({ sessions });
@@ -549,11 +549,13 @@ test('the kept links are cleared whole once the next would pass 256: an earlier 
   await fire(shellEvent({ sessionID: 'ses_kid0' }));
   assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_top', 'ses_kid0'], 'with 256 links kept, the first`s is still known');
   await fire(shellEvent({ sessionID: 'ses_kid256' }));
-  await fire(shellEvent({ sessionID: 'ses_kid0' }));
-  assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_kid0', 'ses_kid0'], 'its link is gone');
-  misread(context, 'ses_kid256');
-  await fire(shellEvent({ sessionID: 'ses_kid256' }));
-  assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_top', 'ses_kid256']);
+  misread(context, 'ses_kid1', 'ses_kid2', 'ses_kid256');
+  for (const [sessionID, root, why] of [
+    ['ses_kid1', 'ses_kid1', 'the oldest not used since is gone'], ['ses_kid0', 'ses_top', 'followed lately'], ['ses_kid2', 'ses_top', 'one link past the bound drops one'], ['ses_kid256', 'ses_top', 'the walker`s own'],
+  ]) {
+    await fire(shellEvent({ sessionID }));
+    assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], [root, sessionID], why);
+  }
 });
 
 // The bridge with the record-only shell route and the SessionEnd route, on ses_top, ses_mid with the parent `parent()` gives
@@ -665,7 +667,10 @@ test('a walk that meets the 256-link bound loses none of its own links', async (
     const { call, context, last } = await middleBridge(`links-${links}`, () => 'ses_top');
     for (let n = 0; n < links; n += 1) await call(`ses_kid${n}`);
     await call('ses_low');
-    misread(context, 'ses_low', 'ses_mid', 'ses_kid0');
+    misread(context, 'ses_low', 'ses_mid', 'ses_kid0', 'ses_kid1');
+    // The next call, since each call drops what is past the bound.
+    await call('ses_kid1');
+    assert.deepEqual(last(), [links === 256 ? 'ses_kid1' : 'ses_top', 'ses_kid1'], `${links} links: two past the bound drop two`);
     for (const sessionID of ['ses_low', 'ses_mid']) {
       await call(sessionID);
       assert.deepEqual(last(), ['ses_top', sessionID], `${links} links`);
@@ -682,6 +687,13 @@ test('a call of a child already linked, with 256 links kept, clears none: anothe
   misread(context, 'ses_kid1');
   await call('ses_kid1');
   assert.deepEqual(last(), ['ses_top', 'ses_kid1']);
+  // The first child's second walk stored its link anew, so the next link drops the third child's.
+  await call('ses_kid256');
+  misread(context, 'ses_kid0', 'ses_kid2');
+  for (const [sessionID, root] of [['ses_kid0', 'ses_top'], ['ses_kid2', 'ses_kid2']]) {
+    await call(sessionID);
+    assert.deepEqual(last(), [root, sessionID]);
+  }
 });
 
 test('with 256 links kept, a new descendant`s walk that ends at a linked child goes to that child`s root, and the child`s delete runs nothing', { timeout: 10_000 }, async () => {
@@ -692,9 +704,11 @@ test('with 256 links kept, a new descendant`s walk that ends at a linked child g
   parentID = undefined;
   await call('ses_low');
   assert.deepEqual(last(), ['ses_top', 'ses_low']);
+  await call('ses_low');
+  assert.deepEqual(last(), ['ses_top', 'ses_low'], 'its next callback too');
   await remove('ses_mid');
   assert.deepEqual(ends(calls), []);
-  assert.deepEqual(skips(), [['hook-session-end.mjs', 'read']], 'no folder was kept for it');
+  assert.deepEqual(skips(), [['hook-session-end.mjs', 'subagent']], 'its link was used last, so it stays');
 });
 
 test('a two-session cycle`s links count once: with 254 links kept, its walk clears none', async () => {

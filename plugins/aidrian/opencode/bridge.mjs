@@ -66,7 +66,7 @@ const IDLE_HOOK = 'experimental.idle';
 const AFTER_HOOK = 'execute.after';
 // The OpenCode hooks a call of a tool runs; every other hook of EVENTS is a session hook.
 const TOOL_HOOKS = new Set([BLOCKING_HOOK, AFTER_HOOK]);
-// How many calls' PreToolUse contexts the bridge keeps at most before it forgets them all, as the map of parent links does.
+// How many calls' PreToolUse contexts the bridge keeps at most before it forgets them all.
 export const CONTEXTS_MAX = 256;
 // The session hooks the plugin's text reaches the model on, registered after the others (registerAll).
 export const SESSION_HOOKS = Object.freeze(['context', 'compaction']);

@@ -59,6 +59,7 @@ import path from 'node:path';
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
 import { DEFAULTS } from './config-defaults.mjs';
+import { maskSecrets } from './clean-text.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { changeNotFound, forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
@@ -657,8 +658,11 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // A host that would refuse the push of a session the driver `session` starts in the clone halts too (pushPreflight, in
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the placeholders go in (placeHolders,
-// clonePlaceholders).
-function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
+// clonePlaceholders). A halt or a retry, which the user's config or the host's settings cause, removes the clone, since
+// no start row names it for the sweep (sweepAttempts) and a halted run may never start the issue again; a refusal of
+// what the clone holds keeps it for a person to look at, and the issue's next start replaces it.
+function confinedRoom(given) {
+  const { project, state, run, key, branch, recorded, reviewed, guards, attempt, tip, env, home } = given;
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
   const clone = prepareAttempt({ project, state, run, key, attempt, branch, recorded, tip, reviewed, guards, env });
@@ -666,6 +670,14 @@ function confinedRoom({ project, state, run, key, branch, resumed, recorded, rev
   if (clone.retry) return { retry: clone.retry };
   if (clone.park) return { park: clone.park };
   if (clone.problem) return { problem: clone.problem };
+  const room = clonedRoom({ ...given, clone, folders });
+  if (room.halt || room.retry) safely(() => rmSync(clone.folder, { recursive: true, force: true }));
+  return room;
+}
+
+// The checks and files of confinedRoom on the attempt's fresh clone `clone` (prepareAttempt), with the state folders
+// `folders` its session may write (stateWorkFolders): the room, or { halt }, { retry }, or { problem }.
+function clonedRoom({ project, run, key, attempt, state, resumed, tip, env, found, cap, policy, main, pushUrl, session, checked, policyFiles, clone, folders }) {
   const trust = trustProblem(clone.work, clone.reviewed ?? tip, clone.overlay?.files ?? []) ?? ancestorProblem(clone.work, { project, tip, env }) ?? pushProblem(clone.work, found.init.repository);
   if (trust) return { problem: `the attempt's clone ${clone.work} is not started: ${trust}` };
   if (typeof cap.cloneProblem === 'function') {
@@ -681,9 +693,10 @@ function confinedRoom({ project, state, run, key, branch, resumed, recorded, rev
   // (lib/issue-push-checkout.mjs) lets a push through only to exactly one, the URL pinned here.
   const pushes = gateGit(['remote', 'get-url', '--push', '--all', 'origin'], clone.work, { timeout: 30_000 });
   const urls = pushes.status === 0 ? pushes.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : [];
-  if (urls.length > 1) return { halt: `the attempt's clone pushes to ${urls.length} URLs (${urls.join(', ').slice(0, 240)}), as a second remote.origin.pushurl in the user's or the system's git config makes it, and an issue session pushes to exactly one, the URL its start pins; remove the extra push URL, then start again` };
+  // A URL is printed only masked (clean-text.mjs maskSecrets), before any cut: a remote URL may carry a token.
+  if (urls.length > 1) return { halt: `the attempt's clone pushes to ${urls.length} URLs (${maskSecrets(urls.join(', ')).slice(0, 240)}), as a second remote.origin.pushurl in the user's or the system's git config makes it, and an issue session pushes to exactly one, the URL its start pins; remove the extra push URL, then start again` };
   const url = urls[0] ?? null;
-  if (typeof pushUrl === 'string' && url !== pushUrl) return { halt: `the attempt's clone pushes to ${url ?? 'no URL'}, not ${pushUrl}, the URL the host's access check read, as a pushInsteadOf in the user's git config would make it; remove the rewrite, then start again` };
+  if (typeof pushUrl === 'string' && url !== pushUrl) return { halt: `the attempt's clone pushes to ${url === null ? 'no URL' : maskSecrets(url)}, not ${maskSecrets(pushUrl)}, the URL the host's access check read, as a pushInsteadOf in the user's git config would make it; remove the rewrite, then start again` };
   // The denial names a settings file a session no Human attends must never edit: only the Human widens push trust.
   const push = pushPreflight({ cwd: clone.work, env, session, git: (args, cwd) => gateGit(args, cwd, { env }) });
   if (push.answer === 'denied') return { halt: `no session started, since ${push.message}` };

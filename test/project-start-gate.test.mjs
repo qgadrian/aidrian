@@ -336,6 +336,23 @@ test('start halts when the user\'s git config gives origin a second push URL, wh
   assert.deepEqual(fx.claude.starts(), []);
 });
 
+// A remote URL may carry a token, as `https://user:<token>@host/...` or `https://<token>@host/...`: every halt that
+// names one prints it masked (clean-text.mjs maskSecrets), and a URL cut to length is masked before the cut.
+test('a start halt that names a push URL with a token in it prints the token masked, even where the URL is cut', (t) => {
+  const secret = 's3cr3t'.repeat(40);
+  const second = runFixture(t);
+  appendFileSync(testGlobalConfig(t), `[remote "origin"]\n\tpushurl = ${ORIGIN}\n\tpushurl = https://bot:${secret}@github.com/acme/widgets.git\n`);
+  const two = second.cmd(['start', 'launch', 'ENG-1']);
+  assert.match(two.out[0], /^halt the attempt's clone pushes to 2 URLs \(https:\/\/github\.com\/acme\/widgets\.git, https:\/\/bot:\[redacted\]@github\.com\/acme\/widgets\.git\)/u, JSON.stringify(two));
+  // An origin whose own URL holds the token, rewritten to another repository: the trust check's halt names it.
+  const rewrite = runFixture(t);
+  rewrite.git('config', 'remote.origin.pushurl', `https://${secret}@github.com/acme/widgets.git`);
+  rewrite.git('config', 'url.https://github.com/evil/.pushInsteadOf', `https://${secret}@github.com/acme/`);
+  const rewritten = rewrite.cmd(['start', 'launch', 'ENG-1']);
+  assert.match(rewritten.out[0], /^halt git config url\.https:\/\/github\.com\/evil\/\.pushinsteadof rewrites origin's URL https:\/\/\[redacted\]@github\.com\/acme\/widgets\.git to another repository/u, JSON.stringify(rewritten));
+  for (const result of [two, rewritten]) assert.doesNotMatch([...result.out, ...result.err].join('\n'), /s3cr3t/u);
+});
+
 // What the forge holds the issue sessions to, asked again at every start, with the very token the start hands the session
 // (lib/project-forge-holds.mjs holdsProblem): a protection changed since the preflight, or read for another account,
 // starts nothing.
@@ -407,6 +424,8 @@ test('start halts before the launch when the host would refuse the push of a ses
   assert.match(halt, /the Human adds "\$defaults" to that list/u);
   assert.deepEqual(fx.claude.starts(), [], 'no session started');
   assert.deepEqual(fx.rows(), [], 'a halt records nothing');
+  // No start row names the halted attempt's clone, so no sweep would remove it: the halt does.
+  assert.ok(!existsSync(attemptFolder(fx.state, 'launch', 'ENG-1', 1)), 'the halted start leaves no clone');
   writeFileSync(settings, JSON.stringify({ autoMode: { environment: ['Trusted repo: github.com/acme/widgets'] } }));
   const started = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(started.exitCode, 0, JSON.stringify(started));

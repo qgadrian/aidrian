@@ -480,6 +480,13 @@ test('an issue session pushes only from its own clone\'s repository, to the URL 
   git(fx.work, 'config', '--add', 'remote.origin.pushurl', fx.dir);
   git(fx.work, 'config', '--add', 'remote.origin.pushurl', other);
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /one of the 2 URLs origin pushes to, and origin pushes only to/u, 'a second push URL');
+  // A push URL with a token in it prints masked, whole or cut: the denial reaches the session's transcript.
+  git(fx.work, 'config', '--unset-all', 'remote.origin.pushurl');
+  const secret = 's3cr3t'.repeat(30);
+  git(fx.work, 'remote', 'set-url', '--push', 'origin', `https://bot:${secret}@github.com/acme/widgets.git`);
+  const masked = fx.ask(bash(EXACT))?.reason ?? '';
+  assert.match(masked, /it pushes to https:\/\/bot:\[redacted\]@github\.com\/acme\/widgets\.git, and origin pushes only to/u);
+  assert.doesNotMatch(masked, /s3cr3t/u);
 });
 
 test('an issue session writes the findings file pr review names for it, and no review folder another issue key leads', (t) => {

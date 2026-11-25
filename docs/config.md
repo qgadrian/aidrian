@@ -1971,7 +1971,7 @@ session the host continued the driver as takes custody with it and lifts no halt
 An issue's session that finds its own environment broken, such as a sandbox that refuses what the work needs, a forge
 sign-in or push that fails, or a host tool that fails, records the result `environment`, with the failing command and
 its error as its `stop`, which it must name. Every result's `stop` has anything shaped like a token, a URL's password,
-or an Authorization value masked as `[redacted]` before it is kept. The driver's `wait` records the result with that
+the user part of an HTTP URL with no password, or an Authorization value masked as `[redacted]` before it is kept. The driver's `wait` records the result with that
 stop as the run's halt cause, in the same row, and prints `result ISSUE environment -> open`, or `-> parked attempts`
 on the issue's last attempt: the cause is fixed once for the whole run, not once per issue, and a `start` checks for
 a halt again under the ledger's lock. The attempt counts toward the issue's 3, as after `failed`: with attempts left,
@@ -2054,8 +2054,13 @@ settles it, so a gate killed mid-start leaves a row `wait` finds and settles. A 
 attempt's clone pushes to, read before its session starts, and a clone that pushes to more than one URL, as a second
 `remote.origin.pushurl` in the user's git config makes it, halts the start; the issue session's one push goes only there
 ([hooks.md](hooks.md#agent-gates)). A host that would refuse that push in the driver session's permission mode, which the session
-takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
-clone under its host's sandbox, and a host that is not halts the start.
+takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)).
+A halt or a retry from these checks on the attempt's clone removes the clone, since no start row names it for the
+driver's sweep; a refusal of what the clone holds, such as a link where a host file goes, keeps it to look at, and the
+issue's next start replaces it. Every message of the start, the preflight, and the push guard that names a remote URL
+masks the password or token in its user part as `[redacted]` before it cuts the URL to length, as
+`https://bot:[redacted]@github.com/acme/widgets.git` or `https://[redacted]@github.com/acme/widgets.git`.
+Every start is confined to a fresh clone under its host's sandbox, and a host that is not halts the start.
 A run never discards or rebuilds existing work unless a person asks.
 A later attempt goes on on the issue's branch, as does the first attempt of an issue `resumed` from an earlier run at a
 head the branch still holds.

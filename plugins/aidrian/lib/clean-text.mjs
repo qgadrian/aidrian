@@ -12,11 +12,15 @@ const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}]/gu;
 const DOMAIN = /(?<![\w.@-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(?![\w-])(?:[/:]\S*)?/giu;
 
 // `text` with anything shaped like a credential masked as `[redacted]`: a forge, chat, cloud, or API token by its
-// prefix, a JSON web token, the password of a URL's user part, and the value after an HTTP Authorization scheme.
+// prefix, a JSON web token, the password of a URL's user part, empty user or not, the whole user part of an HTTP URL
+// with no password, where a forge takes a token as the user name (`https://<token>@host/...`), and the value after an
+// HTTP Authorization scheme. Every message that prints a remote URL masks it with this before it cuts it to length, so
+// no cut leaves part of a credential behind.
 export const maskSecrets = (text) => String(text)
   .replace(/\b(?:gh[pousr]_|github_pat_|glpat-|sk-|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/gu, '[redacted]')
   .replace(/\b(?:eyJ[A-Za-z0-9_-]{10,}\.){2}[A-Za-z0-9_-]{10,}/gu, '[redacted]')
-  .replace(/(:\/\/[^\s/:@]+:)[^\s/@]+@/gu, '$1[redacted]@')
+  .replace(/(:\/\/[^\s/:@]*:)[^\s/@]+@/gu, '$1[redacted]@')
+  .replace(/(\bhttps?:\/\/)(?!\[redacted\]@)[^\s/:@]+@/giu, '$1[redacted]@')
   .replace(/\b(authorization\\?["']?\s*[:=]\s*)(?:\\?"(?:\\.|[^"\\])*\\?"|'(?:\\.|[^'\\])*'|[^\n|]*)/giu, '$1[redacted]')
   .replace(/\b((?:basic|bearer|token)\s+)(?!\[redacted\])[A-Za-z0-9+/=._-]{12,}/giu, '$1[redacted]');
 

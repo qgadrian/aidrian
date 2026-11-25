@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { cleanText } from './clean-text.mjs';
+import { cleanText, maskSecrets } from './clean-text.mjs';
 import { foldCase, isWithin, resolvedPath } from './fs.mjs';
 import { repoIdentity } from './forges/index.mjs';
 import { GATE_CONFIG, gateGit } from './git.mjs';
@@ -77,7 +77,7 @@ function insteadOfProblem(entry, origins, pinned) {
   if (!match) return null;
   for (const url of origins.filter((each) => entry.value !== '' && each.startsWith(entry.value))) {
     const id = repoIdentity(`${match[1]}${url.slice(entry.value.length)}`);
-    if (!id || `${id.host}/${id.path}`.toLowerCase() !== pinned) return `git config ${entry.key} rewrites origin's URL ${url} to another repository`;
+    if (!id || `${id.host}/${id.path}`.toLowerCase() !== pinned) return maskSecrets(`git config ${entry.key} rewrites origin's URL ${url} to another repository`);
   }
   return null;
 }

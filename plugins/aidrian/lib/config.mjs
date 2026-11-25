@@ -21,6 +21,7 @@ import { checkLocalReview, checkLocalVisual } from './review/config.mjs';
 export { baseBranchTip, committedAuthority, committedConfig, committedDecisions, committedQuorumProduct, configFromText, firstTip, originDefaultTip, stateDirProblem, strictConfigFromText } from './config-committed.mjs';
 export { DEFAULTS } from './config-defaults.mjs';
 export { localDecisions, machineSwitch, resolveAutoMerge, resolveUnattendedWaiver } from './config-local.mjs';
+export { handoffModelErrors } from './config-merge.mjs';
 export { AUDIT_LABEL_FIELDS, COMMIT_FIELDS, MAX_PLAN_OBJECTIONS, NO_REVIEWER, PR_FIELDS, VERSION } from './config-schema.mjs';
 export { pluginRepository, pluginVersion, versionProblem } from './config-version.mjs';
 

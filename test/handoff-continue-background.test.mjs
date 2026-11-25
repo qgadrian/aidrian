@@ -1465,6 +1465,9 @@ const lineOf = (model, effort) => `The start asked for ${model} and ${effort}.`;
 const NONE_LINE = lineOf(HOST_LINE('model'), HOST_LINE('effort'));
 // An assistant entry whose message names the model that wrote it, as a Claude Code transcript holds it.
 const modelEntry = (model, extra = {}) => ({ ...assistantEntry(3), message: { role: 'assistant', model, content: [{ type: 'text', text: 'ok' }] }, ...extra });
+// A prompt as most carry it, with no mode: a `user` entry whose content is `content`.
+const promptEntry = (content = 'go on', extra = {}) => ({ parentUuid: null, isSidechain: false, type: 'user', message: { role: 'user', content }, uuid: 'p', sessionId: SESSION, ...extra });
+const toolResult = (extra = {}) => promptEntry([{ type: 'text', text: 'and' }, { type: 'tool_result', tool_use_id: 't', content: 'done' }], extra);
 
 // The gate's run on a session whose transcript holds `entries`, with the effort variable `effort` or none: { setting,
 // result, calls, args, prompt, say }, `args` those of the one start, its prompt apart, or null when none started.
@@ -1542,7 +1545,7 @@ test('a model the session\'s own main-chain assistant entry does not name, or on
     ['a model in a tool call\'s input', [{ ...assistantEntry(0), message: { role: 'assistant', content: [{ type: 'tool_use', input: { model: FABLE } }] } }], FABLE],
     ['a top-level model', [{ ...assistantEntry(0), model: FABLE }], FABLE],
     ['a user entry', [{ ...userEntry('auto'), message: { role: 'user', model: FABLE, content: 'go' } }], FABLE],
-    ['a tool result\'s entry', [{ ...assistantEntry(0), type: 'user', message: { role: 'user', model: FABLE, content: 'done' } }], FABLE],
+    ['a tool result\'s entry', [{ ...toolResult(), message: { ...toolResult().message, model: FABLE } }], FABLE],
     ['a leading dash', bad('--dangerously-skip-permissions'), '--dangerously-skip-permissions'],
     ['a space', bad('claude-opus-5 5'), 'claude-opus-5 5'],
     ['a newline', bad(`${OPUS}\n`), `${OPUS}`],
@@ -1570,18 +1573,48 @@ test('the model is the one the turn started in: no mid-turn fallback, a switch b
     transcript(setting, entries);
     return sessionModel({ session: SESSION, cwd: setting.dir, env: setting.env });
   };
-  const turn = userEntry('auto');
+  const turn = promptEntry();
   assert.equal(read(turn, modelEntry(OPUS), modelEntry(HAIKU)), OPUS, 'a fallback in the middle of the turn');
   assert.equal(read(turn, modelEntry('<synthetic>'), modelEntry(OPUS, { isSidechain: true }), modelEntry(FABLE), modelEntry(HAIKU)), FABLE, 'the first that counts');
   assert.equal(read(turn, modelEntry(OPUS), turn, modelEntry(FABLE)), FABLE, 'a switch before the last prompt');
   assert.equal(read(turn, modelEntry(OPUS), modelEntry(HAIKU), turn), HAIKU, 'none since the last prompt: the nearest earlier one');
-  assert.equal(read(turn, modelEntry(OPUS), { type: 'permission-mode', permissionMode: 'auto', sessionId: SESSION }, modelEntry(FABLE)), FABLE, 'a mode entry is such an entry too');
   assert.equal(read(turn, modelEntry(OPUS), turn, modelEntry('opusplan'), modelEntry(OPUS)), null, 'a bad first one is not replaced by a later or an older one');
   assert.equal(read(turn, modelEntry(OPUS), modelEntry('opusplan'), turn), null, 'nor is a bad nearest earlier one');
-  assert.equal(read(modelEntry(OPUS)), null, 'with no entry that names the mode, no turn');
+  assert.equal(read(modelEntry(OPUS)), null, 'with no prompt, no turn');
   assert.equal(read(turn), null);
   for (const good of [OPUS, 'claude-sonnet-4-20250514', 'claude-opus-4-1-20250805', 'claude-haiku-5']) assert.equal(read(turn, modelEntry(good)), good);
   assert.equal(sessionModel({ session: SESSION, cwd: undefined, env: setting.env }), null, 'no folder, no read');
+});
+
+test('a turn starts at a prompt, whether or not it carries a mode, and at no other entry', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = (...entries) => {
+    transcript(setting, entries);
+    return sessionModel({ session: SESSION, cwd: setting.dir, env: setting.env });
+  };
+  // A message from a peer, say, carries no mode: the turn it starts is answered by the model the Human switched to.
+  const peer = modelRun(t, [userEntry('auto'), modelEntry(OPUS), promptEntry('a message'), modelEntry(FABLE)]);
+  assert.deepEqual(peer.args, flags('--model', FABLE), 'the mode is the last named one, and the model the turn\'s own');
+  for (const [why, content] of [['text', 'go on'], ['a text block', [{ type: 'text', text: 'go on' }]], ['an image block', [{ type: 'image', source: {} }]]]) {
+    assert.equal(read(promptEntry(), modelEntry(OPUS), promptEntry(content), modelEntry(FABLE)), FABLE, `${why} starts a turn`);
+  }
+  for (const [why, entry] of [
+    ['a tool result', toolResult()],
+    ['a tool result that carries a mode', toolResult({ permissionMode: 'auto' })],
+    ['an entry the host wrote itself', promptEntry('the skill\'s text', { isMeta: true })],
+    ['a mode entry', { type: 'permission-mode', permissionMode: 'auto', sessionId: SESSION }],
+    ['a subagent\'s prompt', promptEntry('go on', { isSidechain: true })],
+    ['another session\'s prompt', promptEntry('go on', { sessionId: 'someone-else' })],
+    ['a system entry', { ...promptEntry(), type: 'system', role: 'user' }],
+    ['content that is no text and no list', promptEntry({ text: 'go on' })],
+    ['a user entry with no message', { type: 'user', message: null, sessionId: SESSION }],
+  ]) {
+    assert.equal(read(promptEntry(), modelEntry(OPUS), entry, modelEntry(FABLE)), OPUS, `${why} starts none`);
+  }
+  // A line too long to parse that may be the last prompt: the turn cannot be told.
+  const long = promptEntry('x'.repeat(33 * MB));
+  assert.equal(read(promptEntry(), modelEntry(OPUS), long, modelEntry(FABLE)), null);
+  assert.equal(read(promptEntry(), modelEntry(OPUS), long, promptEntry()), OPUS, 'one before the last prompt is no candidate, so it is skipped');
 });
 
 test('a model never changes a mode answer: a mode the gate refuses starts nothing beside a valid model, and a line too long gives none', (t) => {
@@ -1610,7 +1643,7 @@ test('a model never changes a mode answer: a mode the gate refuses starts nothin
   const text = readFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`));
   assert.equal(text.length - text.lastIndexOf('"model":"x"'), 34 * MB + 4, 'the key straddles a chunk edge');
   assert.equal(read(), null);
-  transcript(setting, [userEntry('auto'), modelEntry(OPUS), { type: 'user', message: 'x'.repeat(33 * MB), sessionId: SESSION }]);
+  transcript(setting, [userEntry('auto'), modelEntry(OPUS), { type: 'progress', text: 'x'.repeat(33 * MB), sessionId: SESSION }]);
   assert.equal(read(), OPUS, 'a long line with neither key is skipped');
 });
 
@@ -1653,6 +1686,8 @@ test('an error under session.handoff.models on the base branch drops that field 
     { maxChain: 'lots', models: { claude: { model: 'gpt-5.5' } } },
     { modelsFor: {} },
     { 'x": "session.handoff.models.claude': {} },
+    { 'models.claude': {} },
+    { 'models.vim': {}, models: { vim: { model: 'opus' } } },
   ]) {
     const off = run({ ...clean, ...other });
     assert.equal(off.result.out[0], 'continue: clear', JSON.stringify(other));

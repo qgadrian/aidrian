@@ -379,13 +379,16 @@ answer as `asked` and reads nothing again:
 
 - The model is read from the transcript the permission mode is read from, in the same backward read and with the same
   bound. An entry counts when its `type` is `assistant`, it is no sidechain entry, its `sessionId` is the session's,
-  and its `message.model` is a string other than `<synthetic>`. The first such entry after the last entry that names
-  the mode gives it, the model the turn started in, else the nearest earlier one. So a switch the Human made before the
-  last prompt is handed on, and a fallback model or a skill's own model in the middle of the turn is not.
+  and its `message.model` is a string other than `<synthetic>`. The first such entry after the last prompt gives it, the
+  model the turn started in, else the nearest earlier one. So a switch the Human made before the last prompt is handed
+  on, and a fallback model or a skill's own model in the middle of the turn is not.
+- A prompt is a `user` entry of the session's own, no sidechain entry and not `isMeta`, whose `message.content` is a
+  string, or a list with no `tool_result` block. No `permissionMode` takes part: in a transcript of 2.1.332, 23 of 32
+  prompts, such as messages from other sessions, carried none.
 - That one entry is then held to `claude-<family>-<version>`, the family one of `sonnet`, `opus`, `haiku`, and `fable`,
   the version one or two numbers of at most two digits and at most one date. Any other name, such as one with a
   context-window suffix, gives none, and no other entry is searched for one that passes. A line over 32 MB that holds
-  the `"model"` key gives none either. No answer of this read changes the permission mode's.
+  the `"model"` key gives none either, and so does one that holds `"user"` where the last prompt is looked for. No answer of this read changes the permission mode's.
 - The effort is `CLAUDE_EFFORT`, when it is one the adapter names.
 - What the session does not tell is the base branch's [`session.handoff.models.claude`](../config.md#handoff-models),
   held to the adapter's list, where a model is a family's alias such as `opus`; else nothing is passed.
@@ -400,8 +403,8 @@ alias is not proven before the start. Accepted residuals:
   held for up to 24 hours.
 - A script that writes the transcript, which no hook sees, can name another model. It changes cost alone, inside the
   families above; the hooks refuse a session no Human attends a write there and a variable set on the gate's command.
-- A mode changed in the middle of a turn, or a mode entry the host writes there, moves where the turn is read to start,
-  so a fallback after it may be handed on.
+- A prompt the host writes in the middle of a turn, such as a message that arrives while the session works, reads as the
+  start of a turn, so a fallback after it may be handed on.
 
 Not verified: a background continuation from a real brief, end to end, with the plugin loaded from this branch:
 whether the session-continue skill runs from the first message as intended, and whether a second continuation in a

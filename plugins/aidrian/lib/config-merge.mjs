@@ -33,6 +33,11 @@ export function handoffContinueDefault(handoff, values) {
   return { ...handoff, continue: 'background' };
 }
 
+// For a list of config errors, the indexes of those the check of `session.handoff.models` added: what they name, not how
+// they read, since an unknown key such as "models.claude" beside it reads the same.
+const HANDOFF_MODEL_ERRORS = new WeakMap();
+export const handoffModelErrors = (errors) => HANDOFF_MODEL_ERRORS.get(errors) ?? new Set();
+
 export function merge(schema, defaults, values, prefix, file, errors, gateErrors = []) {
   for (const key of Object.keys(values)) {
     const name = `${prefix}${key}`;
@@ -51,7 +56,9 @@ export function merge(schema, defaults, values, prefix, file, errors, gateErrors
     } else if (type === 'models') {
       out[key] = checkModels(value, file, errors, defaults[key]);
     } else if (type === 'handoffModels') {
+      const before = errors.length;
       out[key] = checkHandoffModels(value, `${prefix}${key}`, file, errors);
+      HANDOFF_MODEL_ERRORS.set(errors, new Set(errors.slice(before).map((_, at) => before + at)));
     } else if (type === 'review') {
       out[key] = checkReview(value, file, errors);
     } else if (type === 'agents') {

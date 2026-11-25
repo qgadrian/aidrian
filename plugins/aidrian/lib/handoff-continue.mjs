@@ -37,7 +37,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { baseBranchTip, commandConfig, committedConfig, machineSwitch, stateDirProblem } from './config.mjs';
+import { baseBranchTip, commandConfig, committedConfig, handoffModelErrors, machineSwitch, stateDirProblem } from './config.mjs';
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { foldCase, resolvedPath } from './fs.mjs';
 import { treeOf } from './git.mjs';
@@ -112,14 +112,12 @@ const sameStore = (one, other) => sameFolder(storePath(one), storePath(other));
 function teamHandoff(project) {
   const base = baseBranchConfig(project, 'session.handoff');
   if (base.why) return base;
-  if (base.errors.some((error) => error.includes('"session.handoff') && !namesModels(error, base.file))) return { why: 'the base branch\'s session.handoff has an error' };
+  const dropped = handoffModelErrors(base.errors);
+  if (base.errors.some((error, at) => error.includes('"session.handoff') && !dropped.has(at))) return { why: 'the base branch\'s session.handoff has an error' };
   return { handoff: base.config.session.handoff, config: base.config };
 }
 
-// Whether the config error `error` of `file` names session.handoff.models or a key under it, as the key the error is of.
-const namesModels = (error, file) => error.startsWith(`${file}: `) && /^(?:unknown key )?"session\.handoff\.models[".]/u.test(error.slice(file.length + 2));
-
-// The config.json the base branch commits, with no machine settings: { config, errors, file } or { why }, where `what` names
+// The config.json the base branch commits, with no machine settings: { config, errors } or { why }, where `what` names
 // what the reader wanted from it. lib/handoff-guard.mjs startedUnattended reads its state.dir. `git` gives each git read's
 // options, as config.mjs firstTip's, such as a hook's bounded timeout; one that throws, out of time, is a `why`. With
 // `commit`, the config is read at that commit, such as a base tip a start pinned, instead of the base ref's.
@@ -131,7 +129,7 @@ export function baseBranchConfig(project, what = 'the team\'s config', git = () 
     if (!file) return { why: 'the base branch\'s folder override names no usable project folder' };
     const errors = [];
     const config = committedConfig({ ...project, paths: { ...project.paths, config: file } }, base, errors, git() ?? {});
-    return { config, errors, file };
+    return { config, errors };
   } catch {
     return { why: 'git could not read the base branch\'s config.json' };
   }

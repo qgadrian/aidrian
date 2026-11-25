@@ -51,9 +51,11 @@ const BYPASS = 'bypassPermissions';
 const MODE_CHUNK = 1024 * 1024;
 const MODE_LINE = 32 * 1024 * 1024;
 const MODE_KEY = Buffer.from('"permissionMode"');
-// The key of an `assistant` entry's model, and the bytes of a long line kept to find either key across two pieces.
+// The key of an `assistant` entry's model, the word every `user` entry holds as its type, and the bytes of a long line
+// kept to find any of them across two pieces.
 const MODEL_KEY = Buffer.from('"model"');
-const KEYS = [MODE_KEY, MODEL_KEY];
+const USER_WORD = Buffer.from('"user"');
+const KEYS = [MODE_KEY, MODEL_KEY, USER_WORD];
 const KEY_TAIL = Math.max(...KEYS.map((key) => key.length)) - 1;
 // The model of an entry the host wrote itself, with no request to a model.
 const NO_MODEL = '<synthetic>';
@@ -153,10 +155,11 @@ function awaitSession({ run, claude, wait, ...want }) {
 export const sessionMode = ({ session, cwd, env }) => readTranscript({ session, cwd, env }, lastMode);
 
 // The model the session `session` started its turn in, from the transcript sessionMode reads: the one the first assistant
-// entry after the last entry that names the mode gives, else the nearest earlier one, so neither a fallback the host took
-// in the middle of the turn nor a skill's own model is taken. It is chosen first and then held to MODEL_NAME, with no
-// search for another that passes: the name, or null. null too with no folder `cwd`, or a line too long to parse that
-// holds MODEL_KEY among those read. No answer of it changes sessionMode's.
+// entry after the last prompt gives, else the nearest earlier one, so neither a fallback the host took in the middle of
+// the turn nor a skill's own model is taken. Many prompts carry no mode, so no mode takes part. It is chosen first and
+// then held to MODEL_NAME, with no search for another that passes: the name, or null. null too with no folder `cwd`, or
+// a line too long to parse among those read that holds MODEL_KEY, or that may be the last prompt, as it holds USER_WORD.
+// No answer of it changes sessionMode's.
 export function sessionModel({ session, cwd, env }) {
   if (typeof cwd !== 'string') return null;
   const model = readTranscript({ session, cwd, env }, turnModel);
@@ -199,19 +202,30 @@ function lineMode(line, session) {
   return typeof entry.permissionMode === 'string' ? entry.permissionMode : UNREADABLE_MODE;
 }
 
-// The model a transcript line names: its `message.model` when the entry is an `assistant` entry of the session's own, as
-// lineMode says, and holds its own string there, other than NO_MODEL; else null.
-function lineModel(line, session) {
-  if (line.indexOf(MODEL_KEY) === -1) return null;
+// What a transcript line of the session's own, no sidechain entry, is to turnModel: { prompt, model } or null.
+function lineTurn(line, session) {
+  if (!line.includes(MODEL_KEY) && !line.includes(USER_WORD)) return null;
   let entry;
   try {
     entry = JSON.parse(line.toString('utf8'));
   } catch {
     return null;
   }
-  if (entry === null || typeof entry !== 'object' || entry.type !== 'assistant' || entry.isSidechain === true || entry.sessionId !== session) return null;
-  const { message } = entry;
-  if (message === null || typeof message !== 'object' || !Object.hasOwn(message, 'model')) return null;
+  if (entry === null || typeof entry !== 'object' || entry.isSidechain === true || entry.sessionId !== session) return null;
+  if (entry.message === null || typeof entry.message !== 'object') return null;
+  return { prompt: isPrompt(entry), model: entryModel(entry) };
+}
+
+// Whether an entry is a prompt, which starts a turn: a `user` entry, but one the host wrote itself (`isMeta`), whose
+// content is text or a list of blocks with no tool result.
+function isPrompt({ type, isMeta, message: { content } }) {
+  if (type !== 'user' || isMeta === true) return false;
+  return typeof content === 'string' || (Array.isArray(content) && !content.some((block) => block?.type === 'tool_result'));
+}
+
+// The model an `assistant` entry names: its message's own string, other than NO_MODEL; else null.
+function entryModel({ type, message }) {
+  if (type !== 'assistant' || !Object.hasOwn(message, 'model')) return null;
   return typeof message.model === 'string' && message.model !== NO_MODEL ? message.model : null;
 }
 
@@ -257,12 +271,12 @@ function turnModel(file, session) {
   let first = null;
   let turn = false;
   return readBackwards(file, ({ long, bytes }) => {
-    if (long) return long.has(MODEL_KEY) ? null : undefined;
-    if (!turn && lineMode(bytes, session) !== null) {
+    if (long) return long.has(MODEL_KEY) || (!turn && long.has(USER_WORD)) ? null : undefined;
+    const { prompt = false, model = null } = lineTurn(bytes, session) ?? {};
+    if (!turn && prompt) {
       turn = true;
       return first ?? undefined;
     }
-    const model = lineModel(bytes, session);
     if (model !== null && turn) return model;
     first = model ?? first;
     return undefined;

@@ -12,7 +12,7 @@ import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, DEPTHS, detectFlows, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
 import { flowsFloor, policyFilesLifted } from './merge-trust.mjs';
-import { BUILT_IN, confinedReason, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
+import { botCommentsOf, BUILT_IN, confinedReason, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
@@ -231,10 +231,11 @@ export async function prepareStep(s) {
   // The post context of this step's writes (lib/review/publish.mjs): read once, when the first write needs it.
   let posting = null;
   const post = (extra = {}) => (posting ??= postContext({ forge, repo, n, project, configs: [committed, config], env, reading, ...extra }));
-  // The review bot whose own comments a model reviewer leaves out (reviewers.mjs botCommentsBrief): the base branch's, so a
-  // pull request cannot name another author whose comments the review then skips.
-  const reviewBot = committed.github.reviewer ?? null;
-  Object.assign(s, { root, cleanEnv, info, repo, repoArg, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post, reviewBot });
+  // The review bot's own receipt and status card, which a model reviewer leaves out (reviewers.mjs botCommentsOf), found
+  // in the conversation read above, by the base branch's bot, so a pull request cannot name another author whose comments
+  // the review then skips. With the conversation not read, as under `review.record: "local"`, it is null: none is exempt.
+  const botComments = onPr ? botCommentsOf(comments, committed.github.reviewer ?? null) : null;
+  Object.assign(s, { root, cleanEnv, info, repo, repoArg, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post, botComments });
 
   // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
   // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried

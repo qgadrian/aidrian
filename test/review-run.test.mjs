@@ -94,13 +94,19 @@ test('zero config: codex-local reviews once; a finding is fix_required until a n
   assert.equal(stateFromComment(r.comments[0].body, 7).rounds.length, 2);
 });
 
-test('the local pass reads the base branch`s review bot as the author whose own comments it leaves out, not one the pull request names', async (t) => {
+test('the local pass reads the review bot`s own comments the step found by the base branch`s bot, not one the pull request names', async (t) => {
   const r = repo(t, { baseConfig: { version: 1, github: { reviewer: 'review-bot[bot]' } }, headConfig: { version: 1, github: { reviewer: 'someone' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
-  const bots = [];
-  const exec = async (_reviewer, input) => (bots.push(input.reviewBot), clean());
+  const receipt = "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!";
+  r.comments.push(
+    { id: 101, user: { login: 'review-bot[bot]', type: 'Bot' }, body: receipt, html_url: 'https://github.com/o/r/pull/7#issuecomment-101' },
+    { id: 102, user: { login: 'someone', type: 'User' }, body: receipt, html_url: 'https://github.com/o/r/pull/7#issuecomment-102' },
+    { id: 103, user: { login: 'review-bot', type: 'Bot' }, body: '<!-- codex-pull-request-review-summary -->\n\n## Codex Review Summary' },
+  );
+  const seen = [];
+  const exec = async (_reviewer, input) => (seen.push(input.botComments), clean());
   await r.step({ exec });
-  assert.ok(bots.length > 0, 'a pass ran');
-  assert.ok(bots.every((bot) => bot === 'review-bot[bot]'), `every pass reads the base branch's bot: ${JSON.stringify(bots)}`);
+  assert.ok(seen.length > 0, 'a pass ran');
+  assert.deepEqual(seen, seen.map(() => [{ id: 101, url: 'https://github.com/o/r/pull/7#issuecomment-101' }, { id: 103 }]), 'every pass reads the base branch bot`s own comments');
 });
 
 test('a comment-, doc-, or test-only push keeps its round, and the passes it touches re-review it in delta context', async (t) => {

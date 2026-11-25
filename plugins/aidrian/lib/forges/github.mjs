@@ -19,15 +19,6 @@ export const isTrustedCommenter = (comment) => MEMBER_ASSOCIATIONS.has(comment?.
 // Whether `name` is shaped like a GitHub login: letters, digits, and single hyphens between them, at most 39 characters.
 export const isLogin = (name) => typeof name === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/u.test(name);
 
-// The command a model reviewer runs to read a pull request's conversation with each comment author's login and type
-// (lib/review/reviewers.mjs botCommentsBrief): `gh pr view --comments` shows a bare login and no type, so a bot's
-// comment reads there like a person's. Null for a repository or number not shaped as GitHub's, so no other text
-// reaches the command line.
-export function conversationAuthorsCommand(repo, n) {
-  if (typeof repo !== 'string' || !/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/u.test(repo) || !Number.isSafeInteger(n) || n < 1) return null;
-  return `gh api repos/${repo}/issues/${n}/comments --paginate --jq '.[] | {login: .user.login, type: .user.type, body}'`;
-}
-
 // The adapter's id, which forgeFor's caller keys a forge's readers by and every row changesState gives carries.
 const FORGE_ID = 'github';
 // The hosts this adapter serves, as a constant in its own source: no config, remote, ledger row, or cache adds one.

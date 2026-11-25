@@ -7,8 +7,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { contentFlows } from '../plugins/aidrian/lib/review/content.mjs';
-import { changedFiles, diffLines } from '../plugins/aidrian/lib/review/diff.mjs';
+import { changedFiles, diffLines, headerName, headerPaths, quietDelta } from '../plugins/aidrian/lib/review/diff.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
+import { classify, detectFlows } from '../plugins/aidrian/lib/review/plan.mjs';
 import { acquiredVars, callsWith, EXTENSIONS_RE, importWord, parse, RESOLVE_SUFFIXES } from '../plugins/aidrian/lib/review/trace-js.mjs';
 
 // A privileged-client flow as a project with a service-role database client would write it: the paths that hold the
@@ -55,7 +56,8 @@ const QUERY_ONLY = { [FILE]: ["  return client.from('drafts').select('*');"] };
 const ADDED_REASON = String.raw`head content matches /\bget\w*AdminClient\s*\(/ in `;
 const PROBE_REASON = String.raw`head content matches /\badminClient\b/ in `;
 
-// A throwaway repository under the system temp folder, with `files` at base and `changed` on top of them at head.
+// A throwaway repository under the system temp folder, with `files` at base and `changed` on top of them at head, where
+// a null text deletes its file.
 // Every git call runs in it with the hook variables removed, so no test ever acts on another repository.
 function fixture(t, files, changed = null) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-review-content-')));
@@ -68,7 +70,8 @@ function fixture(t, files, changed = null) {
   const write = (all) => {
     for (const [rel, text] of Object.entries(all)) {
       mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-      writeFileSync(path.join(root, rel), text);
+      if (text === null) rmSync(path.join(root, rel));
+      else writeFileSync(path.join(root, rel), text);
     }
   };
   git('init', '-q', '-b', 'main', '.');
@@ -81,7 +84,7 @@ function fixture(t, files, changed = null) {
     git('add', '-A');
     git('commit', '-q', '-m', 'change');
   }
-  return { root, base, head: git('rev-parse', 'HEAD') };
+  return { root, base, head: git('rev-parse', 'HEAD'), git };
 }
 
 // The content flows for one change whose head text is `text`, with the added lines given.
@@ -462,6 +465,62 @@ test('diffLines names a file git would quote by its real path', async (t) => {
   const { diffLines } = await import('../plugins/aidrian/lib/review/diff.mjs');
   const { root, base, head } = fixture(t, { 'src/café.ts': 'a\n' }, { 'src/café.ts': 'a\nb\n' });
   assert.deepEqual(diffLines(root, base, head).addedLines, { 'src/café.ts': ['b'] });
+});
+
+test('headerName undoes git\'s trailing tab and quoting, and leaves every other name as it is', () => {
+  for (const [written, name] of [
+    ['a/src/x.ts', 'a/src/x.ts'],
+    ['a/src/café.ts', 'a/src/café.ts'],
+    ['a/a b.ts\t', 'a/a b.ts'],
+    ['a/ends in a space \t', 'a/ends in a space '],
+    ['a/b/x b/y.ts\t', 'a/b/x b/y.ts'],
+    [String.raw`"a/tab\tx"`, 'a/tab\tx'],
+    [String.raw`"a/ends in a tab\t"` + '\t', 'a/ends in a tab\t'],
+    [String.raw`"a/\a\b\t\n\v\f\r\"\\\001\177"`, 'a/\x07\b\t\n\v\f\r"\\\x01\x7f'],
+    [String.raw`"a/\\t\\303"`, String.raw`a/\t\303`],
+    [String.raw`"a/caf\303\251 \360\237\230\200é"` + '\t', 'a/café 😀é'],
+  ]) assert.equal(headerName(written), name, written);
+  // No form git writes: an unknown escape, a short or too large octal, a lone backslash, a quote left open or inside.
+  for (const broken of [String.raw`"a/\q"`, String.raw`"a/\1"`, String.raw`"a/\777"`, '"a/\\"', '"a/x', '"', '"a/x"y"', '"a/x y\t', '']) assert.equal(headerName(broken), broken, broken);
+});
+
+test('headerPaths reads a `diff --git` header with a space, a quoted name, or a name that holds " b/"', () => {
+  const header = (from, to = from.replace('a/', 'b/')) => `diff --git ${from} ${to}`;
+  const text = [header('a/x'), header('a/a b'), header('a/x b/y'), header(String.raw`"a/t\tb"`), header(String.raw`"a/q\" z"`), header('a/x', 'b/y'), header('x', 'x'), 'diff --git ', ' diff --git a/z b/z'].join('\n');
+  assert.deepEqual(headerPaths(text), ['x', 'a b', 'x b/y', 't\tb', 'q" z']);
+});
+
+test('the lines of a file whose name git marks with a tab or quotes are filed under the name the file list holds', (t) => {
+  const kept = ['plain.ts', 'a b.ts', 'ends in a space ', 'x b/y.ts', 't\tb.ts', 'a b\tc.ts', 'q"q.ts', 'back\\slash.ts', 'nl\nx.ts', 'café.ts', 'caf é".ts', 'a b.test.ts'].map((name) => `src/${name}`);
+  const deleted = ['src/gone b.ts', 'src/gone\tb.ts'];
+  const all = [...kept, ...deleted].sort();
+  // The removed line `-- note` reads `--- note` in the diff, and the added `++ note` reads `+++ note`.
+  const { root, base, head, git } = fixture(t, Object.fromEntries(all.map((file) => [file, 'same\n-- note\n'])),
+    Object.fromEntries([...kept.map((file) => [file, 'same\n++ note\nuse(adminClient)\n']), ...deleted.map((file) => [file, null])]));
+  const changes = changedFiles(root, base, head);
+  assert.deepEqual(changes.map(({ file }) => file).sort(), all);
+  const lines = diffLines(root, base, head);
+  for (const [key, names] of Object.entries({ addedLines: kept, addedAt: kept, removedLines: all, hunks: all })) assert.deepEqual(Object.keys(lines[key]).sort(), [...names].sort(), key);
+  assert.deepEqual([...lines.removedFiles].sort(), all);
+  for (const file of kept) {
+    assert.deepEqual(lines.addedLines[file], ['++ note', 'use(adminClient)'], file);
+    assert.deepEqual([lines.removedLines[file], lines.addedAt[file], lines.hunks[file].length], [['-- note'], [2, 3], 1], file);
+  }
+  for (const file of deleted) assert.deepEqual(lines.removedLines[file], ['same', '-- note'], file);
+
+  // A flow's `added` pattern sees the lines, and names the files as the list does.
+  const [found] = detectFlows({ admin: { files: ['none/**'], added: [String.raw`\badminClient\b`] } }, { sorted: classify(changes), ...lines });
+  assert.deepEqual(found.files, [...kept].sort());
+  // A test file that lost a line is no quiet change, whatever its name.
+  const lossy = changes.filter(({ file }) => file === 'src/a b.test.ts');
+  assert.equal(quietDelta({ changes: lossy, ...lines }, { prose: () => false, test: () => true }).quiet, false);
+
+  // Git's default quoting too, which writes a byte past ASCII as an octal escape.
+  const raw = git('-c', 'core.quotePath=true', 'diff', '--unified=0', '--no-renames', base, head);
+  const headers = raw.split('\n').filter((line) => /^\+\+\+ "?b\//u.test(line));
+  assert.deepEqual(headers.map((line) => headerName(line.slice('+++ '.length)).slice('b/'.length)).sort(), [...kept].sort());
+  assert.ok(headers.includes('+++ b/src/a b.ts\t') && headers.includes(String.raw`+++ "b/src/t\tb.ts"`) && headers.includes(String.raw`+++ "b/src/caf \303\251\".ts"` + '\t'), headers.join('\n'));
+  assert.deepEqual(headerPaths(raw).sort(), all);
 });
 
 test('a JavaScript project resolves .jsx files and index.js or index.jsx folders', () => {

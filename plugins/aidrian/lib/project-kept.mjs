@@ -19,6 +19,8 @@ import { inflateSync } from 'node:zlib';
 import { workflowPaths } from './issue-push-checkout.mjs';
 import { startsOf } from './project-run-guard.mjs';
 
+// Why an offer waits: an attempt since has a folder no sweep removed or kept.
+export const NOT_SWEPT = 'an attempt since is not swept yet';
 const FULL_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 // The two repositories the gate makes in the new attempt's folder: the copied objects, and those git's fsck passed.
 const QUARANTINE = 'kept';
@@ -52,7 +54,7 @@ export function keptCandidate({ found, key, branch, folderOf, refs }) {
   if (ran[own]?.branch !== branch) return not('it worked on another branch');
   const since = ran.slice(own + 1);
   if (since.some((each) => each.took?.head !== head)) return not('another attempt ran since');
-  if (since.some((each) => existsSync(folderOf(each.attempt)))) return not('an attempt since is not swept yet');
+  if (since.some((each) => existsSync(folderOf(each.attempt)))) return not(NOT_SWEPT);
   const folder = folderOf(attempt);
   const read = refs(path.join(folder, 'git'), branch);
   if (read.head !== head || read.branch !== head) return not(`its clone's HEAD and branch are not both at ${head.slice(0, 12)}`);
@@ -62,51 +64,55 @@ export function keptCandidate({ found, key, branch, folderOf, refs }) {
 // Takes the kept commits `candidate` (keptCandidate) into the fresh clone `work` of the attempt folder `folder`, whose
 // git folder is `gitFolder`, over `forgeHead`, the commit the forge's branch is at: { took: { attempt, head }, count },
 // with KEPT_REF at them, or { attempt, why } when they are not taken, with no ref left, or { problem } when a
-// repository of the gate's own could not be removed, which no session may find. `guards` names the host, instruction,
-// and policy files, and `git(args, cwd)` is the attempt's gateGit.
+// repository of the gate's own, or the ref, could not be removed, which no session may find. `guards` names the host,
+// instruction, and policy files, and `git(args, cwd)` is the attempt's gateGit.
 export function takeKept({ candidate, folder, work, gitFolder, forgeHead, guards, git }) {
   const { attempt, head } = candidate;
   if (head === forgeHead) return { attempt, why: 'the forge has its commits' };
-  let why;
-  let count = null;
+  let read;
   try {
-    why = fetchKept({ candidate, folder, work, gitFolder, git }) ?? judgeKept({ head, forgeHead, guards, git });
-    if (!why) {
-      const counted = git(['rev-list', '--count', `${forgeHead}..${head}`]);
-      count = counted.status === 0 ? Number(counted.stdout.trim()) : null;
-      if (!Number.isInteger(count)) why = 'git cannot count its commits';
-    }
+    read = fetchKept({ candidate, folder, work, gitFolder, forgeHead, guards, git });
   } catch (error) {
-    why = `its objects could not be taken in (${error.code ?? 'no code'})`;
+    read = { why: `its objects could not be taken in (${error.code ?? 'no code'})` };
   }
-  if (why) git(['update-ref', '-d', KEPT_REF]);
   try {
     for (const name of [QUARANTINE, CHECKED]) rmSync(path.join(folder, name), { recursive: true, force: true });
   } catch (error) {
     return { problem: `the gate's copies of attempt ${attempt}'s kept objects in ${folder} could not be removed (${error.code ?? 'no code'})` };
   }
-  return why ? { attempt, why } : { took: { attempt, head }, count };
+  if (read.problem) return { problem: read.problem };
+  return read.why ? { attempt, why: read.why } : { took: { attempt, head }, count: read.count };
 }
 
-// Puts the kept commit of `candidate` in the clone `work` under KEPT_REF: null, or why it could not. The copied objects
-// go into QUARANTINE, git's fsck judges them as CHECKED fetches them, and the clone fetches from CHECKED: nothing reads
-// QUARANTINE after the first fetch.
-function fetchKept({ candidate, folder, work, gitFolder, git }) {
+// Puts the kept commit of `candidate` in the clone `work` under KEPT_REF: { count }, how many commits it is over
+// `forgeHead`, { why } when it could not, or { problem } for a ref that stays all the same. The copied objects go into
+// QUARANTINE, git's fsck judges them as CHECKED fetches them, the commits are judged there (judgeKept), and only then
+// does the clone fetch, from CHECKED, so no commit that is refused enters it: nothing reads QUARANTINE after the first
+// fetch.
+function fetchKept({ candidate, folder, work, gitFolder, forgeHead, guards, git }) {
   const { head } = candidate;
   const [quarantine, checked] = [QUARANTINE, CHECKED].map((name) => path.join(folder, name));
-  if (![quarantine, checked].every((each) => gateRepository(each, { head, folder, gitFolder, git }))) return 'git could not make the repositories its objects are checked in';
+  if (![quarantine, checked].every((each) => gateRepository(each, { head, folder, gitFolder, git }))) return { why: 'git could not make the repositories its objects are checked in' };
   const copied = copyLoose(candidate.folder, path.join(quarantine, 'objects'));
-  if (copied) return copied;
+  if (copied) return { why: copied };
   mkdirSync(path.join(quarantine, 'refs', 'heads'), { recursive: true });
   writeFileSync(path.join(quarantine, KEPT_BRANCH), `${head}\n`, { flag: 'wx' });
-  if (git(fetchArgs(quarantine, KEPT_BRANCH, { fsck: true }), checked).status !== 0) return 'git refused its objects: one is missing, packed, malformed, or not the object its name says';
-  if (commitAt(KEPT_BRANCH, checked, git) !== head) return 'git gave another commit than its `kept` row names';
+  if (git(fetchArgs(quarantine, KEPT_BRANCH, { fsck: true }), checked).status !== 0) return { why: 'git refused its objects: one is missing, packed, malformed, or not the object its name says' };
+  if (commitAt(KEPT_BRANCH, checked, git) !== head) return { why: OTHER };
+  const judged = judgeKept({ head, forgeHead, guards, git: (args) => git(args, checked) });
+  if (judged.why) return judged;
   // With fsckObjects on, git always stores what it fetches as a pack (index-pack), whatever unpackLimit says, and a packed
   // commit could not be taken again after another limit. So this fetch, of what fsck passed, runs without it, and leaves
   // the objects loose; git still hashes each one and checks that none is missing.
-  if (git(fetchArgs(checked, KEPT_REF, { fsck: false }), work).status !== 0) return 'git could not take its checked objects in';
-  return commitAt(KEPT_REF, work, git) === head ? null : 'git gave another commit than its `kept` row names';
+  const fetched = git(fetchArgs(checked, KEPT_REF, { fsck: false }), work).status === 0;
+  if (fetched && commitAt(KEPT_REF, work, git) === head) return judged;
+  git(['update-ref', '-d', KEPT_REF], work);
+  // Exit 1 alone says the ref is not there.
+  if (git(['rev-parse', '--verify', '--quiet', KEPT_REF], work).status !== 1) return { problem: `the ref ${KEPT_REF} of attempt ${candidate.attempt}'s kept commits could not be removed from the new clone` };
+  return { why: fetched ? OTHER : 'git could not take its checked objects in' };
 }
+
+const OTHER = 'git gave another commit than its `kept` row names';
 
 // Makes the bare repository `dir`, for objects of the hash the id `head` is in, with no template and the new clone's
 // objects as its alternate: whether it could. It holds only what the gate, and git for it, puts there.
@@ -131,17 +137,21 @@ function commitAt(ref, cwd, git) {
   return read.status === 0 ? read.stdout.trim() : null;
 }
 
-// Why the commit `head`, fetched under KEPT_REF in the new clone, may not be taken over `forgeHead`, or null. The files
-// are those any of its commits changes, a merge's from each of its parents, so a change a later one takes back counts.
+// Whether the commit `head` may be taken over `forgeHead`, by `git` in CHECKED, which reads the forge's head through
+// its alternate: { count }, the commits it is over that head, or { why } not. The files are those any of its commits
+// changes, a merge's from each of its parents, so a change a later one takes back counts.
 function judgeKept({ head, forgeHead, guards, git }) {
-  if (git(['merge-base', '--is-ancestor', forgeHead, head]).status !== 0) return 'its commits do not descend from the branch\'s head on the forge';
+  if (git(['merge-base', '--is-ancestor', forgeHead, head]).status !== 0) return { why: 'its commits do not descend from the branch\'s head on the forge' };
   // Both settings are git's defaults, given so that no config of the user's hides a merge's or a root's files.
   const log = git(['-c', 'log.diffMerges=separate', '-c', 'log.showRoot=true', 'log', '-m', '--format=', '--name-only', '--no-renames', '--no-relative', '-z', `${forgeHead}..${head}`, '--']);
-  if (log.status !== 0) return 'git cannot say which files its commits change';
+  if (log.status !== 0) return { why: 'git cannot say which files its commits change' };
   const workflows = workflowPaths();
   // A count alone: no file name a session chose reaches the driver.
   const held = [...new Set(log.stdout.split('\0'))].filter((file) => file !== '' && (guards(file) || workflows.counts(file))).length;
-  return held ? `its commits change ${held} host config, instruction, policy, or workflow ${held === 1 ? 'file' : 'files'}` : null;
+  if (held) return { why: `its commits change ${held} host config, instruction, policy, or workflow ${held === 1 ? 'file' : 'files'}` };
+  const counted = git(['rev-list', '--count', `${forgeHead}..${head}`]);
+  const count = counted.status === 0 ? Number(counted.stdout.trim()) : null;
+  return Number.isInteger(count) ? { count } : { why: 'git cannot count its commits' };
 }
 
 // Copies the loose objects of the kept clone in the attempt folder `folder` into the objects folder `to` of the gate's
@@ -149,34 +159,28 @@ function judgeKept({ head, forgeHead, guards, git }) {
 // read: no pack, index, commit graph, alternates, ref, config, or hook. Each folder on the way is a plain one by lstat,
 // and each file is opened without following a link or waiting on a FIFO, and is a regular file of one link, whose bytes
 // inflate within `caps` (git inflates them outside any sandbox) and are copied as they are, for git to judge. An odd
-// entry at an object's name, or a cap, takes none. No byte is read through a folder swapped for another: after each
-// listing, and after each file's open and before its read, every folder on the way must be the one recorded first, with
-// the same ctime, which a swap of an entry of it, back again too, moves. `before(path)` is a test's hook, called before
-// each listing and each open.
+// entry at an object's name, or a cap, takes none. No entry and no byte is read through a folder swapped for another:
+// with each folder or file open, and before its first read, every folder on the way must be the one pinned first
+// (pinnedFolders). An open handle keeps to the folder or file it was opened on, so what it reads then is the clone's.
+// `before(path)` is a test's hook, called before each open.
 export function copyLoose(folder, to, caps = KEPT_CAPS, before = () => {}) {
   const objects = path.join(folder, 'git', 'objects');
-  const trunk = [folder, path.join(folder, 'git'), objects].map((dir) => [dir, identity(dir)]);
-  if (trunk.some(([, was]) => was === null)) return 'a folder of its clone is not a plain one';
-  const same = (stamps) => stamps.every(([dir, was]) => identity(dir) === was);
+  const trunk = [folder, path.join(folder, 'git'), objects];
+  const pins = pinnedFolders();
+  if (!pins.pin(trunk)) return 'a folder of its clone is not a plain one';
   const left = { entries: caps.entries, raw: caps.bytes, expanded: caps.bytes };
-  before(objects);
-  const names = namesIn(objects, OBJECT_FOLDER, left);
-  if (!same(trunk)) return CHANGED;
-  if (!names) return MANY;
-  const folders = names.map((name) => [path.join(objects, name), identity(path.join(objects, name))]);
-  if (folders.some(([, was]) => was === null)) return 'its clone holds something other than a folder where objects lie';
-  for (const each of folders) {
-    const [from] = each;
-    const whole = () => same([...trunk, each]);
-    before(from);
-    const held = namesIn(from, OBJECT_FILE, left);
-    if (!whole()) return CHANGED;
-    if (!held) return MANY;
+  const names = namesIn(objects, OBJECT_FOLDER, left, () => pins.whole(trunk), before);
+  if (names.why) return names.why;
+  const folders = names.map((name) => path.join(objects, name));
+  if (!pins.pin(folders)) return 'its clone holds something other than a folder where objects lie';
+  for (const from of folders) {
+    const whole = () => pins.whole([...trunk, from]);
+    const held = namesIn(from, OBJECT_FILE, left, whole, before);
+    if (held.why) return held.why;
     const into = path.join(to, path.basename(from));
     if (held.length) mkdirSync(into, { recursive: true });
     for (const file of held) {
-      before(path.join(from, file));
-      const read = readObject(path.join(from, file), Math.min(caps.file, left.raw), whole);
+      const read = readObject(path.join(from, file), Math.min(caps.file, left.raw), whole, before);
       const size = read.why ? read : expandedSize(read.body, Math.min(caps.file, left.expanded));
       if (size.why) return size.why;
       left.raw -= read.body.length;
@@ -185,6 +189,21 @@ export function copyLoose(folder, to, caps = KEPT_CAPS, before = () => {}) {
     }
   }
   return null;
+}
+
+// The folders a read of a kept clone walks, each pinned before the read's first open: `pin(dirs)` records the identity
+// and the ctime of each not recorded yet, and says whether all are plain folders; `whole(dirs)` whether each of `dirs`,
+// by default every one pinned, is still as recorded. A swap of a folder for another, back again too, moves its parent's
+// ctime. Used for the objects here, and for the refs by project-start.mjs cloneRefs.
+export function pinnedFolders() {
+  const pinned = new Map();
+  return {
+    pin: (dirs) => dirs.every((dir) => {
+      if (!pinned.has(dir)) pinned.set(dir, identity(dir));
+      return pinned.get(dir) !== null;
+    }),
+    whole: (dirs = [...pinned.keys()]) => dirs.every((dir) => identity(dir) === pinned.get(dir)),
+  };
 }
 
 // The identity and the last change of the plain folder `dir`, or null for anything else there.
@@ -201,15 +220,18 @@ const MANY = 'its clone holds too many objects';
 const LARGE = 'its clone\'s objects are too large';
 const CHANGED = 'its clone changed while it was read';
 
-// The names in the folder `dir` that `wanted` takes, or null once the entries read pass those `left` allows, which each
+// The names in the folder `dir` that `wanted` takes, read only once `whole()` says, with the folder open, that the
+// folders on the way are the ones pinned, or { why }, as once the entries read pass those `left` allows, which each
 // entry counts toward, whatever its name.
-function namesIn(dir, wanted, left) {
+function namesIn(dir, wanted, left, whole, before) {
   const names = [];
+  before(dir);
   const open = opendirSync(dir);
   try {
+    if (!whole()) return { why: CHANGED };
     for (let entry = open.readSync(); entry; entry = open.readSync()) {
       left.entries -= 1;
-      if (left.entries < 0) return null;
+      if (left.entries < 0) return { why: MANY };
       if (wanted.test(entry.name)) names.push(entry.name);
     }
   } finally {
@@ -229,10 +251,11 @@ function expandedSize(body, cap) {
 }
 
 // The bytes of the object file `file`, at most `cap` of them, read only once `whole()` says, with the file open, that
-// its folders are still the ones recorded: { body } or { why }.
-function readObject(file, cap, whole) {
+// its folders are still the ones pinned: { body } or { why }.
+function readObject(file, cap, whole, before) {
   let fd;
   try {
+    before(file);
     fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     if (!whole()) return { why: CHANGED };
     const stat = fstatSync(fd);

@@ -37,7 +37,7 @@ import { gateGit } from './git.mjs';
 import { nestedPathspecs } from './hosts/index.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, keepTokenFiles, sessionToken, tokenDigest, tokenFiles, tokenRecordThere, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
-import { keptCandidate, takeKept } from './project-kept.mjs';
+import { keptCandidate, pinnedFolders, takeKept } from './project-kept.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
@@ -256,6 +256,12 @@ export function stateWorkFolders(state, { env, home }) {
   return { folders };
 }
 
+// The kept commits the next attempt of issue `key` of the run `run`, as `found` holds it, may be offered for `branch`, or
+// why none, or null (project-kept.mjs keptCandidate).
+export const keptOffer = ({ found, state, run, key, branch }) => keptCandidate({
+  found, key, branch, folderOf: (attempt) => attemptFolder(state, run, key, attempt), refs: cloneRefs,
+});
+
 // The fresh clone of attempt `attempt` of issue `key` for a confined host: { folder, work, git, drop, cache, branch,
 // onForge, head, reviewed, overlay, kept }, or { problem }, { halt }, { retry }, or { park }, each of which leaves no
 // attempt folder. `head` is the commit the forge's branch was at, or the tip it was cut from, which the start row records.
@@ -347,7 +353,7 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
   if (!later && listed.status === 0) return park(null, `the forge has ${branch}, and the ledger records no head of it`);
   if (!later && listed.status !== 2) return failed('ls-remote', listed);
   if (later) {
-    kept = keptCandidate({ found, key, branch, folderOf: (each) => attemptFolder(state, run, key, each), refs: cloneRefs });
+    kept = keptOffer({ found, state, run, key, branch });
     if (listed.status === 0) {
       const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
       if (fetched.status !== 0) return failed('fetch', fetched);
@@ -821,13 +827,21 @@ const PACKED_CAP = 32 * 1024 * 1024;
 // without following a link: { heads }, each a full hex id once, none for a folder with no HEAD or a branch not born yet,
 // or { problem }, for a ref the read cannot trust, which keeps the folder.
 export function cloneHeads(gitFolder, branch) {
-  const refs = cloneRefs(gitFolder, branch);
+  const refs = cloneRefs(gitFolder, branch, { pins: null });
   return refs.problem ? refs : { heads: [...new Set([refs.head, refs.branch].filter(Boolean))] };
 }
 
 // The same two refs each by its name, { head, branch }, a full hex id or null for one that is missing or not born yet, or
-// { problem }: a kept clone is taken from only with both at its one commit (project-kept.mjs).
-function cloneRefs(gitFolder, branch) {
+// { problem }: a kept clone is taken from only with both at its one commit (project-kept.mjs). Each ref file is read only
+// through the folders pinned before its open (pinnedFolders), but with `pins` null, as cloneHeads reads them;
+// `before(relative)` is a test's hook, called right before each open.
+export function cloneRefs(gitFolder, branch, { pins = pinnedFolders(), before = () => {} } = {}) {
+  const walk = (relative) => [path.dirname(gitFolder), gitFolder, ...relative.split('/').slice(0, -1).map((_, at, parts) => path.join(gitFolder, ...parts.slice(0, at + 1)))];
+  const read = (relative, cap) => {
+    pins?.pin(walk(relative));
+    return refFile(gitFolder, relative, cap, { whole: () => !pins || pins.whole(), before });
+  };
+  pins?.pin(walk(`refs/heads/${branch}`));
   let folder;
   try {
     folder = lstatSync(gitFolder);
@@ -837,16 +851,16 @@ function cloneRefs(gitFolder, branch) {
   }
   if (!folder.isDirectory()) return { problem: 'the git folder is not a plain folder' };
   // A git folder whose HEAD is gone may still hold the branch's commits: it keeps the folder.
-  const head = refFile(gitFolder, 'HEAD', LOOSE_CAP);
+  const head = read('HEAD', LOOSE_CAP);
   if (head.missing) return { problem: 'HEAD is missing' };
   if (head.problem) return { problem: `HEAD ${head.problem}` };
   let packed = null;
   const resolve = (name) => {
     if (!plainRef(name)) return { problem: `${name} is not a branch's ref name` };
-    const loose = refFile(gitFolder, name, LOOSE_CAP);
+    const loose = read(name, LOOSE_CAP);
     if (loose.problem) return { problem: `${name} ${loose.problem}` };
     if (!loose.missing) return FULL_ID.test(loose.text) ? { id: loose.text } : { problem: `${name} holds no commit id` };
-    packed ??= refFile(gitFolder, 'packed-refs', PACKED_CAP);
+    packed ??= read('packed-refs', PACKED_CAP);
     if (packed.problem) return { problem: `packed-refs ${packed.problem}` };
     const line = packed.missing ? undefined : packed.text.split('\n').find((each) => each.endsWith(` ${name}`) && !each.startsWith('#') && !each.startsWith('^'));
     if (line === undefined) return { id: null };
@@ -863,13 +877,16 @@ function cloneRefs(gitFolder, branch) {
 
 // The trimmed text of the ref file at the path `relative` below the git folder `gitFolder`, a regular file of at most
 // `cap` bytes read without following a link, at the file or at any folder on its way there, or waiting on a FIFO:
-// { text }, { missing }, or { problem }. The session wrote that folder, so a link in it could lead the read anywhere.
-function refFile(gitFolder, relative, cap) {
+// { text }, { missing }, or { problem }. The session wrote that folder, so a link in it could lead the read anywhere. With
+// the file open, and before its read, `whole()` says whether the folders on the way are still the ones pinned.
+function refFile(gitFolder, relative, cap, { whole, before }) {
   let fd;
   try {
     const linked = linkedPart(gitFolder, path.posix.dirname(relative) === '.' ? '' : path.posix.dirname(relative));
     if (linked) return { problem: `lies below ${linked}, a link` };
+    before(relative);
     fd = openSync(path.join(gitFolder, ...relative.split('/')), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    if (!whole()) return { problem: 'lies below a folder that changed while it was read' };
     const stat = fstatSync(fd);
     if (!stat.isFile()) return { problem: 'is not a regular file' };
     if (stat.size > cap) return { problem: 'is too large to read' };

@@ -5,20 +5,20 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { cpSync, Dir, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { deflateSync, inflateSync } from 'node:zlib';
 
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
-import { copyLoose, keptLines, keptPrompt } from '../plugins/aidrian/lib/project-kept.mjs';
+import { copyLoose, keptLines, keptPrompt, takeKept } from '../plugins/aidrian/lib/project-kept.mjs';
 import { isPolicyPath } from '../plugins/aidrian/lib/project.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { ownIssue } from '../plugins/aidrian/lib/project-run-guard.mjs';
-import { attemptFolder, prepareAttempt } from '../plugins/aidrian/lib/project-start.mjs';
+import { attemptFolder, cloneRefs, prepareAttempt } from '../plugins/aidrian/lib/project-start.mjs';
 import { isGuarded } from '../plugins/aidrian/lib/project-trust.mjs';
 import { runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
@@ -315,6 +315,7 @@ test('kept commits are taken only after a limit, only with no other attempt sinc
   const over = prepare();
   assert.match(over.kept.why, /^its commits do not descend from the branch's head on the forge$/u);
   assert.equal(inClone(fx, 2)('rev-parse', 'HEAD'), moved);
+  assert.throws(() => inClone(fx, 2)('cat-file', '-e', head), 'no refused commit in the clone, under any id');
   execFileSync('git', ['-C', fx.bare, 'fetch', '-q', path.join(kept, 'git'), BRANCH]);
   execFileSync('git', ['-C', fx.bare, 'update-ref', `refs/heads/${BRANCH}`, head]);
   assert.equal(prepare().kept.why, 'the forge has its commits');
@@ -340,7 +341,32 @@ test('kept commits that change a host, policy, or workflow file are not taken, a
     notTaken(setting, room, /^its commits change 1 host config, instruction, policy, or workflow file$/u, file);
     assert.equal(room.kept.why.includes(path.basename(file)), false, `${file}: no file name of the clone reaches the driver`);
     assert.equal(inClone(fx, 2)('diff', '--name-only', forgeHead, 'HEAD'), '');
+    assert.throws(() => inClone(fx, 2)('cat-file', '-e', head), `${file}: no refused commit in the clone, under any id`);
   }
+});
+
+test('a take the clone\'s own fetch spoils leaves no ref, and one whose ref stays ends the start', (t) => {
+  const { fx, forge: forgeHead, head, kept, prepare } = keptClone(t);
+  const room = prepare({ found: { ...fx.run(), rows: fx.rows().filter((row) => row.event !== 'kept') } });
+  assert.equal(room.kept, null);
+  const git = (args, cwd = room.work, options = {}) => spawnSync('git', args, { cwd, encoding: 'utf8', env: fx.env, ...options });
+  const at = (name) => path.join(fx.root, name);
+  const take = (name, run) => {
+    mkdirSync(at(name));
+    return takeKept({ candidate: { attempt: 1, head, folder: kept }, folder: at(name), work: room.work, gitFolder: room.git, forgeHead, guards: () => false, git: run });
+  };
+  const ref = () => inClone(fx, 2)('for-each-ref', '--format=%(refname)', 'refs/aidrian/');
+  // The ref read after the fetch names another commit.
+  const other = (args, cwd, ...more) => (cwd === room.work && args.at(-1) === 'refs/aidrian/kept^{commit}' ? { status: 0, stdout: `${forgeHead}\n` } : git(args, cwd, ...more));
+  assert.deepEqual(take('other', other), { attempt: 1, why: 'git gave another commit than its `kept` row names' });
+  assert.deepEqual([ref(), gateRepositories(at('other'))], ['', []]);
+  // The same, and the ref cannot be removed.
+  const stuck = (args, ...more) => (args[0] === 'update-ref' ? { status: 1, stdout: '' } : other(args, ...more));
+  assert.deepEqual(take('stuck', stuck), { problem: 'the ref refs/aidrian/kept of attempt 1\'s kept commits could not be removed from the new clone' });
+  assert.deepEqual([ref(), gateRepositories(at('stuck'))], ['refs/aidrian/kept', []]);
+  // git cannot say whether it is there.
+  const unsaid = (args, ...more) => (args.at(-1) === 'refs/aidrian/kept' ? { status: 128, stdout: '' } : other(args, ...more));
+  assert.match(take('unsaid', unsaid).problem ?? '', /could not be removed/u);
 });
 
 test('a protected change a later kept commit takes back, or a merge brings in, is not taken', (t) => {
@@ -440,6 +466,16 @@ test('copyLoose reads no byte through a folder of the clone swapped for another,
     writeFileSync(path.join(dir, 'git', 'objects', 'aa', name), body);
   };
   fill(other, outside);
+  // Every folder the code reads an entry of, by the path it opened it at.
+  const listed = [];
+  const readSync = Dir.prototype.readSync;
+  Dir.prototype.readSync = function read() {
+    listed.push(this.path);
+    return readSync.call(this);
+  };
+  t.after(() => {
+    Dir.prototype.readSync = readSync;
+  });
   let runs = 0;
   const run = (target, spot, back, from = other) => {
     runs += 1;
@@ -454,6 +490,7 @@ test('copyLoose reads no byte through a folder of the clone swapped for another,
     const answer = copyLoose(folder, to, undefined, (next) => {
       if (swapped || next !== path.join(folder, spot)) return;
       swapped = true;
+      listed.length = 0;
       renameSync(at, away);
       symlinkSync(path.join(from, target), at);
       if (!back) return;
@@ -462,6 +499,7 @@ test('copyLoose reads no byte through a folder of the clone swapped for another,
     });
     assert.ok(swapped, `${target} before ${spot}`);
     assert.match(answer, /^its clone changed while it was read$/u, `${target} before ${spot}${back ? ', back again' : ''}`);
+    assert.deepEqual(listed, [], `${target} before ${spot}: no entry read once it was swapped`);
     const copied = path.join(to, 'aa', name);
     assert.equal(existsSync(copied), false, `${target} before ${spot}: nothing copied`);
     rmSync(away, { recursive: true, force: true });
@@ -472,7 +510,7 @@ test('copyLoose reads no byte through a folder of the clone swapped for another,
       for (const back of [false, true]) run(target, spot, back);
     }
   }
-  // A listing of another folder with nothing in it opens no file: its own check is what shows the swap.
+  // A listing of another folder with nothing in it opens no file.
   const empty = path.join(top, 'empty');
   mkdirSync(path.join(empty, 'git', 'objects', 'aa'), { recursive: true });
   for (const back of [false, true]) run('git/objects/aa', 'git/objects/aa', back, empty);
@@ -481,6 +519,55 @@ test('copyLoose reads no byte through a folder of the clone swapped for another,
   rmSync(folder, { recursive: true });
   fill(folder, deflateSync(Buffer.from('own')));
   assert.equal(copyLoose(folder, path.join(top, 'still')), null, 'a clone that stays as it was');
+});
+
+test('a kept clone\'s refs are read through no folder swapped for another, back again too, and cloneHeads reads as before', (t) => {
+  const top = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-kept-refs-')));
+  t.after(() => rmSync(top, { recursive: true, force: true }));
+  const [own, outside] = ['a'.repeat(40), 'b'.repeat(40)];
+  const folder = path.join(top, 'attempt');
+  const other = path.join(top, 'other');
+  const fill = (dir, id) => {
+    mkdirSync(path.join(dir, 'git', 'refs', 'heads', 'feat'), { recursive: true });
+    writeFileSync(path.join(dir, 'git', 'HEAD'), `ref: refs/heads/${BRANCH}\n`);
+    writeFileSync(path.join(dir, 'git', 'refs', 'heads', BRANCH), `${id}\n`);
+    writeFileSync(path.join(dir, 'git', 'packed-refs'), `${id} refs/heads/${BRANCH}\n`);
+  };
+  fill(other, outside);
+  const run = (target, spot, back, { loose = true, pinned = true } = {}) => {
+    rmSync(folder, { recursive: true, force: true });
+    fill(folder, own);
+    if (!loose) rmSync(path.join(folder, 'git', 'refs', 'heads', BRANCH));
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40);
+    const at = path.join(folder, target);
+    const away = path.join(top, 'away');
+    let swapped = false;
+    const read = cloneRefs(path.join(folder, 'git'), pinned ? BRANCH : null, { ...(pinned ? {} : { pins: null }), before: (relative) => {
+      if (swapped || relative !== spot) return;
+      swapped = true;
+      renameSync(at, away);
+      symlinkSync(path.join(other, target), at);
+      if (!back) return;
+      rmSync(at);
+      renameSync(away, at);
+    } });
+    assert.ok(swapped, `${target} before ${spot}`);
+    rmSync(away, { recursive: true, force: true });
+    return read;
+  };
+  const targets = ['', 'git', 'git/refs', 'git/refs/heads', 'git/refs/heads/feat'];
+  for (const back of [false, true]) {
+    for (const target of targets) assert.match(run(target, `refs/heads/${BRANCH}`, back).problem ?? '', /^refs\/heads\/feat\/eng-1-export lies below a folder that changed while it was read$/u, `${target} before the branch${back ? ', back again' : ''}`);
+    for (const target of targets.slice(0, 2)) {
+      assert.match(run(target, 'HEAD', back).problem ?? '', /^HEAD lies below a folder that changed while it was read$/u, `${target} before HEAD`);
+      assert.match(run(target, 'packed-refs', back, { loose: false }).problem ?? '', /^packed-refs lies below a folder that changed while it was read$/u, `${target} before packed-refs`);
+    }
+  }
+  // With no pins, as its other callers read it, the reader follows the swap, as it did.
+  assert.deepEqual(run('git/refs/heads/feat', `refs/heads/${BRANCH}`, false, { pinned: false }), { head: outside, branch: null });
+  rmSync(folder, { recursive: true });
+  fill(folder, own);
+  assert.deepEqual(cloneRefs(path.join(folder, 'git'), BRANCH), { head: own, branch: own }, 'a clone that stays as it was');
 });
 
 // The push the issue's session makes from attempt `attempt`'s clone, as its push guard judges it, with the row's facts.
@@ -580,7 +667,7 @@ test('a second limit with nothing taken is offered the same commits again, past 
   assert.equal(inClone(fx, 4)('fsck', '--full', '--no-dangling', '--no-progress'), '');
 });
 
-test('an offered attempt that took the commits and made more, unswept through a forge outage, leaves nothing older to offer', (t) => {
+test('an offered attempt that took the commits and made more, unswept through a forge outage, is swept once by the next start, and nothing older is offered meanwhile', (t) => {
   const { fx, forge: forgeHead, head } = keptRun(t);
   startAgain(fx);
   takeOffer(fx, 2, head);
@@ -590,12 +677,21 @@ test('an offered attempt that took the commits and made more, unswept through a 
     throw new Error('gh: HTTP 502');
   };
   assert.equal(limited(fx, 2), null, 'the sweep cannot tell yet');
-  fx.forge.hasCommit = has;
+  // The forge is still out when the next start sweeps: it goes on with no offer, and the folder stays.
   assert.equal(startAgain(fx), 'not taken ENG-1 attempt 1: an attempt since is not swept yet');
   assert.deepEqual([inClone(fx, 3)('rev-parse', 'HEAD'), Object.hasOwn(lastStart(fx), 'took')], [forgeHead, false]);
   assert.equal(inClone(fx, 2)('rev-parse', 'HEAD'), newer, 'the newer work is still there');
-  // A wait that can ask the forge keeps it for a person, as any ended attempt's.
-  assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0']).out[0], /^kept ENG-1 attempt 2: /u);
+  // Given back, that start leaves the ledger as it was: with the forge back, the next one's own sweep keeps the newer
+  // clone, and its commits are offered, with no wait between.
+  const { id, child, ...ahead } = lastStart(fx);
+  fx.claude.states[STARTED[2].session] = 'done';
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ ...ahead, outcome: 'void', at: now() }, { event: 'issue', key: 'ENG-1', state: 'open', at: now() }] }));
+  fx.forge.hasCommit = has;
+  const { exitCode, out } = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(exitCode, 0);
+  assert.ok(out.some((line) => line.startsWith(`kept ENG-1 attempt 2: its clone holds ${newer.slice(0, 12)}, `)), out.join('\n'));
+  assert.ok(out.includes(`offered ENG-1 attempt 2: 3 unpushed commits, ${newer.slice(0, 12)}`), out.join('\n'));
+  assert.equal(inClone(fx, 3)('rev-parse', 'refs/aidrian/kept'), newer);
 });
 
 test('an attempt on base copies fast-forwards to its offered commits with the copies in place, and the next holds base copies again', (t) => {

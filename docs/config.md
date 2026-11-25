@@ -2037,12 +2037,13 @@ The issue's next attempt is offered the commits a kept clone holds (`lib/project
 usage or rate limit, no other attempt ran since but ones offered that very commit whose folders the sweep removed, the
 clone's HEAD and its issue branch, each read as a file, both resolve to the one commit its `kept` row names, and the
 forge has the issue's branch at a commit they descend from. While the folder of such an attempt is there, as through a
-forge outage, none is offered: it may hold newer work. The gate pushes nothing and runs no git in the kept clone. It
-copies the clone's loose objects alone, each a regular file of one link, never through a link or a folder swapped while
-it reads, at most 64 MiB each and 256 MiB in all, as files and as they expand, out of at most 20,000 folder entries,
-into a repository it makes in the new attempt's folder. A second one there fetches from it under git's fsck, and the new
-clone fetches from that second one, so an object enters only under the id its bytes hash to, once fsck passed it. The
-gate removes both before the session starts.
+forge outage, the start runs the sweep once, as `wait` does; if it is still there, none is offered, since it may hold
+newer work. The gate pushes nothing and runs no git in the kept clone. It copies the clone's loose objects alone, each a
+regular file of one link, never through a link or a folder swapped while it reads, at most 64 MiB each and 256 MiB in
+all, as files and as they expand, out of at most 20,000 folder entries, into a repository it makes in the new attempt's
+folder. A second one there fetches from it under git's fsck, the commits are judged in it, and only then does the new
+clone fetch from that second one, so an object enters only under the id its bytes hash to, once fsck passed it, and no
+refused commit does. The gate removes both before the session starts.
 They are never offered when any one of them, a merge read from each of its parents, changes a host config, instruction,
 or policy file, or a forge workflow file, even when a later one takes the change back.
 The offered commits lie in the new clone under `refs/aidrian/kept` alone. The gate checks none of them out: the

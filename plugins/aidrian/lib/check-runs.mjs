@@ -13,7 +13,8 @@
 // those of the session's own checkout, so it supports no claim held to a tree (unplaced).
 // On a host whose PostToolUse comes only for a call that exited 0, as Claude Code's, a run whose status is the line's
 // own (only `&&` before and after it) passed unless its counts show a failure.
-// Any other run, and every run on a host that sends the hook failed calls too, as Codex, is judged by its counts alone: passed with a pass count above 0 and a fail count of 0, failed with a fail count above 0,
+// Any other run, and every run on a host that sends the hook failed calls too, as Codex, is judged by its counts alone:
+// passed with a pass count above 0 and a fail count of 0, failed with a fail count above 0,
 // and `unjudged` when it printed no count, since its exit status is unknown. A call whose output the host kept in a file,
 // as Claude Code does with one too long for the payload, is read from the tail of that file (outputText).
 

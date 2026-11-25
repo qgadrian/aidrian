@@ -21,7 +21,7 @@ import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
 import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
 import { detectHost } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { LINGER_GRACE, releaseAttempts } from '../plugins/aidrian/lib/project-linger.mjs';
-import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, HOST_DENIED_MERGE, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { recheckHalt } from '../plugins/aidrian/lib/project-recheck.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -242,6 +242,67 @@ test('merged is kept only when the forge shows the pull request merged from the 
   const none = started(t);
   assert.deepEqual(none.recorded({ status: 'merged', pr: null }).out, ['ended ENG-1 bad_result -> open']);
   assert.equal(none.rows().find((row) => row.event === 'ended').why, 'the result names no pull request');
+});
+
+test('a pr_open result may carry the cause that the host denied its merge, which lifts no check and reaches its row and summary', (t) => {
+  const head = 'b'.repeat(40);
+  const denied = { status: 'pr_open', pr: 12, stop: 'the host denied the merge command', stopCause: 'host_denied_merge' };
+  const open = (fx, more = {}) => {
+    const own = fx.forge.change;
+    fx.forge.change = (ref, fields, options) => (ref === '12' ? { state: 'OPEN', headRefName: 'feat/eng-1-export', headRefOid: head, url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false, ...more } : own(ref, fields, options));
+    fx.forge.branchHead = () => head;
+    return fx;
+  };
+  const kept = (fx) => JSON.parse(readFileSync(path.join(runFolder(fx.state, 'launch'), 'results', 'ENG-1.json'), 'utf8'));
+  const fx = open(started(t));
+  assert.deepEqual(fx.recorded(denied).out, ['result ENG-1 pr_open -> parked pr-open']);
+  const row = fx.rows().find((each) => each.event === 'result');
+  assert.deepEqual([row.status, row.stopCause, row.verified, row.head], ['pr_open', 'host_denied_merge', false, head]);
+  assert.equal(kept(fx).stopCause, 'host_denied_merge');
+  assert.ok(!fx.rows().some((each) => each.event === 'halt' || each.halt), 'the run goes on');
+  assert.match(fx.cmd(['summary', 'launch']).out[0], /\n## Merges the host denied\n\n[^\n]+#auto-merge-and-ci\)\.\n\n- ENG-1: pull request #12\n/u);
+  // Any other pr_open result says nothing of the host.
+  const plain = open(started(t));
+  plain.recorded({ ...denied, stopCause: undefined });
+  assert.equal(Object.hasOwn(plain.rows().find((each) => each.event === 'result'), 'stopCause'), false);
+  assert.doesNotMatch(plain.cmd(['summary', 'launch']).out[0], /the host denied/u);
+  // The cause lifts no check of the pull request: one from another branch ends the attempt as any other does.
+  const other = open(started(t), { headRefName: 'feat/other' });
+  assert.deepEqual(other.recorded(denied).out, ['ended ENG-1 bad_result -> open']);
+  // One a person merged before the driver took it in is done, with no cause left.
+  const landed = started(t);
+  landed.forge.change = () => merged();
+  assert.deepEqual(landed.recorded(denied).out, ['result ENG-1 merged -> done']);
+  assert.equal(Object.hasOwn(landed.rows().find((each) => each.event === 'result'), 'stopCause'), false);
+  assert.equal(kept(landed).stopCause, undefined);
+});
+
+test('a stopCause on another status, or of another value, is refused', (t) => {
+  const named = { decisions: [{ question: 'Which?', options: ['a', 'b'], recommended: 0, class: 'other' }], stop: 'x', pr: 12 };
+  for (const status of ['merged', 'parked', 'blocked', 'failed', 'environment']) {
+    const { result, problems } = validateResult({ ...named, status, stopCause: 'host_denied_merge' });
+    assert.deepEqual([result, problems], [null, ['"stopCause" is for a pr_open result alone']], status);
+  }
+  for (const stopCause of ['HOST_DENIED_MERGE', 'guard', '', null, true, 1, ['host_denied_merge'], {}]) {
+    const { result, problems } = validateResult({ status: 'pr_open', pr: 12, stop: 'x', stopCause });
+    assert.equal(result, null, JSON.stringify(stopCause));
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /^"stopCause" .* is not "host_denied_merge"; leave it out for any other stop$/u);
+  }
+  assert.deepEqual(validateResult({ status: 'pr_open', pr: 12, stop: 'x' }).result, { status: 'pr_open', pr: 12, decisions: [], stop: 'x' });
+  const fx = started(t);
+  const refused = fx.result({ status: 'failed', stop: 'x', stopCause: 'host_denied_merge' });
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.err.join('\n'), /"stopCause" is for a pr_open result alone/u);
+});
+
+test('the issue session\'s instructions name the cause for the host\'s own denial alone, and ask for no second attempt', () => {
+  const skill = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/autopilot/references');
+  const phases = readFileSync(path.join(skill, 'phases.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.ok(phases.includes(`"stopCause": "${HOST_DENIED_MERGE}"`));
+  assert.match(phases, /host's own permission check denies the merge command, make no second attempt/u);
+  assert.match(phases, /Set `stopCause` for that denial alone: not for a guard hook's refusal, the forge's answer, or a stop of `aidrian pr auto-merge`/u);
+  assert.ok(readFileSync(path.join(skill, 'entry-task.md'), 'utf8').includes(`| \`stopCause\` | \`"${HOST_DENIED_MERGE}"\` on a \`pr_open\``));
 });
 
 test('the result\'s text is cleaned of controls, bidirectional and zero-width characters, links, images, HTML, and mentions, and capped', (t) => {

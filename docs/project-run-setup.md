@@ -25,7 +25,7 @@ The keys are in [Project run](config.md#project-run); how a start confines its s
 | [Keep the user-scope plugin current](#keep-the-user-scope-plugin-current) | machine, after each release | Claude Code | `access` when it is not installed |
 | [Team config](#team-config) | team | both | `policy`, `tracker`, `handoff` |
 | [Host start](#host-start) | team, and on Codex each install | both | `host` |
-| [Auto-merge and CI](#auto-merge-and-ci) | team and machine | both | `auto-merge`, `ci` |
+| [Auto-merge and CI](#auto-merge-and-ci) | team and machine | both | `auto-merge`, `ci`, `note merge-permission` |
 | [Review bot](#review-bot) | repository | both | `reviewer`, `reviewer-seen` |
 | [Forge rules](#forge-rules) | repository | both | `branch-protection`, `release-tags`, `workflow-secrets` |
 | [This machine](#this-machine) | machine and project | both | `machine` |
@@ -317,6 +317,37 @@ With both `includeGuardedPaths` and `includePolicyFiles` on, a policy file can m
 The pointer file `.aidrian.json`, a renamed file, and a file outside a nested project's folder wait for you even then.
 `init` and `init --check` print a `needs your merge` line for each one they can see already ([Project run](config.md#project-run)).
 The run's first turn gives you each line, so you know before you leave which merges are yours.
+
+### When the host blocks the merge
+
+On Claude Code in `auto` permission mode, the host blocks "Merging a pull request no human has approved" by default
+([permission modes](https://code.claude.com/docs/en/permission-modes)).
+No person approves a pull request of a run, so each issue may end with its pull request ready, green, and unmerged.
+That block is an oversight rule of the host, and it is yours: the plugin writes no host setting and never lifts it.
+A session whose merge the host denied makes no second attempt, and records `pr_open` with `"stopCause": "host_denied_merge"`.
+The run goes on with the issues that do not wait on that one.
+`aidrian project summary` names the cause once, with each pull request under it and a link to this section.
+
+The choices, each one yours to make in your own settings, outside any session of the run:
+
+- **Leave it.** Each pull request waits for your merge, and an issue that waits on it waits too.
+  A later run's `init` takes in the merged ones, as its `landed:` line says. It costs your time and changes no setting.
+- **An exception the classifier still judges**: an entry in `autoMode.allow` of your user settings, in prose, with
+  `"$defaults"` beside it in the list, or the built-in rules that list holds are lost
+  ([auto mode](https://code.claude.com/docs/en/auto-mode-config)).
+  The classifier reads no `autoMode` from project settings. This is the narrower exception: the classifier still judges
+  each merge against it. The cost: it reads prose, so it may still deny a merge, and the entry holds in every session
+  and repository of your user that its words cover.
+- **A permission rule for the merge command**: a narrow `permissions.allow` rule resolves before the classifier runs.
+  The cost: no classifier judges a matching merge, in any session and any repository of your user.
+  The plugin's [merge guard](hooks.md#merge-guard) still does, where the plugin is on.
+
+`aidrian project preflight` prints `note merge-permission` when the session runs in auto mode and the settings it can
+read hold nothing that covers a merge ([Claude Code](providers/claude-code.md#merge-permission-in-auto-mode)).
+It blocks nothing, and it prints nothing where it cannot tell: a missing note is no promise that a merge goes through.
+
+Checked on: Claude Code, documentation only, its docs read on 2026-11-25. No live run proved the block or an exception.
+No other host was checked.
 
 ## Review bot
 

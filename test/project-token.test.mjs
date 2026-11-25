@@ -23,7 +23,7 @@ import { confinedShellVars, confinedTokenVars } from '../plugins/aidrian/lib/pro
 import { apiStatus, receivePackStatus, tokenMayPush, TOKEN_READS, tokenReadProblems } from '../plugins/aidrian/lib/forges/github-token.mjs';
 import { confineCheck } from '../plugins/aidrian/lib/project-confine.mjs';
 import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, gitCredentialVars, handoffProblem, keychainToken, TOKEN_FILES, tokenFiles, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
-import { setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
+import { setupDocUrl } from '../plugins/aidrian/lib/project-setup-doc.mjs';
 import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, FIXTURE_TOKEN, runFixture, STARTED } from './project-start-fixture.mjs';
 

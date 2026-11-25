@@ -9,6 +9,7 @@ import path from 'node:path';
 import { attachLine, findLine, findSessions, heldSessions, listBackground, nameMatcher, readAsked, sessionEnded, sessionFinished, startBackground, startChoice, startFolder, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
 import { PROJECT_AGENTS, subagentEffort } from './claude-code-agents.mjs';
 import { configDir, MODEL_CHOICES } from './claude-code-config.mjs';
+import { mergePermission } from './claude-code-merge.mjs';
 import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
@@ -361,6 +362,8 @@ export default {
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
     // Whether auto mode would let a session push to the remote, from the user settings (lib/hosts/claude-code-push.mjs).
     pushPermission: (ask) => pushPermission(ask),
+    // Whether nothing in the settings it can read covers a merge auto mode blocks (lib/hosts/claude-code-merge.mjs).
+    mergePermission: (ask) => mergePermission(ask),
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,
     // the claude process, names the session before and after it. The background route starts a new session with
     // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, `startFolder`, under its name,

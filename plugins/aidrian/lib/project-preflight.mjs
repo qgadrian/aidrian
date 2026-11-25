@@ -22,19 +22,19 @@
 // one (lib/project-forge-holds.mjs holdLines, which every start asks again): the agent gate hook refuses its tag pushes, releases,
 // and workflow pushes, and the forge holds what a script it runs does with the token, unless the team accepts running
 // without that backstop (projectRun.forgeProtectionAccepted). Notes say the forge runs a
-// branch's workflow files with the repository's secrets on every push, and other services act on a push or a comment.
+// branch's workflow files with the repository's secrets on every push, and other services act on a push or a comment;
+// and, where the host says so, that it blocks an unattended merge no setting it can read covers (mergeNotes).
 // A read the forge or the tracker lacks becomes an `ask` line, which the driver answers with its own tools.
 
 import path from 'node:path';
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
 import { resolveAutoMerge } from './config-local.mjs';
-import { pluginRepository } from './config-version.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
 import { humanMergeLines } from './project-human-merges.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
-import { continueRoutes, detectHost } from './hosts/index.mjs';
+import { continueRoutes, detectHost, hostName, mergePermission } from './hosts/index.mjs';
 import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { isPluginRepository, mayFollowTeamDefault, projectId } from './project.mjs';
@@ -46,6 +46,7 @@ import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, landedLine, landedStates, mayStart, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, SERIAL, splitLanded, teamsNote } from './project-run.mjs';
 import { landedPull, openPullHead } from './project-result.mjs';
 import { parallelOf, teamPolicy } from './project-run-gate.mjs';
+import { setupPointer } from './project-setup-doc.mjs';
 import { accessProblem, commitProblem, guardedFolders, hostStartProblem, PROBE_BRANCH } from './project-start.mjs';
 import { ancestorProblem, pushProblem, repositoryProblem } from './project-trust.mjs';
 import { cardState, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
@@ -57,25 +58,6 @@ const NO_REVIEWER = new Set([null, undefined, '', 'none']);
 // The risk of projectRun.localBinding where the host names none of its own.
 const LOCAL_BINDING_RISK = 'a service a session starts may listen on this machine\'s network interfaces, where other local processes, and other machines the firewall lets through, reach it, and the session may reach the services listening on this machine';
 
-// The setup doc of a project run, and its section that clears each check's blocker, by the check's name: every blocker
-// line, and the labels `ask`, ends with a pointer to it (setupPointer). `token` is the access check's section when no
-// source gives a forge token, or that token may not push. test/project-run-report.test.mjs holds each anchor to a
-// heading of the doc.
-export const SETUP_DOC = 'docs/project-run-setup.md';
-// The doc's address on the main branch of the repository the plugin's manifest names, so a fork points at its own: a
-// project's checkout has no copy of the doc. Its path alone when the manifest names no repository.
-export function setupDocUrl() {
-  const repository = pluginRepository();
-  return repository ? `${repository.replace(/(?:\.git)?\/*$/u, '')}/blob/main/${SETUP_DOC}` : SETUP_DOC;
-}
-export const SETUP_SECTIONS = Object.freeze({
-  repository: 'origin-over-https', state: 'state-folder', run: 'after-a-halt-or-a-stop', instructions: 'state-folder',
-  policy: 'team-config', machine: 'this-machine', commit: 'commits-in-attempt-clones', host: 'host-start', trust: 'trust-the-runs-folder', access: 'host-settings',
-  token: 'forge-token-in-the-keychain', 'token-reads': 'forge-token-permissions', 'usage-limit': 'host-settings', tracker: 'team-config', 'auto-merge': 'auto-merge-and-ci',
-  handoff: 'team-config', reviewer: 'review-bot', 'reviewer-seen': 'review-bot', ci: 'auto-merge-and-ci',
-  'branch-protection': 'forge-rules', 'release-tags': 'forge-rules', 'workflow-secrets': 'forge-rules', labels: 'the-decision-label',
-});
-export const setupPointer = (section) => ` (setup: ${setupDocUrl()}#${SETUP_SECTIONS[section]})`;
 const blockerLine = (name, problem, section = name) => `blocker ${name}: ${problem}${setupPointer(section)}`;
 
 // The branch of the first issue of the run `run` in `state`, which the commit probe checks out as a clone would, or null
@@ -155,6 +137,7 @@ export function preflightCommand({ project, config, run = null, env = process.en
   const tracker = trackerLines(base, policy, read.problem ? (fallback.mcpServers ?? {}) : policy.mcpServers);
   lines.push(...tracker.lines);
   check('auto-merge', autoMergeProblem({ project, repository, facade }));
+  lines.push(...mergeNotes({ main, env }));
   const route = base.config?.session?.handoff?.continue;
   check('handoff', base.why ? `the base branch's config.json cannot be read (${base.why})` : route === 'background' ? null
     : route === 'clear' ? 'the base branch\'s session.handoff.continue is "clear", and the clear route needs a person to start the next session; set it to "background" on the default branch'
@@ -310,6 +293,17 @@ function autoMergeProblem({ project, repository, facade }) {
   if (resolved.reason === 'local') return 'this machine has not turned auto-merge on: "github": { "autoMerge": "on" } in its git-ignored local file, or the team sets github.autoMerge.default to "on"';
   if (!Array.isArray(github.requiredChecks) || github.requiredChecks.length === 0) return 'the default branch lists no github.requiredChecks, so a pull request would merge with no CI run; merge a CI workflow and its checks in github.requiredChecks before the run';
   return null;
+}
+
+// The `note merge-permission:` line, or none: where the host says that it blocks a merge no human approved and that
+// nothing in the settings it can read covers one (capabilities.mergePermission), for the session this runs in, whose
+// permission mode the run's sessions have, and the settings of the main checkout `main`. It is the Human's to know
+// before they leave, and blocks nothing: what the host blocks stays blocked, and the setup doc holds their choices.
+export function mergeNotes({ main, env, host = detectHost({ env }) }) {
+  const said = mergePermission(host, { session: host.sessionId(env), cwd: main, env });
+  if (said.answer !== 'uncovered') return [];
+  return [`note merge-permission: ${hostName(host)} says ${said.why}, and nothing in the settings this check can read covers one (${said.setting} in ${said.file} has no such entry), `
+    + `so each issue's pull request may wait for the Human's merge; what to do about that is the Human's choice alone${setupPointer('auto-merge')}`];
 }
 
 // Whether a comment by the review bot's login shows a review it finished: its usage-limit notice does not, and nor does

@@ -2127,6 +2127,11 @@ On a conflict it gives `merge_base`, and `wait` while the forge works it out, un
 It reads no auto-merge answer, so a draft that conflicts gets `merge_base`, whose line then says to go on with the checks and the review on the new head.
 `stop-action` exits 1 when it refuses, such as for another session or a pull
 request that is not the issue's own: the session then records `pr_open` with that line as its stop.
+A merge the host's own permission check denied is no stop of these, and the session neither tries again nor runs `stop-action`.
+It records `pr_open` with `"stopCause": "host_denied_merge"`, which any other status or value makes a refused result.
+The cause decides nothing: the pull request is checked as any `pr_open` one's is, and the run goes on.
+The issue's result row keeps it, and `summary RUN` names it once, with each pull request the host denied
+([When the host blocks the merge](project-run-setup.md#when-the-host-blocks-the-merge)).
 
 At the end of its loop the driver runs `aidrian project end RUN`, which writes an `end` row: an end row counts only when
 the session that wrote it was the run's driver, by custody, at that row, and then the run is over, starts no

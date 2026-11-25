@@ -1259,6 +1259,41 @@ verification. Four assumptions follow from the references:
   this repository in no entry is the shape of a run whose push was refused, and the only shape that answers `denied`.
 - `soft_deny` and `hard_deny` are never read: no pattern over prose says whether one forbids a push.
 
+## Merge permission in auto mode
+
+The adapter's `capabilities.mergePermission` ([the adapter's fields](adding-a-host.md#the-adapters-fields)),
+in `lib/hosts/claude-code-merge.mjs`, says whether auto mode blocks an unattended merge with nothing that covers it.
+Auto mode's classifier blocks "Merging a pull request no human has approved" by default
+([permission modes](https://code.claude.com/docs/en/permission-modes)), and a project run's pull request has no human approval.
+`aidrian project preflight` prints a note for `uncovered`, and nothing for `unknown`. It blocks and allows nothing.
+The choices are the Human's: [When the host blocks the merge](../project-run-setup.md#when-the-host-blocks-the-merge).
+
+It answers `uncovered` only when all of this holds, and `unknown` for anything else:
+
+1. The session's permission mode is `auto`, read as [the push answer](#push-permission-in-auto-mode) reads it.
+   In any other mode no settings file is read.
+2. The user settings file is there and read, and each project settings file is absent or read, from the same folders
+   and within the same limits as the push answer's step 2 (`lib/hosts/claude-code-settings.mjs`).
+3. No `permissions.allow`, `permissions.deny`, or `permissions.ask` rule of those files may reach a merge.
+   A rule may reach one when it mentions `gh pr merge`, when its tool is the shell tool with no pattern or one whose text
+   before its first `*` starts `gh pr merge`, such as `Bash(gh:*)` or `Bash(*)`, or when it holds `merge` and a word
+   for a pull request, such as `mcp__github__merge_pull_request`. `Bash(git merge-base:*)` does not.
+   A broad allow rule counts here, though auto mode drops it: the answer is then `unknown`, the silent one.
+4. `autoMode` is absent, or an object of the keys this file knows: `environment`, `allow`, `soft_deny`, `hard_deny`, and `classifyAllShell`.
+   `environment` and `allow` are absent or lists of strings that mention no merge, pull request, or PR.
+   `soft_deny` and `hard_deny` are absent or lists of strings holding `"$defaults"`: without it, the built-in block is gone.
+
+`uncovered` carries `autoMode.allow`, the user settings file, and what the host blocks. No answer says a merge is allowed.
+
+Read on 2026-11-25 from the [permission modes](https://code.claude.com/docs/en/permission-modes) and
+[auto mode configuration](https://code.claude.com/docs/en/auto-mode-config) references. Documentation only: no live run was made.
+
+- Managed settings and a `--settings` flag may hold an `autoMode` entry too, and are not read.
+  The note therefore speaks of the settings this check can read.
+- The server's built-in rules can differ from the ones the docs list, and the denial seen named only a broad policy.
+  That the rule above caused it is a reading, not a proof.
+- A permission rule that covers a whole MCP server is not read as reaching a merge: a run merges with `gh pr merge` alone.
+
 Limits: managed settings and a `--settings` value can add `autoMode` entries the user file does not show, and an entry
 that names one other host and trusts the remote in prose under another word, such as `"Microsoft's forge, and
 gitlab.example.com"`, reads as naming that host only; either can answer `denied` where the classifier would allow the

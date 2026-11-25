@@ -126,6 +126,12 @@ merge steps stop on a conflict, a branch behind its base, failing checks, or che
 run `aidrian project stop-action <run> <issue>`, with the run and the issue the session's first message names.
 It prints one line whose first word is the action, and has already taken the forge's part of it.
 
+- **The host denied the merge.** When the host's own permission check denies the merge command, make no second attempt,
+  by that command or any other, and run no `stop-action`: the block is the Human's to keep or lift, outside this run.
+  Never ask for a host setting, and never change one. Record `pr_open` with the pull request's number, the denial in one
+  line as its `stop`, and `"stopCause": "host_denied_merge"`. It is never `environment`.
+  Set `stopCause` for that denial alone: not for a guard hook's refusal, the forge's answer, or a stop of
+  `aidrian pr auto-merge` or the merge steps, which take the routes below.
 - Do what the line says, then run the `pr-auto-merge` skill again. On the next stop, run `stop-action` again.
 - `park`: record the result the line names, `pr_open` with the stop it names, or `parked` with the one decision it names;
   but `environment`, with the line as its stop, when it says a forge read or action failed again and again and this

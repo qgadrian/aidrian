@@ -19,7 +19,8 @@ import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { baseReader } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
-import { SETUP_DOC, SETUP_SECTIONS, setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
+import { mergeNotes } from '../plugins/aidrian/lib/project-preflight.mjs';
+import { SETUP_DOC, SETUP_SECTIONS, setupDocUrl } from '../plugins/aidrian/lib/project-setup-doc.mjs';
 import { pluginRepository } from '../plugins/aidrian/lib/config-version.mjs';
 import { owedReports, reportBody, reportCalls, reportPolicy, runWriter, startedWrites } from '../plugins/aidrian/lib/project-report.mjs';
 import { appendToRun, planRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
@@ -596,6 +597,51 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.match(blocked.out.find((line) => line.startsWith('blocker auto-merge')), /does not set github\.autoMerge\.allow/u);
   const local = runFixture(t, { init: false, ...READY, local: { handoff: { background: 'on' } } });
   assert.match(local.cmd(['preflight']).out.find((line) => line.startsWith('blocker auto-merge')), /or the team sets github\.autoMerge\.default to "on"/u);
+});
+
+test('preflight prints one merge-permission note when the host says nothing covers a merge, none when it cannot tell, with the same exit code', (t) => {
+  const fx = runFixture(t, { init: false, ...READY });
+  const settings = path.join(fx.env.CLAUDE_CONFIG_DIR, 'settings.json');
+  const transcript = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'), `${DRIVER}.jsonl`);
+  const mode = (permissionMode) => writeFileSync(transcript, `${JSON.stringify({ type: 'permission-mode', permissionMode, sessionId: DRIVER })}\n`);
+  const notes = ({ out }) => out.filter((line) => line.startsWith('note merge-permission:'));
+  const rest = ({ out }) => out.filter((line) => !line.startsWith('note merge-permission:'));
+  writeFileSync(settings, JSON.stringify({ autoContinueAtUsageLimit: true }));
+  mode('auto');
+  const uncovered = fx.cmd(['preflight']);
+  assert.equal(notes(uncovered).length, 1, uncovered.out.join('\n'));
+  assert.ok(notes(uncovered)[0].includes(`nothing in the settings this check can read covers one (autoMode.allow in ${settings} has no such entry)`), notes(uncovered)[0]);
+  assert.ok(notes(uncovered)[0].endsWith(`may wait for the Human's merge; what to do about that is the Human's choice alone (setup: ${setupDocUrl()}#auto-merge-and-ci)`), notes(uncovered)[0]);
+  assert.equal(readFileSync(settings, 'utf8'), JSON.stringify({ autoContinueAtUsageLimit: true }), 'no host setting is written');
+  writeFileSync(settings, JSON.stringify({ autoContinueAtUsageLimit: true, autoMode: { allow: ['$defaults', 'Merging is fine'] } }));
+  const covered = fx.cmd(['preflight']);
+  writeFileSync(settings, JSON.stringify({ autoContinueAtUsageLimit: true }));
+  mode('acceptEdits');
+  const otherMode = fx.cmd(['preflight']);
+  for (const unknown of [covered, otherMode]) {
+    assert.deepEqual(notes(unknown), []);
+    assert.equal(unknown.exitCode, uncovered.exitCode, 'the note moves no exit code');
+    assert.deepEqual(rest(unknown), rest(uncovered), 'nor any other line');
+  }
+});
+
+test('a host with no merge permission, or one that fails to answer, gives no note', () => {
+  const host = (mergePermission) => ({ id: 'fake', name: 'Fake', sessionId: () => 's', capabilities: { mergePermission } });
+  assert.deepEqual(mergeNotes({ main: '/x', env: {}, host: host(undefined) }), []);
+  assert.deepEqual(mergeNotes({ main: '/x', env: {}, host: host(() => { throw new Error('boom'); }) }), []);
+  assert.deepEqual(mergeNotes({ main: '/x', env: {}, host: host(() => ({ answer: 'allowed' })) }), []);
+  let asked = null;
+  const said = host((ask) => ((asked = ask), { answer: 'uncovered', setting: 'a.setting', file: '/x/settings.json', why: 'it blocks a merge' }));
+  assert.match(mergeNotes({ main: '/x', env: { A: '1' }, host: said })[0], /^note merge-permission: Fake says it blocks a merge, and nothing in the settings this check can read covers one \(a\.setting in \/x\/settings\.json/u);
+  assert.deepEqual(asked, { session: 's', cwd: '/x', env: { A: '1' } });
+});
+
+test('the setup doc gives the Human\'s choices for a merge the host blocks, leaving it first, as documentation only', () => {
+  const doc = readFileSync(path.resolve(import.meta.dirname, '..', SETUP_DOC), 'utf8');
+  const section = /^## Auto-merge and CI\n([\s\S]*?)^## /mu.exec(doc)[1];
+  const order = ['**Leave it.**', '`autoMode.allow`', '`permissions.allow`', 'documentation only'].map((each) => section.indexOf(each));
+  assert.ok(order.every((at) => at !== -1), order.join(' '));
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
 });
 
 test('every preflight blocker line, and the labels ask, ends with the setup doc section that clears it', (t) => {

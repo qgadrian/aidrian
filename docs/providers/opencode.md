@@ -277,11 +277,12 @@ or into `system`. Fixture only: no live OpenCode session has shown a model read 
 `SessionEnd` runs `hook-session-end.mjs` for a session with no parent, on its `session.deleted` event, and on nothing
 else: `session.archived` runs no hook, and what an archived session leaves, such as its gate snapshot, goes with the
 snapshot's 30-day sweep. The event carries the session's id alone, and the session may no longer be readable, so the
-bridge reads no session there: it runs the hook only for a session its own reads showed to be a root, the end of its
-own walk ([Session ids](#session-ids)), with that root's last read folder as its folder and `cwd`, and the root's id
-as `session_id`. A child's delete runs nothing, since its payload would carry its root's id and delete the root's
-records while the root runs on. A session whose root-ness the bridge cannot tell runs none, traced as a `skip` with
-`read`: one it never read in this setup, and one whose walk the 256-answer roots map forgot. Nor does a root whose
+bridge reads no session there: it runs the hook only for a session its own reads showed to be a root, the end of a
+walk, the root's own or a child's ([Session ids](#session-ids)), with that root's last read folder as its folder and
+`cwd`, and the root's id as `session_id`. A start of that session that still runs ends first, within its own
+timeout. A child's delete runs nothing, since its payload would carry its root's id and delete the root's records while
+the root runs on. A session whose root-ness the bridge cannot tell runs none, traced as a `skip` with `read`: one it
+never read in this setup, and one whose walk the 256-answer roots map forgot. Nor does a root whose
 folder is gone, traced with `cwd`. The root's start lines and stop state are dropped after its end ran. The payload
 carries no `reason` and no `transcript_path`, so the hook deletes the session's records and writes no session row.
 OpenCode publishes a root's delete event before it removes the root's children, so the root's records are deleted
@@ -439,7 +440,8 @@ through the `events` seam. None means no OpenCode hook or session read gives the
   root is kept, and the agent gates would judge it as the strictest subagent once a route runs before a tool call
   ([Agents](../config.md#agents)); none does yet.
   That call still carries the kept root as `session_id`, so a kept child's call keeps its root session's holds:
-  a root is kept only from a walk that reached its end for that same session, and a session's parent never changes.
+  a root is kept only from a walk that reached its end, for the session it started from and for the root it reached, and
+  a session's parent never changes.
 - A subagent's own shell names the child session in `OPENCODE_SESSION_ID`, so that command run there shows none of
   the root session's pull requests.
 - A command in an OpenCode that was itself started from a Claude Code or Codex shell reads the outer host's session:

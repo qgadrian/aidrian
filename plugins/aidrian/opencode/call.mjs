@@ -100,8 +100,9 @@ export function folderOf(workdir, dir, home) {
 // is kept, so the next call reads again.
 // A kept root answers only a call whose own read gave the session: one whose read failed is a subagent's, kept or not,
 // with its kept root still as `root`, so a kept child's call keeps its root's session-keyed holds. A kept answer comes
-// only from a walk that reached its end for that same id, and a session's parent never changes, so it still holds. A
-// root's folder, from its latest read, is kept beside it for its end (endCall).
+// only from a walk that reached its end, kept for the id it started from and for the root it reached, and a session's
+// parent never changes, so it still holds. A root's folder, from its latest read, its own or a child's walk, is kept
+// beside it for its end (endCall).
 async function sessionOf(runner, get, sessionID) {
   let current;
   try {
@@ -135,11 +136,17 @@ async function sessionOf(runner, get, sessionID) {
   }
   const answer = { root: id, agent: !ended || id !== sessionID ? sessionID : null };
   if (ended) {
-    if (runner.roots.size >= ROOTS_MAX) runner.roots.clear();
-    runner.roots.set(sessionID, answer);
-    if (answer.agent === null) remember(runner, sessionID, dir);
+    keep(runner, sessionID, answer);
+    keep(runner, id, { root: id, agent: null });
+    remember(runner, id, current.location?.directory);
   }
   return { ...answer, dir, ...(ended ? {} : { failed: true }) };
+}
+
+// Keeps `answer`, where the session `id`'s walk ended, in a map cleared whole once it holds ROOTS_MAX others.
+function keep(runner, id, answer) {
+  if (runner.roots.size >= ROOTS_MAX && !runner.roots.has(id)) runner.roots.clear();
+  runner.roots.set(id, answer);
 }
 
 // Keeps `dir`, the folder a read just gave the root session `root`, for its SessionEnd (endCall), which runs once the
@@ -153,11 +160,11 @@ function remember(runner, root, dir) {
 
 // What a session's `session.deleted` event sends its SessionEnd routes: { base, cwd, root, agent: null }, or { skip }.
 // The event carries the session's id alone, and the session may no longer be readable, so the bridge reads nothing:
-// the session runs SessionEnd only when the roots it already keeps say it is a root, the end of its own walk, and its
-// folder, the last one a read gave, is on disk. `skip` is `session` for no id, `read` for a session whose root-ness
-// the bridge cannot tell, as one it never read or one the roots map forgot, `subagent` for a child, and `cwd` for a
-// root whose folder is not known or not on disk. A child's end never runs its root's SessionEnd, which would delete the
-// root's records while the root runs on.
+// the session runs SessionEnd only when the roots it already keeps say it is a root, the end of a walk, its own or a
+// child's, and its folder, the last one a read gave, is on disk. `skip` is `session` for no id, `read` for a session
+// whose root-ness the bridge cannot tell, as one it never read or one the roots map forgot, `subagent` for a child, and
+// `cwd` for a root whose folder is not known or not on disk. A child's end never runs its root's SessionEnd, which would
+// delete the root's records while the root runs on.
 export function endCall(runner, sessionID) {
   if (typeof sessionID !== 'string' || sessionID === '') return { skip: 'session' };
   const known = runner.roots.get(sessionID);
@@ -191,7 +198,7 @@ export async function sessionCall(runner, sessionID) {
       const root = await reads.get(session.root);
       if (!isSession(root, session.root)) return { skip: 'read' };
       rootDir = root.location?.directory;
-      if (runner.roots.get(session.root)?.agent === null) remember(runner, session.root, rootDir);
+      remember(runner, session.root, rootDir);
     }
     const folder = (dir) => (isFolder(dir) ? dir : null);
     return { root: session.root, agent: session.agent, dir: folder(session.dir), rootDir: folder(rootDir) };

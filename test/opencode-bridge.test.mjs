@@ -535,14 +535,15 @@ test('a child session`s call carries the root as session_id and itself as agent_
 
 test('the root cache forgets every answer once it holds 256, so the 257th session`s call makes the first read again', async () => {
   const sessions = { ses_top: {} };
-  for (let n = 0; n <= 256; n += 1) sessions[`ses_kid${n}`] = { parentID: 'ses_top' };
+  for (let n = 0; n <= 255; n += 1) sessions[`ses_kid${n}`] = { parentID: 'ses_top' };
   const context = fakeContext({ sessions });
   const { calls, fire } = await bridge({ context });
-  for (let n = 0; n < 256; n += 1) await fire(shellEvent({ sessionID: `ses_kid${n}` }));
+  // 255 children and the root their walks reach.
+  for (let n = 0; n < 255; n += 1) await fire(shellEvent({ sessionID: `ses_kid${n}` }));
   const reads = context.reads.length;
   await fire(shellEvent({ sessionID: 'ses_kid0' }));
   assert.deepEqual(context.reads.slice(reads), ['ses_kid0'], 'with 256 answers kept, the first`s root is still known');
-  await fire(shellEvent({ sessionID: 'ses_kid256' }));
+  await fire(shellEvent({ sessionID: 'ses_kid255' }));
   const cleared = context.reads.length;
   await fire(shellEvent({ sessionID: 'ses_kid0' }));
   assert.deepEqual(context.reads.slice(cleared), ['ses_kid0', 'ses_top'], 'its chain is read again');
@@ -2267,17 +2268,55 @@ test('a root whose last known folder is gone runs no SessionEnd, never in the pl
   assert.deepEqual(traceLines(trace).at(-1), { at: traceLines(trace).at(-1).at, step: 'skip', script: 'hook-session-end.mjs', status: 'cwd' });
 });
 
-test('a root that moved ends in the last folder a read gave, on its own call or on a child`s first callback', { timeout: 10_000 }, async () => {
-  const readers = {
-    'own-call': (context) => context.hooks['execute.after'](shellEvent({ sessionID: 'ses_end' })),
-    'child-start': (context) => context.hooks.context(request('ses_kid')),
+test('a root whose child alone made a call ends in its own folder', { timeout: 10_000 }, async () => {
+  const firsts = {
+    start: [EVENTS, (context) => context.hooks.context(request('ses_kid'))],
+    'tool-call': [{ PostToolUse: EVENTS.PostToolUse, SessionEnd: EVENTS.SessionEnd }, (context) => context.hooks['execute.after'](shellEvent({ sessionID: 'ses_kid' }))],
   };
-  for (const [name, read] of Object.entries(readers)) {
+  for (const [name, [events, first]] of Object.entries(firsts)) {
+    const stream = eventStream();
+    const context = fakeContext({ sessions: ROOT_AND_CHILD, subscribe: () => stream.iterable });
+    const { calls } = await startBridge(`end-child-first-${name}`, { context, routes: [END_ROUTE], events });
+    await first(context);
+    await stream.send([{ type: 'session.deleted', data: { sessionID: 'ses_end' } }]);
+    assert.deepEqual(ends(calls).map((call) => [call.options.cwd, sent(call)]), [[PROJECT_DIR, { hook_event_name: 'SessionEnd', opencode: {}, session_id: 'ses_end', cwd: PROJECT_DIR }]], name);
+  }
+});
+
+test('a root`s end waits for its start to end', { timeout: 10_000 }, async () => {
+  let release = null;
+  const spawn = fakeSpawn((child, call) => {
+    if (path.basename(call.args[0]) === 'hook-session-start.mjs') release = () => answers(child, startAnswer(call));
+    else answers(child, { status: 0 });
+  });
+  const stream = eventStream();
+  const context = fakeContext({ sessions: ROOT_AND_CHILD, subscribe: () => stream.iterable });
+  const { calls } = await startBridge('end-after-start', { context, spawn, routes: [END_ROUTE] });
+  const starting = context.hooks.context(request('ses_end'));
+  while (release === null) await settle();
+  const ended = stream.send([{ type: 'session.deleted', data: { sessionID: 'ses_end' } }]);
+  for (let turn = 0; turn < 10; turn += 1) await settle();
+  assert.deepEqual(ends(calls), [], 'its start still runs');
+  release();
+  await Promise.all([starting, ended]);
+  assert.deepEqual(ran(calls), [['hook-session-start.mjs'], ['hook-session-end.mjs']]);
+});
+
+test('a root that moved ends in the last folder a read gave, on its own call or on a child`s first or later callback', { timeout: 10_000 }, async () => {
+  const prompt = (context) => context.hooks.prompt({ sessionID: 'ses_kid', messageID: 'msg_1', prompt: { text: 'x' }, delivery: 'steer' });
+  const readers = {
+    'own-call': [() => {}, (context) => context.hooks['execute.after'](shellEvent({ sessionID: 'ses_end' }))],
+    'child-start': [() => {}, (context) => context.hooks.context(request('ses_kid'))],
+    'child-prompt': [prompt, prompt],
+  };
+  for (const [name, [before, read]] of Object.entries(readers)) {
     let directory = PROJECT_DIR;
     const stream = eventStream();
     const context = fakeContext({ sessions: { ...ROOT_AND_CHILD, ses_end: () => ({ location: { directory } }) }, subscribe: () => stream.iterable });
-    const { calls, fire } = await startBridge(`end-moved-${name}`, { context, routes: [END_ROUTE] });
+    const events = { ...EVENTS, UserPromptSubmit: 'prompt' };
+    const { calls, fire } = await startBridge(`end-moved-${name}`, { context, routes: [END_ROUTE, PROMPT_ROUTE], events });
     await fire(shellEvent({ sessionID: 'ses_end' }));
+    await before(context);
     directory = SESSION_DIR;
     await read(context);
     await stream.send([{ type: 'session.deleted', data: { sessionID: 'ses_end' } }]);

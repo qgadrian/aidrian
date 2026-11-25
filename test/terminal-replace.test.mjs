@@ -427,7 +427,7 @@ function typedStop(t, { lift = true, prompt } = {}) {
   assert.ok(noteFrom(store, BG_SESSION, { slug: 'widget', chain: 1, brief: path.join(dir, '2026-11-24-widget.md'), route: 'background' }));
   assert.ok(markUnattended(BG_SESSION, { root: dir, env }));
   if (lift) assert.equal(liftAttended(BG_SESSION, transcript, { env, home: TEST_HOME, isHuman: () => true }), true);
-  assert.equal(unattendedHere(BG_SESSION, { store, env, now: Date.now() }), !lift, lift ? 'the Human\'s prompt lifted the mark' : 'the mark holds');
+  assert.equal(unattendedHere(BG_SESSION, { store, env, home: TEST_HOME, now: Date.now() }), !lift, lift ? 'the Human\'s prompt lifted the mark' : 'the mark holds');
   const file = noteEnding(store, BG_SESSION, { own: BG_SESSION, shell: null, id: 'efgh5678', next: NEXT_SESSION }, { now: at });
   utimesSync(file, new Date(at), new Date(at));
   const prompts = { file: transcript, isHuman: (entry) => entry.human === true, timeOf: claudeCode.entryTime, still: () => true };

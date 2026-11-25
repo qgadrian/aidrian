@@ -29,7 +29,8 @@
 // A residual: where the host keeps no transcript its adapter vouches for, the agent gate cannot lift the session's mark
 // either, so the mark still holds it, and a request a turn the Human interrupted left ends it at the end of a later
 // turn the Human typed, within OWN_ENDING_WINDOW (docs/handoff.md#replacing-the-terminal).
-// A former background session a Human resumed in a terminal, which the host says a Human attends, never names itself.
+// A former background session a Human resumed as an interactive session, which the host says a Human attends, never
+// names itself.
 // A background session that stays open after its successor started says why in the gate's say line. The chain floor
 // and its cap bound the hops.
 // Which host process, which signal, and which program and words open a session are the host adapter's

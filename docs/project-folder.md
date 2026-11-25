@@ -626,6 +626,9 @@ Refunds take five days.
 <!-- aidrian:decision-new id=refund-copy text="Refunds take five days." -->
 ```
 
+A wording states the rule as it holds, and never its build state: "not built yet" goes in the tracker issue or in text outside the block,
+so building the rule changes no record.
+
 - `id` is lowercase letters, digits, and `-`, unique across the docs.
   It takes at most 32 characters, so the longest marker fits on one screen at the default `docs.wrapLimit`.
 - `status` is `unconfirmed`, `confirmed`, or `rejected`. An agent writes `unconfirmed`; only the Human moves it, and nothing settles a decision by time.
@@ -669,6 +672,8 @@ So is a marker with no `decision-new` line, and an old wording line below a new 
 `hasOldWording` true with `oldWording` null means the old wording cannot be read, and `hasNewWording` true with `newWording` null the same of the new.
 Two more problems compare the wording with the doc.
 An unconfirmed marker at the bottom of its stack has drifted when its new wording is not in its block exactly once.
+The remedy is to put the wording back as it was. A changed wording is the Human's to settle, with `aidrian decisions set`:
+`undo` refuses it until the wording is back, and no command rewrites a `decision-new` line.
 A confirmed marker is exempt, since the Human may reword what they kept.
 A rejected marker is exempt too: `set rejected` changes no wording, so a later hand edit is expected.
 And in any stack that is not independent, each marker's old wording must be the new wording of the marker above it.

@@ -435,7 +435,7 @@ export function wordingProblems(text, { decisions, problems: parsed = [] } = par
     }
     if (decision.status !== 'unconfirmed' || decision.newWording === null) return;
     const count = findWording(lines, blockAbove(lines, fenced, decision.line - 1), decision.newWording).length;
-    if (count !== 1) problems.push({ line: decision.line, problem: `"${decision.id}" wrote wording found ${count} times in the block above it, and undo needs it exactly once: put it back, or fix the decision-new line` });
+    if (count !== 1) problems.push({ line: decision.line, problem: `"${decision.id}" wrote wording found ${count} times in the block above it, and undo needs it exactly once: put the wording back as it was; a changed wording is the Human's to settle, with aidrian decisions set` });
   });
   return problems;
 }

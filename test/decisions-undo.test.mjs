@@ -311,6 +311,9 @@ test('list and check report a new wording that drifted, and a stack whose wordin
   assert.equal(drifted.length, 1);
   assert.equal(drifted[0][0], 2);
   assert.match(drifted[0][1], /"refund-copy" wrote wording found 0 times in the block above it/u);
+  assert.match(drifted[0][1], /: put the wording back as it was; a changed wording is the Human's to settle, with aidrian decisions set$/u);
+  assert.doesNotMatch(drifted[0][1], /decision-new|\bfix\b|\bedit\b/u, 'no words that send an agent to the record');
+  assert.match(undoDecision(`Six days.\n${record({ wrote: rule }).join('\n')}\n`, 'refund-copy').refused, /not found in the block/u, 'undo refuses it, so the message does not offer undo');
   assert.match(problems(`${rule}\n${rule}\n${record({ wrote: rule }).join('\n')}\n`)[0][1], /found 2 times/u);
   assert.deepEqual(problems(`Six days.\n${record({ wrote: rule, status: 'confirmed' }).join('\n')}\n`), [], 'confirmed: the Human may reword it');
   assert.deepEqual(problems(`Six days.\n${record({ wrote: 'Five', status: 'rejected' }).join('\n')}\n`), [], 'only an unconfirmed marker drifts');
@@ -328,6 +331,20 @@ test('list and check report a new wording that drifted, and a stack whose wordin
   const higher = problems(['Third.', ...record({ id: 'first', wrote: 'Gone.' }), ...record({ id: 'second', was: 'Gone.', wrote: 'Third.' })].join('\n'));
   assert.deepEqual(higher, [], 'only the bottom of a stack has to be in the doc');
   assert.deepEqual(problems(`${rule}\n${marker()}\n<!-- aidrian:decision-new id=refund-copy text=oops -->\n`), [], 'unreadable wording is a parse problem, not a drift');
+});
+
+test('a rule states its build state outside its block, so marking it built changes no record and no problem', () => {
+  const rule = 'A cancelled slot goes back at once.';
+  const problems = (text) => {
+    const found = parseDecisions(text);
+    return [...found.problems, ...wordingProblems(text, found)];
+  };
+  const lines = [rule, ...record({ wrote: rule })];
+  for (const state of [['The rule below is not built yet.', ''], ['The rule below is built.', ''], []]) {
+    assert.deepEqual(problems(['# Booking', '', ...state, ...lines, ''].join('\n')), [], state[0] ?? 'the sentence removed');
+  }
+  const inside = `${rule} Decided, not built yet.`;
+  assert.equal(problems([rule, ...record({ wrote: inside }), ''].join('\n')).length, 1, 'a state inside the wording drifts once the rule is built');
 });
 
 // A project with the doc `docs/a.md`, indexed, and the doc's path.

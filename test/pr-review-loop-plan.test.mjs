@@ -69,8 +69,9 @@ test('an unverified invariant the session can prove itself is gathered, never a 
   assert.ok(resolve !== -1 && resolve < route.indexOf('`e2e-runner`'), 'the trust gate comes before any dispatch');
   assert.ok(route.includes('any other result, limited, an error, or a missing field, takes the next route'), 'trust gate: any other result');
   assert.ok(route.includes('under the checks of the product-access workflow the `persona-audit` skill runs'), 'trust gate: the workflow\'s checks');
-  // The attach policy: ingest keeps the images local; posting follows the mode the capture resolved from the base branch.
-  assert.ok(route.includes('only when this head\'s captures comment says `Attach: **auto**`') && route.includes('never the checkout\'s config'), 'attach policy');
+  // No upload on this route: ingest keeps the images local, and publishing stays with the pr-screenshot skill.
+  assert.ok(route.includes('This route never posts them: publishing screenshots stays with the `pr-screenshot` skill and its own confirmation.'), 'never posts');
+  assert.doesNotMatch(route, /Attach: \*\*auto\*\*|review\.visual\.attach/u, 'the route reads no attach policy');
   // A local run is no CI check.
   assert.ok(route.includes('A local run never clears a flow\'s `checks`.'), 'a local run never clears a flow\'s checks');
   assert.ok(fix.slice(ask).includes('never how to get the proof'), 'the Human is asked to approve, never how to get the proof');
@@ -88,8 +89,9 @@ test('an unverified invariant the session can prove itself is gathered, never a 
   for (const step of ['**Proof the session gathers.**', '`e2e-runner`', '`designer`', '`product-access`', 'aidrian pr settle <PR> --flow <id> --accept',
     'asks nothing', '`signoff: "human"` flow and a change to `harness-config` still ask the Human',
     '(personas.md#a-pull-request-link-alone)', 'printed `limited: false`; any other result', 'takes the next route as before',
-    'says `Attach: **auto**`, the mode the capture resolved from the base branch', 'never clears a flow\'s `checks`']) {
+    'never posts the screenshots on this route', 'never clears a flow\'s `checks`']) {
     assert.ok(rulings.includes(step), `Unattended rulings: ${step}`);
   }
-  assert.match(doc('Visual review', '##'), /\*\*An empty capture\*\*.*`limited: false`.*`designer`.*product-access workflow.*`Attach: \*\*auto\*\*`.*no question to the Human/u);
+  assert.match(doc('Visual review', '##'), /\*\*An empty capture\*\*.*`limited: false`.*`designer`.*product-access workflow.*never posts them.*no question to the Human/u);
+  assert.doesNotMatch(rulings + doc('Visual review', '##'), /Attach: \*\*auto\*\*/u, 'the docs tie no upload to the attach line');
 });

@@ -93,9 +93,8 @@ crosses them.
      the `persona-audit` skill runs, with the project's `product-access` knowledge (`personas`).
      Post the run's command and result lines as a comment of the pull request. Ingest the screenshots with
      `aidrian pr ingest`, which keeps them local, and dispatch the visual reviewer again to cite `capture:<key>`.
-     Post them through the `pr-screenshot` skill only when this head's captures comment says `Attach: **auto**`,
-     the mode the capture resolved from the base branch, never the checkout's config; with no such comment, keep
-     them local. Never post a secret or a session token from the login. A local run never clears a flow's `checks`.
+     This route never posts them: publishing screenshots stays with the `pr-screenshot` skill and its own
+     confirmation. Never post a secret or a session token from the login. A local run never clears a flow's `checks`.
      When `product-access` holds no way in, report that gap as a finding, and ask nothing. A sign-off the Human owes,
      a `signoff: "human"` flow or a `harness-config` change, still stops at `human_required`.
   3. An entry has `settle`, so this project allows unattended rulings: dispatch an independent read-only agent, such as

@@ -416,10 +416,9 @@ team, an error, or a missing field, takes the next route as before. It runs loca
 `review.visual.viewports`, each reaching the product under the checks of the
 [product-access workflow](personas.md#a-pull-request-link-alone) that the `persona-audit` skill runs. The session
 posts the run's command and result lines as a comment of the pull request, and ingests the screenshots with
-`aidrian pr ingest`, which keeps them on this machine. It posts them through the `pr-screenshot` skill only when the
-head's captures comment says `Attach: **auto**`, the mode the capture resolved from the base branch's
-`review.visual`, never the checkout's config, and never posts a secret or session token from the login. A visual
-reviewer then cites the ingested images as `capture:<key>`.
+`aidrian pr ingest`, which keeps them on this machine, and a visual reviewer cites them as `capture:<key>`. The
+session never posts the screenshots on this route: publishing them stays with the `pr-screenshot` skill and its own
+confirmation. It never posts a secret or session token from the login.
 With both switches on, the judge settles an invariant the run proves with `aidrian pr settle <PR> --flow <id> --accept
 <invariant> --evidence <url> --reason "<what it shows>" --head <sha> --judge <agent>`, `<url>` being that comment.
 With either off, the session asks the Human to approve that `--accept`, not how to get the proof. A local run settles
@@ -594,9 +593,9 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   `capture-stderr.log` in the head's capture folder, which each new attempt removes as it starts when it can; one it cannot remove is never written into.
 - **An empty capture**: a capture the visual reviewer opened and reported as an empty, logged-out, or data-less page
   proves nothing of the screen. When `aidrian pr resolve` printed `limited: false`, the session dispatches `designer`
-  under the product-access workflow's checks for the same screens at each width, then ingests the images, posts them
-  only when the captures comment says `Attach: **auto**`, and has the visual reviewer cite them, with no question to
-  the Human ([Unattended rulings](#unattended-rulings)).
+  under the product-access workflow's checks for the same screens at each width, then ingests the images, never
+  posts them, and has the visual reviewer cite them, with no question to the Human
+  ([Unattended rulings](#unattended-rulings)).
 - **Ingested images**: `aidrian pr ingest` ([Ingesting images](#sign-off-by-the-human)) adds images taken
   elsewhere to the manifest's own `ingested` list, never to the tool's entries. Each key is
   `ingest-<file name>-<6 hex of its hash>`, so the same image under the same file name ingests again in place. The

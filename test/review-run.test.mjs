@@ -828,6 +828,31 @@ test('the review bot`s clean comment on a draft records no open finding, and the
   assert.deepEqual([bot.open, bot.findings, bot.bot.kind], [0, 0, 'comment']);
 });
 
+test('a failed review bot run records no finding: the step times out for a retry, in the same round', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const { latestBotSignal, DEFAULT_REVIEWER } = await import('../plugins/aidrian/lib/pr-await-review.mjs');
+  const user = { login: DEFAULT_REVIEWER };
+  const notice = { id: 1, user, created_at: '2026-11-12T12:30:19Z', body: 'Codex Review: Something went wrong. Try again later by commenting \u201c@codex review\u201d.\n\n```\nUnknown error\n```' };
+  const card = (head) => ({ id: 2, user, created_at: '2026-11-12T12:01:00Z', updated_at: '2026-11-12T12:31:00Z', body: `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"commit_sha":"${head}","has_any_findings":null,"has_unresolved_findings":null,"status":"failed"}} -->` });
+  // The wait as pr-await-review.mjs reads the pull request: an answer when the signal is one, else a timeout to retry.
+  const wait = (comments) => async ({ head }) => {
+    const signal = latestBotSignal({ reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: '2026-11-12T12:00:00Z', issueComments: comments(head) });
+    return signal ? { status: 'received', head_sha: head, signal } : { status: 'timed_out', head_sha: head, requested: true, requested_head: head, signal: null, retry_recommended: true };
+  };
+  const state = () => readLocalState(r.project, 7);
+  const botPasses = () => Object.values(state().passes ?? {}).filter((pass) => pass.bot);
+  const byNotice = await r.step({ codex: off, awaitBot: wait(() => [notice]) });
+  assert.equal(byNotice.status, 'timed_out', byNotice.reason);
+  assert.deepEqual(botPasses(), [], 'the failure notice is no answer and holds no finding');
+  assert.equal(state().rounds.at(-1).floor, undefined, 'the round history reads no open finding');
+  const rounds = state().rounds.length;
+  const byCard = await r.step({ codex: off, awaitBot: wait((head) => [card(head)]) });
+  assert.equal(byCard.status, 'timed_out', byCard.reason);
+  assert.deepEqual(botPasses(), [], 'a failed status card is no answer either');
+  assert.equal(state().rounds.length, rounds, 'the retry runs in the same round');
+});
+
 test('the review bot`s clean receipt beside its status card of the head that still holds a finding is open work, never a pass', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
   const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });

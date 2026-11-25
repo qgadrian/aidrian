@@ -949,7 +949,13 @@ receipt. A comment the status card vouches for answers the card's full commit, c
 that gives fewer than 40 hex vouches for nothing. The newest answer is the one judged: a later review of an older
 head hides an earlier answer for this one, so the wait asks again or times out, and never records a pass for it. The
 receipt's footer quotes "@codex review", and like the status card it is never a request, nor is a 👀 on it an
-acknowledgement. Any other answer holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
+acknowledgement. A run the bot reports failed on its side is no answer: its notice, which opens with "Codex Review:
+Something went wrong", and a status card whose code review is `failed` are neither a finding nor a request, though the
+notice quotes "@codex review" in its help text. The wait goes on as if the bot had not answered and ends `timed_out`,
+so the failure uses no round and records no finding. That timeout carries `retry_recommended: true`, and the loop
+waits once more, only when the bot acknowledged the request for the head or a receipt still waits on its status card;
+without either, the step reports `timed_out` with `retry_recommended: false` and no follow-up wait.
+Any other answer holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
 at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the
 bot's stage, after the earlier stages, as before. An answer for a commit other than the one under review counts for
 nothing. A flow's required checks are read for that commit too.

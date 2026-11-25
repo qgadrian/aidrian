@@ -33,7 +33,7 @@ Act on `status`, then run it again, until it stops:
 | --- | --- |
 | `dispatch` | run each `dispatch[]` entry as its read-only `agent`, briefed with the entry as `references/review-plan.md` says; record each with its `record` command |
 | `fix_required` | triage `open`, `flows`, `tests_removed`, and `checks_failing` in step 3, fix, push |
-| `running`, `checks_pending`, `timed_out` | run it again; `incomplete`: as `references/review-plan.md` says |
+| `running`, `checks_pending` | run it again; `incomplete`, `timed_out`: as `references/review-plan.md` says |
 | `received`, `none_needed` | copy `residuals` to the body's Accepted residuals; step 2 for comments people or the bot left, then step 7 |
 | `received` with `replies.unanswered` | run it once more; report what is left |
 | `replies.waiting` | run nothing for it; report each thread as waiting on its `login`'s machine |
@@ -54,7 +54,7 @@ aidrian pr checks <n>                                        # one line: ready, 
 ```
 
 For thread state, query `reviewThreads` with `isResolved` and `isOutdated` through `gh api graphql`, and skip
-resolved threads. A failing check is a review item too. Skip the gh user's `aidrian-product-feedback` comment:
+resolved ones. A failing check is a review item too. Skip the gh user's `aidrian-product-feedback` comment:
 `aidrian pr product-feedback answer` answers it. For engine posts, see `references/review-plan.md`.
 
 ## 3. Triage

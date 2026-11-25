@@ -109,6 +109,12 @@ the change does not touch. A push that touches only comments, docs, or tests kee
 still re-review it, in delta context; a quiet push changes only the round count. `residuals` on any result lists the
 late-round low findings the step accepted, which go into the body's Accepted residuals.
 
+## `timed_out`
+
+The bot gave no answer in time. Run the step again once when `bot.retry_recommended` is true, as the step returns it:
+the wait sets it when the bot acknowledged the request for the head or its status card still runs. Otherwise report that the bot did not answer, with
+`aidrian pr await-review <n> --request` to ask it again.
+
 ## `incomplete`
 
 With `retry_recommended: true`, run the step again, for as long as it says so: a slice that timed out reaches its result

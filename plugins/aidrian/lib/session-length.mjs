@@ -249,7 +249,7 @@ const notWorthIt = (cost, next, said) => 'Judge first whether a handoff is worth
 // `solo`, it words the reminder by the base branch's local ref alone, and the gate reads the forge before it starts
 // anything. `capped` says the chain of `session`, the hook's session id, is at the cap of that route, the gate's own
 // check (handoff-continue.mjs sessionAtChainCap): the gate would continue its brief by no route, so neither hook asks
-// for a handoff then. A route the hook took by trusting the local ref's `solo` may be one the forge refuses at the gate,
+// for a handoff then, when every route the gate could take is at its cap. A route the hook took by trusting the local ref's `solo` may be one the forge refuses at the gate,
 // which then goes on by the route a refused background gate takes: `capped` then holds only when that route is at its cap
 // too, so a guess never silences a handoff the gate would continue.
 export async function continuation(handoff, host, project, working, session = null) {

@@ -1366,19 +1366,18 @@ test('Claude Code in auto mode answers uncovered when no readable setting names 
   }
 });
 
-test('Claude Code answers unknown beside a project settings file that may reach a merge, or cannot be read', (t) => {
+test('Claude Code reads no project settings for a merge: an issue session loads the user settings alone', (t) => {
   for (const name of ['settings.json', 'settings.local.json']) {
-    for (const [text, answer] of [[JSON.stringify(rules('allow', 'Bash(npm test)')), 'uncovered'], [JSON.stringify(rules('allow', 'Bash(gh pr merge:*)')), 'unknown'], ['{ nope', 'unknown']]) {
+    for (const text of [JSON.stringify(rules('allow', 'Bash(gh pr merge:*)')), JSON.stringify({ autoMode: { allow: ['Merging is fine'] } }), '{ nope']) {
       const config = claudeSettings(t, {});
       const cwd = path.join(config, 'work');
       mkdirSync(path.join(cwd, '.claude'), { recursive: true });
       mkdirSync(path.join(cwd, '.git'));
       writeFileSync(path.join(cwd, '.claude', name), text);
-      assert.equal(askMerge(config, { cwd }).answer, answer, `${name}: ${text}`);
+      assert.equal(askMerge(config, { cwd }).answer, 'uncovered', `${name}: ${text}`);
     }
   }
   const config = claudeSettings(t, {});
-  for (const cwd of ['work', '', null, undefined]) assert.deepEqual(askMerge(config, { cwd }), { answer: 'unknown' }, `a folder that is not absolute: ${cwd}`);
   assert.deepEqual(askMerge(config, { env: { CLAUDE_CONFIG_DIR: 'relative' } }), { answer: 'unknown' }, 'a config folder that is not absolute');
 });
 

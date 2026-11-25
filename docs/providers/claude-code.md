@@ -1259,6 +1259,9 @@ verification. Four assumptions follow from the references:
   this repository in no entry is the shape of a run whose push was refused, and the only shape that answers `denied`.
 - `soft_deny` and `hard_deny` are never read: no pattern over prose says whether one forbids a push.
 
+Verified on Claude Code by `node --test` on fixtures (`test/adapters.test.mjs`); not live: no denial of a real
+classifier has been held against the answer. `claude auto-mode config` shows the rules the host applies, as a check by hand.
+
 ## Merge permission in auto mode
 
 The adapter's `capabilities.mergePermission` ([the adapter's fields](adding-a-host.md#the-adapters-fields)),
@@ -1272,9 +1275,10 @@ It answers `uncovered` only when all of this holds, and `unknown` for anything e
 
 1. The session's permission mode is `auto`, read as [the push answer](#push-permission-in-auto-mode) reads it.
    In any other mode no settings file is read.
-2. The user settings file is there and read, and each project settings file is absent or read, from the same folders
-   and within the same limits as the push answer's step 2 (`lib/hosts/claude-code-settings.mjs`).
-3. No `permissions.allow`, `permissions.deny`, or `permissions.ask` rule of those files may reach a merge.
+2. The user settings file is there and read, within the same limits as the push answer's step 2
+   (`lib/hosts/claude-code-settings.mjs`). No project or local settings file is read: an issue's session starts with
+   `--setting-sources user`, so none applies to its merge.
+3. No `permissions.allow`, `permissions.deny`, or `permissions.ask` rule of the user settings may reach a merge.
    A rule may reach one when it mentions `gh pr merge`, when its tool is the shell tool with no pattern or one whose text
    before its first `*` starts `gh pr merge`, such as `Bash(gh:*)` or `Bash(*)`, or when it holds `merge` and a word
    for a pull request, such as `mcp__github__merge_pull_request`. `Bash(git merge-base:*)` does not.
@@ -1308,9 +1312,6 @@ check. A permission rule that reaches a push some other way, such as a rule for 
 read; either can answer `denied` where the push would go through. A deny or ask rule that refuses the push answers
 `unknown`, not `denied`: the run starts, as it did before the check, and stops at its push. A relative `CLAUDE_CONFIG_DIR`
 answers `unknown`. Every shape of `autoMode` the adapter does not know answers `unknown`.
-
-Verified on Claude Code by `node --test` on fixtures (`test/adapters.test.mjs`); not live: no denial of a real
-classifier has been held against the answer. `claude auto-mode config` shows the rules the host applies, as a check by hand.
 
 ## The Claude mod
 

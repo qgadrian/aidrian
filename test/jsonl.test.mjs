@@ -1,7 +1,8 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import fs, { appendFileSync, constants, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -168,4 +169,26 @@ test('withLocks locks a file by its real path: two spellings through a symlinked
   const deeper = path.join(path.dirname(file), 'new/log.jsonl');
   assert.deepEqual(withLocks([deeper, path.join(link, 'new/log.jsonl')], () => lockFiles(deeper), { waitMs: 2000 }), ['log.jsonl.lock.1']);
   assert.equal(realFile(path.join(link, 'new/log.jsonl')), realFile(deeper));
+});
+
+// A named pipe there would make a plain read wait for a writer that never comes. What the open asks for says it cannot,
+// with no process to make a pipe; a link to a device stands for an entry that is no regular file.
+test('a lock file is opened without waiting, and an entry that is no regular file holds no lock', (t) => {
+  const file = tempFile(t);
+  mkdirSync(path.dirname(file), { recursive: true });
+  symlinkSync('/dev/null', `${file}.lock.1`);
+  const asked = [];
+  const real = fs.openSync;
+  t.mock.method(fs, 'openSync', function openSync(...args) {
+    asked.push(args);
+    return real.apply(this, args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  assert.equal(withLocks([file], () => 'ran', { waitMs: 50 }), 'ran');
+  const flags = asked.filter(([name]) => String(name).endsWith('.lock.1')).map(([, flag]) => flag);
+  assert.ok(flags.length > 0 && flags.every((flag) => (flag & constants.O_NONBLOCK) !== 0), JSON.stringify(flags));
 });

@@ -489,6 +489,34 @@ test('a git call that writes its output to a file names that file to the write a
   }
 });
 
+// The plan `aidrian plan set` and `record` edit is a path the call writes, so the hook's own session id and the session's
+// places decide, whatever project or environment the call names.
+test('a session no Human attends marks with aidrian plan only a plan it may write, behind the prefixes the guard reads', (t) => {
+  const fx = fixture(t);
+  const ask = fx.steady();
+  const own = path.join(fx.state, 'plans', 'mine-plan.md');
+  const other = path.join(fx.root, 'other-state', 'plans', 'shared-plan.md');
+  const set = (file) => `set ${file} S1 complete`;
+  for (const command of [
+    `aidrian plan ${set(other)}`, `aidrian plan record ${other} --by a --text t --project ${fx.dir}`, `aidrian plan ${set(other)} --project ${path.dirname(other)}`,
+    `env -u CLAUDE_CODE_SESSION_ID aidrian plan ${set(other)}`, `CLAUDE_CODE_SESSION_ID=x XDG_STATE_HOME=/x aidrian plan ${set(other)}`, `env -i aidrian plan ${set(other)}`,
+    `/opt/plugin/bin/aidrian plan ${set(other)}`, `node /opt/plugin/lib/cli.mjs plan ${set(other)}`, `node --no-warnings "$CLAUDE_PLUGIN_ROOT/bin/aidrian" plan ${set(other)}`,
+    `"$(command -v aidrian)" plan ${set(other)}`, `aidrian plan "$ACTION" ${other} S1 complete`, `A=set; aidrian plan $A ${other} S1 complete`, `sh -c 'aidrian plan ${set(other)}'`, `true && timeout 5 aidrian plan ${set(other)}`,
+    `cd ${path.dirname(other)} && aidrian plan ${set('shared-plan.md')}`, `env -C ${path.dirname(other)} aidrian plan ${set('shared-plan.md')}`,
+  ]) assert.match(ask(bash(command))?.reason ?? '', /outside the places/u, command);
+  assert.match(ask(bash(`aidrian plan ${set(path.join(fx.home, '.tool', 'plans', 'x.md'))}`))?.reason ?? '', /a dot file or folder of the user's home folder/u);
+  for (const args of ['set', 'record', '"$ACTION"', 'set "$PLAN" S1 complete', 'record $(ls) --by a --text t', `set --note x ${own} S1 complete`, `set ${fx.state}/plans/*.md S1 complete`, `set {${other},x} S1 complete`]) {
+    assert.match(ask(bash(`aidrian plan ${args}`))?.reason ?? '', /whose file is missing, not the first word after the action, or built at run time/u, args);
+  }
+  assert.match(ask(bash(`aidrian plan set ${fx.state}/plans/link/../x.md S1 complete`))?.reason ?? '', /a path that climbs/u);
+  for (const command of [
+    `aidrian plan ${set(own)} --note "$NOTE"`, `aidrian plan "$ACTION" ${own} S1 complete`, `aidrian plan record ${own} --by product-manager --text-file ${path.join(fx.temp, 'note.md')}`, `env -C ${path.dirname(own)} aidrian plan set mine-plan.md --plan complete`,
+    'aidrian plan', 'aidrian plan --help', 'aidrian report', `grep -n "aidrian plan set" ${other}`, `git log --grep 'plan set ${other}'`,
+  ]) assert.equal(ask(bash(command)), null, command);
+  // An attended session is never asked.
+  assert.equal(fx.ask(bash(`aidrian plan ${set(other)}`), { held: null }), null);
+});
+
 test('a session no Human attends never publishes, withdraws, or changes a package or its owners on a registry', (t) => {
   const fx = fixture(t);
   const refused = [

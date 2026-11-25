@@ -38,6 +38,8 @@ except its base branch and re-entry sections, which it cites.
    unless the plan records one; any other `sign_off` stops the run.
    A security-sensitive slice: `security-engineer` reviews the approach, unless the plan records that review;
    a finding whose disposition is `fix_now` stops the run.
+   A `## Revision history` entry or a slice's `notes` records neither, as anyone may write one, unless it names the gate's handoff file
+   and that file says approved.
 5. **Re-entry**: as issue-implement's phase 0 re-entry section says, against the plan's slices.
 
 ## Substitutions

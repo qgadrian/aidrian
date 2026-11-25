@@ -13,7 +13,7 @@ import { configCommands } from './hosts/index.mjs';
 import { readings } from './package-runner.mjs';
 import { isFolderIn } from './rules/main-checkout/bash-writes.mjs';
 import { WRITERS, written } from './rules/main-checkout/writers.mjs';
-import { readGit, walkCommands } from './shell-lex.mjs';
+import { aidrianArgs, readGit, walkCommands } from './shell-lex.mjs';
 
 // Programs, besides each host's own (hosts/index.mjs configCommands) and the forge CLI's (forges/index.mjs
 // forgeConfigCommands), whose subcommands write the user's config, login, or jobs. `valueOptions` are the global options
@@ -173,10 +173,13 @@ export function runsDeclared(each, program, words) {
 
 // The config each program call in a command writes: `git config` by its scope (configForm), any key that makes git run
 // a program (attempt-clone.mjs PROGRAM_KEYS) at any scope, the folders `git worktree add`, `git clone`, and `git init`
-// make, the forge CLI's and each host's own config subcommands, SHARED_COMMANDS, PUBLISH_COMMANDS, crontab, and launchctl.
+// make, the forge CLI's and each host's own config subcommands, SHARED_COMMANDS, PUBLISH_COMMANDS, crontab, and launchctl;
+// and the local plan `aidrian plan` edits (planTarget).
 function programWrites(segment, invocation, folder) {
   const shown = [invocation.program, ...plainWords(invocation.args)].join(' ').slice(0, 120);
   if (invocation.program === 'git') return gitWrites(readGit(segment), folder, shown);
+  const plan = planTarget(invocation, folder, shown);
+  if (plan.length > 0) return plan;
   // Through a package runner, each program it may run (package-runner.mjs readings), as `npx codex login` runs codex,
   // and `npx npm publish codex` both npm's publish and codex: the first that writes config counts.
   for (const { program, args: words } of readings(invocation.program, plainWords(invocation.args))) {
@@ -184,6 +187,18 @@ function programWrites(segment, invocation, folder) {
     if (writes.length > 0) return writes;
   }
   return [];
+}
+
+// The plan `aidrian plan set` or `record` edits, whatever project or environment the call names: the word right after the
+// action, as the command takes its first operand there. One that is missing, an option, or built at run time, a glob or
+// a brace included, is refused, since which plan it edits cannot be told. A program
+// word built at run time may be aidrian, and an action built at run time may be one of the two.
+function planTarget(invocation, folder, shown) {
+  const words = aidrianArgs(invocation) ?? (invocation.dynamic ? invocation.args : []);
+  if (words[0]?.text !== 'plan' || !(words[1]?.dynamic || ['set', 'record'].includes(words[1]?.text))) return [];
+  const file = words[2];
+  if (!file || file.dynamic || /^-|[*?[{]/u.test(file.text)) return [{ what: 'a local plan `aidrian plan` edits, whose file is missing, not the first word after the action, or built at run time, so which plan it edits cannot be told', text: shown }];
+  return [{ file: file.text, folder, text: shown }];
 }
 
 // The config one program call with the arguments `words` writes, as programWrites reads it, shown as `shown`.

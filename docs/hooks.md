@@ -1637,7 +1637,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `--output <file>` on any subcommand, as `git log`, `show`, or `diff`, and `-o` or `--output-directory` of
     `git format-patch`, and `-o` of `git archive`, alone, attached, or last in a cluster), and the file
     `git bundle create` writes, when outside the places, or when built at run time; a relative name lies in the folder
-    every leading `-C` moves to, the last one included; the forge CLI's, which its adapter declares
+    every leading `-C` moves to, the last one included; the plan `aidrian plan set` and `record` edit
+    ([Marking a plan](project-folder.md#marking-a-plan)), the word right after the action, whatever `--project` or environment
+    the call names, an action built at run time read as one of the two, when outside the places, or when it is missing, an option,
+    a glob, a brace, or built at run time; the forge CLI's, which its adapter declares
     (`gh auth setup-git`, `login`, `logout`, `switch`, and `refresh`, `gh config set`, and `gh extension install` on
     GitHub); each host's own config subcommands, which its adapter declares (`configCommands`: `claude mcp add`,
     `claude config set`, `claude plugin install`, and `claude plugin marketplace add` for Claude Code, `codex mcp add`,

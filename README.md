@@ -191,6 +191,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian check` | Checks the project folder and its indexes. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
 | `aidrian lint` | Lints the project's skills, agents, paths, knowledge size, banned terms, the review config, and persona docs. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
 | `aidrian state` | Prints the state folder. | [Local state](docs/project-folder.md#local-state) |
+| `aidrian plan` | Marks a local plan's slice, or the plan itself, with its status, and records an outcome that changes no slice. | [Marking a plan](docs/project-folder.md#marking-a-plan) |
 | `aidrian worktree new` | Creates a task worktree. | [Task worktrees](docs/project-folder.md#task-worktrees) |
 | `aidrian worktree cleanup` | Removes the task worktrees whose work merged. | [Task worktrees](docs/project-folder.md#task-worktrees) |
 | `aidrian pr await-review` | Waits for the review bot. | [`pr-review-loop`](plugins/aidrian/skills/pr-review-loop/SKILL.md) |

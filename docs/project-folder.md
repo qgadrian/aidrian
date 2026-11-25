@@ -145,7 +145,7 @@ and the dispatch log on each machine. They live in one state folder per project,
 
 ```text
 $XDG_STATE_HOME/aidrian/projects/<project-id>/
-├── plans/                local plans
+├── plans/                local plans, and the <plan>.lock.<n> lock files aidrian plan leaves beside one it marked
 ├── handoffs/             session handoff briefs, which the session-continue skill reads
 │   ├── .prior/           the brief a refresh supersedes, and the last brief that passed aidrian handoff check
 │   └── .continue/        the handoff continuation's markers: check stamps, armed and ready continuations, chain floors, requests to end, follow records, the worktrees aidrian worktree new made per session
@@ -268,6 +268,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 
 `aidrian state` prints the folder. Skills use it to find plans and handoff briefs, and to draft pull request bodies;
 the orchestrator uses it to name each background agent's handoff file.
+`aidrian plan` marks a local plan and records outcomes in it ([Marking a plan](#marking-a-plan)).
 `aidrian lesson` adds, lists, resolves, and counts lessons in the inbox ([lessons.md](lessons.md)).
 `aidrian audits` lists the persona audits and records their triage ([personas.md](personas.md#triage)).
 A lesson for the plugin goes to the [plugin's inbox](lessons.md#the-plugins-inbox), in the state folder of the plugin's own repository.
@@ -510,6 +511,36 @@ it, and it is not written back. Any `complete` decide ledger fails, unwritten, w
 ruling is `rule`, and the first ruling's otherwise.
 Otherwise it writes the ledger back, and its last line reads
 `checked: mode decide, N cases, N cross points, N opinion, N problems`.
+
+### Marking a plan
+
+`aidrian plan` makes the edits of a local plan that change nothing a slice must do, so no `planning-agent` run is spent on them.
+The plan's content, the frontmatter statuses `ready` and `open-questions`, and every plan git tracks stay `planning-agent`'s.
+A decision that changes what any slice must do is content, so it never goes in as a record alone.
+
+| Command | What it changes |
+| --- | --- |
+| `aidrian plan set <file> <slice> pending\|in_progress\|complete\|blocked [--note TEXT]` | The slice's `status:` line, and with `--note` its `notes:` field, added after the status when the slice has none. |
+| `aidrian plan set <file> --plan in-progress\|complete\|blocked` | The frontmatter's `status:` line. `complete` needs every slice `complete`. |
+| `aidrian plan record <file> --by <who> (--text TEXT \| --text-file FILE)` | One entry, `- <date>, <who>: <text>`, at the end of `## Revision history`, or that section added at the end of the file. The date is today's in UTC. |
+
+- A slice is found by the first word after `### Slice `, outside every code fence, without a colon after it.
+  Its own block is the fenced block whose `slice_id` is that word, or the first one under its heading when none there holds a `slice_id`.
+- Every other byte stays, line ends included. A `status` keeps its quotes; a `# comment` after it goes when the value changes.
+  `generated_at` never changes: a record is no revision. The command prints each line it changed, old and new.
+- `--note`, `--by`, and `--text` are one line each, with no tab or other character that does not show. A note is written in double
+  quotes, escaped. A text file may hold several lines, which go indented inside the one entry, and none may open a heading or
+  a code fence, or be only dashes or equals signs, behind list or quote markers too.
+- The file is a `.md` file directly in the state folder's own `plans/`, not in a subfolder, with every symlink resolved, and one git does not track:
+  a `state.dir` may lie in a checkout. It is checked by path and written by path, which hostile code that shares the folder can still race.
+  The command asks nothing about who runs it. On a host with the guards, the [write guard](hooks.md#agent-gates) reads the file as a path the call writes,
+  so a session no Human attends marks only the plans it may write. The hold has that guard's limits: what a script or another program runs is not read,
+  and a host with no guard holds nothing.
+- `--by` is the caller's word: a record is no gate's approval.
+- Exit 2 says why it refused, and wrote nothing. Besides the rules above: a slice the plan lacks or holds twice, one with no fenced block of its own
+  or no `status:` line it can read, a notes field whose end it cannot tell, `--plan complete` with a slice not complete or with no slice, an empty record,
+  two `## Revision history` sections, or a code fence left open before the entry. Exit 1 is an unknown option, an
+  invalid config.json, a plan another process keeps locked, or a write the system refuses; the plan stays as it was. The write is one rename under the plan's lock, so two marks at once both land.
 
 ## Task worktrees
 

@@ -59,7 +59,8 @@ session nobody attends would end in a manual resume, with a message the host sho
 Both hooks read the gate's own check, `sessionAtChainCap` in `lib/handoff-continue.mjs`, so they never ask for a
 handoff the gate refuses. A background route the hooks take by trusting the local ref's `solo`, which the gate still
 asks the forge to confirm, counts as at the cap only when the route the gate falls back to is at its own cap too.
-The Stop hook still records the firing in its marker, so the reminder backs off as after a skipped one. With `maxChain: "unlimited"`, or the `none` route, which reads no chain, the reminder is as before.
+The Stop hook still records the firing in its marker, so the reminder backs off as after a skipped one.
+With `maxChain: "unlimited"`, or the `none` route, which reads no chain, the reminder is as before.
 
 **Once, then again.** The first firing is at `costRatio`, 2 by default. When it comes back depends on the mode:
 

@@ -134,7 +134,7 @@ export async function runStages(s) {
     return { marker: markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings, fixed: findings - open }) };
   };
   const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
-  const botWait = (extra) => wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: keepsRecordedCap(env, opts.maxRounds !== undefined), validHead: head, grantFloor, ...extra }, { gate });
+  const botWait = (extra) => wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: keepsRecordedCap(env, opts.maxRounds !== undefined), validHead: head, grantFloor, countedFailures: state.failedRuns ?? [], ...extra }, { gate });
   const headMoved = (bot) => finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} before the request on an extra round: run the step again, which reads the grant on the new head`, retry_recommended: true });
   // The bot's answer for this head, recorded as its pass's result. A 👍, or the clean comment it answers a draft with
   // (pr-await-review.mjs latestBotSignal `clean`), leaves nothing open; any other answer holds at least one finding.
@@ -154,7 +154,10 @@ export async function runStages(s) {
   // A run the bot reported failed on its side (pr-await-review.mjs `bot_failed`) is no answer and records no finding,
   // so no round history reads it as open work. It counts on the head's failures, as a local reviewer's does, in the
   // round it was asked in: the first is `incomplete` and the next step asks the bot again, the second is `stuck`.
+  // The run's id goes on the record (`failedRuns`, the last ten), so no later wait counts the same run twice.
   const botFailed = (pass, bot) => {
+    const id = bot.signal?.failure_id;
+    if (typeof id === 'string') state.failedRuns = [...(state.failedRuns ?? []).filter((each) => each !== id), id].slice(-10);
     const key = `${head}:${pass.id}`;
     state.failures[key] = (state.failures[key] ?? 0) + 1;
     const attempts = state.failures[key];

@@ -833,11 +833,11 @@ test('a failed review bot run records no finding: the next step asks the bot aga
   const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
   // The wait as pr-await-review.mjs ends it on the bot's failure notice: a timeout marked bot_failed, never received.
   let calls = [];
-  const awaitBot = async ({ head, request, timeoutSec }) => {
-    calls.push({ request, timeoutSec });
+  const awaitBot = async ({ head, request, timeoutSec, countedFailures }) => {
+    calls.push({ request, timeoutSec, countedFailures });
     const asked = request ? { requested: true, requested_head: head } : { requested: false };
     if (timeoutSec === 0) return { status: 'timed_out', head_sha: head, signal: null, ...asked };
-    return { status: 'timed_out', bot_failed: true, retry_recommended: true, head_sha: head, signal: { kind: 'failed', review_id: null, line_comments: 0 }, ...asked };
+    return { status: 'timed_out', bot_failed: true, retry_recommended: true, head_sha: head, signal: { kind: 'failed', review_id: null, line_comments: 0, failure_id: `comment:${calls.length}` }, ...asked };
   };
   const first = await r.step({ codex: off, awaitBot });
   assert.deepEqual([first.status, first.retry_recommended, first.attempts], ['incomplete', true, 1], first.reason);
@@ -846,9 +846,12 @@ test('a failed review bot run records no finding: the next step asks the bot aga
   assert.deepEqual(botPasses(), [], 'a failed run is no answer and holds no finding');
   assert.equal(state().rounds.at(-1).floor, undefined, 'the round history reads no open finding');
   const rounds = state().rounds.length;
+  const firstRun = state().failedRuns;
+  assert.equal(firstRun.length, 1, 'the counted run is on record');
   calls = [];
   const second = await r.step({ codex: off, awaitBot });
   assert.ok(calls.some((call) => call.request === true), `the step after a failure asks the bot again: ${JSON.stringify(calls)}`);
+  assert.ok(calls.every((call) => call.countedFailures.includes(firstRun[0])), 'every wait is told which run was counted');
   assert.deepEqual([second.status, second.retry_recommended, second.attempts], ['stuck', false, 2], second.reason);
   assert.match(second.reason, /aidrian pr await-review 7 --request/);
   assert.deepEqual(botPasses(), [], 'a second failure records the pass as failed, never as open findings');
@@ -868,6 +871,7 @@ test('a failed review bot run of a newer head counts nothing on this head, and k
   assert.match(moved.reason, /moved to eeeeeee/);
   const state = readLocalState(r.project, 7);
   assert.deepEqual(state.failures, {}, 'no failure is charged to the head the step reviewed');
+  assert.equal(state.failedRuns, undefined, 'and no run of the newer head is counted');
   assert.equal(state.botRequest?.head, newer, 'the request for the newer head stays on record');
 });
 

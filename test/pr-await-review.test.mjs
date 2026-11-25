@@ -22,6 +22,7 @@ import {
   awaitReview,
   isQuotaNotice,
   isFailureNotice,
+  failureId,
   isReviewSummaryCard,
   REVIEW_SUMMARY_CARD_MARKER,
   exitCodeFor,
@@ -842,14 +843,51 @@ test('awaitReview --request: a retry posted in the second of the failure it answ
   }
 });
 
-test('latestBotSignal: a usage-limit notice since the request outranks a failed status card of the head', async () => {
-  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: T(5) };
+test('latestBotSignal: any usage-limit notice for the head since the request wins, whatever failed after it', async () => {
+  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: T(5), head: B40, triggerHead: B40 };
   const notice = { id: 2, user: BOT, created_at: T(11), body: QUOTA_BODY };
-  assert.equal(latestBotSignal({ ...base, issueComments: [notice, failedCard(B40, T(12))] }).kind, 'quota_exhausted');
-  const forge = fakeForge([{}, { issueComments: [notice, failedCard(B40, T(12))] }], { head: B40 });
+  const failure = { id: 4, user: BOT, created_at: T(12), body: FAILURE_BODY };
+  const both = [notice, failure, failedCard(B40, T(13))];
+  assert.equal(latestBotSignal({ ...base, issueComments: both }).kind, 'quota_exhausted');
+  const forge = fakeForge([{}, { issueComments: both }], { head: B40 });
   const c = clock();
   const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep: async (s) => { await c.sleep(s); forge.advance(); } });
   assert.deepEqual([r.status, r.bot_failed], ['blocked_quota', undefined]);
+});
+
+test('latestBotSignal: only signals for the awaited head take part, so another commit`s failed card hides nothing', () => {
+  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: T(5), head: B40, triggerHead: B40 };
+  const review = { id: 9, user: BOT, submitted_at: T(6), commit_id: B40, state: 'COMMENTED' };
+  const signal = latestBotSignal({ ...base, reviews: [review], issueComments: [failedCard(C40, T(7))] });
+  assert.deepEqual([signal.kind, signal.commit_id], ['review', B40]);
+  const quota = { id: 2, user: BOT, created_at: T(6), body: QUOTA_BODY };
+  assert.equal(latestBotSignal({ ...base, issueComments: [quota, failedCard(C40, T(7))] }).kind, 'quota_exhausted');
+  assert.equal(latestBotSignal({ ...base, issueComments: [failedCard(C40, T(7))] }), null, 'a failure of another commit is no signal for this head');
+});
+
+test('awaitReview: a fresh failure in the request`s own second counts; one a step already counted does not', async () => {
+  // The request this wait posts is dated T(10), the floored clock, and the bot fails within that second.
+  const fresh = { id: 5, user: BOT, created_at: T(10), body: FAILURE_BODY };
+  const forge = fakeForge([{}, { issueComments: [fresh] }], { head: B40 });
+  const c = clock();
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep: async (s) => { await c.sleep(s); forge.advance(); } });
+  assert.deepEqual([r.status, r.bot_failed, r.signal.failure_id], ['timed_out', true, 'comment:5']);
+  // The next step's wait: the retry trigger and the failure a step counted share a second, and only an answer ends it.
+  const retry = { id: 6, user: { login: 'someone' }, created_at: T(10), body: requestCommentBody(B40), reactions: { eyes: 1 } };
+  const review = { id: 9, user: BOT, submitted_at: T(12), commit_id: B40, state: 'COMMENTED' };
+  const later = fakeForge([{ issueComments: [fresh, retry] }, { issueComments: [fresh, retry], reviews: [review] }], { head: B40 });
+  const c2 = clock();
+  const waited = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, countedFailures: ['comment:5'], timeoutSec: 900, intervalSec: 60 }, { forge: later, now: c2.now, sleep: async (s) => { await c2.sleep(s); later.advance(); } });
+  assert.deepEqual([waited.status, waited.bot_failed, later.posts.length], ['received', undefined, 0]);
+  for (const card of [failedCard(B40, T(10))]) {
+    const id = failureId({ card });
+    assert.equal(id, `card:3@${T(10)}`);
+    const quiet = fakeForge([{ issueComments: [retry, card] }], { head: B40 });
+    const counted = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, countedFailures: [id], timeoutSec: 0, intervalSec: 60 }, { forge: quiet, ...clock() });
+    assert.equal(counted.bot_failed, undefined, 'a counted card in the retry`s second ends nothing');
+    const uncounted = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 }, { forge: quiet, ...clock() });
+    assert.equal(uncounted.bot_failed, true, 'the same card, not yet counted, is a failure');
+  }
 });
 
 test('main exits by exitCodeFor, so a blocked_quota run is distinguishable from timed_out and success', () => {

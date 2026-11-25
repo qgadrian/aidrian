@@ -2302,8 +2302,7 @@ may start and nothing runs.
 Lines for the issues that run, are blocked, or are skipped follow. An issue in a cycle of blockers is blocked.
 An issue the ledger records parked, or a canceled one, is never started, and every issue that waits on it through issues not done
 is skipped and names it. Last comes an `owed KEY` line for each issue whose settle report no `recorded` row closed,
-so a report owed before a driver's first `wait`, such as one an earlier driver left or an orphan's that `start`
-settled, is written on its first pass. `--json` prints the whole plan, with the `maxParallel` it read and `owed`.
+so a report owed before a driver's first `wait`, such as one an earlier driver left, is written on its first pass. `--json` prints the whole plan, with the `maxParallel` it read and `owed`.
 
 `preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
 state folder and any other active run but `RUN`, a host instruction file, such as a `CLAUDE.md`, in a folder above the

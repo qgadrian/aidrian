@@ -1086,8 +1086,8 @@ function holdLedger(fx) {
 }
 
 test('a command whose ledger another process holds locked exits 75 with a retry line', (t) => {
-  const fx = started(t);
-  fx.settle({ status: 'merged', pr: 12 });
+  // No issue started, so `end` meets the held lock once, at its own row.
+  const fx = runFixture(t);
   holdLedger(fx);
   const answer = fx.cmd(['end', 'launch']);
   assert.equal(answer.exitCode, 75);
@@ -1128,7 +1128,10 @@ test('next lists each settle report still owed, so a driver that takes the run o
   // The loop's step 1 sends the driver to the report on that line before any other.
   const loop = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/references/loop.md'), 'utf8').replace(/\s+/gu, ' ');
   const first = loop.slice(loop.indexOf('1. `aidrian project next <run>`:'), loop.indexOf('2. `aidrian project start'));
-  assert.ok(first.includes('one `owed <key>` line or more, which come last') && first.includes('Step 4 first, then the other lines of this answer.'), 'the loop reads the owed line');
+  assert.ok(first.includes('one `owed <key>` line or more, which come last') && first.includes('Step 4 first, then the other lines of this answer, `halted` and `paused` included.'), 'the loop reads the owed line');
+  // A halt or stop reached from another step, and an orphan's settle, pass no `next`: each writes what is owed itself.
+  assert.match(loop.slice(loop.indexOf('## Halt'), loop.indexOf('## Stop')), /2\. Run `aidrian project report <run> --json` and write what it owes/u, 'before the halt waits');
+  assert.match(loop, /an `orphan <key> \.\.\.` line, with any exit: .* then step 4 before the next start or wait/u, 'after an orphan');
 });
 
 test('a driver\'s background continuation gets the driver mark at its start, and is held until custody moves', async (t) => {

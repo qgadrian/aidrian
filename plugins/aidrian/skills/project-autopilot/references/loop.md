@@ -15,7 +15,7 @@ named and go on from that output as step 2 says.
 
 1. `aidrian project next <run>`:
    - one `owed <key>` line or more, which come last: a settle report is still owed, such as one an earlier driver
-     left, or an orphan's that `start` settled. Step 4 first, then the other lines of this answer.
+     left. Step 4 first, then the other lines of this answer, `halted` and `paused` included.
    - `halted <cause>`: § Halt.
    - `paused until <time>`: § Pause.
    - one `next <key> <branch>` line or more: step 2 for each, in order.
@@ -26,8 +26,9 @@ named and go on from that output as step 2 says.
    - exit 0, `started <key> attempt <n> session <id>`: the issue runs in its own session. Set its started status once,
      as [tracker-writes.md](tracker-writes.md) § The started status says. Next `next` line, else step 3.
    - exit 0, `parked <key> unreconciled: ...`: nothing started; follow [existing-work.md](existing-work.md). Next `next` line, else step 3.
-   - an `unverified:` line is a note, not a refusal. An `orphan <key> ...` line settled an earlier attempt: its report
-     is written on step 1's `owed` line.
+   - an `unverified:` line is a note, not a refusal.
+   - an `orphan <key> ...` line, with any exit: an earlier attempt settled. Follow the other lines for this `<key>`, then
+     step 4 before the next start or wait, in place of the next `next` line.
    - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: § Pause.
    - a line `halt <cause>`, exit 1: § Halt. A `recheck kept the halt:` line after it names what kept it.
    - exit 0, `recheck lifted the halt: <cause>; ok <checks>`: the start lifted the halt of this issue and launched
@@ -53,7 +54,8 @@ named and go on from that output as step 2 says.
    - `idle`: step 1.
    - exit 75, `retry: <why>`, as when another process holds the ledger: § Retry. Exit 1: § Stop.
 4. `aidrian project report <run> --json`, and write each report it owes as [tracker-writes.md](tracker-writes.md) says.
-   Exit 75: § Retry. Exit 1: § Stop. Then step 1, or, when step 1's `owed` lines sent you here, that answer's other lines.
+   Exit 75: § Retry. Exit 1: § Stop. Then step 1, or,
+   when step 1's `owed` lines sent you here, that answer's other lines.
 
 ## Pause
 
@@ -86,7 +88,9 @@ place for the next driver start of that issue, which re-checks it again: one who
 forge that could not answer, may pass then with no change.
 
 1. Start nothing more.
-2. Run `aidrian project wait <run> --max-wait 150` until it prints `idle`, writing each owed report after each settle.
+2. Run `aidrian project report <run> --json` and write what it owes, since a report may be owed from before any settle
+   line here; when it refuses, go on. Then run `aidrian project wait <run> --max-wait 150` until it prints `idle`,
+   writing each owed report after each settle.
    Stop waiting sooner once every line left is a `running <key>` or `lingering <key> attempt <n>` line of a session
    that a `could not be stopped` line named twice: no wait ends it.
 3. `aidrian project summary <run>`.
@@ -136,7 +140,7 @@ At the session-length reminder, a usage-limit warning, or the plan offer, hand o
 2. Write the brief with the `session-handoff` skill, slug `project-<run>`. Objective: drive run `<run>`.
    Current state: the run id, and `aidrian project summary <run>`'s counts. Next steps: read this skill's `SKILL.md`
    at its absolute path, then `references/loop.md`, then `aidrian project wait <run> --max-wait 0` first, which moves
-   the run to the new session. The ledger holds the rest: name no issue's detail.
+   the run to the new session; once it exits 0, step 1 of § Each pass, whatever it printed. The ledger holds the rest: name no issue's detail.
 3. Run `aidrian project handoff <run> <brief>` before `aidrian handoff continue <brief>`: custody moves only to a session
    started from a brief the driver recorded this way. Then follow the `session-handoff` skill's continue step.
 4. When `aidrian handoff continue` answers `continue: none` or `continue: clear`, or refuses twice, keep driving in this

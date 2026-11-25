@@ -96,5 +96,6 @@ At the end, or at a halt, for a reader who saw nothing of the run, naming the Hu
    the Human gives it in a separate session the Human attends, never in this one.
 4. **Stopped**: a halt or refusal, its cause, and the fix; then `aidrian project resume <run>` when the cause was a halt,
    for the Human to run once it is fixed. Each session a `not released` line of the last `wait` or `end` named,
-   with the command that stops it, and the `note sessions:` line it printed, if any.
+   with the command that stops it. When that one printed a `note sessions:` line: that line, and each session an earlier
+   `wait` named that no later readable one cleared, marked as not verified now.
 5. **Next**: the one action that unblocks the most issues.

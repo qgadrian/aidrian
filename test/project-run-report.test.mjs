@@ -1557,14 +1557,14 @@ test('the driver\'s halt wait ends once only sessions it could not stop are left
   // The release's lines (project-linger.mjs releaseAttempts): a `not released` line says `could not be stopped` and
   // prints again each wait, so the second-line § Stop rule exempts it, and the final report names its session.
   assert.ok(wait.includes('- `released <key> attempt <n>`: the host still held the session of a settled attempt, and wait stopped it. Go on by the other lines.'), 'the released line');
-  assert.ok(wait.includes('It ends no wait and prints again each wait while it holds. Go on by the other lines: the final report names only what the last `wait` or `end` printed. Never § Stop for it, whatever its words.'), 'the not released line');
+  assert.ok(wait.includes('It ends no wait and prints again each wait while it holds. Go on by the other lines: the final report names only what the last `wait` or `end` printed, and, when that one printed a `note sessions:` line, each such session an earlier `wait` named that no later readable one cleared, as not verified now. One clears it that prints a `released` line of its attempt, or neither names it nor prints a `note sessions:` line. Never § Stop for it, whatever its words.'), 'the not released line');
   assert.ok(wait.includes('- `note sessions: <host name>: <reason>`: the host cannot say now which sessions it still holds, or whether a session it holds ended. Note it, and go on by the other lines.'), 'the note sessions line');
   assert.ok(wait.includes('a second such line for the same issue: § Stop, with that line as the cause. A `not released` line is never such a line.'), 'the § Stop rule exempts it');
   const finish = text.slice(text.indexOf('## Finish'), text.indexOf('## Hand off'));
   assert.ok(finish.includes('Its `released`, `not released`, and `note sessions:` lines are read as step 3 reads them: the run ends all the same.'), 'end\'s lines');
-  assert.ok(finish.includes('names, under **Stopped**, each session a `not released` line of the last `wait` or `end` named, by its issue, its attempt, and its session id, with the host\'s command on that line that stops it by hand, and the `note sessions:` line it printed, if any.'), 'the report names it');
+  assert.ok(finish.includes('names, under **Stopped**, each session a `not released` line of the last `wait` or `end` named, by its issue, its attempt, and its session id, with the host\'s command on that line that stops it by hand; and, when that one printed a `note sessions:` line, that line, and each session an earlier `wait` named that no later readable one cleared, the same way, marked as not verified now.'), 'the report names it');
   const skill = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/SKILL.md'), 'utf8').replace(/\s+/gu, ' ');
-  assert.ok(skill.includes('Each session a `not released` line of the last `wait` or `end` named, with the command that stops it, and the `note sessions:` line it printed, if any.'), 'a session already stopped is never left for the Human');
+  assert.ok(skill.includes('Each session a `not released` line of the last `wait` or `end` named, with the command that stops it. When that one printed a `note sessions:` line: that line, and each session an earlier `wait` named that no later readable one cleared, marked as not verified now.'), 'a session already stopped is never left for the Human');
 });
 
 test('autopilot under a project run reads its issue from the file and makes its tracker writes optional', () => {

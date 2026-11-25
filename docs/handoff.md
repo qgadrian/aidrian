@@ -964,8 +964,8 @@ asks, runs the stop line it prints.
 
 A session is listed only when both hold:
 
-- An [unattended mark](#the-background-route) names it, under its full id, the exact short id the host lists it by, or
-  a short id of at least 4 characters that the full id starts with. A mark holds 30 days, so an older session is not
+- An [unattended mark](#the-background-route) names it, under its full id, else the exact short id the host lists it by,
+  else a short id of at least 4 characters that the full id starts with. A mark holds 30 days, so an older session is not
   listed. A mark whose tags name a run and an issue makes the session that run's attempt; any other is a handoff
   continuation.
 - Its host's listing, through the adapter's `backgroundSessions.list`, says it is idle: its turn ended, or it waits

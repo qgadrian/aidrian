@@ -2418,9 +2418,10 @@ when the host cannot say now which sessions it holds, or whether one it holds en
 of a chain whose other held session works again prints nothing that pass. None of the three ends a `wait`: each prints once, after
 the lines that did, when it returns, or with the refusal of a `wait` that could no longer read the run, and `wait` still
 prints `idle`. Within one `wait`, a `not released` line of an earlier pass stays only while the latest pass that could
-read the host repeats it, so a session that runs no more, stopped by a later pass or by hand, is not named. A pass that
-could not, which prints a `note sessions:` line, keeps the line of each attempt it prints none of. A `released` line of
-any pass stays.
+read its attempt repeats it, so a session that runs no more, stopped by a later pass or by hand, is not named. A pass
+that printed a `note sessions:` line keeps the line of each attempt it could not read and prints none of: every one when
+the host cannot say which sessions it holds, else one with a held session it cannot say ended. A `released` line of any
+pass stays.
 Only a session the host lists as ended is released: one that works or waits on a response again is left alone, as while
 a person's turn runs in a session they attached to, and its attempt prints no `released` line meanwhile. That holds
 only for the turn, and, as Claude Code has no conditional stop, only for a turn the host already listed when that session

@@ -26,6 +26,7 @@ export const LINGER_GRACE = 2 * 60 * 1000;
 
 const iso = (now) => new Date(now).toISOString();
 const attemptOf = (row) => `${row.key}#${row.attempt}`;
+const attemptName = (row) => `${row.key} attempt ${row.attempt}`;
 
 // Whether every session of the chain a start record or row names, from `id` and `session`, is one the host lists as
 // ended: true, false, or null when a listing gives no answer or the chain goes on past what was read (issueChain).
@@ -85,21 +86,23 @@ export function lingeringStarts({ found, store, cap, env, spawn, now }) {
 // `wait` and `end` do: one read of which members of those attempts' chains it holds (hosts/index.mjs backgroundHeld),
 // then, member by member, whether the host still lists each held one as ended, and at once the project start's `stop`
 // (`cap`) for it, so one that works or waits on a response again, as while a person's turn runs in it, is left alone. A
-// host with no conditional stop leaves the moment between that read and its stop. It writes no row. Returns a line for each
-// attempt with such a member: `not released KEY attempt N: ` and notStopped's text for the first that did not stop,
+// host with no conditional stop leaves the moment between that read and its stop. It writes no row. Returns { lines,
+// unread }: in `lines`, one for each attempt with such a member: `not released KEY attempt N: ` and notStopped's text for the first that did not stop,
 // else `released KEY attempt N` once each held member ended and stopped, so none is printed while a held member of the
 // chain still works, or the host cannot say whether it ended; and `note sessions: <host name>: <reason>` when the host cannot say now
-// which it holds, or whether one it holds ended. A host that by design holds no such session, and a member it answers
-// false or null for, stops nothing and prints nothing.
+// which it holds, or whether one it holds ended. `unread` names, as `KEY attempt N`, each attempt it could not read and
+// prints no line of: every one when the host cannot say which it holds, else one with a session that may have ended. A
+// host that by design holds no such session, and a member it answers false or null for, stops nothing and prints nothing.
 export function releaseAttempts({ found, store, cap, host, env, spawn, now }) {
   const gone = new Set(found.rows.filter((row) => row.event === 'gone').map(attemptOf));
   const attempts = startRows(found).filter((row) => row.outcome === 'started' && gone.has(attemptOf(row)))
     .map((row) => ({ row, chain: issueChain(store, row, { now }).chain }));
-  if (attempts.length === 0) return [];
+  if (attempts.length === 0) return { lines: [], unread: [] };
   const read = backgroundHeld(host, { sessions: attempts.flatMap(({ chain }) => chain), env, run: spawn });
-  if (read.problem) return [`note sessions: ${hostName(host)}: ${read.problem}`];
-  if (!read.held) return [];
+  if (read.problem) return { lines: [`note sessions: ${hostName(host)}: ${read.problem}`], unread: attempts.map(({ row }) => attemptName(row)) };
+  if (!read.held) return { lines: [], unread: [] };
   const lines = [];
+  const unread = [];
   let unsure = false;
   let first = 0;
   for (const { row, chain } of attempts) {
@@ -108,19 +111,22 @@ export function releaseAttempts({ found, store, cap, host, env, spawn, now }) {
     if (held.length === 0) continue;
     const stuck = [];
     let stopped = 0;
+    let unknown = false;
     for (const member of held) {
       const ended = safely(() => cap.ended({ id: member.id, session: member.session, env, run: spawn }));
-      unsure ||= ended === null;
+      unknown ||= ended === null;
       if (ended !== true) continue;
       if (safely(() => cap.stop({ id: member.session ?? member.id, started: member.id, env, run: spawn })) === true) stopped += 1;
       else stuck.push(member);
     }
-    const attempt = `${row.key} attempt ${row.attempt}`;
+    unsure ||= unknown;
+    const attempt = attemptName(row);
     if (stuck.length > 0) lines.push(`not released ${attempt}: ${notStopped(cap, stuck[0], 'stayed with the host after its work ended and ')}`);
     else if (stopped === held.length) lines.push(`released ${attempt}`);
+    else if (unknown) unread.push(attempt);
   }
   if (unsure) lines.push(`note sessions: ${hostName(host)}: ${UNSURE}`);
-  return lines;
+  return { lines, unread };
 }
 
 // Why a held session of a settled attempt was left alone when the host's listing gave no answer whether it ended.

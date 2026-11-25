@@ -1125,18 +1125,13 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
 }
 
 // The release lines one wait prints (project-linger.mjs releaseAttempts): `held`, those of its passes so far, with
-// `fresh`, those of one more, each once. A `not released KEY attempt N: ...` line of an earlier pass stays only while the
-// latest pass that could read the host repeats it, so a session that runs no more is never left for the Human to stop by
-// hand; one that could not, which prints a `note sessions:` line, keeps it for each attempt it prints no line of.
-export function mergeRelease(held, fresh) {
-  const unread = fresh.some((line) => line.startsWith('note sessions: '));
-  const answered = new Set(fresh.map(attemptNamed));
-  const stands = (line) => !line.startsWith('not released ') || (unread && !answered.has(attemptNamed(line)));
-  return [...held.filter((line) => !fresh.includes(line) && stands(line)), ...fresh];
+// `lines`, those of one more, each once. A `not released KEY attempt N: ...` line of an earlier pass stays only while the
+// latest pass that could read that attempt repeats it, so a session that runs no more is never left for the Human to stop
+// by hand: one whose `unread` names the attempt keeps it.
+export function mergeRelease(held, { lines, unread }) {
+  const stands = (line) => !line.startsWith('not released ') || unread.some((attempt) => line.startsWith(`not released ${attempt}:`));
+  return [...held.filter((line) => !lines.includes(line) && stands(line)), ...lines];
 }
-
-// The `KEY attempt N` a release line names, or undefined for one that names none.
-const attemptNamed = (line) => /^(?:not )?released (\S+ attempt \d+)/u.exec(line)?.[1];
 
 // The policy `wait` settles a run's issues under, from the team's policy `team` (teamPolicy): { policy, note }, where
 // `note` holds the line to print first, if any. A policy the forge confirms stands. One it no longer confirms, or cannot
@@ -1167,7 +1162,7 @@ const hoursOf = (policy, start) => (typeof policy.hoursOf === 'function' ? polic
 
 // One read of `wait`: orphans, handed-over results, ended sessions, then sessions that run on after their issue
 // settled, the stop of each the host still holds after its `gone` row (project-linger.mjs), and the sweep of ended
-// attempts' folders: { lines, lingering, release }, with the stop's lines in `release`, null when it asked no host.
+// attempts' folders: { lines, lingering, release }, with releaseAttempts' answer in `release`, null when it asked no host.
 function waitPass({ state, run, store, cap, host, env, home, spawn, policy, forge, now }) {
   const lines = settleOrphans({ state, run, store, cap, env, spawn, now });
   const dropped = readRun(state, run);
@@ -1349,7 +1344,7 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
   const cap = host.capabilities.projectStart;
   if (cap) settleLingering({ state, run, store, cap, env, spawn, now });
   const settled = cap ? readRun(state, run) : { problem: 'no host' };
-  const released = settled.problem ? [] : releaseAttempts({ found: settled, store, cap, host, env, spawn, now });
+  const released = settled.problem ? [] : releaseAttempts({ found: settled, store, cap, host, env, spawn, now }).lines;
   // An issue that still runs, or a session that runs on after its issue settled, is one the run still answers for: end
   // only once none is.
   const written = appendToRun(state, run, (fresh) => {

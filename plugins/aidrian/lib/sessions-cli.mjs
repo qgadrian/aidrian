@@ -59,11 +59,12 @@ export function idleSessions({ hosts = HOSTS, env = process.env, home, now = Dat
   return { idle: idle.sort((a, b) => b.ageMs - a.ageMs), notes };
 }
 
-// The mark filed under the full id of the listing row `row`, else under its short id `id`, or one the full id starts
-// with (unattended-mark.mjs markNames), or null.
+// The mark filed under the full id of the listing row `row`, else under its short id `id`, else under a short id the full
+// id starts with (unattended-mark.mjs markNames), or null.
 function markNaming(marks, { id, session }) {
   if (typeof session !== 'string') return null;
-  return marks.find((mark) => mark.session === session) ?? marks.find((mark) => mark.session === id || markNames(mark.session, session)) ?? null;
+  const exact = marks.find((mark) => mark.session === session) ?? marks.find((mark) => mark.session === id);
+  return exact ?? marks.find((mark) => markNames(mark.session, session)) ?? null;
 }
 
 // One idle session, from `row` as backgroundList cleaned it and the mark that names it, whose fields no wrapper read.

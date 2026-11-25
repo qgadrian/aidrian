@@ -149,6 +149,21 @@ test('a row the host does not call idle and an idle row no mark names are left o
   assert.deepEqual(idleSessions({ hosts: [apart], env, home, now: NOW }).idle.map(({ id }) => id), ['feed0001'], 'a short id the full id does not start with matches the row\'s own id, and only the whole of it');
 });
 
+test('a session takes the mark under its full id, then under its exact short id, then under a short id it starts with, whatever the order of the marks', (t) => {
+  const { env, home } = place(t);
+  // The state root's folder is read before the user's own, so these marks come first: a prefix, and an exact short id.
+  markUnattended('abcd', { root: '/work/app', cwd: '/prefix', env, now: NOW });
+  markUnattended('42cf8d0a', { root: '/work/app', cwd: '/exact', env, now: NOW });
+  const own = path.join(home, '.local/state/aidrian/unattended');
+  mkdirSync(own, { recursive: true });
+  writeFileSync(path.join(own, 'abcd1234.json'), JSON.stringify({ root: '/work/app', cwd: '/exact', at: NOW }));
+  writeFileSync(path.join(own, `${ATTEMPT}.json`), JSON.stringify({ root: '/work/app', cwd: '/full', at: NOW }));
+  const order = listMarks({ env, home, now: NOW }).map(({ session }) => session);
+  assert.ok(order.indexOf('abcd') < order.indexOf('abcd1234') && order.indexOf('42cf8d0a') < order.indexOf(ATTEMPT), order.join(' '));
+  const { host } = fakeHost({ rows: [{ id: 'abcd1234', session: SHORT, startedAt: NOW - MINUTE }, { id: '42cf8d0a', session: ATTEMPT, startedAt: NOW }] });
+  assert.deepEqual(idleSessions({ hosts: [host], env, home, now: NOW }).idle.map(({ id, cwd }) => [id, cwd]), [['abcd1234', '/exact'], ['42cf8d0a', '/full']]);
+});
+
 test('listMarks reads plain and issue marks of this user within their age, and leaves every other file out', (t) => {
   const { env, home } = place(t);
   markUnattended(HANDOFF, { root: '/work/app', cwd: '/work/app/sub', env, now: NOW - MINUTE });

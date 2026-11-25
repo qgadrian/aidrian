@@ -48,7 +48,10 @@ named and go on from that output as step 2 says.
      Go on by the other lines.
    - `not released <key> attempt <n>: ...`: the host still holds the session of a settled attempt, and wait could not
      stop it. It ends no wait and prints again each wait while it holds. Go on by the other lines: the final report names
-     only what the last `wait` or `end` printed. Never § Stop for it, whatever its words.
+     only what the last `wait` or `end` printed, and, when that one printed a `note sessions:` line, each such session
+     an earlier `wait` named that no later readable one cleared, as not verified now. One clears it that prints a
+     `released` line of its attempt, or neither names it nor prints a `note sessions:` line. Never § Stop for it, whatever
+     its words.
    - `note sessions: <host name>: <reason>`: the host cannot say now which sessions it still holds, or whether a
      session it holds ended. Note it, and go on by the other lines.
    - `overdue <key> ...`, or `limited <key> attempt <n>: ...` or `lingered <key> attempt <n>: ...` that says `could not
@@ -136,7 +139,8 @@ issue still runs, or a session runs on after its issue settled, so run it only a
 `released`, `not released`, and `note sessions:` lines are read as step 3 reads them: the run ends all the same. Then
 the final report of `SKILL.md` § Report, which names, under **Stopped**, each session a `not released` line of the
 last `wait` or `end` named, by its issue, its attempt, and its session id, with the host's command on that line that
-stops it by hand, and the `note sessions:` line it printed, if any.
+stops it by hand; and, when that one printed a `note sessions:` line, that line, and each session an earlier `wait`
+named that no later readable one cleared, the same way, marked as not verified now.
 
 ## Hand off
 

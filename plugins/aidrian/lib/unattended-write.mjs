@@ -921,10 +921,10 @@ function pathDenial(spelled, found, say) {
 }
 
 // How much of a climbing path a refusal shows, its end, where the `..` is, and the one way to the same result it allows.
-// That way names the file the call is meant to write: past a link the text without its `..` is another file, and in an
-// interpreter's code the text may be what the file is to hold.
+// That way is about each path the call names, since a link's target is no file it writes, and past a link the text
+// without its `..` is another file; in an interpreter's code the text may be what a file is to hold.
 const CLIMB_SHOWN = 120;
-const CLIMB_REMEDY = 'name the file this call is meant to write by the plain path it really has, with no `..` in the command, or write it through the host\'s file tool, whose text may hold `..`, when this session may write that file';
+const CLIMB_REMEDY = 'make the same call with each path it names spelled as the plain path it really has, with no `..`, or, where a script only writes the quoted text as a file\'s content, write that file through the host\'s file tool';
 
 // A path in `text`, a target as a reader spells it, that climbs with `..` from a folder it names, as `a/link/../x`,
 // `a/./../x`, `a//../x`, or `$d/..`, as the text from the start to that `..`, or null: the system takes the `..` from

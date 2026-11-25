@@ -1477,9 +1477,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   writes anything and names a target that climbs with `..` from a folder it names, as `<worktree>/a/out/../x`,
   `"$d/../x"`, or `~/a/../x`, by a file tool, a redirect, a writer, a glob, a removal, a mode change, or a link, is
   refused first, whatever the folder is: the system takes that `..` from where a link there leads, and the guard's
-  readers fold it as text, which may name another file. The refusal allows one way on, for a file the session may
-  write: name the file the call is meant to write by the plain path it really has, with no `..` in the command, or write
-  it through the host's file tool, whose text may hold `..`. A target that starts with `..` climbs from the call's own
+  readers fold it as text, which may name another file. The refusal allows one way on: the same call with each path it
+  names spelled as the plain path it really has, with no `..`, or, where a script only writes the quoted text as a
+  file's content, that file through the host's file tool. A target that starts with `..` climbs from the call's own
   folder, which the host names as the system resolves it, and is placed as usual. In an interpreter's code, where a
   quote or an escape may end a path anywhere, any `/..` counts, `../../x` and `a/..draft` included, in text the code
   only puts in a file too, such as an import; the refusal quotes the run of characters around the first one. It writes

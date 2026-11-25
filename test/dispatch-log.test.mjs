@@ -126,8 +126,8 @@ test('the hooks write dispatch, stop, and session rows inside a project, and not
   assert.deepEqual(rows.map((row) => row.event), ['dispatch', 'stop', 'session']);
   assert.deepEqual(rows[1].tokens, { input: 10 + 10, output: 10, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 });
   assert.deepEqual(rows[1].tokens_by_model, {
-    'claude-sonnet-5-5': { ...rows[1].tokens, over: { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 } },
-  }, 'per model, with the part over a price tier, none here');
+    'claude-sonnet-5-5': { ...rows[1].tokens, over: { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 }, over_prompt: null },
+  }, 'per model, with the part over a price tier and its cutoff, none here');
   const testing = 'docs/knowledge/engineering/testing.md';
   assert.deepEqual([rows[1].docs_read, rows[1].delivered, rows[1].models], [[{ path: testing, bytes: bytes(testing) }], 'chat', ['claude-sonnet-5-5']]);
   assert.deepEqual([rows[1].requests, rows[1].tool_requests, rows[1].tool_calls], [2, 2, 2], 'two requests, each with one Read');
@@ -626,7 +626,7 @@ test('a stop row names each cause the stop hook sent the subagent back for, and 
   assert.deepEqual(stops.map((row) => [row.agent_id, row.sent_back, row.sent_back_for]), cases.map(([id, , causes]) => [id, causes.length > 0, causes]));
   const ended = stops.at(-1);
   const zero = { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };
-  assert.deepEqual(ended.tokens_by_model, { 'claude-haiku-5-5': { ...zero, input: 170_000, output: 20, over: { ...zero, input: 150_000, output: 10 } } });
+  assert.deepEqual(ended.tokens_by_model, { 'claude-haiku-5-5': { ...zero, input: 170_000, output: 20, over: { ...zero, input: 150_000, output: 10 }, over_prompt: 100_000 } });
   assert.deepEqual([rowCostUsd(ended).usd, rowCostUsd(ended).exact], [ended.cost_usd, true], 'priced again to what it logged, the tier included');
 });
 
@@ -1091,14 +1091,16 @@ test('sessionRow splits main and subagents, with effort, cost per model, cache w
   const mainTokens = { input: 1_000_000, output: 1000, cache_read: 0, cache_write: 1_000_000, cache_write_5m: 0, cache_write_1h: 1_000_000 };
   const subagentTokens = { input: 1_000_000, output: 0, cache_read: 0, cache_write: 1_000_000, cache_write_5m: 1_000_000, cache_write_1h: 0 };
   assert.deepEqual(row.main, {
-    tokens: mainTokens, tokens_by_model: { 'claude-opus-5-5': { ...mainTokens, over: none } },
+    tokens: mainTokens, tokens_by_model: { 'claude-opus-5-5': { ...mainTokens, over: none, over_prompt: null } },
     cost_usd: 12.02, requests: 2, tool_requests: 1, tool_calls: 3,
   }, 'm2, repeated in the subagent transcript, stays the main conversation`s');
   assert.deepEqual(row.subagents, {
-    tokens: subagentTokens, tokens_by_model: { 'claude-sonnet-5-5': { ...subagentTokens, over: none } },
+    tokens: subagentTokens, tokens_by_model: { 'claude-sonnet-5-5': { ...subagentTokens, over: none, over_prompt: null } },
     cost_usd: 4.5, requests: 1, tool_requests: 1, tool_calls: 1,
   });
-  assert.deepEqual(row.tokens_by_model, { 'claude-opus-5-5': { ...mainTokens, over: none }, 'claude-sonnet-5-5': { ...subagentTokens, over: none } });
+  assert.deepEqual(row.tokens_by_model, {
+    'claude-opus-5-5': { ...mainTokens, over: none, over_prompt: null }, 'claude-sonnet-5-5': { ...subagentTokens, over: none, over_prompt: null },
+  });
   assert.equal(row.cost_usd, 16.52);
   // At the tables the row was written with, the report prices each side and the whole to the dollars it logged.
   for (const part of [row, { models: row.models, ...row.main }, { models: row.models, ...row.subagents }]) {

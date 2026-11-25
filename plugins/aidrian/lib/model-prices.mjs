@@ -70,7 +70,8 @@ function usageOf(tokens) {
 }
 
 // The cost of `entries`, [model, tokens] pairs, at `tables`: { usd, by_model }, or null when one cannot be priced from its
-// tokens: a model whose row has an `over` tier, read from tokens that do not say which part was over it.
+// tokens: a model whose row has an `over` tier, from tokens whose split was not made at that tier's cutoff
+// (`over_prompt`), or holds no split or no cutoff. A table with no tier prices the whole at its one rate.
 function priced(entries, tables) {
   let total = 0;
   const byModel = {};
@@ -78,7 +79,7 @@ function priced(entries, tables) {
     if (!isObject(tokens)) return null;
     const price = priceFor(model, tables);
     if (!price) continue;
-    if (price.over && !isObject(tokens.over)) return null;
+    if (price.over && (!isObject(tokens.over) || tokens.over_prompt !== price.over.prompt)) return null;
     const usage = isObject(tokens.over) ? { ...usageOf(tokens), over: usageOf(tokens.over) } : usageOf(tokens);
     const cost = costUsd(usage, price);
     setOwn(byModel, model, round4(cost));

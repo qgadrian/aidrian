@@ -38,7 +38,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | --- | --- |
 | `ts`, `session_id`, `agent_id`, `agent_type` | Which subagent. `agent_id` joins it to its `dispatch` row. |
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's API requests, each request counted once. |
-| `tokens_by_model` | The same per model, with `cache_write_5m` and `cache_write_1h` apart, and `over`: the part of them sent by requests whose prompt was over the model's price row's `over.prompt`, all zero when none was. It is what the report [prices again](#prices-at-report-time). A row written before the field has none. |
+| `tokens_by_model` | The same per model, with `cache_write_5m` and `cache_write_1h` apart, and `over`: the part of them sent by requests whose prompt was over the model's price row's `over.prompt`, all zero when none was, with `over_prompt`, that cutoff, or `null` when the row had no tier. It is what the report [prices again](#prices-at-report-time). A row written before the field has none. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices as they were when the row was written (the host adapter's `modelPrices`, [Model prices](#model-prices)). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
 | `docs_read` | The knowledge docs it opened with the Read tool or printed with a shell command (`cat`, `head`, `tail`, `sed`, `awk`, `less`, `more`, `bat`, `nl`), as `{ "path", "bytes" }`: index path and size. A shell path counts by its end, so `$W/docs/x.md` and a `docs/x.md` relative to a `cd` both name `docs/x.md`. `null` while `telemetry.docReads` is off. |
@@ -546,8 +546,10 @@ Every report view prices each row again from its tokens, at the tables as they a
   and a row that names models and holds no tokens. A `Partial:` line counts the rows that keep their logged cost, with their dollars.
 - A row that names no model costs what it logged.
 
-The `over` part is split when the row is written, at the `over.prompt` its price row had then; a tier a later table adds
-or moves does not split the tokens of an older row again.
+The `over` part is split when the row is written, at the `over.prompt` its price row had then, which the row keeps as
+`over_prompt`. Tokens cannot be split again, so a model whose price row has a tier today is priced again only when its
+`over_prompt` is that tier's `over.prompt`; a tier a later table adds or moves keeps the logged cost of an older row,
+counted in the `Partial:` line. A table that drops a tier prices every token at the one rate.
 
 ## Limits
 

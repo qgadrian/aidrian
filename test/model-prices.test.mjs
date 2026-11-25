@@ -102,6 +102,21 @@ test('rowCostUsd keeps the logged cost of a row it cannot price again, and says 
   assert.equal(rowCostUsd({ models: ['x-m-1'], tokens: usage, cost_usd: 7 }, tiered).exact, false);
 });
 
+test('rowCostUsd prices a split again only at the cutoff that made it', () => {
+  const tier = (prompt) => [table([row({ match: 'm-1', input: 1, output: 2, over: { prompt, input: 10, output: 20 } })])];
+  const flat = [table([row({ match: 'm-1', input: 1, output: 2 })])];
+  const split = (fields) => ({ tokens_by_model: { 'x-m-1': { ...tokens({ input: 2_000_000 }), over: tokens({ input: 1_000_000 }), ...fields } }, cost_usd: 7 });
+  // Made at today's cutoff: 1M at the base rate and 1M at the tier's.
+  assert.deepEqual(rowCostUsd(split({ over_prompt: 200_000 }), tier(200_000)), { usd: 11, logged: 7, exact: true, by_model: { 'x-m-1': 11 } });
+  // The table moved its cutoff, or the row names none: which tokens are over today's cutoff is unknown.
+  assert.deepEqual(rowCostUsd(split({ over_prompt: 200_000 }), tier(100_000)), { usd: 7, logged: 7, exact: false, by_model: {} });
+  assert.equal(rowCostUsd(split({}), tier(200_000)).exact, false, 'a split with no cutoff');
+  // The table added a tier to a model the row split with none.
+  assert.equal(rowCostUsd(split({ over_prompt: null, over: tokens() }), tier(200_000)).exact, false);
+  // The table dropped its tier: every token is at the one rate, whatever the split.
+  assert.deepEqual(rowCostUsd(split({ over_prompt: 200_000 }), flat), { usd: 2, logged: 7, exact: true, by_model: { 'x-m-1': 2 } });
+});
+
 test('rowCostUsd prices the part over a row`s over.prompt at its tier, to the dollar estimateCostUsd gave', () => {
   // Haiku 5.5 bills a request whose prompt is over 100k tokens at its `over` rates.
   const line = (id, input) => JSON.stringify({ type: 'assistant', message: { id, model: 'claude-haiku-5-5', usage: { input_tokens: input, output_tokens: 1000 } } });
@@ -109,6 +124,7 @@ test('rowCostUsd prices the part over a row`s over.prompt at its tier, to the do
   const logged = estimateCostUsd(perModel).total;
   const byModel = tokensByModel(perModel);
   assert.deepEqual(byModel['claude-haiku-5-5'].over, tokens({ input: 150_000, output: 1000 }));
+  assert.equal(byModel['claude-haiku-5-5'].over_prompt, 100_000, 'the cutoff the split was made at');
   assert.deepEqual(rowCostUsd({ tokens_by_model: byModel, cost_usd: logged }), { usd: logged, logged, exact: true, by_model: estimateCostUsd(perModel).byModel });
   assert.ok(logged > rowCostUsd({ tokens_by_model: { 'claude-haiku-5-5': { ...byModel['claude-haiku-5-5'], over: tokens() } } }).usd, 'the tier costs more');
 });

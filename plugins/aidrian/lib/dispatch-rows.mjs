@@ -12,6 +12,7 @@ import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
 import { detectHost, sessionIdentity, wakesOnEnd, wakesOnReport } from './hosts/index.mjs';
 import { loadKnowledge } from './knowledge.mjs';
+import { priceFor } from './model-prices.mjs';
 import {
   aggregateUsage, estimateCostUsd, filesRead, partOf, readText, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
 } from './transcript.mjs';
@@ -119,10 +120,11 @@ export function denyRow(input, rule, match, { env = process.env, now = Date.now(
 }
 
 // Each model's tokens as sumTokens counts them, with `over`: the part sent by requests whose prompt was over its price
-// row's `over.prompt` (transcript.mjs addTokens), all zero when none was. Every entry carries `over`, so a reader tells a
-// model that sent none over from a row written before the field (model-prices.mjs rowCostUsd).
-export const tokensByModel = (perModel) => Object.fromEntries(Object.entries(perModel).map(([model, usage]) =>
-  [model, { ...sumTokens([usage]), over: sumTokens(usage.over ? [usage.over] : []) }]));
+// row's `over.prompt` (transcript.mjs addTokens), all zero when none was, and `over_prompt`, that cutoff, or null when the
+// row had no tier. A reader prices the split again only at the same cutoff (model-prices.mjs rowCostUsd).
+export const tokensByModel = (perModel) => Object.fromEntries(Object.entries(perModel).map(([model, usage]) => [model, {
+  ...sumTokens([usage]), over: sumTokens(usage.over ? [usage.over] : []), over_prompt: priceFor(model)?.over?.prompt ?? null,
+}]));
 
 // SubagentStop: the subagent's tokens, per model and in total, its cost, API requests and tool calls, the knowledge docs
 // it read with their sizes, its delivery check, the count of background tasks it started that still run (`running`, from

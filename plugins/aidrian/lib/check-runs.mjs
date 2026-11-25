@@ -121,9 +121,12 @@ function keyOfText(text) {
 // runs one file, and is no full suite.
 export const isFullSuite = (invocation, testing = {}) => !invocation.dynamic && (testing.fullSuite ?? []).map(keyOfText).includes(fullKey(invocation));
 
-// The test runs on the top level of `command`, as { key, folder, carries }: `folder` the folder it runs in (shell-lex
-// walkCommands), `cwd` when nothing on the line moves it, or null when the command does not tell it, as with a folder a
-// variable holds, whose value is never read; and `carries` whether the line's exit status of 0 says the run exited 0: no
+// The test runs on the top level of `command`, as { key, folder, carries }: `folder` the folder it runs in, `cwd` when
+// nothing on the line moves it, or null when the command does not tell it, as with a folder a variable holds, whose value
+// is never read. A `cd`'s folder counts only when that `cd` opens the line and every link from it to the run is `&&`, so
+// the run cannot outlive its failure: where walkCommands' `folder`, which follows a leading `cd`, and `chained`, which a
+// `;`, `||`, pipe, `!`, or subshell after a `cd` ends, agree. An absolute `env -C` on the run gives both whatever the
+// shell's folder, and a relative one neither without it. Nothing else of the line, such as a redirection, is judged. And `carries` whether the line's exit status of 0 says the run exited 0: no
 // separator before or after it but `&&`. After `;` or `||` the run may not have run at all, or another command's status is the line's.
 // A run the lexer marks `uncertain`, which the shell may never run, as behind `repeat 0`, is no run.
 // A run inside a substitution or a nested shell is not read.
@@ -140,7 +143,8 @@ export function testRuns(command, cwd, testing = {}) {
     next += 1;
     if (segment.length === 0 || invocation.uncertain || !isTestRun(invocation, testing)) return;
     const carries = separators.every((separator) => separator === '&&' || separator === null || separator === undefined);
-    runs.push({ key: commandKey(invocation), folder: entry?.folder ?? null, carries });
+    const told = entry !== undefined && entry.folder === entry.chained;
+    runs.push({ key: commandKey(invocation), folder: told ? entry.folder ?? null : null, carries });
   });
   return runs;
 }
@@ -247,7 +251,7 @@ export function runStatus({ pass, fail }, exitZero) {
 // A row's `folder` when the command does not tell the run's folder, and whether a row is of such a run.
 const UNKNOWN_FOLDER = 'unknown';
 const unplaced = (run) => run.folder === UNKNOWN_FOLDER;
-const RUN_PLACED = 'Run it again with a literal path, `env -C <path> ...`.';
+const RUN_PLACED = 'Run it again with a literal absolute path, `env -C <path> ...`.';
 
 // The most untracked code and test files a row names.
 const UNTRACKED_MAX = 20;

@@ -279,6 +279,14 @@ test('a run whose folder the command does not tell records no tree, and any othe
     '(cd /x && node --test)',
     'popd && node --test',
     'cd /x && cd "$W" && node --test',
+    // The run may outlive a `cd` that failed, and then it runs where the shell was.
+    'cd /other < /missing && true; node --test',
+    'cd /other || node --test',
+    '! cd /other < /missing && node --test',
+    'cd /x && true; node --test',
+    'cd /x && true | node --test',
+    'cd /x && (node --test)',
+    'cd /other < /missing && true; env -C sub node --test',
   ]) assert.deepEqual(runsOf(command), [unknown], command);
   // With no folder for the call itself, a run is in no known folder unless its own is written out.
   assert.deepEqual(runsOf('node --test', { cwd: null }), [unknown]);
@@ -293,6 +301,13 @@ test('a run whose folder the command does not tell records no tree, and any othe
     ['cd sub && node --test', '/w/sub'],
     ['pushd /x && node --test', '/x'],
     ['cd "$W"; env -C /x node --test', '/x'],
+    ['cd /other < /missing && true; env -C /x node --test', '/x'],
+    ['cd /other || env --chdir=/x node --test', '/x'],
+    ['cd /x && true && node --test', '/x'],
+    ['cd /x && env -C sub node --test', '/x/sub'],
+    ['env -C sub node --test', '/w/sub'],
+    ['true; node --test', '/w'],
+    ['node --test; cd /x', '/w'],
   ]) {
     const [row] = runsOf(command);
     assert.deepEqual([row.tree, row.trackedTree, row.untrackedCode], [`tree of ${folder}`, `tracked of ${folder}`, ['lib/other.mjs']], command);
@@ -304,7 +319,7 @@ test('a run whose folder the command does not tell records no tree, and any othe
   assert.deepEqual(runsOf('env -C "$W" node --test && env -C /x npm test', { keep: (folder) => folder !== null }).map(({ command }) => command), ['npm test'], '`keep` is told the folder is unknown');
 });
 
-test('a run in an unknown folder supports no claim held to a tree, whose refusal asks for a literal path, and still a report', () => {
+test('a run in an unknown folder supports no claim held to a tree, whose refusal asks for a literal absolute path, and still a report', () => {
   const claim = { clause: 'c', key: 'node --test', counts: [12], commits: [] };
   const [unknown] = runsOf('env -C "$W" node --test');
   const [placed] = runsOf('env -C /x node --test');
@@ -319,7 +334,7 @@ test('a run in an unknown folder supports no claim held to a tree, whose refusal
   assert.deepEqual(unsupportedClaims([claim], [{ ...older, tree: null, trackedTree: null }]), [], 'a tree git could not read, for a report');
 
   const said = claimProblem([claim], [unknown], { where: 'the body', byTree: true });
-  assert.match(said, /The record holds passed \(pass 12, fail 0\) in a folder its command does not tell\. A run's folder could not be told from its command, as with one a variable holds, so that run supports no claim here\. Run it again with a literal path, `env -C <path> \.\.\.`\. Quote only/u);
+  assert.match(said, /The record holds passed \(pass 12, fail 0\) in a folder its command does not tell\. A run's folder could not be told from its command, as with one a variable holds, so that run supports no claim here\. Run it again with a literal absolute path, `env -C <path> \.\.\.`\. Quote only/u);
   assert.doesNotMatch(said, /Untracked code|git could not read/u);
   const report = claimProblem([{ ...claim, counts: [13] }], [unknown], { where: 'the report' });
   assert.match(report, /The record holds passed \(pass 12, fail 0\) in a folder its command does not tell\. Quote only/u, 'a report is not told to run it again for its folder');
@@ -329,7 +344,7 @@ test('a run in an unknown folder supports no claim held to a tree, whose refusal
   assert.match(claimProblem([claim], [{ ...placed, command: 'npm test' }], { where: 'the body' }), /holds no finished run of it/u);
 
   const facts = (runs) => claimFacts(claim, runs, { tree: 't9', commitOf: (tree) => (tree === 'tree of /x' ? 'abc' : null), named: () => 'named' });
-  assert.equal(facts([unknown]), 'the nearest recorded run is of `node --test`: passed, 12 pass, 0 fail; its folder could not be told from its command. Run it again with a literal path, `env -C <path> ...`.');
+  assert.equal(facts([unknown]), 'the nearest recorded run is of `node --test`: passed, 12 pass, 0 fail; its folder could not be told from its command. Run it again with a literal absolute path, `env -C <path> ...`.');
   assert.match(facts([placed, unknown]), /at commit abc\. Cite one finished run/u, 'a pass in a known folder is the one to cite');
   assert.match(facts([{ ...unknown, status: 'failed', pass: 11, fail: 1 }]), /its folder could not be told from its command\. Report that outcome, or get a passing run\.$/u);
 });
@@ -682,7 +697,7 @@ test('the pull request body rule refuses a pass the session record does not supp
   assert.match(judge([claim], [{ ...run, pass: null, fail: null, status: 'unjudged' }]), /The record holds unjudged at tree/u);
   assert.match(judge([claim], [{ ...run, tree: null, trackedTree: null }]), /at a tree git could not read/u);
   const unplaced = judge([claim], [{ ...run, tree: null, trackedTree: null, untrackedCode: [], folder: 'unknown' }]);
-  assert.match(unplaced, /^Blocked: the `## Tests run` section says `npm run check` passed.*Run it again with a literal path, `env -C <path> \.\.\.`\./su);
+  assert.match(unplaced, /^Blocked: the `## Tests run` section says `npm run check` passed.*Run it again with a literal absolute path, `env -C <path> \.\.\.`\./su);
   assert.doesNotMatch(unplaced, /Untracked code/u);
   assert.match(judge([claim], [{ ...run, tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) }]), /the files of HEAD \(tree [0-9a-f]{12}\), or of the commit the line names/u);
   assert.equal(judge(['- `npm run check`: not finished (stopped under load)', '- CI `Check (Node 22)`: pass'], []), null);

@@ -4,7 +4,7 @@
 // session the Human attends writes it, and `--forget` removes an entry; the hooks and a confined session's sandbox keep
 // every other session from writing the folder, as they keep the sign-off store's (lib/review/signoff-store.mjs, whose
 // folder rules, atomic write, and guarded read it reuses). A start reads it only where the team's projectRun.recordedDecisions
-// switch is on (lib/project-run-gate.mjs decisionFor). It lies apart from `<state>/decisions/`, the decision-review records.
+// switch is on (lib/project-run-gate.mjs decisionFor). It lies apart from `<state>/decisions/`, the residual verdicts.
 // Only file and path imports, so the hooks that guard the folder load nothing more.
 
 import { readdirSync, unlinkSync } from 'node:fs';

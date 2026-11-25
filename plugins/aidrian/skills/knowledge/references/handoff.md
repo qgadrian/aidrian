@@ -22,7 +22,7 @@ Add a field only when your role emits it or the dispatch asks for it. Use these 
 - `critical_flow[]` (`product-manager`): `{flow, planning_artifact_confirmed, mandatory_review_confirmed, sign_off}`, one per touched flow.
   A gate passes only when every `critical_flow[].sign_off` is `approved`.
 - `pending_commit` (any agent dispatched not to commit): each changed file; the dispatcher compares it to `git status --porcelain`.
-- `residual_rows` (`product-manager`, from the `pr-write` residuals check): one `{ residual, contradicts, evidence }` per accepted residual.
+- `residual_rows` (`product-manager`, from the `pr-write` residuals check): one `{ residual, contradicts, evidence }` per owed residual.
 - `dirty_handoff` (developers): uncommitted changes with no reason when the dispatch asked for a commit.
 - `commands_run` (developers, `integrator`, `e2e-runner`, `helper-scout`, `github-archaeologist`): the exact commands run,
   each with its result as the tool returned it, or `not finished` for one stopped or still running.

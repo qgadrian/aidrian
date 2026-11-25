@@ -7,7 +7,7 @@
 //   aidrian decisions list --added-since REF     # decisions, settled, and removed are the branch's; problems may also hold rows marked inherited; --json adds queue, the base branch's decisions.record.queue
 //   aidrian decisions set ID confirmed|changed|rejected  # the Human's answer: rewrites that one marker in the working copy; changed confirms it
 //   aidrian decisions undo ID                    # the Human's undo: puts back the old wording and removes the decision's lines
-//   aidrian decisions residuals --body FILE [--judged FILE] [--adr DIR] [--json]  # each accepted residual beside the decisions on record and the ADR consequences; with --judged, the contradictions, exit 1
+//   aidrian decisions residuals --body FILE [--judged FILE] [--rejudge] [--adr DIR] [--json]  # each accepted residual beside the decisions on record and the ADR consequences; with --judged, the contradictions, exit 1
 //   aidrian decisions residuals --body FILE [--residual N] [--path P]  # the listing narrowed to one residual, or to the record under a path
 //
 // `--reversible` answers the questions of decisions.json in its order: storedData, external, pricingOrContract,
@@ -26,6 +26,10 @@
 // line. With no project folder the record is the ADR lines alone, and a superseded ADR adds none, as a note says. A scan
 // problem (an index problem, a doc, an ADR, or an ADR folder that is there but does not read, a failed git scan) prints as a
 // note, and forces exit 1 only where the pairing would otherwise say nothing is on record. It exits 1 too when `--adr` names no folder or `--project` no project.
+// The judged file is `{ record, rows }`, with `record` the hash the listing printed, or the rows alone. A judged run that exits 0
+// keeps each residual's clean verdict (residual-verdicts.mjs) when that hash is of the record it reads itself, and says so when
+// it keeps none: a later listing marks such a residual `kept`, `--judged` needs no row for it, and `--rejudge` ignores it.
+// Nothing is kept or reused under `--residual` or `--path`, with no project folder, or while a decision or an ADR could not be read.
 // `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision), and `quorum route` and `quorum provisional` add `resolve`'s;
 // docs/dispatch-log.md describes them.
 
@@ -36,17 +40,19 @@ import { parseArgs } from 'node:util';
 
 import { baseBranchTip, commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions } from './config.mjs';
 import { appendEvent, stamp } from './dispatch-log.mjs';
+import { isObject } from './fs.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { ageDays, blockOf, classDomain, consequenceLines, supersededAdr, DECISION_STATUSES, isClassName, judgeResiduals, loadVocab, pairResiduals, parseDecisions, recordAt, residualItems, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { indexedPaths, loadKnowledge } from './knowledge.mjs';
 import { committedConfigFile, findProject, noProjectMessage, projectAt } from './project.mjs';
+import { markKept, recordHash, saveVerdicts, verdictsFile, withKept } from './residual-verdicts.mjs';
 import { checkTool as mainCheckoutDenial } from './rules/main-checkout.mjs';
 import { usageLines } from './usage.mjs';
 
 const USAGE = 'resolve --domain D --class C [--reversible A,B,C,D] [--doc PATH]... [--project DIR] | resolve --vocab [--project DIR] ' +
-  '| list [--added-since REF] [--json] [--project DIR] | residuals --body FILE [--judged FILE] [--adr DIR] [--json] [--project DIR] ' +
+  '| list [--added-since REF] [--json] [--project DIR] | residuals --body FILE [--judged FILE] [--rejudge] [--adr DIR] [--json] [--project DIR] ' +
   '| residuals --body FILE [--residual N] [--path P] [--adr DIR] [--json] [--project DIR] ' +
   '| set ID confirmed|changed|rejected [--project DIR] | undo ID [--project DIR]';
 // Each answer `set` takes, and the status it writes. `changed` is the Human's wording in place of the agent's: the rule stands, so
@@ -390,13 +396,14 @@ function list(args) {
 
 // `decisions residuals`: each item of a pull request body's accepted residuals section beside every decision on record and the
 // `## Consequences` line of the ADR folder, the record listed once (pairResiduals), for `product-manager` to judge; with
-// `--judged`, that judgment checked against the whole record. `--residual N` lists residual N alone, and `--path P` every
+// `--judged`, that judgment checked against the whole record. A residual whose clean verdict the store holds is `kept`, and
+// the others are `owed`, unless `--rejudge` ignores the store. `--residual N` lists residual N alone, and `--path P` every
 // decision and ADR line in P, a doc or a folder as the listing prints it. `--json` prints pretty, one value a line, so a long listing reads in parts. `--body`, `--judged`, and `--adr` are
 // read from the current folder; `--project` only finds the project.
 function residuals(args) {
   const word = { type: 'string' };
   const flag = { type: 'boolean' };
-  const options = { body: word, judged: word, adr: word, json: flag, project: word, residual: word, path: word };
+  const options = { body: word, judged: word, rejudge: flag, adr: word, json: flag, project: word, residual: word, path: word };
   const { values } = parseArgs({ args, options });
   if (!values.body) return fail('residuals needs --body FILE');
   const narrowed = values.residual !== undefined || values.path !== undefined;
@@ -435,14 +442,25 @@ function residuals(args) {
   const unread = [...(scanned?.problems ?? []).filter(({ line }) => line === null), ...adrProblems];
   const scanNotes = scanned ? scanned.notes : [NO_FOLDER];
   const skippedNotes = skipped.map((each) => `skipped superseded ADR ${each}`);
-  const notes = [...scanNotes, ...unread.map(problemNote), ...skippedNotes];
+  // A marker problem off a listed marker, such as a marker that does not parse, or one in a doc no index lists, may be a
+  // decision the record lacks: a note names it, and no verdict is kept.
+  const onMarker = ({ doc, line }) => decisions.some((each) => each.doc === doc && line >= each.line && line <= each.through);
+  const unparsed = (scanned?.problems ?? []).filter((each) => each.line !== null && !onMarker(each));
+  const notes = [...scanNotes, ...[...unread, ...unparsed].map(problemNote), ...skippedNotes];
   const partial = unread.length > 0 || (scanned?.notes.length ?? 0) > 0;
   const prefix = values.path?.replace(/\/+$/u, '');
   const within = (file) => prefix === undefined || file === prefix || file.startsWith(`${prefix}/`);
   const paired = pairResiduals(items, decisions.filter(({ doc }) => within(doc)), adrs.filter(({ path: file }) => within(file)));
   // With no decision and no ADR line on record, no residual can contradict one: nothing is owed, --judged or not.
   const nothing = !decisions.some(({ status }) => status !== 'rejected') && adrs.every(({ lines }) => lines.length === 0);
-  const listing = { ...paired, residuals: only === null ? paired.residuals : paired.residuals.filter(({ n }) => n === only) };
+  const texts = narrowed || partial || unparsed.length ? null : unwordedTexts(project, decisions);
+  const store = texts === null ? null : verdictsFile(project);
+  const record = store === null ? null : recordHash(paired, folder, texts);
+  if (project && !narrowed && store === null && !nothing) notes.push('no verdict is kept or reused while the problems noted here stand');
+  const marked = store === null || values.rejudge ? paired.residuals : markKept(paired.residuals, store, record);
+  const shownResiduals = only === null ? marked : marked.filter(({ n }) => n === only);
+  const owed = nothing && !partial ? [] : shownResiduals.filter(({ kept }) => !kept).map(({ n }) => n);
+  const listing = { ...paired, residuals: shownResiduals, owed, record };
   const json = (value) => JSON.stringify(value, null, 2);
   if (nothing && partial) {
     const why = 'the decisions and ADRs on record could not all be read, so an empty record proves nothing: fix the problems above, then run this again';
@@ -452,30 +470,40 @@ function residuals(args) {
     return 1;
   }
   if (values.judged === undefined || nothing) {
-    const last = nothing ? 'nothing on record: no judgment owed' : 'judgment owed: product-manager returns one row per residual, { residual, contradicts, evidence }';
+    const done = nothing || owed.length === 0;
+    const last = lastLine({ nothing, owed, all: owed.length === shownResiduals.length });
     if (values.json) {
-      console.log(json({ ...listing, section, adrFolder: folder, nothing, notes: nothing ? [...notes, last] : notes }));
+      console.log(json({ ...listing, section, adrFolder: folder, nothing: done, notes: done ? [...notes, last] : notes }));
       return 0;
     }
     const shown = [
       ...(listing.decisions.length ? listing.decisions.map((each) => `decision ${each.id} ${each.status} ${place(each)}: ${each.wording}`) : ['decision none on record']),
       ...(listing.adrs.length ? listing.adrs.map((each) => `adr ${each.path}:${each.line}: ${each.text}`) : ['adr none found']),
-      ...listing.residuals.map((each) => `residual ${each.n}: ${each.residual}`),
+      ...listing.residuals.map((each) => `residual ${each.n}${each.kept ? ' (kept)' : ''}: ${each.residual}`),
     ];
-    console.log([...shown, ...notes.map((note) => `note\t${note}`), last].join('\n'));
+    console.log([...shown, ...(record === null ? [] : [`record ${record}`]), ...notes.map((note) => `note\t${note}`), last].join('\n'));
     return 0;
   }
   const judgedFile = path.resolve(values.judged);
-  let rows;
+  let given;
   try {
-    rows = JSON.parse(readFileSync(judgedFile, 'utf8'));
+    given = JSON.parse(readFileSync(judgedFile, 'utf8'));
   } catch (error) {
     return fail(`cannot read the judged file ${judgedFile}: ${error.code ?? error.message}`);
   }
-  const { contradictions, invalid } = judgeResiduals(paired, rows);
+  const named = isObject(given) && Array.isArray(given.rows);
+  const rows = named ? given.rows : given;
+  const { contradictions, invalid } = judgeResiduals(paired, withKept(rows, marked));
   const status = contradictions.length || invalid.length ? 1 : 0;
+  // Rows judged against another record, as before a merge from the base branch, are no verdict on this one.
+  const otherRecord = store !== null && status === 0 && !(named && given.record === record);
+  const unsaved = store === null || otherRecord ? null : saveVerdicts(store, record, { residuals: paired.residuals, rows, clean: status === 0 });
+  if (otherRecord && owed.length) notes.push('no verdict was kept: the judged file does not name the record this run read');
+  const keptCount = marked.length - owed.length;
+  if (keptCount) notes.push(`${keptCount} residual${keptCount === 1 ? '' : 's'} kept from an earlier judgment of this record`);
+  if (unsaved) notes.push(status === 0 ? `no verdict was kept: ${unsaved}` : `an earlier verdict may still be kept, so list with --rejudge: ${unsaved}`);
   if (values.json) {
-    console.log(json({ residuals: paired.residuals, contradictions, invalid, notes }));
+    console.log(json({ residuals: marked, contradictions, invalid, notes }));
     return status;
   }
   const shown = [
@@ -486,6 +514,25 @@ function residuals(args) {
   ];
   console.log(shown.join('\n'));
   return status;
+}
+
+// How a listing of residuals ends: whether a judgment is owed, on which residuals when not on all, and why none is.
+function lastLine({ nothing, owed, all }) {
+  if (nothing) return 'nothing on record: no judgment owed';
+  if (owed.length === 0) return 'every residual was judged against this record';
+  return `judgment owed${all ? '' : ` for residual ${owed.join(', ')}`}: product-manager returns one row per residual, { residual, contradicts, evidence }`;
+}
+
+// The text of each doc that holds a decision on record with no wording of its own, where the judge reads it, or null when
+// one does not read or there is no project.
+function unwordedTexts(project, decisions) {
+  if (!project) return null;
+  const docs = decisions.filter(({ status, newWording }) => status !== 'rejected' && typeof newWording !== 'string').map(({ doc }) => doc);
+  try {
+    return [...new Set(docs)].map((doc) => readFileSync(path.resolve(project.root, doc), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 // A problem row, as readMarkers gives one, printed as a note.

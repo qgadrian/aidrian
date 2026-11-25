@@ -8,21 +8,27 @@ An accepted residual that contradicts a decision on record never ships.
    names an ADR folder other than `docs/adr/`. It lists each decision on record and each `## Consequences` line of the
    ADRs once, in `decisions` and `adrs`, then each residual by its number `n`: every residual is set against the whole
    record. An ADR whose Status starts `Superseded` is skipped, and a note names it.
-   When it says `nothing` is true (`nothing to check`, or `nothing on record: no judgment owed`), it exited 0 and no
-   dispatch is owed: the body ships.
-2. Dispatch `product-manager` with that output as its brief and the knowledge tag `product_sensitive`.
+   A residual an earlier run of step 3 found clean against this same record is marked `kept`; `owed` holds the numbers of
+   the others, and `record` the record's hash. When it says `nothing` is true (`nothing to check`,
+   `nothing on record: no judgment owed`, or `every residual was judged against this record`), it exited 0 and no dispatch
+   is owed: the body ships.
+2. Dispatch `product-manager` for the owed residuals alone, with that output as its brief, the numbers in `owed`, and the
+   knowledge tag `product_sensitive`. A narrowed listing marks nothing `kept`, so the numbers still come from step 1.
    When the output is still too long for one brief, split the record with `--path <doc or folder>`, which lists every
    decision and ADR line there, and dispatch once per part; `--residual <n>` lists one residual. A single document too
    long for one brief is not split further: `product-manager` reads it in parts, and no residual's row is `null` until
    every part was read. A residual's row is `null` only when no part found a contradiction. It returns the rows
-   in its handoff's `residual_rows` field, one row per residual, `{ residual, contradicts, evidence }`: `residual` the text
+   in its handoff's `residual_rows` field, one row per owed residual, `{ residual, contradicts, evidence }`: `residual` the text
    exactly as printed, `contradicts` a decision id or ADR `path:line` from the pairing, or `null`, and `evidence` the quoted
    wording it contradicts. The pairing lists only `confirmed` and `unconfirmed` decisions: a `rejected` one is no rule,
    so the command leaves it out.
-3. Write the rows as a JSON array to `<state>/tmp/pr-residuals-<branch>.json`, with the same `<branch>` spelling as the
-   body file, and run `aidrian decisions residuals --body <file> --judged <that file>`. Spell both paths out, with the
-   folder `aidrian state` prints and the branch put in before the command, as the body file's is: the Bash hook refuses a
-   write to a path built in a shell variable, such as `> $S/pr-residuals.json`.
+3. Write `{ "record": <step 1's record>, "rows": [...] }` as JSON to `<state>/tmp/pr-residuals-<branch>.json`, with the same
+   `<branch>` spelling as the body file, and run `aidrian decisions residuals --body <file> --judged <that file>`, with the
+   same `--adr <folder>` as step 1. The rows answer the record step 1 listed, so a later listing's `record` never goes beside
+   them. Spell both paths out, with the folder `aidrian state` prints and the branch put in before the command, as the body
+   file's is: the Bash hook refuses a write to a path built in a shell variable, such as `> $S/pr-residuals.json`. A `kept`
+   residual needs no row; the exit covers the whole body, and on 0 each clean verdict is kept. To judge every residual again,
+   add `--rejudge` here and in step 1.
 4. Each printed contradiction goes back to the owner of the change, who fixes the defect or drops the residual; an
    `invalid:` row goes back to `product-manager`. Rerun steps 1 to 3 until the judged run exits 0: the body ships only then.
 

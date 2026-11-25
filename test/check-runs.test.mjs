@@ -444,10 +444,14 @@ test('a table row reads only as many cells as its header has', () => {
   assert.deepEqual(claimPairs(['| Command | Result |', '| --- | --- |', '| `npm test` | 35 passed | 99 passed |']), [['npm test', [35]]]);
 });
 
-test('a line with no pipe ends a table and starts an item of its own', () => {
+test('a line with no pipe ends a table and continues its header', () => {
   const table = ['| Command | Passed |', '| --- | --- |', '| `npm test` | 35 |'];
-  assert.deepEqual(claimPairs([...table, '`vitest run` ran here:', '34 passed']), [['npm test', [35]], ['vitest run', [34]]], 'a wrapped paragraph');
-  assert.deepEqual(claimPairs([...table, '---', '`vitest run` was not run']), [['npm test', [35]]], 'a thematic break, then text under no header');
+  assert.deepEqual(claimPairs([...table, '---', '`vitest run` ran here:', '34 passed']), [['vitest run', [34]], ['npm test', [35]]],
+    'a thematic break, then a wrapped paragraph, apart from the row');
+});
+
+test('a pass on a line with no pipe is held with the command in the header above it', () => {
+  assert.deepEqual(claimPairs(['| `npm test` |', '| --- |', '35 passed']), [['npm test', [35]]]);
 });
 
 test('an id of only digits under a Commit header is a commit id', () => {

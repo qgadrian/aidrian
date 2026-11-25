@@ -621,7 +621,7 @@ function rowText(cells, labels) {
 // heading ends it, and any other line continues it, as a wrapped line does. A line with a `|` and a delimiter row after
 // it opens a table: each line with a `|` from there to a blank line, a heading, or a list marker is a row, and one string
 // with what the table stands under, its header and the paragraph it continues, but not with the other rows. A line with
-// no `|` ends the table and starts a new string.
+// no `|` ends the table and continues the header's string, as a wrapped line does.
 function units(lines) {
   const out = [];
   let open = null;
@@ -638,7 +638,6 @@ function units(lines) {
       out.push(`${out[open]}, ${rowText(cellsOf(line), labels)}`);
       continue;
     }
-    if (labels) open = null;
     labels = null;
     if (open === null || item) {
       out.push(line.trim());

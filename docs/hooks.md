@@ -2549,9 +2549,9 @@ Two checks read it:
 - The [pull request body rule](#bash-rules) reads the `## Tests run` section outside fenced code, one list item,
   paragraph, or table row at a time with its wrapped lines joined, split at `;` and sentence ends. A table row is read
   as its own item, each cell before its header cell, after the header and any line right above it, and apart from the
-  other rows. A line with no `|` ends the table and starts a new item, and a line with a `|` and no delimiter row
-  after it is a paragraph. A cell past the header's last is not read, and one under "Commit" reads as "commit" and
-  the cell. A clause that names a test command,
+  other rows. A line with no `|` ends the table and continues the header's item, as the lines after it do, and a line
+  with a `|` and no delimiter row after it is a paragraph. A cell past the header's last is not read, and one under
+  "Commit" reads as "commit" and the cell. A clause that names a test command,
   in backticks or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or
   "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
   or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. An id of digits

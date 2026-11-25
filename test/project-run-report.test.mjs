@@ -1556,13 +1556,15 @@ test('the driver\'s halt wait ends once only sessions it could not stop are left
   assert.ok(wait.includes('- `note policy: <why>`: the forge withdrew the policy; the run may start nothing more. § Stop (wait still settles the run).'), 'the policy line');
   // The release's lines (project-linger.mjs releaseAttempts): a `not released` line says `could not be stopped` and
   // prints again each wait, so the second-line § Stop rule exempts it, and the final report names its session.
-  assert.ok(wait.includes('- `released <key> attempt <n>`: the host still held the session of a settled attempt, and wait stopped it. Go on by the other lines.'), 'the released line');
-  assert.ok(wait.includes('Note it once for the final report, with the session id and the host\'s command it names, and go on by the other lines. Never § Stop for it, whatever its words.'), 'the not released line');
+  assert.ok(wait.includes('- `released <key> attempt <n>`: the host still held the session of a settled attempt, and wait stopped it. It clears an earlier `not released` note of that attempt. Go on by the other lines.'), 'the released line');
+  assert.ok(wait.includes('Note it once for the final report, with the session id and the host\'s command it names, and go on by the other lines. A later `released` line of that attempt clears the note. Never § Stop for it, whatever its words.'), 'the not released line');
   assert.ok(wait.includes('- `note sessions: <host name>: <reason>`: the host cannot say now which sessions it still holds, or whether a session it holds ended. Note it, and go on by the other lines.'), 'the note sessions line');
   assert.ok(wait.includes('a second such line for the same issue: § Stop, with that line as the cause. A `not released` line is never such a line.'), 'the § Stop rule exempts it');
   const finish = text.slice(text.indexOf('## Finish'), text.indexOf('## Hand off'));
   assert.ok(finish.includes('Its `released`, `not released`, and `note sessions:` lines are read as step 3 reads them: the run ends all the same.'), 'end\'s lines');
-  assert.ok(finish.includes('names, under **Stopped**, each session a `not released` line named, from `wait` or `end`, by its issue, its attempt, and its session id, with the host\'s command on that line that stops it by hand.'), 'the report names it');
+  assert.ok(finish.includes('names, under **Stopped**, each session a `not released` line named, from `wait` or `end`, and no later `released` line of its attempt cleared, by its issue, its attempt, and its session id, with the host\'s command on that line that stops it by hand.'), 'the report names it');
+  const skill = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/SKILL.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.ok(skill.includes('Each session a `not released` line named that no later `released` line of its attempt cleared, with the command that stops it.'), 'a session already stopped is never left for the Human');
 });
 
 test('autopilot under a project run reads its issue from the file and makes its tracker writes optional', () => {

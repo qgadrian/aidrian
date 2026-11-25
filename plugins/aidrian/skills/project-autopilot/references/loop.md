@@ -48,8 +48,8 @@ named and go on from that output as step 2 says.
      an earlier `not released` note of that attempt. Go on by the other lines.
    - `not released <key> attempt <n>: ...`: the host still holds the session of a settled attempt, and wait could not
      stop it. It ends no wait and prints again each wait. Note it once for the final report, with the session id and the
-     host's command it names; a later `released` line of that attempt clears the note. Go on by the other lines, and
-     never § Stop for it, whatever its words.
+     host's command it names, and go on by the other lines. A later `released` line of that attempt clears the note. Never
+     § Stop for it, whatever its words.
    - `note sessions: <host name>: <reason>`: the host cannot say now which sessions it still holds, or whether a
      session it holds ended. Note it, and go on by the other lines.
    - `overdue <key> ...`, or `limited <key> attempt <n>: ...` or `lingered <key> attempt <n>: ...` that says `could not

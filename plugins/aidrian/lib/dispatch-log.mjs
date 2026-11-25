@@ -61,7 +61,7 @@ export const stamp = (now) => new Date(now).toISOString();
 export const docsRead = (row) =>
   (Array.isArray(row.docs_read) ? row.docs_read : []).map((entry) => (typeof entry === 'string' ? { path: entry, bytes: null } : entry));
 
-// Whether each run among `stops` was sent back by the delivery check: true, false, or null for unknown, keyed by
+// Whether each run among `stops` was sent back by the stop hook, for any cause: true, false, or null for unknown, keyed by
 // agent_id. A stop row without an agent_id is a run of its own, so it is its own key here as in latestRows. A row says
 // so in `sent_back`; a row from before that field is unknown when its `delivered` is `missing`, and was never sent back
 // otherwise. A run is sent back when any of its rows was, else unknown when any is.
@@ -74,6 +74,50 @@ export function sendBackStates(stops) {
   }
   return runs;
 }
+
+// Why the stop hook sent a subagent back, as a `stop` row's `sent_back_for` names it, in the order the hook lists them:
+// the words the reports use for each, and the check of docs/hooks.md it comes from. `unrecorded` is never written: it
+// stands for a run sent back by a row from before `sent_back_for`, or one that names no cause this list holds.
+export const SEND_BACK_CAUSES = {
+  background: { words: 'background task', check: 'the background check' },
+  missing_file: { words: 'missing file', check: 'the delivery check' },
+  handoff: { words: 'handoff file', check: 'the delivery check' },
+  marker: { words: 'handoff marker', check: 'the marker check' },
+  evidence: { words: 'test claim with no run', check: 'the evidence check' },
+  unrecorded: { words: 'cause not recorded', check: null },
+};
+const CAUSE_ORDER = Object.keys(SEND_BACK_CAUSES);
+
+// The causes each run among `stops` was sent back for, over every one of its rows, as a Set keyed as sendBackStates keys
+// its runs. A row with `sent_back: true` adds its `sent_back_for`, or `unrecorded` when it names none this file knows.
+export function sendBackCauses(stops) {
+  const runs = new Map();
+  for (const row of stops) {
+    const key = row.agent_id ?? row;
+    const causes = runs.get(key) ?? new Set();
+    if (row.sent_back === true) {
+      const named = (Array.isArray(row.sent_back_for) ? row.sent_back_for : [])
+        .filter((cause) => cause !== 'unrecorded' && Object.hasOwn(SEND_BACK_CAUSES, cause));
+      for (const cause of named.length ? named : ['unrecorded']) causes.add(cause);
+    }
+    runs.set(key, causes);
+  }
+  return runs;
+}
+
+// The causes of `causeSets`, one Set a run, as [cause, runs] pairs: the most runs first, then in SEND_BACK_CAUSES order.
+export const rankCauses = (causeSets) => {
+  const counts = new Map();
+  for (const causes of causeSets) for (const cause of causes) counts.set(cause, (counts.get(cause) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1] || CAUSE_ORDER.indexOf(a[0]) - CAUSE_ORDER.indexOf(b[0]));
+};
+
+// Dollars as the agents and sessions views print them, to the cent: `$3.08`.
+export const money = (usd) => `$${usd.toFixed(2)}`;
+// `logged $X` for a cost at today's prices whose rows logged another, as the views print dollars; else ''.
+// loggedNote puts it in parentheses, ` (logged $X)`.
+export const loggedCost = (usd, logged) => (Number.isFinite(logged) && money(usd) !== money(logged) ? `logged ${money(logged)}` : '');
+export const loggedNote = (usd, logged) => (loggedCost(usd, logged) ? ` (${loggedCost(usd, logged)})` : '');
 
 // What a report over `rows` cannot see: { enabled, doc_reads, hook_denies, rows_without_doc_reads, runs_without_send_back,
 // rotated_out_before }. `enabled`, `doc_reads`, and `hook_denies` are the switches now. `rows_without_doc_reads` counts

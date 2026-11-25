@@ -42,7 +42,7 @@ the tracker write guard, and the question names check also record each block: se
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
 | The main session ends a turn | The [result hold](config.md#project-run) of a project run's issue session that has not handed its result over, first, then the [announce check](#announced-work), the [review-loop check](#review-loop-check), the [merge hand-back check](#merge-hand-back-check), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the result hold, announce, and hand-back checks also Codex ([not live](providers/codex.md#hooks)), the review-loop and merge hand-back checks Claude Code only; the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop, and each check once per turn ([send-backs](#send-backs-per-turn)); the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
-| A subagent stops | A `stop` row, then the [delivery check](#delivery-check), the [background check](#background-check), and the [evidence check](#check-runs) | Claude Code | once |
+| A subagent stops | A `stop` row, then the [delivery check](#delivery-check) with its marker check, the [background check](#background-check), and the [evidence check](#check-runs), for the five [send-back causes](#send-back-causes) | Claude Code | once |
 | A session ends | The main session's recorded issue reads for a [project run](config.md#project-run) removed. When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
 The Bash rules run in the order of their table, in one process.
@@ -1984,7 +1984,7 @@ Each such marker names one file: everything inside the backticks that open its v
 without the trailing `.`, `,`, `;`, `:`, or `)` that ends a sentence, as in `Handoff file: <path>.`.
 The whole value must be an absolute path in the state folder's `dispatch/` that ends in `.json`; prose after it is not read.
 A marker that names no path, or a path that is not one, such as `<state>/dispatch/...` left unexpanded or a relative
-path, cannot be filled by the hook. Unless this run wrote a regular file there, by the transcript's start time, the agent
+path, cannot be filled by the hook; the marker check finds it. Unless this run wrote a regular file there, by the transcript's start time, the agent
 is sent back once, on the first stop of its turn, with the marker and the reason, and with no "write it now" for that
 path even when its report claims it: it writes nothing at that path, which may lie outside the
 dispatch folder, and hands back its report as its last message, saying that the brief's path was rejected, so its
@@ -2028,6 +2028,23 @@ the corrected one. The file is the record its dispatcher reads:
 a subagent's handback can reach another session than the one that dispatched it, such as the main session for an agent
 a named teammate started, or none once that one has ended. A forked subagent's first prompt is its parent's, so the check finds nothing there.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
+
+## Send-back causes
+
+The subagent stop hook sends a subagent back for five causes, and its `stop` row lists those of each send-back in
+`sent_back_for` ([dispatch-log.md](dispatch-log.md#stop-when-a-subagent-ends)). `aidrian report` counts the runs each
+cause sent back in its words, and `aidrian report health` names the leading one with its check.
+
+| Cause | The report's words | When | Check |
+| --- | --- | --- | --- |
+| `background` | background task | A background shell or agent it started still runs. | the [background check](#background-check) |
+| `missing_file` | missing file | Its last message presents a file as written that does not exist. | the [delivery check](#delivery-check) |
+| `handoff` | handoff file | A handoff file its brief named is not written, and it gave no report to write there. | the [delivery check](#delivery-check) |
+| `marker` | handoff marker | Its brief's `Handoff file:` marker names a path the hook cannot fill. | the marker check, part of the [delivery check](#delivery-check) section |
+| `evidence` | test claim with no run | Its report says a test command passed, with no finished run of its own that shows it. | the [evidence check](#check-runs) |
+
+A send-back can have several causes, such as a missing file and a test claim at once. A row written before
+`sent_back_for` existed shows its send-back under `cause not recorded`.
 
 ## Background check
 

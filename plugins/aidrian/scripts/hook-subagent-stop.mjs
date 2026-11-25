@@ -1,4 +1,10 @@
-// SubagentStop hook (Claude Code): one `stop` row in the dispatch log, then two checks that can send the subagent back.
+// SubagentStop hook (Claude Code): one `stop` row in the dispatch log, then the checks that can send the subagent back,
+// for five causes the row's `sent_back_for` names (lib/dispatch-log.mjs SEND_BACK_CAUSES):
+// - `background`: a background task it started still runs (the background check);
+// - `missing_file`: its last message names a file as written that does not exist (the delivery check);
+// - `handoff`: a handoff file its brief asked for is not written, with no report to write there (the delivery check);
+// - `marker`: its brief's `Handoff file:` marker names a path the hook cannot fill (the marker check);
+// - `evidence`: its report claims a test run passed with no finished run of its own to show it (the evidence check).
 // The delivery check: every .md or .json path the subagent's last message names must exist; when one does not, it is sent
 // back once, on the first stop of its turn, to write it or correct its report, and the send-back is recorded as a lesson
 // for that agent type (lib/lesson-signals.mjs). A handoff file its brief asked it to write and it did not (unwrittenHandoffs)
@@ -20,7 +26,7 @@
 // The stop the cap lets end with a task still running is recorded as a lesson for the plugin. The count is stored before
 // each send-back past the first, and a count that cannot be stored ends the stop, so no host can loop on it; a payload
 // without `stop_hook_active` (another host) is never sent back (sendsBack). The row's `sent_back` records the decision.
-// A `Handoff file:` marker the hook cannot fill, such as one whose path is not absolute, sends the subagent back once,
+// The marker check: a `Handoff file:` marker the hook cannot fill, such as one whose path is not absolute, sends the subagent back once,
 // on the first stop of its turn, to hand back its report with the mistake named, and never to write that path itself.
 // The evidence check: a final report that says a test command passed, with no run of it on the session's check-run
 // record that passed (lib/check-runs.mjs), is sent back once, on the first stop of its turn, to quote a run a tool
@@ -146,7 +152,15 @@ export async function handle(input) {
     forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
   }
   if (config.telemetry.enabled) {
-    appendEvent(project, config, stopRow(input, project, { delivery, children: tasks, sentBack: forChildren || forDelivery || forEvidence || forMarker, docReads: config.telemetry.docReads }));
+    // The causes in the order of dispatch-log.mjs SEND_BACK_CAUSES; the row's `sent_back` is true exactly when one holds.
+    const sentBackFor = [
+      ...(forChildren ? ['background'] : []),
+      ...(forDelivery && delivery.missing.length ? ['missing_file'] : []),
+      ...(forDelivery && (delivery.unwritten ?? []).length ? ['handoff'] : []),
+      ...(forMarker ? ['marker'] : []),
+      ...(forEvidence ? ['evidence'] : []),
+    ];
+    appendEvent(project, config, stopRow(input, project, { delivery, children: tasks, sentBackFor, docReads: config.telemetry.docReads }));
   }
   const agent = stopAgent(input);
   // The lesson's evidence names the agent's dispatch log row, which only telemetry writes.

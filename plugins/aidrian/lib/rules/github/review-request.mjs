@@ -158,6 +158,19 @@ export function readWords(args, values) {
   return { words, flags };
 }
 
+// The last `name` switch of a gh command line `args`, from its readWords `flags`, as gh reads a bool (Go's
+// strconv.ParseBool), where the last one given wins: true when given with no value or a literal true word, false when
+// absent or given a false one, and null when any word of `args` is one the shell fills in or expands, a quoted one
+// included: it may be any option, a cluster or a value that eats one, so gh's reading of every switch is unknown. A
+// caller takes null the way that refuses more: no exemption, or the switch on when on is what is held.
+const TRUE_WORDS = new Set(['1', 't', 'T', 'TRUE', 'true', 'True']);
+export function switchValue(args, flags, name) {
+  if (args.some((token) => token.dynamic || token.expands || token.splits)) return null;
+  const flag = flags.filter((each) => each.name === name).at(-1);
+  if (!flag) return false;
+  return flag.value === null || TRUE_WORDS.has(flag.value.text);
+}
+
 // The body text: an inline body (a substitution's text, heredoc included, is read as written), or a readable file.
 function bodyOf(inline, file, read) {
   if (inline) return inline.text;

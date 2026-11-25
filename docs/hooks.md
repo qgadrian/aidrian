@@ -469,13 +469,23 @@ What each rule matches:
   request, body file, or subcommand it cannot read is refused while a record holds a post; so is text fed to a shell, `xargs`,
   `parallel`, or a command it did not judge, such as `npx`, whose words name `product-feedback` and `post`, and a post in the same
   command as `record` or an aidrian call it cannot read. The deny says the Human can run `post` in their own shell.
-- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, and with quotes or
-  backslashes the shell takes out anywhere in its words (`r""eady`), but `--undo` with no value or a true one, and a
+- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, and with quotes,
+  backslashes, or a line continuation the shell takes out anywhere in its words (`r""eady`, a backslash and a line break
+  inside `ready`), but a last `--undo` with no value or a true one, read only when every word is written out, as the merge
+  guard's entry below says, and a
   `gh api` call to any spelling of the graphql endpoint that names `markPullRequestReadyForReview` ([Ready hold](#ready-hold)).
 - Ready checks: the same `gh pr ready` calls, but not the `gh api` form, and a `gh pr edit` with `--title`, `--body`, or
   `--body-file` (`-t`, `-b`, `-F`), or any `gh pr create`, in the same command as one ([Ready checks](#ready-checks)).
 - Merge guard: `gh pr merge` but `--disable-auto` and a read of its `--help` or `-h`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
-  sent as a PUT or a POST ([Merge guard](#merge-guard)).
+  sent as a PUT or a POST ([Merge guard](#merge-guard)). A switch is read only when every word of the gh command is written
+  out. A word the shell fills in or expands, quoted or not, anywhere in it, a `--body "$BODY"` included, may be any option, a
+  cluster, or a value that eats one, so then no switch exempts and `--auto` counts as on. With every word written out, gh's
+  reading holds: the last of a switch given twice wins, and `-h` anywhere prints help. So `--help`, `-h`, and
+  `--disable-auto` exempt when on; `gh pr merge 7 --help=false`, `gh pr merge 7 "$X" --help`, and
+  `gh pr merge 7 --help --body "$B"` are judged as `gh pr merge 7`; `gh pr merge 7 --auto --auto=false` merges at once; and
+  `gh pr merge 7 "$X"` and `gh pr merge 7 --auto=false --body "$BODY"` count as `--auto`. To merge a body the shell builds,
+  write it to a file and pass `--body-file` with a literal path. This is no unread input: the guard reads the command, and
+  a switch the shell may still fill in is a possible auto-merge, which it refuses on purpose.
 - Push first: a command of `testing.fullSuite` as written, through wrappers such as `rtk` and redirects, in the folder a leading
   `cd` names; `npm test -- <file>` runs no full suite. [Push first](#push-first) says when it refuses.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
@@ -531,6 +541,11 @@ to a shell; the last four refuse text piped or scripted into a shell that names 
 The ready hold reads them too, and refuses text fed to a shell, or a shell's `-c` string or `eval` words built by a command
 substitution, that holds the word `gh` and a word close to `ready` (`"ready"`, `re""ady`, printf's `re%sdy`), or names
 `markPullRequestReadyForReview`, in a project where git says product feedback is on.
+The quick look of the ready hold, the ready checks, and the product feedback answer and post rules, which spares every other
+command the full read, and the reads of fed text of the merge guard, the ready hold, and the product feedback answer and post
+rules, read the text as the shell reads its words (`shellPlain` in `lib/shell-lex.mjs`): a backslash and the line break after
+it are dropped, then every quote and backslash, so `r""eady` and `r`, a backslash, a line break, and `eady` each read `ready`,
+and `aid""rian pr prod""uct-feedback answer` names the answer call.
 A command reached only through a script or an interpreter such as `python -c` is out of their sight.
 
 The product feedback answer rule has limits it accepts, so a reader does not take it for more than it is:
@@ -797,7 +812,8 @@ alone: a confined session can write the review records. The guard holds it to th
 start folder, else its main checkout, wherever its call runs, so a git folder of its own makes no hole; a mark that
 names no project the guard can read refuses, and so does a main checkout that does not resolve to a project, whatever
 the start folder; the start folder gives only the project's folder in the repository and its record folders. A project
-run's driver is held the same way, from its driver mark. Its `gh pr merge --auto`, and any `gh api` call whose `query`
+run's driver is held the same way, from its driver mark. Its `gh pr merge --auto`, read as the [Bash rules](#bash-rules) list
+says, and any `gh api` call whose `query`
 field names `mergePullRequest`, `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or a GraphQL call
 (`graphql`, `/graphql`, `graphql/`, `graphql?x=1`, or an absolute URL whose path is GraphQL's, or an endpoint the
 shell builds) whose query is in a file it names or the shell builds, and fed text naming one, are refused: each leaves
@@ -873,7 +889,8 @@ and merges leaves the guard its own time. It decides in this order:
 
 1. `AIDRIAN_ALLOW_UNHELD_READY=1` in the hook's own environment lets it run. Only this rule reads it, so a setter in the
    command, `AIDRIAN_ALLOW_UNHELD_READY=1 gh pr ready 7` or an `export` before it, lifts nothing. `gh pr ready --undo` runs
-   when its last `--undo` has no value or one gh reads as true; `--undo=false` and `--undo=0` are held.
+   when its last `--undo` has no value or one gh reads as true, and every word is written out; `--undo=false`, `--undo=0`,
+   `--undo "$U"`, and `--undo -R "$REPO"` are held.
 2. Each call is judged in the project of the folder gh runs in, read by the product feedback answer rule's folder rules.
    A folder it cannot read, as after `cd "$PWD"`, is the session's project: gh resolves the branch there. A folder in no
    project lets a call run unless it names its repository. A call that names its repository (a URL, `-R`, `GH_REPO`, a
@@ -2162,7 +2179,10 @@ earlier in the turn, is read there as well.
   An `echo` of the line, an error exit with no verdict, and a path that holds the command text count as no gate run.
 - The last gate run or merge of each pull request in the turn counts: a later run that passed, or refused for another
   reason, and a `gh pr merge` of that pull request whose result is no error clear an earlier refusal. `gh pr merge` with
-  `--help`, `-h`, `--auto`, or `--disable-auto` merges nothing and clears nothing. A merge with no target, or one this
+  `--help`, `-h`, `--auto`, or `--disable-auto` merges nothing and clears nothing. gh reads the last `--auto` and the last
+  `--disable-auto` only when every word is written out, as the merge guard does ([Bash rules](#bash-rules)): one with a
+  false value, as in `--auto --auto=false`, merges, and a command with a word the shell fills in, as `gh pr merge 401 "$X"`
+  or `--disable-auto=false --body "$B"`, counts as a toggle. A merge with no target, or one this
   cannot read as a number, counts for the number gh printed in its `merged pull request` line; gh prints that line on a
   terminal only, so one that printed no number clears a refusal only when it is the one refusal that stands then.
   A refused or failed merge clears nothing.

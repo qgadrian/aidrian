@@ -1001,6 +1001,18 @@ function folderAfter(here, { program, args, environment = [] }) {
   }
 }
 
+// `text` with what the shell takes out of its words, for a rule's quick look at a command line, or at text fed to a shell,
+// before or instead of a full read: a backslash and the newline after it (a line continuation) dropped, then every quote and
+// backslash. So `r\<newline>eady`, `r""eady`, and `r\e\a\d\y` each read `ready`. It takes out more than the shell does,
+// a quoted backslash too, so a quick look finds every spelling the shell runs, and the full read decides.
+export const shellPlain = (text) => text.replaceAll('\\\n', '').replace(/["'\\]/gu, '');
+
+// Whether a dynamic token stays one word whatever it holds: quoted, and no glob or list expansion in any spelling, as
+// `"$@"`, `"${@}"`, `"${@:2}"`, `"${a[@]}"`, their `*` forms, or a name list such as `"${!a@}"` or `"${!a[@]}"`, which a rule
+// never takes for one word.
+export const quotedScalar = ({ text, dynamic, splits, expands }) =>
+  dynamic && !splits && !expands && /[$`]/u.test(text) && !/\$\{?[@*]|\[[@*]\]|\$\{![^}]*[@*]\}/u.test(text);
+
 // A token written back as a shell word that reads as the same word, for a deny reason that hands back a command to run:
 // bare when it is plain, in double quotes when it expands a variable, in single quotes otherwise. null when the lexer
 // kept too little to write it back: an unquoted `$(…)` or backtick body.

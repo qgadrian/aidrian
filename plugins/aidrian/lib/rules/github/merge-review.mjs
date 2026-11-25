@@ -85,12 +85,12 @@ import { readHumanSignoffs, sameBot, trustProblem } from '../../review/merge-tru
 import { CAPPED, clip, emptyState, FINISHED, openCount, owed, owedElsewhere, pendingOf, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { budgetedForge, guardWaiver, READ_TIMEOUT_MS, runOf, trailKey, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
-import { walkCommands } from '../../shell-lex.mjs';
+import { shellPlain, walkCommands } from '../../shell-lex.mjs';
 import { driverHold } from '../../run-driver.mjs';
 import { readUnattendedMark } from '../../unattended-mark.mjs';
 import { transcriptAnswers, waitingRoute } from '../review-extend.mjs';
 import { severalRemotes } from '../review-signoff.mjs';
-import { commandPath, fillRepo, invocationRepo, readWords } from './review-request.mjs';
+import { commandPath, fillRepo, invocationRepo, readWords, switchValue } from './review-request.mjs';
 
 // How long the head lookup may take, inside the hook's 5 s, as pr-body's open pull request lookup.
 const VIEW_TIMEOUT_MS = 3000;
@@ -159,8 +159,11 @@ function readGh(args, environment, env, cwd) {
   }
   if (command[0] !== 'pr' || command[1] !== 'merge') return null;
   const { words, flags } = readWords(args, new Set(MERGE_VALUES));
-  // `--help` prints the command's options and merges nothing, so a read of them is never held.
-  if (flags.some((flag) => ['--disable-auto', '--help', '-h'].includes(flag.name))) return null;
+  // `--help` prints the command's options and merges nothing, so a read of them is never held; nor is `--disable-auto`.
+  // Each exempts only as gh reads it, and only when every word is written out (switchValue): `-h` anywhere, and a last
+  // `--help` or `--disable-auto` that is on, so `gh pr merge 7 --help=false`, which merges, is judged as `gh pr merge 7`.
+  const value = (name) => switchValue(args, flags, name);
+  if (['-h', '--help', '--disable-auto'].some((name) => value(name) === true)) return null;
   const last = (...names) => flags.filter((flag) => names.includes(flag.name)).at(-1)?.value ?? null;
   const target = words[2] ? literal(words[2]) : null;
   const head = literal(last('--match-head-commit'));
@@ -175,8 +178,10 @@ function readGh(args, environment, env, cwd) {
     // repository or host an `-R` beside it contradicts, since the guard would read one and gh may merge the other.
     unreadable: (Boolean(words[2]) && target === null) || selectorsDisagree(target, urlRepo, flagRepo),
     text: mergeText(last('-t', '--subject'), last('-b', '--body'), last('-F', '--body-file')),
-    // `--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then.
-    ...(flags.some((flag) => flag.name === '--auto') ? { auto: true } : {}),
+    // `--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then. gh reads its last
+    // value: `--auto=false` merges at once. With a word the shell fills in (switchValue), which may be an `--auto`, it
+    // counts as on, which a session no Human attends is refused.
+    ...(value('--auto') !== false ? { auto: true } : {}),
   };
 }
 
@@ -799,7 +804,7 @@ export function unattendedProblem({ project, home = project, merge, mark, forge 
     'A merge no Human asks for rests on the forge as well as this machine\'s review record: the team\'s auto-merge policy, the review bot\'s verdict on exactly the head, ' +
     'and the Human\'s sign-off, from the sign-off store, of every flow that asks for one (docs/review.md, Merge trust). Or the Human merges in their own shell.';
   if (merge.graphql) return deny(`it ${graphqlCall(merge.unreadable)}: merge with \`gh pr merge <PR> --match-head-commit <the 40-character head>\``);
-  if (merge.auto) return deny('`--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then: merge with `gh pr merge <PR> --match-head-commit <the 40-character head>` once every check passed');
+  if (merge.auto) return deny('`--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then, and this command gives it, or holds a word the shell fills in that may be it: merge with `gh pr merge <PR> --match-head-commit <the 40-character head>`, every other word written out, once every check passed');
   if (pr === null || typeof head !== 'string' || !FULL_SHA.test(head)) {
     return deny('it does not name both its number and its full head commit, so the guard cannot confirm what gh merges: merge with `gh pr merge <PR> --match-head-commit <the 40-character head>`');
   }
@@ -869,7 +874,9 @@ function checkCommand(command, { cwd, env, input, viewPr, waiverForge, startedAt
   const memo = {};
   for (const { invocation, unread } of walkCommands(command, null)) {
     if (unread !== undefined) {
-      if ((found && MERGE_TEXT.test(unread)) || ((MERGE_TEXT.test(unread) || MUTATION_TEXT.test(unread)) && markOf())) return UNREAD_REASON;
+      // Read as the shell reads its words, so `pr m\<newline>erge` or `pr "merge"` names a merge too.
+      const plain = shellPlain(unread);
+      if ((found && MERGE_TEXT.test(plain)) || ((MERGE_TEXT.test(plain) || MUTATION_TEXT.test(plain)) && markOf())) return UNREAD_REASON;
       continue;
     }
     const merge = readMerge(invocation, env, { cwd });

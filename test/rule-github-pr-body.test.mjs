@@ -546,50 +546,53 @@ test('a Tests run deny names what clears each claim, and the line or the run it 
   git('init', '-q', '-b', 'feat/x');
   git('add', '-A');
   git('commit', '-q', '-m', 'first');
-  const first = git('rev-parse', 'HEAD');
+  const first = git('rev-parse', 'HEAD').slice(0, 7);
   const firstTree = git('rev-parse', 'HEAD^{tree}');
   writeFileSync(path.join(dir, 'a.txt'), 'b\n');
   git('commit', '-q', '-am', 'second');
   const tree = git('rev-parse', 'HEAD^{tree}');
   const judge = (line, runs) => {
     writeFileSync(path.join(dir, 'body.md'), `## Summary\n\n- x\n\n## Tests run\n\n${line}\n`);
-    return check('gh pr create --draft --title "fix: x" --body-file body.md', { cwd: dir, env: {}, listOpenPrs: () => [], readRuns: () => runs });
+    return check('gh pr create --draft --title "fix: x" --body-file body.md', { cwd: dir, env: {}, listOpenPrs: () => [], readRuns: () => runs }) ?? null;
   };
-  const named = (reason) => /What clears it: For `[^`]+`, [^]*?as "([^"]+)"\./u.exec(reason ?? '')?.[1];
   const run = (fields) => ({ command: 'npm test', status: 'passed', pass: 12, fail: 0, tree, trackedTree: tree, untrackedCode: [], ...fields });
+  const older = run({ tree: firstTree, trackedTree: firstTree });
 
-  // Another count than the run printed at these files.
-  const count = judge('- `npm test`: 11 pass', [run({})]);
-  assert.match(count, /What clears it: For `npm test`, `npm test` passed at these files with 12 pass, and the line states 11: write the count it printed/u);
-  assert.equal(judge(named(count), [run({})]), null, named(count));
+  // Another count than the run printed at these files: the count it printed passes, and a named commit is kept.
+  assert.match(judge('- `npm test`: 11 pass', [run({})]), /What clears it: For `npm test`, its run at these files printed 12 passes, and the line states 11: write the count it printed\./u);
+  assert.equal(judge('- `npm test`: 12 pass', [run({})]), null);
+  assert.match(judge(`- \`npm test\` at ${first}: 11 pass`, [older]), new RegExp(`write the count it printed, and keep "at ${first}"\\.`, 'u'));
+  assert.equal(judge(`- \`npm test\` at ${first}: 12 pass`, [older]), null);
 
-  // A run of the same program with other words passed at these files.
+  // A run of the same program with other words: named as recorded, never handed back as a command to paste.
   const words = judge('- `aidrian test changed`: pass', [run({ command: 'aidrian test changed --base origin/main' })]);
-  assert.equal(named(words), '- `aidrian test changed --base origin/main`: 12 pass, 0 fail');
-  assert.equal(judge(named(words), [run({ command: 'aidrian test changed --base origin/main' })]), null);
+  assert.match(words, /a run of `aidrian` with other words, recorded as `aidrian test changed --base origin\/main`, passed at these files with 12 passes: quote that command as its shell call ran it, copied from that call\./u);
+  assert.equal(judge('- `aidrian test changed --base origin/main`: 12 pass', [run({ command: 'aidrian test changed --base origin/main' })]), null);
 
   // A pass of an earlier commit: the deny names that commit, and the line that says so passes.
-  const older = [run({ tree: firstTree, trackedTree: firstTree })];
-  const stale = judge('- `npm test`: 12 pass', older);
-  assert.match(stale, new RegExp(`its last pass was of commit ${first.slice(0, 7)}, and the files have changed since: rerun \`npm test\` in the foreground at HEAD`, 'u'));
-  assert.equal(named(stale), `- \`npm test\` at ${first.slice(0, 7)}: 12 pass, 0 fail`);
-  assert.equal(judge(named(stale), older), null);
-  assert.match(judge('- `npm test`: 12 pass', [run({ tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) })]), /its last pass was of files no commit holds/u);
+  const stale = judge('- `npm test`: 12 pass', [older]);
+  assert.match(stale, new RegExp(`its last pass was of commit ${first}, and the files have changed since: rerun it in the foreground at HEAD, or say which commit it ran on, with "at ${first}" in the line\\.`, 'u'));
+  assert.equal(judge(`- \`npm test\` at ${first}: 12 pass`, [older]), null);
+  assert.match(judge('- `npm test`: 12 pass', [run({ tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) })]),
+    /its last pass was of other files, and no commit among HEAD's last 100 holds them, or git could not list them: rerun it in the foreground at HEAD\./u);
 
-  // No finished run, only unjudged ones, or only failed ones: the deny names the run to make, and that run, finished in
-  // the foreground with its summary, is a row that supports the line.
+  // No finished run, a run of zero tests, only unjudged runs, or only failed ones: the deny names the run to make, and
+  // that run, finished in the foreground with its summary, is a row that supports the line. A line that names a commit
+  // is told to drop it, since the rerun is at HEAD.
   const foreground = checkRows({ command: 'npm test', cwd: dir, output: 'ℹ pass 12\nℹ fail 0\n', exitZero: true, tree: () => ({ tree, trackedTree: tree, untrackedCode: [] }) });
   assert.equal(foreground[0].status, 'passed');
   for (const [runs, why] of [
-    [[], /no shell call of this session finished it, and a run in the background, inside `sh -c` or `\$\( \)`, or in another session leaves no row: run `npm test` in the foreground, as a call of its own\./u],
-    [[run({ status: 'unjudged', pass: null, fail: null })], /its runs printed no test count in the output the call returned, as when a `tail` cuts the summary or a redirect sends it to a file, and a pipe or `;` hid their exit status: rerun `npm test` in the foreground/u],
-    [[run({ status: 'failed', pass: 11, fail: 1 })], /its last run failed, and a failed run is no pass: fix what failed, then rerun `npm test` in the foreground\./u],
+    [[], /no shell call of this session finished it, and a run in the background, inside `sh -c` or `\$\( \)`, or in another session leaves no row: rerun it in the foreground at HEAD, as a call of its own\./u],
+    [[run({ pass: 0 })], /its run finished and ran zero tests: check the test selection, such as its file paths or name pattern, then rerun it in the foreground at HEAD\./u],
+    [[run({ status: 'unjudged', pass: null, fail: null })], /its runs printed no test count in the output the call returned, as when a `tail` cuts the summary or a redirect sends it to a file, and a pipe or `;` hid their exit status: rerun it in the foreground at HEAD/u],
+    [[run({ status: 'failed', pass: 11, fail: 1 })], /its last run failed, and a failed run is no pass: fix what failed, then rerun it in the foreground at HEAD\./u],
   ]) {
     const reason = judge('- `npm test`: 12 pass', runs);
     assert.match(reason, /^Blocked: the `## Tests run` section says `npm test` passed, but no run of it/u, 'the first sentence the dispatch log keys on stays');
     assert.match(reason, why);
     assert.equal(judge('- `npm test`: 12 pass', [...runs, ...foreground]), null, 'the named run clears it');
   }
+  assert.match(judge(`- \`npm test\` at ${first}: 12 pass`, []), new RegExp(`rerun it in the foreground at HEAD and drop "at ${first}" from the line`, 'u'));
   // A run made with `| tail -3` that cut the summary is unjudged, and one with its summary in the output passes.
   const piped = (output) => checkRows({ command: 'npm test 2>&1 | tail -3', cwd: dir, output, exitZero: true, tree: () => ({ tree, trackedTree: tree, untrackedCode: [] }) })[0].status;
   assert.deepEqual([piped('slow.test.mjs 4.1s\ntotals 9s\n'), piped('ℹ pass 12\nℹ fail 0\n')], ['unjudged', 'passed']);

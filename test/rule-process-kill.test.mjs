@@ -787,7 +787,8 @@ function assertParses(line) {
 
 test('no whole-line replacement for a listing behind a shell word, in a group, or in a body that occurs twice', () => {
   const lead = 'Blocked: this process listing prints full command lines.';
-  for (const command of ['(ps aux; echo done)', 'while pgrep -fl x; do sleep 1; done', '! pgrep -fl x', 'case $x in a) ps aux;; esac', '(ps aux | grep "(a|b)")']) {
+  // `grep 'foo)'`: the words read drop an unmatched `)`, even a quoted one, so a rewrite would search for `foo`.
+  for (const command of ['(ps aux; echo done)', 'while pgrep -fl x; do sleep 1; done', '! pgrep -fl x', 'case $x in a) ps aux;; esac', '(ps aux | grep "(a|b)")', "ps aux | grep 'foo)'", "ps aux | grep -E 'foo)' | head"]) {
     const { decision, reason } = decideForCommand(command, NO_OVERRIDE);
     assert.equal(decision, 'deny', command);
     assert.ok(!reason.includes('Run this instead'), `${command}\n${reason}`);

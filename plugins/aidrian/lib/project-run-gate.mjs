@@ -11,7 +11,7 @@
 //      is an issue's session, and any session but the driver, or a continuation custody moves to; a halted run, until
 //      an attended session runs `aidrian project resume`, or, for an environment result's halt or a failed proof's, the
 //      re-check of the preflight that the driver's start of that issue runs passes (project-recheck.mjs); and a run paused on a usage or rate limit an issue's session
-//      met, until the pause ends (lib/project-limit.mjs);
+//      met, until the pause ends (lib/project-limit.mjs) or the driver's own start lifts it, which launches nothing;
 //   2. a repository whose git state could run a program or move a fetch (project-trust.mjs repositoryProblem, a halt),
 //      checked before any other git call, and an origin whose fetch or push URL, with pushurl and insteadOf applied,
 //      names another repository than the one init pinned;
@@ -19,7 +19,7 @@
 //      is not confined (a halt); from here on, an unverified host's every answer prints an `unverified:` line; and an
 //      earlier start of this session whose session the host does not list ended (heldProblem's read of it); up to here
 //      no check reads the team's policy, nothing is fetched, and nothing on the path to a launch writes before the
-//      policy read, except a halt recheck's `resume` row;
+//      policy read, except a halt recheck's `resume` row and a pause's `lifted` row;
 //   4. a default branch whose head the forge cannot name, or that git cannot fetch (each a retry), or that the local
 //      base refs do not name too (forgeBase): the
 //      pin, the base tip every later check, cut, and policy read uses, fetched only now. Then the team's policy, read
@@ -71,7 +71,7 @@ import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } fro
 import { credentialStores, detectHost, nestedGlobs, otherPlaceholders, protectedPaths, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { chainEnded, lingerLine, lingerProblem, notStopped, releaseAttempts, settleLingering, stopChain } from './project-linger.mjs';
-import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
+import { checkedLimit, liftRow, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
 import { recheckHalt } from './project-recheck.mjs';
 import { ATTEMPT_ENV, cacheVars, registryHosts } from './project-registries.mjs';
@@ -448,6 +448,9 @@ function startContext(given) {
   const halted = haltOf(found);
   if (halted) return { answer: haltAnswer(`the run is halted: ${halted}`, { lift: RESUME(run), lines: rechecked.lines }) };
   const paused = pauseOf(found, given.now);
+  const lifted = paused ? liftPause({ state, run, cap: detectHost({ env }).capabilities.projectStart, env, home, custodian, now: given.now }) : null;
+  // As a start that lifts a halt, one that lifts a pause launches nothing.
+  if (lifted) return { answer: { exitCode: 0, out: [lifted], err: [] } };
   if (paused) return plain(`the run waits out a ${paused.kind} limit the session of ${paused.key} met, until ${paused.until}; \`aidrian project wait ${run}\` waits with it, and a start runs once it is over`, [`paused until ${paused.until}`]);
   const main = project.checkouts.at(-1);
   const repository = repositoryProblem([...new Set([project.root, main])], found.init.repository);
@@ -482,9 +485,9 @@ function clonePlaceholders(cap, host) {
 // base tip, reads the team policy once with its local half at that commit, and decides everything from that read: the
 // machine's switch, the host's start, the caps, the access check, the clone's checks, and every value of the launch.
 // Only checks that read no policy run before the pin, so a start they refuse fetches nothing, and nothing on the path to
-// a launch writes before the policy read, except a halt recheck's `resume` row (startContext): what writes the ledger
-// or touches a session, as settling an orphan, runs only once the policy read and the checks it feeds let the start go
-// on.
+// a launch writes before the policy read, except a halt recheck's `resume` row and a pause's `lifted` row
+// (startContext): what writes the ledger or touches a session, as settling an orphan, runs only once the policy read
+// and the checks it feeds let the start go on.
 function startPlace(context) {
   const { project, run, key, env, home, state, store, session, facade, cap, refuse, noted, spawn, main, found } = context;
   // An earlier start of this session that still runs holds this one back, read only, before anything is fetched; the
@@ -1044,7 +1047,8 @@ function startLines({ result, state, run, key, attempt, session, base, proof, pr
 // Waits, at most `maxWait` seconds, for an issue of run `run` to settle, as the driver: it settles orphan starts, takes
 // in the results confined sessions handed over (lib/project-result.mjs ingestDrops), records an issue whose whole chain
 // of sessions the host lists as ended with no result (`ended no_result`), and stops and records one that ran past
-// projectRun.issueHours (`ended timeout`), less the time the run was paused; and, for a session that met a usage or rate
+// projectRun.issueHours (`ended timeout`), less the time the run was paused; it ends a pause early once the host's record
+// shows the account changed (`lifted the pause until TIME: ...`, liftPause); and, for a session that met a usage or rate
 // limit, pauses the run (lib/project-limit.mjs): one the host continues keeps running (`paused KEY KIND until TIME: ...`),
 // any other ends its attempt (`limit KEY KIND until TIME -> open`, or `limit KEY KIND halt -> open` past LIMIT_WAITS,
 // `-> parked attempts` once the issue's attempt numbers ran out); it
@@ -1102,7 +1106,7 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
     const began = time();
     if (last && until - began < slowest + WAIT_MARGIN) return last;
     const at = pass === 0 ? now : began;
-    const { lines, lingering, release } = waitPass({ state, run, store, cap, host, env, home, spawn, policy, forge: facade, now: at });
+    const { lines, lingering, release } = waitPass({ state, run, store, cap, host, env, home, spawn, policy, forge: facade, session, now: at });
     if (release) released = mergeRelease(released, release);
     const found = readRun(state, run);
     if (found.problem) return { ...refuse(found.problem), out: released };
@@ -1160,14 +1164,18 @@ function settlePolicy(project, team) {
 // The hours `policy` (settlePolicy) holds the session of the start row `start` to.
 const hoursOf = (policy, start) => (typeof policy.hoursOf === 'function' ? policy.hoursOf(start) : policy.issueHours);
 
-// One read of `wait`: orphans, handed-over results, ended sessions, then sessions that run on after their issue
-// settled, the stop of each the host still holds after its `gone` row (project-linger.mjs), and the sweep of ended
-// attempts' folders: { lines, lingering, release }, with releaseAttempts' answer in `release`, null when it asked no host.
-function waitPass({ state, run, store, cap, host, env, home, spawn, policy, forge, now }) {
+// One read of `wait` by the driver `session`: orphans, handed-over results, ended sessions, a pause that lifts, then
+// sessions that run on after their issue settled, the stop of each the host still holds after its `gone` row
+// (project-linger.mjs), and the sweep of ended attempts' folders: { lines, lingering, release }, with releaseAttempts'
+// answer in `release`, null when it asked no host.
+function waitPass({ state, run, store, cap, host, env, home, spawn, policy, forge, session, now }) {
   const lines = settleOrphans({ state, run, store, cap, env, spawn, now });
   const dropped = readRun(state, run);
   if (!dropped.problem) lines.push(...ingestDrops({ state, run, found: dropped, forge, now }));
   lines.push(...endedLines({ state, run, store, cap, env, home, spawn, policy, now }));
+  // Once every limit this read met is recorded, so each of them holds the pause it joined.
+  const lifted = liftPause({ state, run, cap, env, home, custodian: session, now });
+  if (lifted) lines.push(lifted);
   const lingered = settleLingering({ state, run, store, cap, env, spawn, now, wait: true });
   lines.push(...lingered.lines);
   const after = readRun(state, run);
@@ -1217,9 +1225,37 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
   return lines;
 }
 
+// The usage or rate limit the session of the start row `start` last met, as the host's own error record shows it
+// (`capabilities.projectStart.limitOf`), or null when it shows none, the host reads none, or the read fails.
+function sessionLimit({ state, run, cap, env, home, start, now }) {
+  if (typeof cap?.limitOf !== 'function') return null;
+  return checkedLimit(safely(() => cap.limitOf({ id: start.id, session: start.child, cwd: start.cwd, log: runLogFile(state, run, start.key, start.attempt), env, home, now })));
+}
+
+// Ends the pause on run `run` early when the host's record shows the signed-in account changed after its limits
+// (project-limit.mjs liftRow): the line to print, or null when nothing was lifted. The row goes in under the ledger's
+// lock, read again there, only while the run has not ended and custody rests with `custodian`, the driver that asks or
+// the one it succeeds. A ledger another process holds lifts nothing, and the next read asks again.
+function liftPause({ state, run, cap, env, home, custodian, now }) {
+  const read = (found) => (limited) => {
+    const start = startsOf(found, limited.key).find((row) => row.attempt === limited.attempt && row.outcome === 'started');
+    return start ? sessionLimit({ state, run, cap, env, home, start, now }) : null;
+  };
+  const rowOf = (found) => liftRow({ found, now, read: read(found) });
+  const seen = readRun(state, run);
+  if (seen.problem || !rowOf(seen)) return null;
+  let until = null;
+  const written = safely(() => appendToRun(state, run, (fresh) => {
+    until = pauseOf(fresh, now)?.until;
+    const row = !endedIn(fresh) && driverOf(fresh).session === custodian ? rowOf(fresh) : null;
+    return { rows: row ? [row] : [] };
+  }));
+  return written?.rows?.length ? `lifted the pause until ${until}: ${written.rows[0].cause}` : null;
+}
+
 // What `wait` does for the running issue `key` whose latest start `start` met a usage or rate limit, as the host's own
-// error record shows it (`capabilities.projectStart.limitOf`): null when it shows none or the host reads none, so the
-// other checks go on; else { line } with the line to print, if any, and the issue's other checks skipped.
+// error record shows it (sessionLimit): null when it shows none or the host reads none, so the other checks go on; else
+// { line } with the line to print, if any, and the issue's other checks skipped.
 //   - A session the host does not list as ended, of a host that continues its own session once the limit resets
 //     (`continuesAtLimit`), keeps running only for a `usage` limit, and only while its normal pause runs: the record's
 //     pause is written once (pauseRow), and the issue waits until that pause, and RESUME_GRACE after the later of its
@@ -1230,8 +1266,7 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
 //     writes nothing and is read again by the next wait.
 // Each write happens only while the issue still runs that attempt.
 function limitLine({ state, run, store, cap, env, home, spawn, key, start, found, now }) {
-  if (typeof cap.limitOf !== 'function') return null;
-  const limit = checkedLimit(safely(() => cap.limitOf({ id: start.id, session: start.child, cwd: start.cwd, log: runLogFile(state, run, key, start.attempt), env, home, now })));
+  const limit = sessionLimit({ state, run, cap, env, home, start, now });
   if (!limit) return null;
   const ended = chainEnded({ cap, store, id: start.id, session: start.child, env, spawn, now });
   const current = (fresh) => fresh.states.get(key)?.state === 'running' && latestStart(fresh, key)?.attempt === start.attempt;

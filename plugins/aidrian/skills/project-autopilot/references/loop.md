@@ -28,6 +28,7 @@ named and go on from that output as step 2 says.
    - exit 0, `parked <key> unreconciled: ...`: nothing started; follow [existing-work.md](existing-work.md), then step 1.
    - an `unverified:` line is a note, not a refusal.
    - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: step 1, whose `next` says so.
+   - exit 0, `lifted the pause until <time>: <cause>`: the start ended the pause early and launched nothing. Then step 1.
    - a line `halt <cause>`, exit 1: § Halt. A `recheck kept the halt:` line after it names what kept it.
    - exit 0, `recheck lifted the halt: <cause>; ok <checks>`: the start lifted the halt of this issue and launched
      nothing. Then step 1.
@@ -43,6 +44,7 @@ named and go on from that output as step 2 says.
      instead, the issue used every attempt number a run gives it: it settled, step 4.
    - `paused <key> ...`: that issue's session waits out a limit and goes on by itself; step 3 again.
    - `paused until <time>` with no running issue: § Pause.
+   - `lifted the pause until <time>: <cause>`: the pause ended early. Step 1, once the other lines are followed.
    - `lingered <key> attempt <n> ended` or `... stopped`: a session that ran on after its issue settled runs no more;
      step 1.
    - only `running <key>` and `lingering <key> attempt <n>` lines: step 3 again.
@@ -72,7 +74,8 @@ A usage limit is the account's: it pauses the issues' sessions and this driver a
 lifts, at most 6 hours ahead. Start nothing until then.
 
 1. Run `aidrian project wait <run> --max-wait 150` again and again, writing the owed reports after each settle,
-   until `<time>` has passed: about 150 calls for a 6-hour pause. Each is cheap; never end the turn to wait.
+   until `<time>` has passed or a `lifted the pause` line ends it: about 150 calls for a 6-hour pause. Each is cheap;
+   never end the turn to wait.
 2. If the driver's own turn is cut by the limit, its host carries it on once the limit lifts (the preflight's
    `usage-limit` line): go on from step 1.
 3. Then step 1 of § Each pass. A `paused until` line with a later time: § Pause again.

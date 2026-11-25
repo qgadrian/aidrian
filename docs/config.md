@@ -2173,12 +2173,26 @@ or whose mark, run, or ledger cannot be read, stops. It runs on Claude Code, the
 Codex runs the same Stop hook, [not verified live](providers/codex.md#hooks).
 A session that meets a usage or rate limit pauses the run (`lib/project-limit.mjs`). `wait` asks the host adapter
 whether the session's last record is the host's own limit error, never a tool's output or the model's text, and writes
-a `limit` row whose `until` is the reset time the host named, read against the record's own time and held to between
-1 minute and 6 hours from now, so a reset already past waits 1 minute; or, when it named none, 15, then 30, then 60
-minutes for each pause in a row since the last result. A limit met while a pause lasts joins it: the same pause, its
-end moved later only by a named reset. Until the pause is over, `start` of any issue exits 1 with `paused until
-<time>`, `next` prints that line first and `--json` adds `pause`, and an idle `wait` waits with it, up to `--max-wait`.
-Time paused counts toward no issue's `issueHours`.
+a `limit` row whose `until` is the reset time the host named, read against the record's own time and held to at most 6
+hours after that time, or after now when the host gave none, and at least 1 minute from now: a driver that comes back
+4 hours after a limit that resets on another day waits 2 more, and a reset already past waits 1 minute. When the host
+named no reset, the pause is 15, then 30, then 60 minutes from now for each pause in a row since the last result. A
+limit met while a pause lasts joins it: the same pause, its end moved later only by a named reset. Until the pause is
+over, `start` of any issue exits 1 with `paused until <time>`, `next` prints that line first and `--json` adds
+`pause`, and an idle `wait` waits with it, up to `--max-wait`. Time paused counts toward no issue's `issueHours`.
+
+A pause ends early only when the host's own record shows the limit may be gone: the account signed in on the machine
+changed after the limit. While a pause lasts, the driver's `wait` and `start` read, with the adapter, the last limit of
+each session whose `limit` row set, extended, or joined the pause. When every one of them shows the change, dated after
+its limit and no later than now, the gate writes one `lifted` row with the pause's `wait` number, the `key`, `attempt`,
+and `record` of its first limit, the `cause` in words, and `at`, and prints `lifted the pause until <time>: <cause>`;
+that `start` launches nothing, and the next one does. The pause is over at that time for everything that reads it: the
+paused time counted, and the 5 minutes an idle session stays held past a pause's end. Nothing a session wrote lifts a
+pause, and no answer of one does, the driver's included: an answer shows nothing of a limit on another model. A limit
+record with no time of its own lifts nothing, nor does a read that fails. A record's pause lifts once, so an account
+that is still limited pauses the run again, as a new pause that counts toward its 24. Claude Code's record shows the
+change only where Remote Control was on in the limited session; elsewhere, on Codex, and once the limited session
+answered again or its process ended before the change, the pause runs to its end.
 
 A session the host still lists running, on a host that continues its own session at the reset (Claude Code, started
 with `autoContinueAtUsageLimit`), keeps running for a usage limit while its pause runs, and 5 minutes past the later
@@ -2197,10 +2211,11 @@ clone of the issue's branch as the forge holds it, whose prompt says the attempt
 limited session had not pushed is lost, which the host's own continuation makes rarer. A run waits out 24 pauses at
 most: the next limit writes a `halt` row instead, which only `aidrian project resume` lifts.
 
-Neither host's limit record is verified live, and a host that reads none, or a record it does not recognise, leaves the
-backstop: the session ends with no result, or `issueHours` stops it. The driver session shares the account's limit,
-and nothing restarts a driver its own limit stopped: the run goes on when the driver's host continues it after the
-reset, which `autoContinueAtUsageLimit` in the user's own settings asks of the host.
+Of the limit records, only Claude Code's weekly limit was seen live, once, on 2.1.332, with its account-change entry.
+A host that reads none, or a record it does not recognise, leaves the backstop: the session ends with no result, or
+`issueHours` stops it. The driver session shares the account's limit, and nothing restarts a driver its own limit
+stopped: the run goes on when the driver's host continues it after the reset, which `autoContinueAtUsageLimit` in the
+user's own settings asks of the host.
 For the issue's own session, whose unattended mark names the run and the issue, its attempt clone takes the run's
 main checkout, named in the ledger's init row, as its own: the machine's switches and decisions come from that
 checkout's `.aidrian.local.json`, never the clone's. Any other reader, and a clone whose link cannot be read or whose

@@ -6,8 +6,10 @@
 // while a pause lasts joins it. A Claude Code session the host still lists running keeps running, as the host continues
 // it at the reset; one that ended, or one of a host that does not continue, is stopped and its attempt ends on the
 // limit, which counts toward no cap of the issue. `start` of any issue refuses while the pause lasts, and afterwards
-// starts the same issue again as a new attempt on its branch; past 24 pauses a run halts instead. The record texts are
-// fixtures from the hosts' issue reports, binary, and source, never seen live, so both adapters' reads stay unverified.
+// starts the same issue again as a new attempt on its branch; past 24 pauses a run halts instead. A pause ends early only
+// when the host's own entry shows the signed-in account changed after its limits, once a record. The record texts are
+// fixtures from the hosts' issue reports, binary, and source, so both adapters' reads stay unverified, but for Claude
+// Code's weekly limit entry and its account-change entry, each seen live once on 2.1.332.
 // The fixture is test/project-start-fixture.mjs.
 
 import '../scripts/test-state.mjs';
@@ -23,7 +25,7 @@ import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { logLimit } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
 import { clockTime, durationTime, FAR } from '../plugins/aidrian/lib/hosts/limit-time.mjs';
-import { BACKOFF, checkedLimit, LIMIT_WAITS, limitEndRows, PAUSE_CEILING, PAUSE_FLOOR, pauseEnd, pauseOf, pausedTime, pauseRow, recordedPauseRuns, RESUME_CEILING, RESUME_GRACE } from '../plugins/aidrian/lib/project-limit.mjs';
+import { BACKOFF, checkedLimit, liftRow, LIMIT_WAITS, limitEndRows, PAUSE_CEILING, PAUSE_FLOOR, pauseEnd, pauseOf, pausedTime, pauseRow, recordedPauseRuns, RESUME_CEILING, RESUME_GRACE } from '../plugins/aidrian/lib/project-limit.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { waitRun } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
@@ -148,7 +150,7 @@ test('a pause lasts from 1 minute to 6 hours, backs off 15, 30, then 60 minutes,
   assert.deepEqual(BACKOFF, [15 * MINUTE, 30 * MINUTE, 60 * MINUTE]);
   assert.deepEqual([PAUSE_CEILING, LIMIT_WAITS], [6 * HOUR, 24]);
   assert.equal(checkedLimit({ kind: 'billing', until: null }), null, 'a kind the run does not know');
-  assert.deepEqual(checkedLimit({ kind: 'rate', until: 'soon', at: 'then' }), { kind: 'rate', until: null, at: null, after: null });
+  assert.deepEqual(checkedLimit({ kind: 'rate', until: 'soon', at: 'then' }), { kind: 'rate', until: null, at: null, after: null, changed: null });
 
   const row = (wait, from, to, more = {}) => ({ event: 'limit', key: 'ENG-1', attempt: 1, kind: 'rate', wait, at: iso(NOW + from * MINUTE), until: iso(NOW + to * MINUTE), ...more });
   const rate = { kind: 'rate', until: null, at: null };
@@ -268,7 +270,7 @@ test('a session the host continued is held until its first new answer: its own e
   assert.equal(transcriptLimit({ session: CHILD, cwd: '/w', env: { CLAUDE_CONFIG_DIR: config }, now: read }).after, resetAt + 10_000);
   writeTranscript(config, '/w', [limited]);
   assert.equal(transcriptLimit({ session: CHILD, cwd: '/w', env: { CLAUDE_CONFIG_DIR: config }, now: read }).after, null);
-  assert.deepEqual(checkedLimit({ kind: 'usage', until: null, at: 5, after: 'later' }), { kind: 'usage', until: null, at: 5, after: null });
+  assert.deepEqual(checkedLimit({ kind: 'usage', until: null, at: 5, after: 'later' }), { kind: 'usage', until: null, at: 5, after: null, changed: null });
 });
 
 test('the hold of a session the host continued has a ceiling: an entry dated ahead, or one with no session id, holds nothing, and entries that keep coming hold it at most 30 minutes past the pause', (t) => {
@@ -571,4 +573,160 @@ test('past 24 pauses a run, the next limit halts it until an attended resume', (
   const halted = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(halted.exitCode, 1);
   assert.match(halted.out[0], /^halt the run is halted: the run waited out 24 usage or rate limits, the most a run waits, and ENG-1 attempt 1 met another/u);
+});
+
+// The entries Claude Code 2.1.332 was seen to write: a weekly limit's, and the one that says the signed-in account changed.
+const WEEKLY = 'You\'ve hit your weekly limit · resets Nov 29 at 1am (Europe/Madrid)';
+const weekly = (at) => apiError(WEEKLY, { error: 'rate_limit', timestamp: iso(at) });
+const CHANGED = 'Remote Control disconnected — signed-in claude.ai account or organization changed on this machine';
+const accountChanged = (at, more = {}) => ({ type: 'system', subtype: 'informational', content: `${CHANGED}; sign in again.`, timestamp: iso(at), ...more });
+
+test('the 6-hour cap of a named reset counts from the limit record\'s own time, with a floor of 1 minute from the read; a backoff counts from the read', () => {
+  const end = (until, at) => pauseEnd({ kind: 'usage', until, at }, 0, NOW) - NOW;
+  assert.equal(end(FAR, NOW - 4 * HOUR), 2 * HOUR, 'read 4 hours after the record: the rest of the cap');
+  assert.equal(end(NOW + 5 * HOUR, NOW - 4 * HOUR), 2 * HOUR, 'a reset named past the cap');
+  assert.equal(end(NOW + HOUR, NOW - 4 * HOUR), HOUR, 'a reset within it');
+  assert.equal(end(FAR, NOW - 7 * HOUR), PAUSE_FLOOR, 'a record older than the cap');
+  assert.equal(end(FAR, NOW + 4 * HOUR), PAUSE_CEILING, 'a record dated ahead never stretches a pause');
+  assert.equal(end(FAR, null), PAUSE_CEILING, 'no time of its own');
+  assert.equal(end(null, NOW - 7 * HOUR), BACKOFF[0], 'no reset named');
+  const found = { rows: [{ event: 'limit', key: 'ENG-1', attempt: 1, kind: 'usage', wait: 1, at: iso(NOW - MINUTE), until: iso(NOW + MINUTE) }] };
+  assert.equal(pauseRow({ found, key: 'ENG-4', attempt: 1, limit: { kind: 'usage', until: FAR, at: NOW - 4 * HOUR }, now: NOW }).until, NOW + 2 * HOUR, 'a limit that joins a pause');
+});
+
+test('Claude Code: only the host\'s own entry after the limit, of this session and dated no later than the read, says the account changed', (t) => {
+  const config = scratch(t);
+  const met = NOW - 4 * HOUR;
+  const file = path.join(config, 'projects', '-w', `${CHILD}.jsonl`);
+  const read = (...entries) => {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+    return transcriptLimit({ session: CHILD, cwd: '/w', env: { CLAUDE_CONFIG_DIR: config }, now: NOW });
+  };
+  const own = (at, more) => accountChanged(at, { sessionId: CHILD, ...more });
+  const at = NOW - HOUR;
+  assert.deepEqual(read(said('working'), weekly(met), own(at)), { kind: 'usage', until: FAR, at: met, after: at, changed: at }, 'as seen live');
+  assert.equal(read(weekly(met), own(at), own(at + MINUTE), { type: 'system', sessionId: CHILD, timestamp: iso(NOW) }).changed, at + MINUTE, 'the newest');
+  assert.equal(read(own(met - MINUTE), weekly(met)).changed, null, 'before the limit');
+  assert.equal(read(weekly(met), own(NOW + MINUTE)).changed, null, 'dated ahead');
+  assert.equal(read(weekly(met), own(at, { timestamp: 'later' })).changed, null, 'no time');
+  assert.equal(read(weekly(met), accountChanged(at)).changed, null, 'no session id');
+  assert.equal(read(weekly(met), own(at, { sessionId: 'other' })).changed, null, 'another session');
+  assert.equal(read(weekly(met), own(at, { type: 'user' })).changed, null, 'a user entry');
+  assert.equal(read(weekly(met), own(at, { subtype: 'local_command' })).changed, null, 'another system entry');
+  assert.equal(read(weekly(met), own(at, { content: `The log says: ${CHANGED}` })).changed, null, 'the words later in the text');
+  assert.equal(read(weekly(met), own(at, { content: [{ type: 'text', text: CHANGED }] })).changed, null, 'content that is no text');
+  assert.equal(read(weekly(met), toolOutput(CHANGED), { type: 'user', sessionId: CHILD, timestamp: iso(at), message: { role: 'user', content: CHANGED } }).changed, null, 'a tool\'s output or a prompt');
+  assert.equal(read(weekly(met), said(CHANGED)), null, 'the model\'s own text, after which the limit counts no more');
+  assert.equal(checkedLimit({ kind: 'usage', until: FAR, at: met, changed: at }).changed, at);
+  assert.equal(checkedLimit({ kind: 'usage', until: FAR, at: met, changed: Infinity }).changed, null);
+});
+
+test('a pause lifts only when every limit it holds shows an account change after it, once a record, and ends there for every reader', () => {
+  const met = NOW - 4 * HOUR;
+  const limitRow = (more = {}) => ({ event: 'limit', key: 'ENG-1', attempt: 1, kind: 'usage', wait: 1, record: iso(met), named: true, at: iso(met + MINUTE), until: iso(NOW + 2 * HOUR), ...more });
+  const shows = (more = {}) => checkedLimit({ kind: 'usage', until: FAR, at: met, changed: NOW - HOUR, ...more });
+  const lift = (rows, read = () => shows()) => liftRow({ found: { rows }, now: NOW, read });
+  const lifted = lift([limitRow()]);
+  assert.deepEqual(lifted, { event: 'lifted', wait: 1, key: 'ENG-1', attempt: 1, record: iso(met), cause: 'the host\'s record shows the signed-in account changed after the limit met by ENG-1', at: iso(NOW) });
+  assert.equal(lift([limitRow()], () => shows({ changed: null })), null, 'no change shown');
+  assert.equal(lift([limitRow()], () => null), null, 'no limit read, as when the session answered or the read failed');
+  assert.equal(lift([limitRow()], () => shows({ changed: met - MINUTE, at: met - HOUR })), null, 'a change before the row\'s record');
+  assert.equal(lift([limitRow()], () => shows({ at: NOW - MINUTE })), null, 'a change before the limit the session met since');
+  assert.equal(lift([limitRow()], () => shows({ at: null })), null, 'a limit with no time');
+  assert.equal(lift([limitRow()], () => shows({ changed: NOW + MINUTE })), null, 'a change dated ahead');
+  assert.equal(lift([limitRow({ record: null })]), null, 'a row with no record');
+  assert.equal(lift([limitRow({ until: iso(NOW - MINUTE) })]), null, 'a pause already over');
+
+  // A limit that joined holds the pause too, whether or not it moved its end: it may be the new account's own.
+  const joined = limitRow({ key: 'ENG-4', joined: true, record: iso(NOW - MINUTE), at: iso(NOW - MINUTE) });
+  for (const until of [NOW + 2 * HOUR, NOW + 3 * HOUR]) {
+    const rows = [limitRow(), { ...joined, until: iso(until) }];
+    assert.equal(lift(rows, (row) => (row.key === 'ENG-1' ? shows() : shows({ at: NOW - MINUTE, changed: null }))), null);
+    assert.match(lift(rows, (row) => (row.key === 'ENG-1' ? shows() : shows({ at: NOW - MINUTE, changed: NOW }))).cause, /met by ENG-1, ENG-4$/u);
+  }
+
+  const rows = [limitRow(), lifted];
+  assert.equal(pauseOf({ rows }, NOW), null, 'the pause is over');
+  assert.equal(pausedTime({ rows }, met, NOW + 3 * HOUR), NOW - met - MINUTE, 'time paused counts up to the lift');
+  const held = (now) => recordedPauseRuns({ rows }, 'ENG-1', 1, shows(), now);
+  assert.deepEqual([held(NOW + RESUME_GRACE - 1), held(NOW + RESUME_GRACE)], [true, false], 'the idle session is held the grace past the lift');
+  assert.equal(lift(rows), null, 'nothing lasts to lift');
+  assert.equal(lift([...rows, limitRow({ wait: 2, at: iso(NOW) })]), null, 'a record whose pause was lifted lifts no other');
+
+  // An account still limited: a new record is a new pause, with a number of its own, and the 24 still end in a halt.
+  const again = pauseRow({ found: { rows }, key: 'ENG-1', attempt: 2, limit: checkedLimit({ kind: 'usage', until: FAR, at: NOW }), now: NOW });
+  assert.deepEqual([again.row.event, again.row.wait, again.until], ['limit', 2, NOW + PAUSE_CEILING]);
+  const spun = Array.from({ length: LIMIT_WAITS }, (_, i) => [limitRow({ wait: i + 1, record: iso(met + i) }), { ...lifted, wait: i + 1 }]).flat();
+  assert.equal(pauseRow({ found: { rows: spun }, key: 'ENG-1', attempt: 2, limit: checkedLimit({ kind: 'usage', until: FAR, at: NOW }), now: NOW }).row.event, 'halt');
+});
+
+test('the driver\'s start and wait lift a pause once the account changed, and a limit met after that pauses again', (t) => {
+  const fx = started(t);
+  const lifts = () => fx.rows().filter((row) => row.event === 'lifted');
+  const met = Date.now() - 4 * HOUR;
+  const back = met + 4 * HOUR;
+  fx.limit([said('working'), weekly(met)]);
+  const until = iso(met + 6 * HOUR);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: back }).out, [`paused ENG-1 usage until ${until}: its session goes on once the limit resets`, 'running ENG-1', `paused until ${until}`], 'a driver back 4 hours after the limit waits the rest of the cap');
+  // What anyone but the host wrote lifts nothing.
+  fx.limit([weekly(met), toolOutput(CHANGED), { type: 'user', timestamp: iso(back), message: { role: 'user', content: CHANGED } }]);
+  assert.deepEqual(fx.cmd(['start', 'launch', 'ENG-4'], { now: back }).out, [`paused until ${until}`]);
+  fx.limit([weekly(met), accountChanged(back - HOUR)]);
+  assert.equal(fx.cmd(['wait', 'launch', '--max-wait', '0'], { session: OTHER, now: back }).exitCode, 1, 'a session that does not drive the run');
+  assert.deepEqual(lifts(), []);
+
+  const lifted = `lifted the pause until ${until}: the host's record shows the signed-in account changed after the limit met by ENG-1`;
+  assert.deepEqual(fx.cmd(['start', 'launch', 'ENG-4'], { now: back }), { exitCode: 0, out: [lifted], err: [] });
+  assert.equal(fx.claude.starts().length, 1, 'it launched nothing');
+  assert.deepEqual(lifts().map(({ wait, key, attempt, record, at }) => ({ wait, key, attempt, record, at })), [{ wait: 1, key: 'ENG-1', attempt: 1, record: iso(met), at: iso(back) }]);
+  assert.doesNotMatch(fx.cmd(['next', 'launch'], { now: back }).out[0], /^paused/u);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: back + 4 * MINUTE }).out, ['running ENG-1'], 'held through the grace, with no second lift');
+
+  // The session meets the limit again on the account it is now on: a new pause, which the older change does not lift.
+  const second = back + 4 * MINUTE;
+  fx.limit([weekly(met), accountChanged(back - HOUR), weekly(second)]);
+  assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: second + MINUTE }).out[0], /^paused ENG-1 usage until /u);
+  assert.equal(lifts().length, 1);
+  assert.deepEqual(fx.rows().filter((row) => row.event === 'limit').map((row) => row.wait), [1, 2]);
+  fx.limit([weekly(met), accountChanged(back - HOUR), weekly(second), accountChanged(second + 2 * MINUTE)]);
+  const out = fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: second + 3 * MINUTE }).out;
+  assert.deepEqual(out, [`lifted the pause until ${iso(second + 6 * HOUR)}: the host's record shows the signed-in account changed after the limit met by ENG-1`, 'running ENG-1']);
+  assert.deepEqual(lifts().map((row) => row.wait), [1, 2]);
+  assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: second + 9 * MINUTE }).out[0], /^limit ENG-1 usage until \S+ -> open$/u, 'an idle session is stopped once the grace past the lift is over');
+  assert.equal(fx.rows().filter((row) => row.event === 'limit').length, 2, 'its record pauses nothing again');
+});
+
+test('a pause stays when the read fails, when custody moved meanwhile, and when the run ended meanwhile', (t) => {
+  const fx = started(t);
+  const cap = claudeCode.capabilities.projectStart;
+  const kept = cap.limitOf;
+  t.after(() => {
+    cap.limitOf = kept;
+  });
+  const met = Date.now() - HOUR;
+  fx.limit([weekly(met)]);
+  fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: met + MINUTE });
+  fx.limit([weekly(met), accountChanged(met + 2 * MINUTE)]);
+  const now = met + 5 * MINUTE;
+  cap.limitOf = () => {
+    throw new Error('unreadable');
+  };
+  const paused = [`paused until ${iso(met + 6 * HOUR)}`];
+  assert.deepEqual(fx.cmd(['start', 'launch', 'ENG-4'], { now }).out, paused);
+  // The ledger changes between the first read and the lock, which the row is decided under.
+  const meanwhile = (row) => {
+    let done = false;
+    cap.limitOf = (given) => {
+      if (!done) appendToRun(fx.state, 'launch', () => ({ rows: [row] }));
+      done = true;
+      return kept(given);
+    };
+  };
+  meanwhile({ event: 'driver', session: OTHER, from: DRIVER, sha256: 'a'.repeat(64), at: iso(Date.now()) });
+  assert.deepEqual(fx.cmd(['start', 'launch', 'ENG-4'], { now }).out, paused, 'custody moved');
+  meanwhile({ event: 'end', session: OTHER, at: iso(Date.now()) });
+  assert.deepEqual(fx.cmd(['start', 'launch', 'ENG-4'], { session: OTHER, now }).out, paused, 'the run ended');
+  assert.deepEqual(fx.rows().filter((row) => row.event === 'lifted'), []);
+  assert.deepEqual(fx.rows().slice(-2).map((row) => row.event), ['driver', 'end']);
 });

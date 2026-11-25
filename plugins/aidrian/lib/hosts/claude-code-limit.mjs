@@ -1,9 +1,11 @@
 // Whether a Claude Code session a project run started met a usage or rate limit, from its own transcript
-// (lib/project-limit.mjs, through `capabilities.projectStart.limitOf`). UNVERIFIED: no live session has shown what a
-// limit leaves there. The record read is the one the host writes itself when an API call fails for good: an `assistant`
-// entry with `isApiErrorMessage: true`. Its structured `error`, where the host writes one, decides: only `rate_limit`,
-// the class the host's own code gives an account's limit too, is a limit. With none, its text, the host's own, must start
-// with a limit's words, such as `Claude AI usage limit reached|<epoch seconds>`, `5-hour limit reached ∙ resets 5pm`,
+// (lib/project-limit.mjs, through `capabilities.projectStart.limitOf`). Seen live once, on Claude Code 2.1.332: a weekly
+// limit's entry, `You've hit your weekly limit · resets Nov 29 at 1am (Europe/Madrid)` with `error: "rate_limit"`, and the
+// entry that says the signed-in account changed (ACCOUNT_CHANGED). UNVERIFIED: every other shape. The record read is
+// the one the host writes itself when an API call fails for good: an `assistant` entry with `isApiErrorMessage: true`.
+// Its structured `error`, where the host writes one, decides: only `rate_limit`, the class the host's own code gives an
+// account's limit too, is a limit. With none, its text, the host's own, must start with a limit's words, such as
+// `Claude AI usage limit reached|<epoch seconds>`, `5-hour limit reached ∙ resets 5pm`,
 // `You've hit your limit · resets 5pm (Europe/Madrid)`, or `API Error: 429` once the host's own retries ran out: the
 // shapes the host's issue reports, changelog, and binary give, kept as fixtures in test/project-limit.test.mjs. The
 // reset time is read against the entry's own `timestamp`, so a record read later still names the same time.
@@ -28,6 +30,9 @@ const USAGE = /\busage limit\b|\blimit reached\b|\bhit your (?:[\w-]+ )?limit\b/
 const EPOCH = /\|\s*(\d{9,11})\b/u;
 const RESET = /\breset(?:s)?(?:\s+at)?\s+([^|]{1,80})/iu;
 const AGAIN = /\btry again in\s+([^|]{1,80})/iu;
+// How the host's own `informational` system entry starts when Remote Control stops because the account it is signed in
+// with changed. The host writes it only where Remote Control was on, and nothing else in the transcript says so.
+const ACCOUNT_CHANGED = 'Remote Control disconnected — signed-in claude.ai account or organization changed on this machine';
 const ZONE = /\(([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+){1,2}|UTC)\)/u;
 
 // The transcript files the session `session` started in `cwd` may have, the likeliest first.
@@ -66,6 +71,12 @@ export function resetOf(text, now) {
   return again ? durationTime(again[1], now) : null;
 }
 
+// The newest time the entries `entries` carry that is no later than `now`, or null when none carries one.
+function newestTime(entries, now) {
+  const times = entries.map((entry) => (typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : Number.NaN)).filter((time) => Number.isFinite(time) && time <= now);
+  return times.length ? Math.max(...times) : null;
+}
+
 // The limit the host's API error entry `entry` reports: { kind: 'usage' | 'rate', until, at }, `at` the entry's own
 // time, or null when it gives none, `until` read against it, else `now`, and null when the text names no time; or null
 // when the entry reports no limit.
@@ -78,11 +89,18 @@ export function entryLimit(entry, now) {
   return { kind: USAGE.test(text) ? 'usage' : 'rate', until: resetOf(text, at ?? now), at };
 }
 
+// Whether `entry` is the host's own record that the signed-in account changed: no text the model, a tool, or a person
+// wrote is one.
+const accountChanged = (entry) => entry.type === 'system' && entry.subtype === 'informational'
+  && typeof entry.content === 'string' && entry.content.startsWith(ACCOUNT_CHANGED);
+
 // Whether the session `session`, started in `cwd`, last met a usage or rate limit: entryLimit's answer for the last
 // assistant entry of its transcript, with `after`, the time of the newest entry after that one that names this session
 // by its id and its own time no later than `now`, the read's time, or null when none does, such as the host's own entry
-// when it continues the session once the limit resets; or null when there is no such entry, it reports no limit, or no
-// transcript can be read. An entry with no session id, or one dated ahead, never holds the session.
+// when it continues the session once the limit resets, and `changed`, the time of the newest of those entries that is
+// the host's own record of a changed account (accountChanged), or null; or null when there is no such entry, it reports
+// no limit, or no transcript can be read. An entry with no session id, or one dated ahead, never holds the session, and
+// lifts no pause.
 export function transcriptLimit({ session, cwd, env, home, now = Date.now() }) {
   if (typeof session !== 'string' || !ID.test(session)) return null;
   for (const file of transcripts({ session, cwd, env, home })) {
@@ -92,9 +110,8 @@ export function transcriptLimit({ session, cwd, env, home, now = Date.now() }) {
     const at = own.findLastIndex((entry) => entry.type === 'assistant');
     const limit = entryLimit(own[at], now);
     if (!limit) return null;
-    const times = own.slice(at + 1).filter((entry) => entry.sessionId === session)
-      .map((entry) => (typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : Number.NaN)).filter((time) => Number.isFinite(time) && time <= now);
-    return { ...limit, after: times.length ? Math.max(...times) : null };
+    const later = own.slice(at + 1).filter((entry) => entry.sessionId === session);
+    return { ...limit, after: newestTime(later, now), changed: newestTime(later.filter(accountChanged), now) };
   }
   return null;
 }

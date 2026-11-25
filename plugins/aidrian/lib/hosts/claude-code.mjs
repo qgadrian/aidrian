@@ -466,7 +466,7 @@ export default {
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),
       find: ({ cwd, name, env, run }) => findSessions({ cwd, name, env, run }),
       // Whether the session last met a usage or rate limit, from the host's own API error entry at the end of its
-      // transcript (hosts/claude-code-limit.mjs); unverified, as no live session has shown that entry.
+      // transcript (hosts/claude-code-limit.mjs), and whether its account-change entry came after it.
       limitOf: ({ session, cwd, env, home, now }) => transcriptLimit({ session, cwd, env, home, now }),
       // The session starts with autoContinueAtUsageLimit (claude-code-sandbox.mjs sandboxSettings), so the host waits
       // out a usage limit and goes on with its work: `wait` keeps a limited session it still lists running. Unverified

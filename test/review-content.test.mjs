@@ -525,6 +525,18 @@ test('the lines of a file whose name git marks with a tab or quotes are filed un
   assert.deepEqual(headerPaths(raw).sort(), all);
 });
 
+for (const [name, settings] of [['diff.noprefix', [['diff.noprefix', 'true']]], ['diff.srcPrefix and diff.dstPrefix', [['diff.srcPrefix', 'old/'], ['diff.dstPrefix', 'new/']]]]) {
+  test(`diffLines files the lines under the file list's names, with ${name} set in the repository`, (t) => {
+    const { root, base, head, git } = fixture(t, { 'src/a b.ts': 'a\n', 'src/plain.ts': 'a\n', 'src/gone.ts': 'a\n' }, { 'src/a b.ts': 'b\n', 'src/plain.ts': 'b\n', 'src/gone.ts': null });
+    const plain = diffLines(root, base, head);
+    for (const [key, value] of settings) git('config', key, value);
+    const lines = diffLines(root, base, head);
+    assert.deepEqual(lines, plain, 'the same as with a plain configuration');
+    assert.deepEqual(Object.keys(lines.hunks).sort(), changedFiles(root, base, head).map(({ file }) => file).sort());
+    assert.deepEqual(lines.addedLines, { __proto__: null, 'src/a b.ts': ['b'], 'src/plain.ts': ['b'] });
+  });
+}
+
 test('a JavaScript project resolves .jsx files and index.js or index.jsx folders', () => {
   for (const target of ['src/helpers/index.js', 'src/helpers/index.jsx', 'src/helpers.jsx', 'src/helpers.cjs']) {
     const { imports } = parse('src/page.js', "import { load } from './helpers';\n", { tracked: new Set([target]) });

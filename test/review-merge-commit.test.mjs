@@ -124,6 +124,20 @@ test('a merge with a resolved conflict is no clean merge, and its remerge diff h
   assert.equal(remergeDiff(r.dir, r.first), null, 'a commit that is not a merge has no remerge diff');
 });
 
+for (const [name, settings] of [['diff.noprefix', [['diff.noprefix', 'true']]], ['diff.srcPrefix and diff.dstPrefix', [['diff.srcPrefix', 'old/'], ['diff.dstPrefix', 'new/']]]]) {
+  test(`remergeDiff files the resolution's lines under the file list's names, with ${name} set in the repository`, (t) => {
+    const r = repo(t);
+    const merge = r.mergeMain(CONFLICT, RESOLVED);
+    const plain = remergeDiff(r.dir, merge);
+    for (const [key, value] of settings) r.git('config', key, value);
+    const scope = remergeDiff(r.dir, merge);
+    assert.deepEqual(scope, plain, 'the same as with a plain configuration');
+    assert.deepEqual(scope.changes, [{ file: 'src/app.js', added: 1, removed: 5, status: 'M' }]);
+    assert.deepEqual(Object.keys(scope.hunks), ['src/app.js']);
+    assert.deepEqual(scope.addedLines, { __proto__: null, 'src/app.js': ['export const app = 29;'] });
+  });
+}
+
 test('a clean merge from the base branch carries the received review: no reviewer, no round, and the merge guard lets it merge', async (t) => {
   const r = repo(t);
   const first = recorder();

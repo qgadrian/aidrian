@@ -9,7 +9,7 @@
 // It writes nothing and refuses nothing: a read the forge cannot answer is a line saying what cannot be told.
 // Every read goes through the forge facade, and none is made with no resumed pull request and no text to read.
 
-import { branchPolicies, ghError, includesGuardedPaths, includesPolicyFiles, neverMerged, readView, startDocs, VIEW_FIELDS, wholeFiles } from './pr-auto-merge.mjs';
+import { branchPolicies, ghError, includesPolicyFiles, neverMerged, readView, startDocs, VIEW_FIELDS, wholeFiles } from './pr-auto-merge.mjs';
 import { isPolicyPath } from './project.mjs';
 
 // The line prefix of every merge this module names, which the driver gives the Human word for word.
@@ -19,9 +19,8 @@ const TEXT_FIELDS = ['title', 'description', 'criteria'];
 
 // The recorded text of issue `key` in `texts`, or '' when no read recorded any.
 const textOf = (texts, key) => TEXT_FIELDS.map((field) => texts?.[key]?.[field]).filter((each) => typeof each === 'string').join('\n');
-// The path-like words of `text`: split on spaces, quotes, and brackets, with a leading "./" and a trailing stop or colon
-// taken off.
-const words = (text) => text.split(/[\s`'"()[\]{}<>,;|*]+/u).map((word) => word.replace(/^(?:\.\/)+/u, '').replace(/[.:!?]+$/u, '')).filter(Boolean);
+// The path-like words of `text`: split on spaces, quotes, and brackets, with a trailing stop or colon taken off.
+const words = (text) => text.split(/[\s`'"()[\]{}<>,;|*]+/u).map((word) => word.replace(/[.:!?]+$/u, '')).filter(Boolean);
 
 const firstLine = (error) => String(error.message).split('\n')[0];
 
@@ -65,11 +64,8 @@ function pullLine({ forge, repository, pinned, folder, pluginRepository, policie
   }
   const whole = wholeFiles(forge, pr);
   if (typeof whole === 'string') return unknown(whole);
-  const loaded = docsOf(policies);
-  const never = neverMerged(whole.files, folder, policies, { startDocs: typeof loaded === 'string' ? undefined : loaded, pluginRepository });
-  if (never) return { named: true, line: `${NEEDS_MERGE}: #${number} changes ${JSON.stringify(never.path)}, which auto-merge never merges` };
-  // No path refuses alone, and the docs every session loads are guarded only with no includeGuardedPaths lift.
-  return typeof loaded === 'string' && !includesGuardedPaths(policies) ? unknown(loaded) : {};
+  const never = neverMerged(whole.files, folder, policies, { startDocs: docsOf(policies), pluginRepository });
+  return never ? { named: true, line: `${NEEDS_MERGE}: #${number} changes ${JSON.stringify(never.path)}, which auto-merge never merges` } : {};
 }
 
 // A function of one argument that keeps `read`'s answer for each `keyOf(argument)`; a throw is not kept.
@@ -100,10 +96,16 @@ export function humanMergeLines({ forge, repository, prefix = () => '', pluginRe
   if (folder === null) return [`${NEEDS_MERGE}, unknown: git cannot say where the project folder is in the repository, so which pull requests auto-merge never merges cannot be told`];
   const pinned = { repo: `${repository.owner}/${repository.name}`, host: repository.host };
   const policiesOf = kept((base) => branchPolicies(forge, { ...pinned, base }, folder));
-  const docsOf = kept((policies) => startDocs(forge, pinned, policies.main, policies.configFile, folder), ({ main, configFile }) => `${main}:${configFile}`);
+  const notes = [];
+  const docsOf = kept((policies) => {
+    const loaded = startDocs(forge, pinned, policies.main, policies.configFile, folder);
+    if (typeof loaded !== 'string') return loaded;
+    notes.push(`${NEEDS_MERGE}, unknown: ${loaded}, so a pull request that changes a doc every session loads is not named`);
+    return undefined;
+  }, ({ main, configFile }) => `${main}:${configFile}`);
   const read = pulls.map(({ key, pr: number }) => ({ key, ...pullLine({ forge, repository, pinned, folder, pluginRepository, policiesOf, docsOf, key, number }) }));
   // An issue whose pull request is named already needs no warning of its text.
   const named = new Set(read.filter((each) => each.named).map(({ key }) => key));
   const keys = written.filter((key) => !named.has(key));
-  return [...read.flatMap(({ line }) => (line ? [line] : [])), ...(keys.length ? textLines({ forge, pinned, folder, keys, texts }) : [])];
+  return [...notes, ...read.flatMap(({ line }) => (line ? [line] : [])), ...(keys.length ? textLines({ forge, pinned, folder, keys, texts }) : [])];
 }

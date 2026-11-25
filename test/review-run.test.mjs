@@ -94,6 +94,35 @@ test('zero config: codex-local reviews once; a finding is fix_required until a n
   assert.equal(stateFromComment(r.comments[0].body, 7).rounds.length, 2);
 });
 
+test('the local pass reads the review bot`s own comments the step found by the base branch`s bot, not one the pull request names', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { reviewer: 'review-bot[bot]' } }, headConfig: { version: 1, github: { reviewer: 'someone' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const receipt = "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!";
+  r.comments.push(
+    { id: 101, user: { login: 'review-bot[bot]', type: 'Bot' }, body: receipt, html_url: 'https://github.com/o/r/pull/7#issuecomment-101' },
+    { id: 102, user: { login: 'someone', type: 'User' }, body: receipt, html_url: 'https://github.com/o/r/pull/7#issuecomment-102' },
+    { id: 103, user: { login: 'review-bot', type: 'Bot' }, body: '<!-- codex-pull-request-review-summary -->\n\n## Codex Review Summary' },
+  );
+  const seen = [];
+  const exec = async (_reviewer, input) => (seen.push(input.botComments), clean());
+  await r.step({ exec });
+  assert.ok(seen.length > 0, 'a pass ran');
+  assert.deepEqual(seen, seen.map(() => [{ id: 101, url: 'https://github.com/o/r/pull/7#issuecomment-101' }, { id: 103 }]), 'every pass reads the base branch bot`s own comments');
+});
+
+test('under review.record "local" the step still reads the review bot`s own comments for the pass, and a failed read leaves none exempt', async (t) => {
+  const receipt = "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!";
+  for (const fails of [false, true]) {
+    const r = repo(t, { baseConfig: { version: 1, review: { record: 'local' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+    r.comments.push({ id: 201, user: { login: 'chatgpt-codex-connector[bot]', type: 'Bot' }, body: receipt, html_url: 'https://github.com/o/r/pull/7#issuecomment-201' });
+    if (fails) r.forge.conversationComments = () => { throw new Error('gh: HTTP 502'); };
+    const seen = [];
+    await r.step({ exec: async (_reviewer, input) => (seen.push(input.botComments), clean()) });
+    assert.ok(seen.length > 0, 'a pass ran');
+    assert.deepEqual(seen.at(-1), fails ? null : [{ id: 201, url: 'https://github.com/o/r/pull/7#issuecomment-201' }], fails ? 'a failed read: none exempt' : 'the genuine receipt is listed');
+    assert.equal(r.comments.length, 1, 'nothing is posted under a local record');
+  }
+});
+
 test('a comment-, doc-, or test-only push keeps its round, and the passes it touches re-review it in delta context', async (t) => {
   for (const [what, push] of [
     ['comment', (r) => r.write('src/app.js', '// note: the app number\nexport const app = 2;\n')],
@@ -1298,10 +1327,13 @@ test('the project`s engine wins over this machine`s local one, and the bot stage
   assert.match(result.engine.reason, /set by the project config/u);
 });
 
-test('review.record "local": the record stays in the state folder, and nothing on the pull request is read, posted, or edited', async (t) => {
+test('review.record "local": the record stays in the state folder, no record is read from the pull request, and nothing there is posted or edited', async (t) => {
   const r = repo(t, { baseConfig: { version: 1, review: { record: 'local' } }, change: (write) => write('src/app.js', 'l\n') });
   const touched = [];
-  for (const call of ['conversationComments', 'postComment', 'editComment']) r.forge[call] = () => (touched.push(call), assert.fail(`gh ${call} must not run`));
+  for (const call of ['postComment', 'editComment']) r.forge[call] = () => (touched.push(call), assert.fail(`gh ${call} must not run`));
+  // The conversation is read once a step, for the review bot's own comments alone (step.mjs botComments).
+  const reads = [];
+  r.forge.conversationComments = () => (reads.push('conversationComments'), []);
   const first = await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) });
   assert.equal(first.status, 'fix_required');
   assert.equal(first.summary_error, undefined);
@@ -1309,6 +1341,7 @@ test('review.record "local": the record stays in the state folder, and nothing o
   r.commit();
   assert.equal((await r.step({ exec: clean })).status, 'received');
   assert.deepEqual(touched, []);
+  assert.deepEqual(reads, ['conversationComments', 'conversationComments'], 'one read a step, for the bot`s own comments');
   assert.equal(readLocalState(r.project, 7).rounds.length, 2, 'the second step read the first one`s record from the state folder');
   const config = loadConfig(projectAt(r.dir)).config;
   assert.equal(remoteState('o/r', 7, { conversationComments: () => assert.fail('the pull request is not read') }, config), null);

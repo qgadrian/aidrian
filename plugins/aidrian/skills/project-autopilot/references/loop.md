@@ -30,7 +30,7 @@ named and go on from that output as step 2 says.
    - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: step 1, whose `next` says so.
    - a line `halt <cause>`, exit 1: § Halt. A `recheck kept the halt:` line after it names what kept it.
    - exit 0, `recheck lifted the halt: <cause>; ok <checks>`: the start lifted the halt of this issue and launched
-     nothing. Run this step again for the same `<key>` at once.
+     nothing. Then step 1.
    - exit 75, `retry: <why>`: § Retry. A session that runs on after its issue settled gives this too: a wait.
    - any other exit 1: § Stop, with its stderr line as the cause.
 3. `aidrian project wait <run> --max-wait 150`:
@@ -140,7 +140,7 @@ At the session-length reminder, a usage-limit warning, or the plan offer, hand o
    at its absolute path, then `references/loop.md`, then `aidrian project wait <run> --max-wait 0` first, which moves
    the run to the new session. A line of it that step 3 of § Each pass sends to § Stop, such as `note policy:`, or
    to § Retry goes there first, and § Retry writes no report until this wait exits 0. Otherwise step 1, whatever else it
-   printed, before any further wait. The ledger holds the rest: name no issue's detail.
+   printed, before any further wait: but first note each `could not be stopped` line it printed, which counts as step 3 says. The ledger holds the rest: name no issue's detail.
 3. Run `aidrian project handoff <run> <brief>` before `aidrian handoff continue <brief>`: custody moves only to a session
    started from a brief the driver recorded this way. Then follow the `session-handoff` skill's continue step.
 4. When `aidrian handoff continue` answers `continue: none` or `continue: clear`, or refuses twice, keep driving in this

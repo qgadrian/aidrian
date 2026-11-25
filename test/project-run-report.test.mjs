@@ -1094,21 +1094,7 @@ test('a command whose ledger another process holds locked exits 75 with a retry 
   assert.match(answer.out[0], /^retry: .*is locked by another process/u);
 });
 
-test('recorded closes a report while another process holds the ledger, so a busy acknowledgment never sends the driver to post it twice', (t) => {
-  const fx = started(t);
-  fx.settle({ status: 'merged', pr: 12 });
-  const [report] = fx.owed();
-  holdLedger(fx);
-  // The driver made the report's calls; a refusal that may pass here would send it back through wait, whose next
-  // settle lists the report again.
-  assert.deepEqual(fx.cmd(['recorded', 'launch', 'ENG-1']), { exitCode: 0, out: ['recorded ENG-1'], err: [] });
-  const row = fx.rows().at(-1);
-  assert.deepEqual([row.event, row.key, row.attempt, row.sha256], ['recorded', 'ENG-1', 1, report.sha256]);
-  assert.deepEqual(fx.report().out, ['none'], 'no tracker call is owed again');
-  assert.match(fx.cmd(['recorded', 'launch', 'ENG-1']).err[0], /the run launch owes no report on ENG-1/u);
-});
-
-test('next lists each settle report still owed, so a driver that takes the run over writes it before it starts an issue', (t) => {
+test('next lists each settle report still owed, so a driver that takes the run over writes it before it starts an issue, and recorded closes it while another process holds the ledger', (t) => {
   const fx = started(t);
   fx.settle({ status: 'merged', pr: 12 });
   // The driver stops before it writes the report; an attended session takes the run over (loop.md § Hand off).
@@ -1122,8 +1108,14 @@ test('next lists each settle report still owed, so a driver that takes the run o
   assert.match(next.out[0], /^next ENG-\d+ /u, 'the run would start an issue next');
   assert.equal(next.out.at(-1), 'owed ENG-1', 'the report the first driver left is named on the first pass, before any start');
   assert.deepEqual(JSON.parse(fx.cmd(['next', 'launch', '--json'], { session: RESCUER }).out[0]).owed, ['ENG-1']);
-  assert.deepEqual(JSON.parse(fx.report(['--json'], RESCUER).out[0]).owed.map((each) => each.key), ['ENG-1']);
-  assert.equal(fx.cmd(['recorded', 'launch', 'ENG-1'], { session: RESCUER }).exitCode, 0);
+  const [report] = JSON.parse(fx.report(['--json'], RESCUER).out[0]).owed;
+  // The driver made the report's calls; a refusal that may pass here would send it back through wait, whose next settle
+  // lists the report again and posts its comment twice.
+  holdLedger(fx);
+  assert.deepEqual(fx.cmd(['recorded', 'launch', 'ENG-1'], { session: RESCUER }), { exitCode: 0, out: ['recorded ENG-1'], err: [] });
+  const row = fx.rows().at(-1);
+  assert.deepEqual([row.event, row.key, row.attempt, row.sha256], ['recorded', 'ENG-1', 1, report.sha256]);
+  assert.deepEqual(fx.report([], RESCUER).out, ['none'], 'no tracker call is owed again');
   assert.equal(fx.cmd(['next', 'launch'], { session: RESCUER }).out.includes('owed ENG-1'), false, 'none once recorded');
   // The loop's step 1 sends the driver to the report on that line before any other.
   const loop = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/references/loop.md'), 'utf8').replace(/\s+/gu, ' ');
@@ -1137,10 +1129,11 @@ test('next lists each settle report still owed, so a driver that takes the run o
   assert.ok(first.includes('one `next <key> <branch>` line or more: step 2 for the first. Step 1 then lists what is left to start.'), 'one start a pass');
   assert.match(step2, /§ The started status says\. Then step 1\. - exit 0, `parked <key> unreconciled: \.\.\.`: nothing started; follow \[existing-work\.md\]\(existing-work\.md\), then step 1\./u, 'started and parked');
   assert.ok(step2.includes('a usage limit paused the run. Not a refusal: step 1, whose `next` says so.'), 'paused');
+  assert.ok(step2.includes('the start lifted the halt of this issue and launched nothing. Then step 1.'), 'a lifted halt');
   assert.ok(loop.includes('Run `aidrian project next <run>` and write the reports it lists as `owed`, then step 3 once, then the same command again.'), 'before the retry\'s wait');
   // The handoff's wait keeps its routing: a withdrawn policy still stops the new driver before it asks `next`.
   const handoff = loop.slice(loop.indexOf('## Hand off'));
-  assert.ok(handoff.includes('A line of it that step 3 of § Each pass sends to § Stop, such as `note policy:`, or to § Retry goes there first, and § Retry writes no report until this wait exits 0. Otherwise step 1, whatever else it printed, before any further wait.'), 'the handoff wait');
+  assert.ok(handoff.includes('A line of it that step 3 of § Each pass sends to § Stop, such as `note policy:`, or to § Retry goes there first, and § Retry writes no report until this wait exits 0. Otherwise step 1, whatever else it printed, before any further wait: but first note each `could not be stopped` line it printed, which counts as step 3 says.'), 'the handoff wait');
 });
 
 test('a start of one issue that settles another\'s orphan keeps its own outcome, and the next next lists the orphan\'s report', (t) => {

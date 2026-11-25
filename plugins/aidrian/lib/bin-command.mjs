@@ -3,6 +3,8 @@
 import { accessSync, constants, realpathSync } from 'node:fs';
 import path from 'node:path';
 
+import { shellWord } from './shell-lex.mjs';
+
 const BIN = path.resolve(import.meta.dirname, '../bin');
 
 function real(dir) {
@@ -27,11 +29,8 @@ export function firstOnPath(name) {
   return null;
 }
 
-// This copy's command `name` by its full path, as a shell takes it.
-export function commandPath(name) {
-  const full = path.join(BIN, name);
-  return /\s/.test(full) ? `"${full}"` : full;
-}
+// This copy's command `name` by its full path, as one shell word that expands to nothing but itself.
+export const commandPath = (name) => shellWord({ text: path.join(BIN, name) });
 
 // The bare name when it runs this copy's command; the full path otherwise, so the line works on either host and never
 // runs another copy's code.

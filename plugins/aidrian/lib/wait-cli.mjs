@@ -10,13 +10,13 @@ import { parseArgs } from 'node:util';
 import { HIDDEN } from './hidden-text.mjs';
 import { detectHost, TASK_ID } from './hosts/index.mjs';
 import { usageLines } from './usage.mjs';
+import { OTHER_CHECK } from './wait-advice.mjs';
 
 const USAGE = 'TASK_ID [--max-wait SECONDS]';
 const POLL_MS = 1000;
 const LINES = 40;
 // How each line of the task's output starts, so none reads as a line of the command's own.
 const OUTPUT = '| ';
-const OTHER_WAY = 'wait for it with the host\'s own tools';
 
 export const commands = {
   wait: {
@@ -33,23 +33,24 @@ export const commands = {
 
 const failed = (status, problem) => ({ status, out: [], err: [`aidrian wait: ${problem}`] });
 
-// The command's { status, out, err }, its lines. `host`, `now`, and `pause` are a test's.
-export async function waitForTask(args, { env = process.env, host = detectHost({ env }), now = Date.now, pause = sleep } = {}) {
+// The command's { status, out, err }, its lines. `host`, `now`, and `pause` are a test's. The wait is timed on a clock a
+// change of the wall clock does not move, so it stays under the host's limit.
+export async function waitForTask(args, { env = process.env, host = detectHost({ env }), now = () => performance.now(), pause = sleep } = {}) {
   const started = now();
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { 'max-wait': { type: 'string' } } });
   if (positionals.length !== 1) return { status: 1, out: [], err: usageLines('wait', USAGE, 'usage: ') };
   const [id] = positionals;
   const { taskOutput, waitCall } = host.capabilities;
-  if (!taskOutput) return failed(2, `${host.name} gives a command no way to read a background task; ${OTHER_WAY}`);
+  if (!taskOutput) return failed(2, `${host.name} gives a command no way to read a background task; ${OTHER_CHECK}`);
   const given = values['max-wait'] ?? String(waitCall.seconds);
   if (!/^\d{1,4}$/u.test(given) || Number(given) > waitCall.seconds) return failed(1, `--max-wait takes whole seconds from 0 to ${waitCall.seconds}`);
   if (!TASK_ID.test(id)) return failed(2, 'a task id holds only letters, digits, _, and -');
   const file = taskOutput.find({ id, env });
-  if (file === null) return failed(2, `no output of a background task ${id} in this session; ${OTHER_WAY}`);
+  if (file === null) return failed(2, `no output of a background task ${id} in this session; ${OTHER_CHECK}`);
   const until = started + Number(given) * 1000;
   for (;;) {
     const task = taskOutput.read(file);
-    if (task === null) return failed(2, `the output of background task ${id} can no longer be read; ${OTHER_WAY}`);
+    if (task === null) return failed(2, `the output of background task ${id} can no longer be read; ${OTHER_CHECK}`);
     const left = until - now();
     if (task.ended || left <= 0) return { status: task.ended ? 0 : 3, out: report(id, task), err: [] };
     await pause(Math.min(POLL_MS, left));

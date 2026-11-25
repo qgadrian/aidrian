@@ -267,7 +267,7 @@ test('on a host that wakes an idle subagent with its child agent\'s report, the 
   const sent = stop(false, SESSION_TASKS);
   assert.equal(sent.status, 2, 'its own background shell still does');
   assert.match(sent.stderr, /^You started background work that is still running: `bmnjbq03x` \(shell: Push the branch\)\. /u);
-  assert.match(sent.stderr, /before you end the turn: run `\S*aidrian wait bmnjbq03x`, in calls of at most 150 seconds each, with a tool timeout of 170 seconds, and repeat each until its first line starts with `ended`, or the host says the task ended\. /u);
+  assert.match(sent.stderr, /before you end the turn: run `\S*aidrian wait bmnjbq03x`, in calls of at most 150 seconds each, with a tool timeout of 170 seconds, and repeat each while it exits 3, until its first line starts with `ended`, or the host says the task ended; on exit 2 no output was found, and repeating the command cannot help: wait with another completion check you have, or report the wait as blocked\. /u);
   assert.match(sent.stderr, /Claude Code may move one still running after 180 seconds whatever its timeout\. /u);
   assert.doesNotMatch(sent.stderr, /two minutes|Next time/u);
   // The wait command is this copy's: by its path behind another copy on PATH, by its bare name ahead of it.

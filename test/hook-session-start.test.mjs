@@ -5,6 +5,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { GIT_TIMEOUT_MS } from '../plugins/aidrian/lib/git.mjs';
@@ -46,7 +47,9 @@ const FOOTER = 'Pull requests: a body here never carries the "Generated with [Cl
   "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
 const LONG = 'Long commands: Claude Code may move a command still running after 180 seconds to the background, whatever timeout the call asks for; ' +
   `expect it for a long push or CI wait. Then wait with \`${path.join(BIN, 'aidrian')} wait <task id>\` in calls of at most 150 seconds each, ` +
-  'with a tool timeout of 170 seconds, until its first line starts with `ended`, or the host says the task ended.';
+  'with a tool timeout of 170 seconds, until its first line starts with `ended`, or the host says the task ended. ' +
+  'Exit 3 means the task still runs: wait again. Exit 2 means no output was found, and repeating the command cannot help: ' +
+  'wait with another completion check you have, or report the wait as blocked.';
 // An empty Claude Code user settings folder, so a developer's own settings never reach these tests.
 const USER_SETTINGS = mkdtempSync(path.join(tmpdir(), 'aidrian-start-claude-'));
 test.after(() => rmSync(USER_SETTINGS, { recursive: true, force: true }));
@@ -423,8 +426,11 @@ test('outside a project, and for any stdin, the hook prints nothing and exits 0'
   t.after(() => rmSync(outside, { recursive: true, force: true }));
   for (const input of ['', 'not json', '[]', JSON.stringify({ cwd: outside }), JSON.stringify({ cwd: 42 })]) {
     for (const args of [[], ['--subagent']]) {
-      const { status, stdout, stderr } = await hook({ input, args, cwd: outside });
-      assert.deepEqual([status, stdout, stderr], [0, '', ''], `${input} ${args}`);
+      // Claude Code too, whose subagents hear the `Long commands:` line inside a project.
+      for (const CLAUDECODE of [undefined, '1']) {
+        const { status, stdout, stderr } = await hook({ input, args, cwd: outside, CLAUDECODE });
+        assert.deepEqual([status, stdout, stderr], [0, '', ''], `${input} ${args} ${CLAUDECODE}`);
+      }
     }
   }
 });
@@ -581,6 +587,38 @@ test('when another copy of the plugin\'s aidrian comes first on PATH, one line n
   assert.ok(ahead.startsWith(LINE('aidrian-knowledge')) && ahead.includes('wait with `aidrian wait <task id>`'), ahead);
   assert.doesNotMatch((await hook({ input, PATH: `${BIN}${path.delimiter}${other}${path.delimiter}${WITHOUT_BIN}` })).stdout, /^Commands:/mu, 'this copy first: nothing');
   assert.doesNotMatch((await hook({ input })).stdout, /^Commands:/mu, 'no aidrian on PATH: nothing');
+});
+
+test('each command named by its path is one literal shell word, whatever characters the plugin\'s folder holds', async (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-quote-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const plugin = path.join(dir, 'a b$(id)$HOME`id`"it\'s;&|*!~');
+  for (const part of ['lib', 'scripts', '.claude-plugin', 'plugin.json']) cpSync(path.join(PLUGIN_DIR, part), path.join(plugin, part), { recursive: true });
+  const load = (rel) => import(pathToFileURL(path.join(plugin, rel)).href);
+  const named = (name) => `'${dir}/a b$(id)$HOME\`id\`"it'\\''s;&|*!~/bin/${name}'`;
+  mkdirSync(path.join(dir, 'project/.aidrian'), { recursive: true });
+  writeFileSync(path.join(dir, 'project/.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1 }));
+  mkdirSync(path.join(dir, 'other'));
+  writeFileSync(path.join(dir, 'other/aidrian'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const { callHook } = await load('lib/hook-io.mjs');
+  const { handle } = await load('scripts/hook-session-start.mjs');
+  const { env } = hookOptions({ CLAUDECODE: '1', PATH: `${path.join(dir, 'other')}${path.delimiter}${WITHOUT_BIN}` });
+  const saved = process.argv;
+  process.argv = [...saved.slice(0, 2), '--subagent'];
+  t.after(() => {
+    process.argv = saved;
+  });
+  const { stdout } = await callHook(handle, { cwd: path.join(dir, 'project') }, { cwd: dir, env });
+  const context = JSON.parse(stdout).hookSpecificOutput.additionalContext;
+  for (const words of [
+    `run \`${named('aidrian-knowledge')} route <tag>\` for your tags or \`${named('aidrian-knowledge')} search <words>\``,
+    `run \`${named('aidrian')} check\`.`,
+    `run this session's as ${named('aidrian')}.`,
+    `wait with \`${named('aidrian')} wait <task id>\``,
+  ]) assert.ok(context.includes(words), `${words}\n${context}`);
+  const { waitWords } = await load('lib/wait-advice.mjs');
+  const { default: host } = await load('lib/hosts/claude-code.mjs');
+  assert.ok(waitWords(host, [{ id: 'b1', type: 'shell' }]).startsWith(`run \`${named('aidrian')} wait b1\``));
 });
 
 test('the gate snapshot is saved before the knowledge loads, so a knowledge folder that throws still leaves the gates held', async (t) => {

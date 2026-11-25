@@ -136,18 +136,21 @@ async function sessionOf(runner, get, sessionID) {
   }
   const answer = { root: id, agent: !ended || id !== sessionID ? sessionID : null };
   if (ended) {
-    keep(runner, new Map([[sessionID, answer], [id, { root: id, agent: null }]]));
+    keep(runner, sessionID, answer);
     remember(runner, id, current.location?.directory);
   }
   return { ...answer, dir, ...(ended ? {} : { failed: true }) };
 }
 
-// Keeps one walk's `answers`, a session id to where its walk ended, in a map cleared whole when they would take it past
-// ROOTS_MAX, so it clears before the first is kept and never drops one of them.
-function keep(runner, answers) {
-  const added = [...answers.keys()].filter((id) => !runner.roots.has(id)).length;
+// Keeps the `answer` of the session `sessionID`'s walk, and its root's beside it, in a map cleared whole when the two would
+// take it past ROOTS_MAX, so it clears before either is kept and drops neither. The root keeps the entry it has, so a kept
+// child's stays a child's when a later walk reads no parent for it.
+function keep(runner, sessionID, answer) {
+  const root = runner.roots.get(answer.root) ?? { root: answer.root, agent: null };
+  const added = [...new Set([sessionID, answer.root])].filter((id) => !runner.roots.has(id)).length;
   if (runner.roots.size + added > ROOTS_MAX) runner.roots.clear();
-  for (const [id, answer] of answers) runner.roots.set(id, answer);
+  runner.roots.set(sessionID, answer);
+  runner.roots.set(answer.root, root);
 }
 
 // Keeps `dir`, the folder a read just gave the root session `root`, for its SessionEnd (endCall), which runs once the

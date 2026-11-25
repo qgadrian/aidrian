@@ -563,6 +563,21 @@ test('a child whose walk meets the 256-answer bound keeps its own answer and its
   assert.deepEqual(context.reads.slice(reads), ['ses_new']);
 });
 
+test('a kept child stays a child when a later walk reads no parent for it, at the 256-answer bound too', async () => {
+  for (const others of [0, 254]) {
+    let parentID = 'ses_top';
+    const sessions = { ses_top: {}, ses_mid: () => ({ parentID }), ses_low: { parentID: 'ses_mid' } };
+    for (let n = 0; n < others; n += 1) sessions[`ses_kid${n}`] = { parentID: 'ses_top' };
+    const { calls, fire } = await bridge({ context: fakeContext({ sessions }) });
+    await fire(shellEvent({ sessionID: 'ses_mid' }));
+    for (let n = 0; n < others; n += 1) await fire(shellEvent({ sessionID: `ses_kid${n}` }));
+    parentID = undefined;
+    await fire(shellEvent({ sessionID: 'ses_low' }));
+    await fire(shellEvent({ sessionID: 'ses_mid' }));
+    assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_top', 'ses_mid'], `${others} others`);
+  }
+});
+
 test('a failed parent read is not kept: the next call of that session reads again and finds its root', async () => {
   let failures = 1;
   const parent = () => {

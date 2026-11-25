@@ -141,7 +141,7 @@ and the workspace or tool input value the tracker write guard refused.
 | `repo`, `pr` | The pull request. |
 | `source`, `round` | `plan` for `aidrian pr review`'s rounds, `bot` for the review bot's; the round at the cap. |
 | `outcome` | `judging`, `asking`, `granted`, `denied`, or `stopped`. |
-| `by` | Who decided: `judge`, `human`, `ceiling`, `catch_up` (a head that only caught up with the base retired the check), or `null` while judging. `mechanical` (the signals) appears only in rows from versions that stopped on a red flag. |
+| `by` | Who decided: `judge`, `human`, `ceiling`, `catch_up` (a head that only caught up with the base retired the check), `unattended` (an extend over a red flag under `"auto"` and the unattended waiver, stopped with no question), or `null` while judging. `mechanical` (the signals) appears only in rows from versions that stopped on a red flag. |
 | `signals` | The signals that raised a red flag: `converging`, `looping`, `drifting`, `bloating`. |
 
 The judge's reason stays in the review record, not the row.

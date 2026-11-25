@@ -1280,6 +1280,21 @@ The stop changes neither the cap nor the rules below: an extra round over a red 
    aidrian pr extend <PR> --human approve|deny [--check <id>]
    ```
 
+   **The unattended rule.** On a check opened under `"auto"`, while the base branch still commits it and the
+   [unattended waiver](config.md#unattended-waiver)'s two switches count for the pull request, an `extend` over a red
+   flag asks no one: it stops the check, `by: "unattended"`, and the cap is `round_limit` with no `question` or
+   `options`. It keeps `raise`, the Human's own command for one more round, so a Human who attends later still has it.
+   For the review step's check, the same review command run again, with the options it was run with, any `--with-bot`
+   included, reports `round_limit`, and offers the waiver's judge only where the waiver's gate lets it run, such as once
+   the review bot passed the current head; otherwise the stop stands with no judge
+   ([At the cap under autopilot](#at-the-cap-under-autopilot));
+   for the bot's, the stop is reported as it stands.
+   The switches are read as the merge guard reads them: the team's `github.unattendedWaiver.allow` from GitHub on the
+   default branch and the base, never the working copy, and this machine's switch. The base's `github.extraRounds` comes
+   from that same read, so a stale local ref never turns the rule on. A read that fails counts as off.
+   The record keeps the judge's reason and one naming the red flags, and the summary comment lists the check as
+   `stopped by the unattended rule (over red flags: ...)`. `"ask"` always asks, and with either switch off, so does `"auto"`.
+
 At the cap that stands, `round_limit` carries a `question`, `options`, and `raise` when the repository is known: the
 question names `<owner>/<name>#<PR>` and `--max-rounds <N>`, its first option starts with "Approve", and `raise` is
 `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` when the step ran the bot
@@ -1358,15 +1373,19 @@ approval names the judge's route: run the review step again with the options it 
 judge's stop, nothing waits for an answer, so the deny names the route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and
 `--max-rounds`, on the Human's answer or typed grant, naming `--repo <owner>/<name>` in a checkout whose remotes name more than one repository.
 The rest is the record's trust: the judge's verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
-signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, never
-a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one
+signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, or
+stops under the unattended rule, never a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one
 listed on the pull request.
 
 ### At the cap under autopilot
 
 Under the `autopilot` skill, and in each issue's session of a [project run](config.md#project-run), no one is there to
 answer at the cap. An extra round goes as [Extra rounds](#extra-rounds) says: under `"ask"`, or over a red flag, it is
-parked as a decision for the Human.
+parked as a decision for the Human. Under `"auto"` with the waiver's switches on, an `extend` over a red flag is
+`round_limit` instead, by [the unattended rule](#extra-rounds), if the check opened under `"auto"` too, the mode its step
+read from the local base ref, so a local base still on `"ask"` asks the Human whatever GitHub holds. The same review
+command run again, with the options it was run with, any `--with-bot` included, reports `round_limit`, and offers the waiver's judge only
+where the waiver's gate below lets it run; otherwise the stop stands with no judge. The bot's cap, from `aidrian pr await-review --request`, offers none and reports the stop.
 What follows on the current head is the [unattended waiver](config.md#unattended-waiver), on one route with no gate command of its own.
 At `extension_check` and at `round_limit`, `aidrian pr review` reports the waiver's gate in its JSON as `waiver`: `{ may, why }`.
 It is the gate `aidrian pr waive <n> --gate` runs, read for the record the step just wrote.

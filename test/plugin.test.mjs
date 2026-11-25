@@ -1995,6 +1995,7 @@ test('pr-review-loop asks the round_limit question word for word, and runs its r
   const plan = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/references/review-plan.md'), 'utf8').replace(/\s+/g, ' ');
   assert.match(plan, /With `question` and `options`, report the open findings, then ask the Human that question with AskUserQuestion, the options word for word/);
   assert.match(plan, /On "Approve", run `raise` exactly as printed, as one plain command/);
+  assert.match(plan, /A `raise` printed with no `question` is the Human's command: report it, never run it\./);
 });
 
 test('the README and the Claude Code page state one minimum Claude Code version, the one whose Bash hooks get Monitor commands', () => {

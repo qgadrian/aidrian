@@ -1203,8 +1203,9 @@ test('runExec: a grandchild in its own process group that holds the pipes does n
   });
   const file = path.join(dir, 'escape.mjs');
   writeFileSync(file, `import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs';
-const g = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
-writeFileSync(${JSON.stringify(pidFile)}, String(g.pid)); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);`);
+process.on('SIGTERM', () => {});
+const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
+writeFileSync(${JSON.stringify(pidFile)}, String(g.pid)); setInterval(() => {}, 1000);`);
   const started = Date.now();
   const result = await runExec({ name: 'escape', kind: 'exec', command: [process.execPath, file], timeoutSec: 1 }, {}, { root: dir, env: process.env });
   assert.equal(result.status, 'timed_out');

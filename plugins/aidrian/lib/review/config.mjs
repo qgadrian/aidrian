@@ -7,6 +7,7 @@
 import { isObject, knownFields, quoteName } from '../fs.mjs';
 import { DEFAULT_IGNORE, DEFAULT_NON_BEHAVIOUR, DEPTHS, HARNESS_FLOW } from './plan.mjs';
 import { SPLIT_DEFAULTS } from './split.mjs';
+import { templateProblem } from './visual-route.mjs';
 
 export const ENGINES = Object.freeze(['auto', 'codex-local', 'pr-bot', 'self']);
 export const KINDS = Object.freeze(['exec', 'agent']);
@@ -207,12 +208,12 @@ function checkVisual(visual, bad) {
   const keys = ['platform', 'targets', 'viewports', 'locales', 'variants', 'login', 'preview', 'attach', 'reviewers', 'checklist'];
   for (const key of Object.keys(visual)) if (!keys.includes(key)) problems.push(`unknown key "review.visual.${key}"`);
   if (!VISUAL_PLATFORMS.includes(visual.platform)) problems.push(`"review.visual.platform" must be ${VISUAL_PLATFORMS.map((each) => `"${each}"`).join(', ')}`);
-  if (!Array.isArray(visual.targets) || visual.targets.length === 0) problems.push('"review.visual.targets" must be a non-empty list of { "files", "routes" }');
+  if (!Array.isArray(visual.targets) || visual.targets.length === 0) problems.push('"review.visual.targets" must be a non-empty list of { "files", "routes" or "routeFrom" }');
   else {
     visual.targets.forEach((target, i) => {
       const at = `review.visual.targets[${i}]`;
       if (!isObject(target)) return problems.push(`"${at}" must be an object`);
-      for (const key of Object.keys(target)) if (!['files', 'routes', 'base', 'locales', 'variants'].includes(key)) problems.push(`unknown key "${at}.${key}"`);
+      for (const key of Object.keys(target)) if (!['files', 'routes', 'routeFrom', 'base', 'locales', 'variants'].includes(key)) problems.push(`unknown key "${at}.${key}"`);
       // A target's own subset of the locales and variants, for a screen that does not change with them: [] locales is
       // one capture in the app's default locale.
       if (target.locales !== undefined && !(Array.isArray(target.locales) && target.locales.every((locale) => Array.isArray(visual.locales) && visual.locales.includes(locale)) && new Set(target.locales).size === target.locales.length)) {
@@ -224,7 +225,11 @@ function checkVisual(visual, bad) {
       if (target.base !== undefined && !FLOW_ID.test(String(target.base))) problems.push(`"${at}.base" must name a base the login command prints, such as "guest"`);
       if (!someTexts(target.files)) problems.push(`"${at}.files" must be a non-empty list of globs`);
       else if (pathsProblem(target.files)) problems.push(`"${at}.files" ${pathsProblem(target.files)}`);
-      if (!someTexts(target.routes) || !target.routes.every((route) => route.startsWith('/'))) problems.push(`"${at}.routes" must be a non-empty list of paths starting with /`);
+      const derived = target.routeFrom !== undefined;
+      if (!(derived && target.routes === undefined) && (!someTexts(target.routes) || !target.routes.every((route) => route.startsWith('/')))) {
+        problems.push(`"${at}.routes" must be a non-empty list of paths starting with /, left out only when the target sets routeFrom`);
+      }
+      if (derived) problems.push(...routeFromProblems(target.routeFrom, `${at}.routeFrom`));
     });
   }
   const widths = visual.viewports ?? [];
@@ -255,6 +260,19 @@ function checkVisual(visual, bad) {
     return null;
   }
   return { attach: null, reviewers: [...VISUAL_REVIEWERS], locales: [], variants: [], ...visual };
+}
+
+// A target's `routeFrom`: the route each changed file of the target yields (visual-route.mjs).
+function routeFromProblems(value, at) {
+  if (!isObject(value)) return [`"${at}" must be { "pattern", "route" }`];
+  const problems = Object.keys(value).filter((key) => !['pattern', 'route'].includes(key)).map((key) => `unknown key "${at}.${key}"`);
+  const { pattern, route } = value;
+  // A glob captures nothing, so it has nothing to fill a route with.
+  if (!isText(pattern) || !pattern.startsWith('re:')) problems.push(`"${at}.pattern" must be a re: pattern`);
+  else if (pathsProblem([pattern])) problems.push(`"${at}.pattern" ${pathsProblem([pattern])}`);
+  else if (isText(route) && templateProblem(value)) problems.push(`"${at}.route" ${templateProblem(value)}`);
+  if (!isText(route)) problems.push(`"${at}.route" must be a route template such as "/$1"`);
+  return problems;
 }
 
 // A flow's `content`: whole-file probes and caller-to-callee tracing over the head (lib/review/content.mjs).

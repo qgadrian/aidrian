@@ -332,6 +332,10 @@ for what its question names, never for an id that only an option the Human did n
 for every id its question names or its offered "Approve" options name. The latest answer that counts
 decides, so a refusal after an approval under the same question refuses, and a push asks
 again. The command is one plain `aidrian pr` call run from the pull request's checkout, with no shell variables, repeated flags, `cd`, `env -C`, or chain.
+The question asks whether to approve, never how the session should get the proof: proof the session can take
+itself, an end-to-end run CI defers to ready or screenshots of a screen the capture saw empty, it gathers first and
+asks nothing, within the product-access workflow's checks ([Unattended rulings](#unattended-rulings)). Such a local
+run never clears a flow's `checks`.
 Before it asks, a session on a host that offers a tool to send the Human a push notification sends one, so a Human away from the session, such as on a phone, sees that a decision waits.
 `--last` stays in the Human's shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
 
@@ -401,6 +405,26 @@ on GitHub. A ruling takes the same refusals as the matching sign-off, holds for 
 shows in the summary as `judge:<agent>`. It never clears an undisputed violated invariant, signs a whole flow or stage,
 or touches `harness-config`, so a `signoff: "human"` flow and a change to the review's own config still ask the Human.
 Like the [unattended waiver](config.md#unattended-waiver), a ruling is the session's word, not proof.
+
+**Proof the session gathers.** An invariant stays `unverified` when its proof needs a run or a picture no reviewer
+had: the pull request is a draft and the project's CI runs its end-to-end tests only once it is ready, or the visual
+reviewer opened the [visual capture](#visual-review) and reported an empty, logged-out, or data-less page. That is a
+process choice with a safe default, so the session asks the Human nothing. It gathers only when
+`aidrian pr resolve <PR>` succeeded and printed `limited: false`; any other result, a pull request from outside the
+team, an error, or a missing field, takes the next route as before. It runs locally, or against a deploy preview:
+`e2e-runner` runs the end-to-end tests and `designer` takes the screenshots at each width of
+`review.visual.viewports`, each reaching the product under the checks of the
+[product-access workflow](personas.md#a-pull-request-link-alone) that the `persona-audit` skill runs. The session
+posts the run's command and result lines as a comment of the pull request, and ingests the screenshots with
+`aidrian pr ingest`, which keeps them on this machine, and a visual reviewer cites them as `capture:<key>`. The
+session never posts the screenshots on this route: publishing them stays with the `pr-screenshot` skill and its own
+confirmation. It never posts a secret or session token from the login.
+With both switches on, the judge settles an invariant the run proves with `aidrian pr settle <PR> --flow <id> --accept
+<invariant> --evidence <url> --reason "<what it shows>" --head <sha> --judge <agent>`, `<url>` being that comment.
+With either off, the session asks the Human to approve that `--accept`, not how to get the proof. A local run settles
+the invariant only, and never clears a flow's `checks`. When `product-access` holds no way in, the session
+reports that gap as a finding and asks nothing. A `signoff: "human"` flow and a change to `harness-config` still ask
+the Human, by design. The steps are in the `pr-review-loop` skill's `references/review-plan.md`.
 
 Raising the round cap works the same way. On an answer naming `<owner>/<name>#<PR>` and `--max-rounds <N>`, the session runs
 `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` before `--max-rounds` when the step
@@ -531,7 +555,7 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
 | Key | |
 | --- | --- |
 | `platform` | `web`: Playwright, loaded from the project's own dependencies (`playwright` or `@playwright/test`) |
-| `targets` | which changed files capture which routes; a route may hold `{locale}`, and `base` names a base the login prints, for screens on another host or path. `locales` and `variants` narrow the target to a subset of the lists below; `"locales": []` is one capture in the default locale |
+| `targets` | which changed files capture which routes; a route may hold `{locale}`, and `base` names a base the login prints, for screens on another host or path. `locales` and `variants` narrow the target to a subset of the lists below; `"locales": []` is one capture in the default locale. `routeFrom` derives routes from the changed files, with or without `routes` |
 | `viewports`, `locales` | the widths and locale tags; each image is taken at one of each |
 | `variants` | the product modes to capture, each with the name of a demo account to sign in as, or none for a public page |
 | `login` | a command, run from the base branch, that reads `{ account, variant, baseUrl, locales }` on stdin and prints `{ "storageState": {...}, "baseUrl"?, "bases"?, "locales"? }`; the account's secret comes from its environment, never config |
@@ -554,6 +578,27 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   variant, as before.
 - **Per target**: a screen that does not change with the mode or the language narrows its target, such as
   `"variants": ["hospitality"]` or `"locales": ["en"]`. A route two touched targets list gets both targets' captures.
+- **Routes from the changed files**: with `routeFrom`, a new screen is captured with no change to the config, which is a policy file.
+  A target gives a `re:` pattern over the changed file's path and a route template, whose `$1`, `$2`, and so on are the pattern's captures:
+
+  ```json
+  { "files": ["src/screens/**"], "routeFrom": { "pattern": "re:^src/screens/(?:(.*)/)?view\\.\\w+$", "route": "/$1" } }
+  ```
+
+  Here `src/screens/staff/floor/view.html` is captured at `/staff/floor`, and `src/screens/view.html` at `/`.
+  A changed file yields a route when it matches both the target's `files` and the pattern; a deleted file yields none.
+  Listed `routes` are captured as before, and a route that is both listed and yielded is captured once.
+  The target's `base`, `locales`, and `variants`, and the limits below, hold for a yielded route too.
+  The template is a path that starts with `/`, and `{locale}` may be a whole segment of it, as in `/{locale}/$1`.
+  File names come from the pull request, so a filled route is held to one rule, and nothing is ever encoded to pass it.
+  It is at most 150 characters, and each segment holds only letters, digits, and `. _ ~ -`, and is not `.` or `..`.
+  So a scheme, a host, a leading `//`, a backslash, an encoded `..`, a query, or a control character is refused, and so is a segment such as `[id]`.
+  A refused route is an error entry in the capture's result that names the file, never a capture of another page or host.
+  The result lists the first 20, then one entry that counts the rest, and keeps them when the whole capture fails for another reason.
+  They are no images, so they count toward neither limit below.
+  A screen that needs a value in its path, such as an id, goes in `routes` with a value the app serves.
+  A `pattern` that is not a `re:` pattern or does not compile, and a template that names a capture the pattern lacks, are config errors.
+  An older plugin rejects the key as unknown, so set [`requires.aidrian`](config.md#plugin-version) to the release that ships it.
 - **Limits**: a route may ask for at most 60 images (viewports x locales x variants, per target), a config error past it. One
   review captures at most 200; past that it stops as `too_large` and names the routes to narrow.
 - **Once per head**: the capture runs when a visual reviewer is dispatched, and its manifest (each image's key, file,
@@ -567,6 +612,11 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   progress line names; an adapter whose last line is no error line says so, with its exit status or signal and that
   screen. Such a reason holds none of the adapter's own text: the screen is numbered from the capture's own list. Its whole error output is kept, readable by its owner only, as
   `capture-stderr.log` in the head's capture folder, which each new attempt removes as it starts when it can; one it cannot remove is never written into.
+- **An empty capture**: a capture the visual reviewer opened and reported as an empty, logged-out, or data-less page
+  proves nothing of the screen. When `aidrian pr resolve` printed `limited: false`, the session dispatches `designer`
+  under the product-access workflow's checks for the same screens at each width, then ingests the images, never
+  posts them, and has the visual reviewer cite them, with no question to the Human
+  ([Unattended rulings](#unattended-rulings)).
 - **Ingested images**: `aidrian pr ingest` ([Ingesting images](#sign-off-by-the-human)) adds images taken
   elsewhere to the manifest's own `ingested` list, never to the tool's entries. Each key is
   `ingest-<file name>-<6 hex of its hash>`, so the same image under the same file name ingests again in place. The
@@ -1251,6 +1301,21 @@ The stop changes neither the cap nor the rules below: an extra round over a red 
    aidrian pr extend <PR> --human approve|deny [--check <id>]
    ```
 
+   **The unattended rule.** On a check opened under `"auto"`, while the base branch still commits it and the
+   [unattended waiver](config.md#unattended-waiver)'s two switches count for the pull request, an `extend` over a red
+   flag asks no one: it stops the check, `by: "unattended"`, and the cap is `round_limit` with no `question` or
+   `options`. It keeps `raise`, the Human's own command for one more round, so a Human who attends later still has it.
+   For the review step's check, the same review command run again, with the options it was run with, any `--with-bot`
+   included, reports `round_limit`, and offers the waiver's judge only where the waiver's gate lets it run, such as once
+   the review bot passed the current head; otherwise the stop stands with no judge
+   ([At the cap under autopilot](#at-the-cap-under-autopilot));
+   for the bot's, the stop is reported as it stands.
+   The switches are read as the merge guard reads them: the team's `github.unattendedWaiver.allow` from GitHub on the
+   default branch and the base, never the working copy, and this machine's switch. The base's `github.extraRounds` comes
+   from that same read, so a stale local ref never turns the rule on. A read that fails counts as off.
+   The record keeps the judge's reason and one naming the red flags, and the summary comment lists the check as
+   `stopped by the unattended rule (over red flags: ...)`. `"ask"` always asks, and with either switch off, so does `"auto"`.
+
 At the cap that stands, `round_limit` carries a `question`, `options`, and `raise` when the repository is known: the
 question names `<owner>/<name>#<PR>` and `--max-rounds <N>`, its first option starts with "Approve", and `raise` is
 `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` when the step ran the bot
@@ -1329,15 +1394,19 @@ approval names the judge's route: run the review step again with the options it 
 judge's stop, nothing waits for an answer, so the deny names the route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and
 `--max-rounds`, on the Human's answer or typed grant, naming `--repo <owner>/<name>` in a checkout whose remotes name more than one repository.
 The rest is the record's trust: the judge's verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
-signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, never
-a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one
+signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, or
+stops under the unattended rule, never a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one
 listed on the pull request.
 
 ### At the cap under autopilot
 
 Under the `autopilot` skill, and in each issue's session of a [project run](config.md#project-run), no one is there to
 answer at the cap. An extra round goes as [Extra rounds](#extra-rounds) says: under `"ask"`, or over a red flag, it is
-parked as a decision for the Human.
+parked as a decision for the Human. Under `"auto"` with the waiver's switches on, an `extend` over a red flag is
+`round_limit` instead, by [the unattended rule](#extra-rounds), if the check opened under `"auto"` too, the mode its step
+read from the local base ref, so a local base still on `"ask"` asks the Human whatever GitHub holds. The same review
+command run again, with the options it was run with, any `--with-bot` included, reports `round_limit`, and offers the waiver's judge only
+where the waiver's gate below lets it run; otherwise the stop stands with no judge. The bot's cap, from `aidrian pr await-review --request`, offers none and reports the stop.
 What follows on the current head is the [unattended waiver](config.md#unattended-waiver), on one route with no gate command of its own.
 At `extension_check` and at `round_limit`, `aidrian pr review` reports the waiver's gate in its JSON as `waiver`: `{ may, why }`.
 It is the gate `aidrian pr waive <n> --gate` runs, read for the record the step just wrote.
@@ -2051,3 +2120,30 @@ due: with nothing to answer, it has no `replies` field.
   body or a fallback comment has no thread, and its outcome shows in the summary table alone.
 - An inline comment whose review the engine could not read back is mapped by its marker on a later step, so it is
   answered too.
+
+## Plan reviews
+
+The `plan-review` skill reviews a local plan before the build: its security and critical-flow gates and its quorum
+run first, then `planning-agent` critiques the plan and proposes a diff the Human approves. A gate runs again on each
+new revision of the plan, so the skill holds each re-run to a stop rule, in its `steps/reruns.md`:
+
+- **Stop rule.** A re-run with no blocking finding, whose findings are all severity `low` or narrower than the previous run's, approves.
+  A finding is narrower when it names a smaller surface than, or a sub-case of, a finding the previous run raised,
+  and adds no required invariant. A `critical` or `high` finding, a `blocking` quorum objection, or a new required
+  invariant is blocking, so it goes into the critique, as on a first run, even at severity `low`.
+- **Cap.** Each gate, and the quorum, runs at most 3 times in one plan review, the first run included, across its
+  restarts. The session counts the runs it made itself: nothing is written to the plan for the count, and a new plan
+  review counts from one again. A reused ledger counts no run; the stop rule applies to it as to a run, and it is the
+  next one's previous run. Past the cap, the findings that are not blocking are carried, and a blocking one escalates
+  to the Human, as does a plan changed after the last run.
+- **Carry-forward.** A carried finding is never revised for. The approved diff records it under
+  `Implementation notes from plan review:` in the plan's `## Risks`. When the critique proposes a diff, the session checks
+  before the report that it holds each carried finding; it sends the diff back to `planning-agent` once for a missing one,
+  and when one is still missing, it reports it and proposes no diff, so step 5 has nothing to apply.
+  The report after the apply names it as `recorded` or `not recorded in the plan`, whatever the cause, and stops nothing.
+  The `issue-implement` skill, which `plan-implement` runs, gives that list to each slice's `code-reviewer` and
+  `security-engineer`.
+
+The stop rule never drops a required invariant: the rule that a gate's required invariants bind the critique holds
+unchanged, and a `blocked` critical-flow sign-off still stops the run:
+the stop rule decides only where minor findings go. The cap is skill instruction, with no config key.

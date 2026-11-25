@@ -8,6 +8,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 
+import { checkRows } from '../plugins/aidrian/lib/check-runs.mjs';
 import { check, fileIdentity, OVERRIDE } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { appearsAfterFirstStat } from './fixtures/fs-faults.mjs';
 
@@ -530,4 +531,84 @@ test('a folder identity keeps an inode past 2^53 exact, so two folders never sha
     syncBuiltinESMExports();
   });
   assert.notEqual(fileIdentity(path.join(dir, 'a', 'x.md')), fileIdentity(path.join(dir, 'b', 'x.md')));
+});
+
+test('a Tests run deny states the nearest recorded run, and a claim written from those facts clears it', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-runs-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { cwd: dir, encoding: 'utf8' }).trim();
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  writeFileSync(path.join(dir, 'a.txt'), 'a\n');
+  git('init', '-q', '-b', 'feat/x');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'first');
+  const first = git('rev-parse', 'HEAD');
+  const firstTree = git('rev-parse', 'HEAD^{tree}');
+  writeFileSync(path.join(dir, 'a.txt'), 'b\n');
+  git('commit', '-q', '-am', 'second');
+  const head = git('rev-parse', 'HEAD');
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  const judge = (line, runs) => {
+    writeFileSync(path.join(dir, 'body.md'), `## Summary\n\n- x\n\n## Tests run\n\n${line}\n`);
+    return check('gh pr create --draft --title "fix: x" --body-file body.md', { cwd: dir, env: {}, listOpenPrs: () => [], readRuns: () => runs });
+  };
+  const run = (fields) => ({ command: 'npm test', status: 'passed', pass: 12, fail: 0, tree, trackedTree: tree, untrackedCode: [], ...fields });
+  const older = run({ tree: firstTree, trackedTree: firstTree });
+  // A commit HEAD's history does not hold, so the log search cannot find it.
+  const side = git('commit-tree', git('mktree'), '-m', 'side');
+  const sideTree = git('rev-parse', `${side}^{tree}`);
+  const atSide = run({ tree: sideTree, trackedTree: sideTree });
+  // Another commit of HEAD's tree: the one the claim names is stated, not the one the log search finds.
+  const twin = git('commit-tree', tree, '-m', 'twin');
+  const noCite = 'Report that outcome, or get a passing run.';
+  const cite = 'Cite one finished run: its command as written in the call that ran it, its counts, and its commit.';
+
+  // [the line, the record, the command as the call wrote it, the counts and the commit the deny must state]
+  const spaced = "node --test 'test with space.js'";
+  const key = checkRows({ command: spaced, cwd: dir, output: 'ℹ pass 12\nℹ fail 0\n', exitZero: true, tree: () => ({ tree, trackedTree: tree, untrackedCode: [] }) })[0].command;
+  for (const [line, runs, command, commit] of [
+    ['- `npm test`: 11 pass', [run({})], 'npm test', head],
+    ['- `npm test`: 12 pass', [older], 'npm test', first],
+    [`- \`npm test\` at ${first.slice(0, 12)}: 11 pass`, [older], 'npm test', first],
+    [`- \`npm test\` at ${head}: 12 pass`, [older], 'npm test', first],
+    ['- `aidrian test changed`: 12 pass', [run({ command: 'aidrian test changed --base origin/main' })], 'aidrian test changed --base origin/main', head],
+    ['- `node --test`: 12 pass', [run({ command: key })], spaced, head],
+    [`- \`npm test\` at ${side.slice(0, 12)}: 11 pass`, [atSide], 'npm test', side],
+    [`- \`npm test\` at ${twin}: 11 pass`, [run({})], 'npm test', twin],
+  ]) {
+    const reason = judge(line, runs);
+    const facts = /What the record shows: For `[^`]+`, the nearest recorded run is of `([^`]+)`: passed, (\d+) pass, (\d+) fail; at commit ([0-9a-f]{40})\. (.+)$/mu.exec(reason);
+    assert.ok(facts, `${line}\n${reason}`);
+    assert.deepEqual([facts[1], facts[4], facts[5]], [runs[0].command, commit, cite], line);
+    const written = `- \`${command}\` at ${facts[4]}: ${facts[2]} pass, ${facts[3]} fail`;
+    assert.equal(judge(written, runs), null, `a claim written from the facts clears the rule: ${written}`);
+  }
+
+  // A run whose record holds no counts supports a pass that states none.
+  const uncounted = [run({ pass: null, fail: null, tree: firstTree, trackedTree: firstTree })];
+  assert.ok(judge('- `npm test`: pass', uncounted).includes(`passed, no counts; at commit ${first}. ${cite}`));
+  assert.equal(judge(`- \`npm test\` at ${first}: pass`, uncounted), null);
+
+  // A passing run whose commit is not found: how to get one to cite.
+  const unfound = judge('- `npm test`: 12 pass', [run({ tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) })]);
+  assert.ok(unfound.includes("passed, 12 pass, 0 fail; its files' commit not found among HEAD's last 100, or git could not list them. "
+    + 'Commit the files it ran on and cite that commit, or run it at the commit you cite.'), unfound);
+  // A line that names a tree id, which is no commit, is still judged at that tree.
+  assert.match(judge(`- \`npm test\` at ${firstTree}: 11 pass`, [older]) ?? '', /^Blocked/u);
+  assert.equal(judge(`- \`npm test\` at ${firstTree}: 12 pass`, [older]), null);
+
+  // Runs that support no pass claim: the facts, and no instruction to cite them.
+  for (const [runs, said] of [
+    [[], 'the record holds no finished run of it: a run in the background, inside `sh -c` or `$( )`, or in another session leaves no row.'],
+    [[run({ pass: 0 })], `passed, 0 pass, 0 fail; at commit ${head}; it recorded zero passes, which supports no pass.`],
+    [[run({ status: 'failed', pass: 0 })], `failed, 0 pass, 0 fail; at commit ${head}; it recorded zero passes, which supports no pass.`],
+    [[run({ status: 'failed', pass: 11, fail: 1 })], `failed, 11 pass, 1 fail; at commit ${head}.`],
+    [[run({ status: 'unjudged', pass: null, fail: null })], `unjudged, no counts; at commit ${head}; its output showed no count and its exit status is unknown.`],
+  ]) {
+    const reason = judge('- `npm test`: 12 pass', runs);
+    assert.match(reason, /^Blocked: the `## Tests run` section says `npm test` passed, but no run of it/u, 'the first sentence the dispatch log keys on stays');
+    assert.ok(reason.includes(`${said} ${noCite}`), reason);
+    assert.ok(!reason.includes(cite), reason);
+  }
 });

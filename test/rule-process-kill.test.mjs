@@ -745,6 +745,27 @@ test('a listing deny names first the exact command to run instead, and that comm
   }
 });
 
+test('a listing filtered by a quoted pattern with an unmatched parenthesis gets no whole-line replacement', () => {
+  const { decision, reason } = decideForCommand("ps aux | grep 'foo)'", NO_OVERRIDE);
+  assert.equal(decision, 'deny');
+  assert.ok(!reason.includes('Run this instead'), reason);
+});
+
+test('each top denied listing shape of issue 130 is denied with a replacement that passes', () => {
+  for (const [command, replacement] of [
+    ['ps -axo pid,etime,command | grep -E "node --test|aidrian test" | grep -v grep | head', "pgrep -d, -f 'node --test|aidrian test' | xargs -r ps -o pid=,etime=,ucomm= -p | head"],
+    ['tail -5 changed.log; pgrep -fl "aidrian test changed" | head -3', "tail -5 changed.log; pgrep -d, -f 'aidrian test changed' | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p | head -3"],
+    ['ps -o pid=,etime=,command= -p 69650 | cut -c1-200', 'ps -p 69650 -o pid=,etime=,ucomm= | cut -c1-200'],
+    ['uptime; ps -Ao pcpu,comm | sort -rn | head -6', 'uptime; ps -A -o pcpu,ucomm | sort -rn | head -6'],
+  ]) {
+    const { decision, reason } = decideForCommand(command, NO_OVERRIDE);
+    assert.equal(decision, 'deny', command);
+    assert.ok(reason.includes(`Run this instead:\n\n  ${replacement}\n`), `${command}\n${reason}`);
+    assert.equal(check(replacement, { env: NO_OVERRIDE }), null, replacement);
+    assert.equal(grepChainCheck(replacement, { env: {} }), null, replacement);
+  }
+});
+
 // bash -n: the line parses. Skipped where bash is missing.
 function assertParses(line) {
   const result = spawnSync('bash', ['-n', '-c', line], { encoding: 'utf8' });

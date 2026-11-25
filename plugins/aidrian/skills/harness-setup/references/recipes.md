@@ -35,7 +35,9 @@ also run whole tracker projects with no one watching? Two choices, in this order
 - `github.requiredChecks`: put the names of the CI checks the project's workflows run on a pull request in place of `"test"`.
   With none found, leave the key out, and the report says auto-merge stays off until it names one.
 - `full-autonomy`, `full-autonomy-solo`, and `autopilot`: put the project's web screens in place of the placeholder target in `review.visual.targets`,
-  one target per group of screens, each with its files' globs and the routes that show them. `review.visual.platform`
+  one target per group of screens, each with its files' globs and the routes that show them. Where the file path says the
+  route, give `routeFrom` (a `re:` pattern and a route template) in place of listed routes, so a new screen needs no
+  config change, and set `requires.aidrian` to the running plugin's version. `review.visual.platform`
   takes only `"web"`: with no web screen, such as a native-only app, leave out `review.visual` and still set
   `review.productFeedback` with `files`, and the report says no capture covers its screens. Set
   `review.productFeedback.files` to the project's UI file patterns: every screen component, the hooks and helpers beside

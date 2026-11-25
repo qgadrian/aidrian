@@ -32,17 +32,18 @@ import { resolveAutoMerge } from './config-local.mjs';
 import { pluginRepository } from './config-version.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
+import { humanMergeLines } from './project-human-merges.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
-import { mayFollowTeamDefault, projectId } from './project.mjs';
+import { isPluginRepository, mayFollowTeamDefault, projectId } from './project.mjs';
 import { recordedDecision } from './project-decision.mjs';
 import { fullAutoLines } from './project-full-auto.mjs';
 import { holdLines } from './project-forge-holds.mjs';
 import { readRecordedDecision } from './project-decision-store.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
-import { activeRuns, landedLine, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, SERIAL, splitLanded, teamsNote } from './project-run.mjs';
+import { activeRuns, landedLine, landedStates, mayStart, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, SERIAL, splitLanded, teamsNote } from './project-run.mjs';
 import { landedPull, openPullHead } from './project-result.mjs';
 import { parallelOf, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, commitProblem, guardedFolders, hostStartProblem, PROBE_BRANCH } from './project-start.mjs';
@@ -364,8 +365,9 @@ function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
 // `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote). For each issue that may
 // still start whose decision this machine's recorded-decision store holds, while the team's policy turns the store on as
 // start reads it, a `recorded-decision` line (decisionChecks), none while the state folder fails runPlace, which is a
-// `blocker snapshot` line of its own, as init refuses it.
-// Exit 1 on any blocker.
+// `blocker snapshot` line of its own, as init refuses it. After the resumed and landed lines, a `needs your merge` line
+// for each merge the run leaves to the Human that init names too (project-human-merges.mjs humanMergeLines), which
+// blocks nothing. Exit 1 on any blocker.
 export function snapshotCheck({ project, config, file, session = null, env = process.env, home, forge = null }) {
   const read = readSnapshotInput(file, refNames(project, config));
   if (!read.snapshot) return { exitCode: 1, out: read.problems.slice(0, 50).map((problem) => `blocker snapshot: ${problem}`), err: ['aidrian project init --check: fix the snapshot input, then check it again'] };
@@ -380,24 +382,24 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   const repository = pinnedRepository(project);
   const policy = repository ? teamPolicy(project, repository, facade) : { problem: 'origin names no forge repository, so the forge\'s config cannot be read' };
   // An issue init takes in as landed is done for the plan, as the issue row init writes for it makes it.
-  const plan = planRun(resumed.length ? { ...read.snapshot, resumed } : read.snapshot, new Map(landed.map(({ key }) => [key, { state: 'done', decision: null }])), { maxParallel: policy.problem ? SERIAL : parallelOf(policy) });
+  const plan = planRun(resumed.length ? { ...read.snapshot, resumed } : read.snapshot, landedStates(landed), { maxParallel: policy.problem ? SERIAL : parallelOf(policy) });
   const blockers = [...[...problems, ...resumedProblems(read.snapshot, resumed)].map((problem) => `blocker snapshot: ${problem}`), ...plan.blocked.filter(({ reason }) => reason === 'cycle' || reason === 'status')
     .map(({ key, reason, on }) => `blocker snapshot: ${key} is ${reason === 'cycle' ? `in a cycle of blockers, ${on.join(', ')}, so it never starts` : `${on[0]} in the tracker, which a run does not start from`}`)];
   const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : {};
-  // The issues that may still start: ready now, or once their blockers are done; never a canceled or skipped one, a
-  // cycled one, or one whose status a run does not start from, each of which never needs its text.
-  const mayStart = new Set([...plan.ready, ...plan.blocked.filter(({ reason }) => reason === 'waiting').map(({ key }) => key)]);
+  // The issues that may still start: any other one never needs its text.
+  const startable = mayStart(plan);
   // A state folder init would refuse is a blocker of its own, whatever else passes, and then no recorded decision is
   // named as standing: the run that would read it cannot be made there.
   if (place.problem) blockers.push(`blocker snapshot: ${place.problem}`);
-  const decisions = place.problem ? { blockers: [], notes: [] } : decisionChecks({ policy, base, mayStart, texts: kept.texts, project, env });
+  const decisions = place.problem ? { blockers: [], notes: [] } : decisionChecks({ policy, base, mayStart: startable, texts: kept.texts, project, env });
   blockers.push(...decisions.blockers);
   if (!trackerReachable(base)) {
-    blockers.push(...read.snapshot.issues.filter((issue) => mayStart.has(issue.key) && !kept.texts[issue.key])
+    blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !kept.texts[issue.key])
       .map((issue) => `blocker texts: ${issue.key} has no text, and projectRun.mcpServers holds no tracker server its session could read it through; read it in this session with the tracker's own issue read, whose answer the run records`));
   }
   const teams = teamsNote(read.snapshot);
-  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...(resumed.length ? [resumedLine(resumed)] : []), ...(landed.length ? [landedLine(landed)] : []), ...blockers, ...decisions.notes, ...nextLines(plan), ...(teams ? [`note teams: ${teams}`] : [])];
+  const merges = humanMergeLines({ forge: facade, repository, prefix: () => knownPrefix(project.root), pluginRepository: isPluginRepository(project), resumed, startable, texts: kept.texts });
+  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...(resumed.length ? [resumedLine(resumed)] : []), ...(landed.length ? [landedLine(landed)] : []), ...merges, ...blockers, ...decisions.notes, ...nextLines(plan), ...(teams ? [`note teams: ${teams}`] : [])];
   return blockers.length ? { exitCode: 1, out, err: ['aidrian project init --check: clear each blocker, then check again'] } : { exitCode: 0, out, err: [] };
 }
 

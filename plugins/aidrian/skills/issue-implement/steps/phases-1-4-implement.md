@@ -69,6 +69,8 @@ For each slice:
    and in parallel `security-engineer` when the slice crosses a trust boundary or touches auth,
    sessions, tokens, tenancy, payments, webhooks, uploads, redirects, untrusted content, or privileged access.
    `architect` only when the shape changed materially or `code-reviewer` asks for it.
+   When the plan's `## Risks` holds `Implementation notes from plan review:`, each reviewer's brief carries that list:
+   the findings `plan-review` carried instead of revising the plan for them, to check against this slice's diff.
 7. **Findings.** Take each through the `orchestration` skill § 4. Before a `fix_now` goes to the owner, check that
    the cited file or symbol exists as cited, that the preferred pattern appears in two other places or in a knowledge doc,
    and that the fix stays inside the acceptance criteria, or is a small gap phase 4 lets the slice fix.

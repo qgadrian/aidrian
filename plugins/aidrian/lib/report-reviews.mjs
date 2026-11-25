@@ -209,7 +209,8 @@ export function formatReviews(result, { since = null } = {}) {
 
 // The checks at the review-round cap (lib/review/extension.mjs), from the dispatch log's `review_extension` rows written
 // since `sinceMs`. Each pull request's round counts once, by its last decision: { checks, over_flags, granted_over_flags,
-// signals, stopped_by_signals, stopped_by_judge, stopped_by_ceiling, granted, granted_by_human, denied, waiting }.
+// signals, stopped_by_signals, stopped_by_judge, stopped_by_ceiling, stopped_by_unattended, granted, granted_by_human,
+// denied, waiting }. `stopped_by_unattended` counts the extends over a red flag the unattended rule stopped.
 // `over_flags` counts the checks whose last row carries red flags, which go to the judge, and `granted_over_flags` those
 // granted all the same; `signals` counts each red flag. `stopped_by_signals` counts the mechanical stops of rows from
 // older versions, and `unreadable` is such a stop whose history held no signal.
@@ -235,6 +236,7 @@ export function extensionSummary(rows, { sinceMs = 0 } = {}) {
     stopped_by_signals: count(mechanical),
     stopped_by_judge: count((row) => row.outcome === 'stopped' && row.by === 'judge'),
     stopped_by_ceiling: count((row) => row.outcome === 'stopped' && row.by === 'ceiling'),
+    stopped_by_unattended: count((row) => row.outcome === 'stopped' && row.by === 'unattended'),
     granted: count((row) => row.outcome === 'granted'),
     granted_by_human: count((row) => row.outcome === 'granted' && row.by === 'human'),
     denied: count((row) => row.outcome === 'denied'),
@@ -247,9 +249,10 @@ export function formatExtensions(summary, { since = null } = {}) {
   if (!summary?.checks) return null;
   const flags = Object.entries(summary.signals).map(([name, count]) => `${name} ${count}`).join(', ');
   const mechanical = summary.stopped_by_signals ? `${summary.stopped_by_signals} stopped by the signals, ` : '';
+  const unattended = summary.stopped_by_unattended ? `${summary.stopped_by_unattended} stopped by the unattended rule, ` : '';
   return `Extra rounds${since ? ` since ${since}` : ''}: ${plural(summary.checks, 'check')} at the round cap; ` +
     `${summary.over_flags} with red flags${flags ? ` (${flags})` : ''}, ${summary.granted_over_flags} granted over them; ` +
-    `${mechanical}${summary.stopped_by_judge} stopped by the judge, ` +
+    `${mechanical}${unattended}${summary.stopped_by_judge} stopped by the judge, ` +
     `${summary.stopped_by_ceiling} at the ceiling; ${summary.granted} granted (${summary.granted_by_human} by the Human), ` +
     `${summary.denied} denied, ${summary.waiting} waiting`;
 }

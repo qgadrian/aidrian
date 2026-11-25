@@ -1477,12 +1477,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   writes anything and names a target that climbs with `..` from a folder it names, as `<worktree>/a/out/../x`,
   `"$d/../x"`, or `~/a/../x`, by a file tool, a redirect, a writer, a glob, a removal, a mode change, or a link, is
   refused first, whatever the folder is: the system takes that `..` from where a link there leads, and the guard's
-  readers fold it as text, which may name another file. The refusal allows one way on: name the file the path really
-  leads to by its plain path, without `..`, in the command or through the host's file tool, when the session may write
-  that file. A target that starts with `..` climbs from the call's own folder, which the host names as the system
-  resolves it, and is placed as usual. In an interpreter's code, where a quote or an escape may end a path anywhere,
-  any `/..` counts, `../../x` and `a/..draft` included, in text the code only puts in a file too, such as an import;
-  the refusal quotes the run of characters around the first one. It writes only:
+  readers fold it as text, which may name another file. The refusal allows one way on, for a file the session may
+  write: name the file the call is meant to write by the plain path it really has, with no `..` in the command, or write
+  it through the host's file tool, whose text may hold `..`. A target that starts with `..` climbs from the call's own
+  folder, which the host names as the system resolves it, and is placed as usual. In an interpreter's code, where a
+  quote or an escape may end a path anywhere, any `/..` counts, `../../x` and `a/..draft` included, in text the code
+  only puts in a file too, such as an import; the refusal quotes the run of characters around the first one. It writes
+  only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names: a linked worktree from any folder inside it, such as a package of a
     monorepo, and the main checkout only from its own top, so a removed worktree's folder left as a plain one inside the

@@ -647,7 +647,8 @@ export function claimFix({ key, counts }, runs, { tree, commitOf = () => null, n
   const passed = (run) => run.status === 'passed' && run.pass !== 0;
   const passes = (run) => (typeof run.pass === 'number' ? `${run.pass} passes` : 'a pass');
   const keep = named ? `, and keep "at ${named.slice(0, 7)}"` : '';
-  const rerun = `rerun it in the foreground at HEAD${named ? ` and drop "at ${named.slice(0, 7)}" from the line` : ''}`;
+  const drop = named ? ` and drop "at ${named.slice(0, 7)}" from the line` : '';
+  const rerun = `rerun it, the exact command copied from its own shell call, in the foreground at HEAD${drop}`;
   const here = own.filter((run) => passed(run) && atTree(run, tree)).at(-1);
   if (here) return `its run at these files printed ${passes(here)}, and the line states ${counts.join(', ')}: write the count it printed${keep}.`;
   const runner = key.split(' ')[0];
@@ -661,10 +662,11 @@ export function claimFix({ key, counts }, runs, { tree, commitOf = () => null, n
     const commit = commitOf(earlier.tree) ?? (earlier.untrackedCode?.length ? null : commitOf(earlier.trackedTree));
     if (!commit) return `its last pass was of other files, and no commit among HEAD's last 100 holds them, or git could not list them: ${rerun}.`;
     return `its last pass was of commit ${commit.slice(0, 7)}, and the files have changed since: ${rerun}, ` +
-      `or say which commit it ran on, with "at ${commit.slice(0, 7)}" in the line.`;
+      `or say which commit it ran on, with "at ${commit.slice(0, 7)}" in the line${named ? ` in place of "at ${named.slice(0, 7)}"` : ''}.`;
   }
   const last = own.at(-1);
-  if (last?.status === 'passed') return `its run finished and ran zero tests: check the test selection, such as its file paths or name pattern, then ${rerun}.`;
+  // A run of no tests is a pass when the line's status was its own, and a failure by its counts behind a pipe (runStatus).
+  if (last?.pass === 0 && !last.fail) return `its run finished and ran zero tests: check the test selection, such as its file paths or name pattern, then ${rerun}.`;
   if (last?.status === 'unjudged') {
     return 'its runs printed no test count in the output the call returned, as when a `tail` cuts the summary or a redirect ' +
       `sends it to a file, and a pipe or \`;\` hid their exit status: ${rerun}, with its summary in the output and nothing ` +
@@ -672,5 +674,5 @@ export function claimFix({ key, counts }, runs, { tree, commitOf = () => null, n
   }
   if (last?.status === 'failed') return `its last run failed, and a failed run is no pass: fix what failed, then ${rerun}.`;
   return 'no shell call of this session finished it, and a run in the background, inside `sh -c` or `$( )`, or in another ' +
-    `session leaves no row: ${rerun}, as a call of its own.`;
+    `session leaves no row: run the command the line names in the foreground at HEAD, as a call of its own${drop}.`;
 }

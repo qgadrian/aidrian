@@ -190,6 +190,32 @@ test('clearing a stale snapshot removes nothing through a .prior that is a link'
   assert.equal(readFileSync(kept, 'utf8'), 'not this folder\'s\n');
 });
 
+test('the stale clear keeps a snapshot changed after the call started, and removes an older one', (t) => {
+  const dir = tempDir(t);
+  const lone = path.join(dir, '2026-01-02-lone.md');
+  mkdirSync(path.dirname(snapshotPath(lone)));
+  writeFileSync(snapshotPath(lone), 'published by another snapshot\n');
+  const { mtimeMs } = statSync(snapshotPath(lone));
+  assert.equal(takeSnapshot(lone, undefined, { now: () => mtimeMs - 1000 }), null);
+  assert.equal(readFileSync(snapshotPath(lone), 'utf8'), 'published by another snapshot\n', 'a newer snapshot stays');
+  assert.equal(takeSnapshot(lone, undefined, { now: () => mtimeMs + 1000 }), null);
+  assert.equal(existsSync(snapshotPath(lone)), false, 'an older snapshot is cleared');
+});
+
+test('a pipe swapped in between the look and the open returns at once with the not-regular message', { timeout: 10_000 }, (t) => {
+  const dir = tempDir(t);
+  const file = write(dir, '2026-01-02-widget.md', brief());
+  mkdirSync(path.join(dir, '.prior'));
+  writeFileSync(snapshotPath(file), brief());
+  const swap = (snapshot) => {
+    rmSync(snapshot);
+    assert.equal(spawnSync('mkfifo', [snapshot]).status, 0, 'mkfifo made the pipe');
+  };
+  const taken = takeSnapshot(file, undefined, { beforeOpen: swap });
+  assert.equal(taken.problem, `cannot be saved: ${snapshotPath(file)} is not a regular file, and a snapshot replaces nothing: remove it and run snapshot again`);
+  assert.equal(lstatSync(snapshotPath(file)).isFIFO(), true, 'the pipe is kept');
+});
+
 test('a folder at the snapshot name with nothing to snapshot exits 2 with a message, not a stack trace', (t) => {
   const dir = tempDir(t);
   const file = path.join(dir, '2026-01-02-lone.md');

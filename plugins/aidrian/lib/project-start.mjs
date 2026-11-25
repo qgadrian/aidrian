@@ -319,7 +319,7 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
   if (url.status !== 0) return failed('origin', url);
   // No template: a template folder, from GIT_TEMPLATE_DIR or init.templateDir, could put a commondir or hooks in the git
   // folder. The hooks folder is made empty instead, so the sandbox's write denial has a path to hold.
-  const cloned = git(['clone', '--quiet', '--template=', '--shared', '--no-checkout', '--separate-git-dir', gitFolder, main, work], folder);
+  const cloned = git(['clone', '--quiet', ...UNPACKED.flatMap(([key, value]) => ['--config', `${key}=${value}`]), '--template=', '--shared', '--no-checkout', '--separate-git-dir', gitFolder, main, work], folder);
   if (cloned.status !== 0) return failed('clone', cloned);
   try {
     mkdirSync(path.join(gitFolder, 'hooks'), { mode: 0o700 });
@@ -328,7 +328,7 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
   }
   const origin = git(['remote', 'set-url', 'origin', url.stdout.trim()]);
   if (origin.status !== 0) return failed('origin', origin);
-  const unsigned = setUnsigned(work, env) ?? setLocal(work, UNPACKED, env);
+  const unsigned = setUnsigned(work, env);
   if (unsigned) return failed('config', unsigned);
   let from = tip;
   // The commit the forge's branch is at, which the start row records for the next attempt's check.
@@ -530,15 +530,12 @@ function sparseMarks({ work, gitFolder, indexed, git }) {
 export const UNSIGNED = Object.freeze([['commit.gpgsign', 'false'], ['tag.gpgsign', 'false']]);
 
 // The keys that keep git from packing objects on its own in each attempt's clone, in its own config: a kept clone's
-// commits are taken from its loose objects alone (project-kept.mjs).
-export const UNPACKED = Object.freeze([['gc.auto', '0'], ['maintenance.auto', 'false']]);
+// commits are taken from its loose objects alone (project-kept.mjs). The clone call itself sets them, with no call more.
+const UNPACKED = Object.freeze([['gc.auto', '0'], ['maintenance.auto', 'false']]);
 
 // Sets UNSIGNED in the own config of the checkout `work`, under `env`: null, or the git call that failed.
-export const setUnsigned = (work, env = process.env) => setLocal(work, UNSIGNED, env);
-
-// Sets the config `pairs` in the own config of the checkout `work`, under `env`: null, or the git call that failed.
-function setLocal(work, pairs, env) {
-  for (const [key, value] of pairs) {
+export function setUnsigned(work, env = process.env) {
+  for (const [key, value] of UNSIGNED) {
     const set = gateGit(['config', '--local', key, value], work, { timeout: 30_000, env });
     if (set.status !== 0) return set;
   }

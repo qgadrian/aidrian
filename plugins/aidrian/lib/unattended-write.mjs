@@ -833,7 +833,7 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   const own = `${cwd.endsWith(path.sep) ? cwd.slice(0, -1) : cwd}${path.sep}`;
   const climb = spelledTargets.map((each) => climbIn(each.startsWith(own) ? each.slice(own.length) : each)).find(Boolean)
     ?? names.filter((_, i) => code[i] === true).map((each) => climbIn(each, true)).find(Boolean);
-  if (climb) return say.deny('unattended write through a climbing path', `it ${say.verb} a file and names \`${climb.slice(0, CLIMB_SHOWN)}\`, a path that climbs with \`..\` from a folder it names, which a link there would lead elsewhere than the text says, and no Human attends this session`, CLIMB_REMEDY);
+  if (climb) return say.deny('unattended write through a climbing path', `it ${say.verb} a file and names \`${climb.slice(-CLIMB_SHOWN)}\`, a path that climbs with \`..\` from a folder it names, which a link there would lead elsewhere than the text says, and no Human attends this session`, CLIMB_REMEDY);
   const found = places();
   if (!found) return say.unknown();
   say.hold(found);
@@ -920,9 +920,10 @@ function pathDenial(spelled, found, say) {
   return null;
 }
 
-// How much of a climbing path a refusal shows, and the one way to the same result it allows.
+// How much of a climbing path a refusal shows, its end, where the `..` is, and the one way to the same result it allows:
+// the file the path leads to, since past a link the text without its `..` names another file.
 const CLIMB_SHOWN = 120;
-const CLIMB_REMEDY = 'name the path plainly, without `..`, in this command or through the host\'s file tool on a file this session may write';
+const CLIMB_REMEDY = 'name the file the path really leads to by its plain path, without `..`, in this command or through the host\'s file tool, when this session may write that file';
 
 // A path in `text`, a target as a reader spells it, that climbs with `..` from a folder it names, as `a/link/../x`,
 // `a/./../x`, `a//../x`, or `$d/..`, as the text from the start to that `..`, or null: the system takes the `..` from

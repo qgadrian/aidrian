@@ -385,6 +385,55 @@ test('a pass claim names a test command and a pass, and never a failure, an unfi
   assert.deepEqual(passClaims('`npm test` on Node 22 pass', { section: null })[0].counts, [], 'a number after a word is a name');
 });
 
+// The claims of `lines` as a pull request body and as a subagent's report, which read the same here, as [key, counts] pairs.
+const claimPairs = (lines) => {
+  const body = passClaims(BODY(lines), { testing: TESTING });
+  const report = passClaims(lines.join('\n'), { section: null, ownOnly: true, testing: TESTING });
+  assert.deepEqual(report, body, 'a body and a report read it the same');
+  return body.map(({ key, counts }) => [key, counts]);
+};
+const TABLE_RUNS = [
+  { command: 'npm test', status: 'passed', pass: 35, fail: 0, tree: 't', trackedTree: 't' },
+  { command: 'vitest run', status: 'passed', pass: 34, fail: 0, tree: 't', trackedTree: 't' },
+];
+
+test('each row of a Markdown table is its own claim, held to its own counts', () => {
+  const table = (second) => ['| Command | Result |', '| --- | :-: |', '| `npm test` | 35 passed |', `| \`vitest run\` | ${second} passed |`];
+  assert.deepEqual(claimPairs(table(34)), [['npm test', [35]], ['vitest run', [34]]]);
+  for (const read of [(lines) => passClaims(BODY(lines)), (lines) => passClaims(lines.join('\n'), { section: null, ownOnly: true })]) {
+    assert.deepEqual(unsupportedClaims(read(table(34)), TABLE_RUNS, { tree: 't' }), [], 'two true rows');
+    assert.deepEqual(unsupportedClaims(read(table(99)), TABLE_RUNS, { tree: 't' }).map(({ key, counts }) => [key, counts]),
+      [['vitest run', [99]]], 'only the row whose count the record does not hold');
+  }
+  assert.deepEqual(claimPairs(['| Command | Result |', '|---|---|', '| `npm test` | 1 failed |', '| `vitest run` | 34 passed |', '', '`pytest` passed']),
+    [['vitest run', [34]], ['pytest', []]], 'a failure is its row\'s own, and a blank line ends the table');
+});
+
+test('a table row reads with its header cells, so a pass word in the header is a claim of each row', () => {
+  assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '| `npm test` | 35 |', '| `vitest run` | 34 |']), [['npm test', [35]], ['vitest run', [34]]]);
+  assert.deepEqual(claimPairs(['Command | Tests passed', '--- | ---', '`npm test` | 35']), [['npm test', [35]]], 'no outer pipes');
+  assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '| `npm test` |']), [['npm test', []]], 'a row short of a cell');
+  assert.deepEqual(claimPairs(['| Command | Pass/fail |', '| --- | --- |', '| `npm test` | 35/0 |']), [['npm test', [35]]], 'no failure is read of it');
+  assert.deepEqual(claimPairs(['| Command | Notes | Passed |', '| --- | --- | --- |', '| `npm test` | Run once. | 35 |']), [['npm test', [35]]],
+    'a cell\'s closing period ends no clause');
+  assert.deepEqual(claimPairs(['| Suite | `npm test` |', '| --- | --- |', '| Result | 35 passed |']), [['npm test', [35]]], 'a command in the header');
+  assert.deepEqual(claimPairs(['| `npm test` passed |', '| --- |']), [['npm test', []]], 'a claim in the header of a table of no rows');
+  assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '| `npm test \\| tail -5` | 35 |', '| `vitest run | cat` | 34 |']),
+    [['npm test', [35]], ['vitest run', [34]]], 'an escaped pipe and one inside backticks split no cell');
+});
+
+test('a table under a list item or a paragraph line reads with it, and a row with no delimiter row is a paragraph', () => {
+  const rows = ['| Command | Result |', '| --- | --- |', '| `npm test` | 35 passed |', '| `vitest run` | 34 passed |'];
+  const two = [['npm test', [35]], ['vitest run', [34]]];
+  assert.deepEqual(claimPairs(['The suites ran:', ...rows]), two);
+  assert.deepEqual(claimPairs(['- The suites ran:', ...rows.map((row) => `  ${row}`), '- `pytest` passed']), [...two, ['pytest', []]], 'a list marker ends it');
+  assert.deepEqual(claimPairs([`- ${rows[0]}`, ...rows.slice(1).map((row) => `  ${row}`)]), two, 'the header behind a list marker');
+  assert.deepEqual(claimPairs(['- `npm test`:', '  | Passed | Skipped |', '  | --- | --- |', '  | 35 | 0 |']), [['npm test', []], ['npm test', [35]]],
+    'the command above its table, whose header says a pass, and its row');
+  assert.deepEqual(claimPairs(['All passed:', '| Command | Tests |', '| --- | --- |', '| `npm test` | 35 |']), [['npm test', []]], 'the pass word above its table');
+  assert.deepEqual(claimPairs([rows[0], ...rows.slice(2)]), [['npm test', [35, 34]], ['vitest run', [35, 34]]], 'no delimiter row');
+});
+
 test('a report\'s own claims leave out what it quotes from another source', () => {
   const report = [
     'Read the pull request.',

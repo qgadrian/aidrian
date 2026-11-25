@@ -536,8 +536,8 @@ const COMMIT_ID = /\b(?:(?=[0-9]*[a-f])[0-9a-f]{7,40}|(?<=\b(?:[Aa]t|[Cc]ommit)\
 const PASS_COUNT = /(?<!\b(?!all\b|only\b)[A-Za-z]+\s)\b(\d+)\s*\/\s*\d+\b|(?<!\b(?!all\b|only\b)[A-Za-z]+\s)\b(\d+)\s+(?:tests?\s+)?pass(?:es|ed|ing)?\b|\bpass(?:es|ed)?\s*:?\s+(\d+)\b/giu;
 
 // The claims of a passing test run in the `## <section>` section of `body`, or in the whole of it when `section` is null,
-// outside fenced code: one a clause of a list item or paragraph, its wrapped lines joined, split at `;` and sentence
-// ends, that names a test command and a pass, and neither a failure nor CI. A command is named in backticks, or, for a
+// outside fenced code: one a clause of a list item, paragraph, or table row (units), its wrapped lines joined, split at `;`
+// and sentence ends, that names a test command and a pass, and neither a failure nor CI. A command is named in backticks, or, for a
 // `testing.fullSuite` command, also as plain words.
 // Each is { clause, key, counts, commits }: `key` the command's (commandKey), `counts` the pass counts it states, and
 // `commits` the commit ids it names, such as "at 056c3c2", which the pull request body rule reads the tree of.
@@ -599,19 +599,51 @@ function ownClause(clause, { said, ends }) {
   return kept.join('');
 }
 
-// The list items and paragraphs of `lines`, each one string: a list marker starts one, a blank line or a heading ends it,
-// and any other line continues it, as a wrapped line does.
+const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])\s/u;
+// The cells of a Markdown table row, split at each `|` but an escaped one, which reads as a plain `|`, and one inside
+// backticks.
+const cellsOf = (line) => line.trim().replace(/^\|/u, '').replace(/(?<!\\)\|$/u, '')
+  .replace(/(\\.|`[^`]*`)|\|/gu, (_, kept) => kept ?? '\n').split('\n').map((cell) => cell.replaceAll('\\|', '|').trim());
+const isDelimiterRow = (line = '') => line.includes('|') && cellsOf(line).every((cell) => /^:?-+:?$/u.test(cell));
+
+// A table row's cells, each before its header cell, as "`npm test` Command, 35 Passed": this order reads a count under
+// "Passed", and 35/0 under "Pass/fail" as no failure. A cell's closing `.` or `;` goes, so no clause ends at its label.
+function rowText(cells, labels) {
+  const width = Math.max(cells.length, labels.length);
+  return Array.from({ length: width }, (_, at) => `${(cells[at] ?? '').replace(/(?<![.;])[.;]+$/u, '')} ${labels[at] ?? ''}`.trim())
+    .filter(Boolean).join(', ');
+}
+
+// The list items, paragraphs, and table rows of `lines`, each one string: a list marker starts one, a blank line or a
+// heading ends it, and any other line continues it, as a wrapped line does. A line with a `|` and a delimiter row after
+// it opens a table: each line from there to a blank line, a heading, or a list marker is a row, and one string with what
+// the table stands under, its header and the paragraph it continues, but not with the other rows.
 function units(lines) {
   const out = [];
   let open = null;
-  for (const line of lines) {
+  let labels = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (line.trim() === '' || /^\s{0,3}#/u.test(line)) {
       open = null;
-    } else if (open === null || /^\s*(?:[-*+]|\d+[.)])\s/u.test(line)) {
+      labels = null;
+      continue;
+    }
+    const item = LIST_MARKER.test(line);
+    if (labels && !item) {
+      out.push(`${out[open]}, ${rowText(cellsOf(line), labels)}`);
+      continue;
+    }
+    labels = null;
+    if (open === null || item) {
       out.push(line.trim());
       open = out.length - 1;
     } else {
       out[open] += ` ${line.trim()}`;
+    }
+    if (line.includes('|') && isDelimiterRow(lines[index + 1])) {
+      labels = cellsOf(line.replace(LIST_MARKER, ''));
+      index += 1;
     }
   }
   return out;

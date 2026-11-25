@@ -2546,8 +2546,10 @@ The record keeps its newest rows within 64 KB.
 
 Two checks read it:
 
-- The [pull request body rule](#bash-rules) reads the `## Tests run` section outside fenced code, one list item or
-  paragraph at a time with its wrapped lines joined, split at `;` and sentence ends. A clause that names a test command,
+- The [pull request body rule](#bash-rules) reads the `## Tests run` section outside fenced code, one list item,
+  paragraph, or table row at a time with its wrapped lines joined, split at `;` and sentence ends. A table row is read
+  as its own item, each cell before its header cell, after the header and any line right above it, and apart from the
+  other rows; a line with a `|` and no delimiter row after it is a paragraph. A clause that names a test command,
   in backticks or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or
   "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
   or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. An id of digits

@@ -883,11 +883,13 @@ test('decisions list --added-since flags a pr=none the branch added once its pul
   const { dir, git } = decisionRepo(t, { 'a.md': 'Rule.\n' });
   git('checkout', '-q', '-b', 'feature');
   const noNumber = decided().replace('pr=41', 'pr=none');
-  writeFileSync(path.join(dir, 'docs/a.md'), `Rule.\n${noNumber}\n\nRule.\n${decided('numbered')}\n`);
+  const condition = 'If a case is decided but not implemented in payroll, escalate it.';
+  writeFileSync(path.join(dir, 'docs/a.md'), `Rule.\n${noNumber}\n\nRule.\n${decided('numbered')}\n\n${condition}\n${decided('condition').replace('Rule.', condition)}\n`);
   git('add', '.');
   git('commit', '-q', '-m', 'decide');
   const before = JSON.parse((await run(['decisions', 'list', '--added-since', 'main', '--json'], dir, { ...process.env, PATH: noGh(t) })).stdout);
-  assert.deepEqual([before.problems, before.pullRequest, before.decisions.length], [[], null, 2], 'gh has no answer: nothing to flag');
+  assert.deepEqual([before.problems, before.pullRequest, before.decisions.length], [[], null, 3], 'gh has no answer: nothing to flag');
+  assert.equal(before.decisions[2].newWording, condition, 'words about a build state in a rule are no problem');
   const after = JSON.parse((await run(['decisions', 'list', '--added-since', 'main', '--json'], dir, fakeGh(t, '{"number":7}'))).stdout);
   assert.equal(after.pullRequest, 7);
   assert.deepEqual(after.problems.map(({ doc, line }) => [doc, line]), [['docs/a.md', 2]]);

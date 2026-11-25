@@ -570,6 +570,7 @@ test('the docs say what list --added-since holds and where a symlinked folder st
   assert.match(read('docs/config.md'), scope);
   assert.match(readFileSync(path.join(ROOT, 'plugins/aidrian/lib/decisions-cli.mjs'), 'utf8').split('\n')[6], /decisions, settled, and removed are the branch's; problems may also hold rows marked inherited/u);
   assert.match(read('docs/project-folder.md'), /A doc reached through a symlink is the file it reaches\. At `--added-since` a doc indexed through a symlink is not read, and a new marker in it reports as stray\./u);
+  assert.match(read('plugins/aidrian/skills/knowledge/references/decisions.md'), /\*\*A wording never holds its build state\.\*\*.*a doc step that marks a rule as built edits that text, and no decision line\./u);
   const review = read('plugins/aidrian/skills/decision-review/SKILL.md');
   assert.match(review, /Relay each entry of `notes`/u);
   assert.ok(review.indexOf('`notes`') < review.indexOf('None: say so and stop.'), 'a batch of none must not hide a scan that failed');

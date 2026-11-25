@@ -146,8 +146,9 @@ async function registerAll(context, seams) {
 
 // The routes of `file` whose event `events` names, each with its script's absolute `file`. A route file that cannot be
 // read is a `skip` with status `routes`, and a route whose script is not on disk an `unregistered` line with status
-// `missing`; each keeps a notice. A missing script's route stays, so its call meets the script's absence as a script
-// that does not start (output.mjs run): a blocking route refuses a subagent's call, and a record-only one records
+// `missing`; each keeps a notice. A missing script's route stays, and each call checks for the script again
+// (output.mjs run), so a script restored after setup runs without a restart; until then its call meets the script's
+// absence as a script that does not start: a blocking route refuses a subagent's call, and a record-only one records
 // nothing.
 function routesOf(file, scripts, events, trace, notices) {
   const read = readRoutes(file);
@@ -158,7 +159,7 @@ function routesOf(file, scripts, events, trace, notices) {
   const routes = (read ?? []).filter((route) => Object.hasOwn(events, route.event)).map((route) => ({ ...route, file: path.join(scripts, route.script) }));
   const missing = [...new Set(routes.filter((route) => !isFile(route.file)).map((route) => route.script))];
   for (const script of missing) trace('unregistered', { script, status: 'missing' });
-  if (missing.length > 0) notices.push(`aidrian's hook scripts not on disk do not run in this session, and a subagent's call one of them guards is refused: ${missing.join(', ')}.`);
+  if (missing.length > 0) notices.push(`aidrian's hook scripts not on disk at setup run nothing until restored, as each call checks again, and a subagent's call one of them guards is refused until then: ${missing.join(', ')}.`);
   return routes;
 }
 

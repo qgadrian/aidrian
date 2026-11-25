@@ -444,9 +444,11 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    an effort too, each on its own: the handing-off session's when the host adapter can tell it, else the one
    [`session.handoff.models`](config.md#handoff-models) of the base branch names for this host, else none, so the
    host's default. The model is the one the session's turn started in, read from the last prompt whether or not that
-   prompt carries a mode, so a fallback the host took in the middle of the turn is not handed on. The adapter answers the choice once (`startChoice`), before the first message is built, and
-   the start takes that answer. No gate option, marker, or text of the brief picks either, and a session no Human attends
-   may set no variable on the gate's command ([agent gates](hooks.md#agent-gates)). A handing-off session
+   prompt carries a mode, so a fallback the host took in the middle of the turn is not handed on. The host's own
+   bookkeeping, such as a compaction summary or a task notification, is no prompt. The adapter answers the choice once
+   (`startChoice`), before the first message is built, and the start takes that answer. No gate option, marker, or text of
+   the brief picks either, and a session no Human attends may set no variable on the gate's command
+   ([agent gates](hooks.md#agent-gates)). A handing-off session
    that runs with permission checks bypassed starts none, and the handoff goes on by the clear route: a session no
    Human attends never runs that way. When the host cannot tell the mode, none starts either, since the host's default
    may bypass permission checks, and the `fallback:` line says the mode could not be read.

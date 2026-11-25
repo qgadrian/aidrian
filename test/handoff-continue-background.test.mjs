@@ -1595,13 +1595,23 @@ test('a turn starts at a prompt, whether or not it carries a mode, and at no oth
   // A message from a peer, say, carries no mode: the turn it starts is answered by the model the Human switched to.
   const peer = modelRun(t, [userEntry('auto'), modelEntry(OPUS), promptEntry('a message'), modelEntry(FABLE)]);
   assert.deepEqual(peer.args, flags('--model', FABLE), 'the mode is the last named one, and the model the turn\'s own');
-  for (const [why, content] of [['text', 'go on'], ['a text block', [{ type: 'text', text: 'go on' }]], ['an image block', [{ type: 'image', source: {} }]]]) {
-    assert.equal(read(promptEntry(), modelEntry(OPUS), promptEntry(content), modelEntry(FABLE)), FABLE, `${why} starts a turn`);
+  for (const [why, entry] of [
+    ['text', promptEntry()],
+    ['a text block', promptEntry([{ type: 'text', text: 'go on' }])],
+    ['an image block', promptEntry([{ type: 'image', source: {} }])],
+    ['the Human\'s prompt', promptEntry('go on', { origin: { kind: 'human' } })],
+    ['a peer\'s message', promptEntry('a message', { origin: { kind: 'peer' } })],
+  ]) {
+    assert.equal(read(promptEntry(), modelEntry(OPUS), entry, modelEntry(FABLE)), FABLE, `${why} starts a turn`);
   }
   for (const [why, entry] of [
     ['a tool result', toolResult()],
     ['a tool result that carries a mode', toolResult({ permissionMode: 'auto' })],
     ['an entry the host wrote itself', promptEntry('the skill\'s text', { isMeta: true })],
+    ['a compaction summary', promptEntry('This session is being continued from a previous conversation.', { isCompactSummary: true })],
+    ['a task notification', promptEntry('<task-notification>done</task-notification>', { origin: { kind: 'task-notification' } })],
+    ['an interruption marker', promptEntry([{ type: 'text', text: '[Request interrupted by user]' }])],
+    ['an interruption marker of a tool call', promptEntry([{ type: 'text', text: '[Request interrupted by user for tool use]' }])],
     ['a mode entry', { type: 'permission-mode', permissionMode: 'auto', sessionId: SESSION }],
     ['a subagent\'s prompt', promptEntry('go on', { isSidechain: true })],
     ['another session\'s prompt', promptEntry('go on', { sessionId: 'someone-else' })],

@@ -16,6 +16,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { pauseSync } from '../fs.mjs';
+import { isPrompt } from '../names.mjs';
 import { recordTrust } from './claude-code-trust.mjs';
 import { configDir, MODEL_CHOICES } from './claude-code-config.mjs';
 import { configFolder, mcpConfig, npmGlobalConfigs, sandboxSettings, secretVars } from './claude-code-sandbox.mjs';
@@ -213,14 +214,14 @@ function lineTurn(line, session) {
   }
   if (entry === null || typeof entry !== 'object' || entry.isSidechain === true || entry.sessionId !== session) return null;
   if (entry.message === null || typeof entry.message !== 'object') return null;
-  return { prompt: isPrompt(entry), model: entryModel(entry) };
+  return { prompt: startsTurn(entry), model: entryModel(entry) };
 }
 
-// Whether an entry is a prompt, which starts a turn: a `user` entry, but one the host wrote itself (`isMeta`), whose
-// content is text or a list of blocks with no tool result.
-function isPrompt({ type, isMeta, message: { content } }) {
-  if (type !== 'user' || isMeta === true) return false;
-  return typeof content === 'string' || (Array.isArray(content) && !content.some((block) => block?.type === 'tool_result'));
+// Whether an entry is a prompt, which starts a turn: a `user` entry names.mjs reads as a prompt, and not the host's own
+// bookkeeping: one marked isMeta, a compaction summary, or a task notification. The marks are those of transcript.mjs
+// humanPrompt, copied since that file's imports lead back here; unlike it, this counts a message from any other origin.
+function startsTurn({ type, isMeta, isCompactSummary, origin, message }) {
+  return type === 'user' && isMeta !== true && isCompactSummary !== true && origin?.kind !== 'task-notification' && isPrompt(message.content);
 }
 
 // The model an `assistant` entry names: its message's own string, other than NO_MODEL; else null.

@@ -382,13 +382,17 @@ answer as `asked` and reads nothing again:
   and its `message.model` is a string other than `<synthetic>`. The first such entry after the last prompt gives it, the
   model the turn started in, else the nearest earlier one. So a switch the Human made before the last prompt is handed
   on, and a fallback model or a skill's own model in the middle of the turn is not.
-- A prompt is a `user` entry of the session's own, no sidechain entry and not `isMeta`, whose `message.content` is a
-  string, or a list with no `tool_result` block. No `permissionMode` takes part: in a transcript of 2.1.332, 23 of 32
-  prompts, such as messages from other sessions, carried none.
+- A prompt is a `user` entry of the session's own, no sidechain entry, whose `message.content` is a string, or a list
+  with a block and no `tool_result` block. The host's own bookkeeping is none: an entry with `isMeta` or
+  `isCompactSummary` true, one whose `origin.kind` is `task-notification`, and an interruption marker, a text block
+  that starts with `[Request interrupted`. A message of any other origin, such as a peer's, starts a turn, unless the
+  host marks it `isMeta`, as a peer's was on 2.1.330 ([above](#prompts-the-human-typed)). No `permissionMode` takes
+  part: in a transcript of 2.1.332, 23 of 32 prompts, such as messages from other sessions, carried none.
 - That one entry is then held to `claude-<family>-<version>`, the family one of `sonnet`, `opus`, `haiku`, and `fable`,
   the version one or two numbers of at most two digits and at most one date. Any other name, such as one with a
   context-window suffix, gives none, and no other entry is searched for one that passes. A line over 32 MB that holds
-  the `"model"` key gives none either, and so does one that holds `"user"` where the last prompt is looked for. No answer of this read changes the permission mode's.
+  the `"model"` key gives none either, and so does one that holds `"user"` where the last prompt is looked for. No
+  answer of this read changes the permission mode's.
 - The effort is `CLAUDE_EFFORT`, when it is one the adapter names.
 - What the session does not tell is the base branch's [`session.handoff.models.claude`](../config.md#handoff-models),
   held to the adapter's list, where a model is a family's alias such as `opus`; else nothing is passed.

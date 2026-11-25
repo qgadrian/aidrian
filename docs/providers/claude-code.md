@@ -1048,8 +1048,9 @@ sessions the supervisor keeps, while `--all` adds the completed ones it no longe
 - `idle` needs `status: "idle"` with `state` either `done` or `blocked`. A row with no `status`, or in any other
   state, is never idle. On 2.1.331, a background session whose turn ended while a task it started still ran was listed
   with `state: "working"` and `status: "idle"`. It is still at work, so it is not idle. `waiting` is `state: "blocked"`.
-- A `name` or `cwd` that holds a hidden character reads as null. `startedAt` is the listing's number of milliseconds,
-  as every live row gave it, and anything else reads as null.
+- `name`, `cwd`, and `startedAt` pass on as listed, and `backgroundList` cleans them: a `name` or `cwd` that holds a
+  hidden character reads as null, and a `startedAt` that is not the listing's number of milliseconds, as every live
+  row gave it, reads as null.
 - A start record is held when a background row names it: by its full id when it has one, else by the printed id, as
   the row's `id`, its `sessionId`, or the start of its `sessionId`, as `sessionEnded` matches.
 - With no `claude` on PATH, or a listing that gives no answer, both answer `{ problem }`.

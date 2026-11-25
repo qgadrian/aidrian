@@ -316,8 +316,8 @@ export function pushPermission(host, ask) {
 
 // What a host says of the background sessions it holds (docs/providers/adding-a-host.md, capabilities.backgroundSessions).
 // Each wrapper below never throws and answers one of three shapes: the answer; { unsupported, byDesign: true }, a
-// one-line reason the host by design holds no such session, from a host that declares `unsupported` or whose call
-// answers it; or { problem }, a one-line reason it cannot say now, for a host with no capability, a call that throws or
+// one-line reason the host by design holds no such session, from a host that declares `unsupported` as its whole
+// capability; or { problem }, a one-line reason it cannot say now, for a host with no capability, a call that throws or
 // answers a promise, and an answer of the wrong shape.
 const isLine = (text) => plainLine(text) !== null;
 const isRow = (row) => row !== null && typeof row === 'object' && isLine(row.id);
@@ -340,10 +340,7 @@ function askBackground(host, member, ask) {
       Promise.resolve(read).catch(() => {});
       return { problem: LATE };
     }
-    if (read !== null && typeof read === 'object' && !Array.isArray(read)) {
-      if (isLine(read.unsupported)) return { unsupported: read.unsupported, byDesign: true };
-      if (isLine(read.problem)) return { problem: read.problem };
-    }
+    if (read !== null && typeof read === 'object' && !Array.isArray(read) && isLine(read.problem)) return { problem: read.problem };
     return { answer: read };
   } catch {
     return { problem: FAILED };

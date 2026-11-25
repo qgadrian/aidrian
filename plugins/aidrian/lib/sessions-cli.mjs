@@ -1,7 +1,8 @@
 // `aidrian sessions idle [--json]`: the background sessions the harness started, handoff continuations and project run
-// attempts, that a host still holds after their work ended, each with its age and the host's line that says how to stop
-// it (docs/handoff.md#idle-sessions). A session counts as the harness's when an unattended mark names it
-// (unattended-mark.mjs listMarks), and as idle only when its host's listing says so (hosts/index.mjs backgroundList).
+// attempts, that a host still holds while idle, their turn ended or waiting on a response, each with its age and the
+// host's line that says how to stop it (docs/handoff.md#idle-sessions). A session counts as the harness's when an
+// unattended mark names it (unattended-mark.mjs listMarks), and as idle only when its host's listing says so
+// (hosts/index.mjs backgroundList).
 // It is read-only: it calls no stop, writes no file, and sweeps no mark.
 
 import { parseArgs } from 'node:util';
@@ -18,7 +19,7 @@ const MINUTE = 60 * 1000;
 export const commands = {
   sessions: {
     usage: USAGE,
-    about: 'list the background sessions the harness started that a host still holds after their work ended, with the line that stops each; it stops nothing',
+    about: 'list the background sessions the harness started that a host still holds while idle, their turn ended or waiting on a response, with the line that stops each; it stops nothing',
     run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { json: { type: 'boolean' } } });
       if (positionals.length !== 1 || positionals[0] !== 'idle') {
@@ -36,8 +37,8 @@ export const commands = {
 // listing gave none: { idle: [{ host, id, session, name, cwd, startedAt, ageMs, waiting, kind, run, issue, root, stop }],
 // notes: [{ host, problem, byDesign }] }. `host` is the host's name; `startedAt` the host's start time, else the mark's;
 // `kind` 'continuation' or 'attempt', with `run` and `issue` the attempt's; `stop` the host's stop line, or null when
-// the id is not safe to print (SESSION_ID) or the host gives none. A name that is not plain words, and a folder or line
-// that holds a hidden character, read null.
+// the id is not safe to print (SESSION_ID) or the host gives none. A name that is not plain words, a folder that is not
+// printable (printableFolder), and a stop line that holds a hidden character, read null.
 // It asks each host's `list` and `stopLine` and nothing else. `home` is a test's, as in unattended-mark.mjs markFolders.
 export function idleSessions({ hosts = HOSTS, env = process.env, home, now = Date.now(), run } = {}) {
   const marks = listMarks({ env, home, now });
@@ -65,15 +66,16 @@ function markNaming(marks, session) {
   return marks.find((mark) => mark.session === session) ?? marks.find((mark) => markNames(mark.session, session)) ?? null;
 }
 
+// One idle session, from `row` as backgroundList cleaned it and the mark that names it, whose fields no wrapper read.
 function idleRow({ host, name, row, mark, now }) {
   const startedAt = row.startedAt ?? mark.at;
   const attempt = typeof mark.issue === 'string';
   return {
     host: name,
     id: row.id,
-    session: plainLine(row.session),
+    session: row.session,
     name: plainName(row.name),
-    cwd: plainLine(row.cwd) ?? plainLine(mark.cwd),
+    cwd: printableFolder(row.cwd) ?? printableFolder(plainLine(mark.cwd)),
     startedAt,
     ageMs: Math.max(0, now - startedAt),
     waiting: row.waiting,
@@ -97,6 +99,10 @@ function stopLineOf(host, id) {
 // A session's name as the line quotes it: only plain words (handoff-markers.mjs PLAIN_NAME), as every other line that
 // quotes a session's name holds it, so no quote or backtick in it can read as a second stop line.
 const plainName = (name) => (typeof name === 'string' && PLAIN_NAME.test(name) ? name : null);
+
+// A folder the line prints after `in`, given as one line of plain text (backgroundList's, or the mark's through
+// plainLine): only one with no backtick and no colon and space, so no part of it can read as a second stop line.
+const printableFolder = (folder) => (typeof folder === 'string' && !folder.includes('`') && !folder.includes(': ') ? folder : null);
 
 // The lines a person reads (docs/handoff.md#idle-sessions): `none` when no session is idle and no host
 // failed, one `idle` line for each session, and one `note` line for each host whose listing failed. A host that holds

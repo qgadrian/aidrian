@@ -333,14 +333,11 @@ Codex residuals, each open until the live checks hold:
 The harness starts a background session here only for a project run's attempt, a detached `codex exec --json`
 process; Codex has no handoff route. `codex exec` runs one turn and exits, so no session stays idle after its work, and
 one that hangs is still running, which `aidrian project wait` stops as a lingering or overdue one.
-So the adapter's `capabilities.backgroundSessions` ([the adapter's fields](adding-a-host.md#the-adapters-fields)) has
-a `list` that answers `{ unsupported }` with that reason, which `backgroundList` passes on as `byDesign: true`, never
-as a failure. Codex lists no sessions, and its `held` reads the process table for each start record instead
-(`heldProcesses` in `lib/hosts/codex-exec.mjs`): held while the process its `pid-<pid>-<start digest>` id names runs,
-not held once that process is gone, a zombie, or a process that started at another time, and null for an id that names
-no process or a table that cannot be read. `stopLine` is the project start's, and a run stops a session it holds with
-the project start's `stop`.
-Verified by `node --test` on a stand-in process table (`test/adapters.test.mjs`); no live `codex exec` has run it.
+So the adapter's `capabilities.backgroundSessions` ([the adapter's fields](adding-a-host.md#the-adapters-fields)) is
+`{ unsupported }` with that reason and nothing else, which `backgroundList` and `backgroundHeld` pass on as
+`byDesign: true`, never as a failure: `aidrian sessions idle` prints nothing for Codex, and `aidrian project wait`
+and `end` stop no settled attempt's session there and print no `released`, `not released`, or `note sessions:` line.
+Verified by `node --test` (`test/adapters.test.mjs`, `test/project-start-codex.test.mjs`); no live `codex exec` has run it.
 
 ## Session ids
 

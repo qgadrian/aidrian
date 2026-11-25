@@ -176,13 +176,14 @@ export function readFollows(session, { env = process.env, now = Date.now(), live
 // shell's terminal follows the next session, and starts the helper. `unattended()` says no Human attends this session,
 // and `background()` that the background route started it (handoff-markers.mjs startedInBackground), though the Human
 // may have typed into it since. `typedSince(at)` says whether the Human typed into it after the request's time `at`, as
-// typedSince below reads it: true, false, or null when it cannot tell.
+// typedSince below reads it: true, false, or null when it cannot tell, which a caller that passes none answers, so only
+// a session its unattended mark holds ends.
 // An attended session's request names its host process, which its own environment must name as the shell's child, and
 // it ends nothing without the shell's record. A background session's names its own id, which `session` must start
 // with, on a host that can end its own session and does not say a Human attends it: it ends whether or not a terminal
 // follows it, and writes the shell's record only while the shell it names is alive and the parent of the host's
 // client, as a terminal attached to the session is (replaceTerminal.hasClient). Returns whether the session is ending.
-export function endAfterTurn({ host, session, take, unattended, background = () => false, typedSince: typed = () => false, follow = () => null, env = process.env, now = Date.now(), run, start = startHelper }) {
+export function endAfterTurn({ host, session, take, unattended, background = () => false, typedSince: typed = () => null, follow = () => null, env = process.env, now = Date.now(), run, start = startHelper }) {
   const replace = replacer(host);
   if (!replace) return false;
   const request = take();
@@ -234,12 +235,9 @@ export function typedSince(prompts, at) {
   } catch {
     return null;
   }
-  const time = (entry) => {
-    const written = prompts.timeOf?.(entry);
-    return Number.isFinite(written) ? written : Number.NaN;
-  };
-  if (tail.entries.some((entry) => prompts.isHuman(entry) && !(time(entry) <= at))) return true;
-  if (!tail.cut || tail.entries.some((entry) => time(entry) <= at)) return false;
+  // `timeOf` answers NaN for an entry it cannot date, which counts as after `at` and never as at or before it.
+  if (tail.entries.some((entry) => prompts.isHuman(entry) && !(prompts.timeOf(entry) <= at))) return true;
+  if (!tail.cut || tail.entries.some((entry) => prompts.timeOf(entry) <= at)) return false;
   return null;
 }
 

@@ -16,7 +16,6 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { pauseSync } from '../fs.mjs';
-import { plainLine } from '../hidden-text.mjs';
 import { recordTrust } from './claude-code-trust.mjs';
 import { configDir } from './claude-code-config.mjs';
 import { configFolder, mcpConfig, npmGlobalConfigs, sandboxSettings, secretVars } from './claude-code-sandbox.mjs';
@@ -614,8 +613,8 @@ function namesSession(row, { id, session }) {
 // The background rows of a listing whose `sessionId` has the id shape: what the host holds that the harness can name.
 const backgroundRows = (list) => list.filter((each) => each.kind === 'background' && typeof each.sessionId === 'string' && ID.test(each.sessionId));
 
-// The states in which a background row whose `status` is `idle` waits for nothing more of its own: its turn ended
-// (`done`), or it waits on a response (`blocked`). A row in `working` with `status: "idle"` ended its turn while a task
+// The states in which a background row whose `status` is `idle` is idle: its turn ended (`done`), or it waits on a
+// response (`blocked`), which may be mid-task. A row in `working` with `status: "idle"` ended its turn while a task
 // it started still runs (read on 2.1.331), so it is not idle, and neither is a row in a state not named here.
 const RESTING = new Set(['done', 'blocked']);
 
@@ -630,10 +629,10 @@ function heldListing({ env, run, resolve }) {
 }
 
 // The background sessions the host holds, from one read of the plain listing: { sessions: [{ id, session, name, cwd,
-// startedAt, idle, waiting }] } or { problem }. `id` is the short id `claude stop` takes, else the full one; `name` and
-// `cwd` are null unless plain text; `startedAt` is the listing's number of milliseconds, else null; `idle` is true only
-// for `status: "idle"` in a RESTING state, so a row with no `status` or still working is never idle, and `waiting` only
-// for `state: "blocked"`. An interactive row is left out.
+// startedAt, idle, waiting }] } or { problem }. `id` is the short id `claude stop` takes, else the full one; `name`,
+// `cwd`, and `startedAt` are the listing's, which hosts/index.mjs backgroundList cleans; `idle` is true only for
+// `status: "idle"` in a RESTING state, so a row with no `status` or still working is never idle, and `waiting` only for
+// `state: "blocked"`. An interactive row is left out.
 export function listBackground({ env, run = runCommand, resolve = claudeOnPath }) {
   const read = heldListing({ env, run, resolve });
   if (read.problem) return read;
@@ -641,9 +640,9 @@ export function listBackground({ env, run = runCommand, resolve = claudeOnPath }
     sessions: backgroundRows(read.list).map((each) => ({
       id: typeof each.id === 'string' && ID.test(each.id) ? each.id : each.sessionId,
       session: each.sessionId,
-      name: plainLine(each.name),
-      cwd: plainLine(each.cwd),
-      startedAt: Number.isFinite(each.startedAt) ? each.startedAt : null,
+      name: each.name,
+      cwd: each.cwd,
+      startedAt: each.startedAt,
       idle: each.status === 'idle' && RESTING.has(each.state),
       waiting: each.state === 'blocked',
     })),

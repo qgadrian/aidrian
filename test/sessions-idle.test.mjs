@@ -1,6 +1,6 @@
 // `aidrian sessions idle` (lib/sessions-cli.mjs) lists the background sessions the harness started that a host still
-// holds after their work ended, from the unattended marks (lib/unattended-mark.mjs listMarks) and each host's listing
-// (lib/hosts/index.mjs backgroundList), and changes nothing. Every host here is a fake one, or a real adapter whose
+// holds while idle, their turn ended or waiting on a response, from the unattended marks (lib/unattended-mark.mjs
+// listMarks) and each host's listing (lib/hosts/index.mjs backgroundList), and changes nothing. Every host here is a fake one, or a real adapter whose
 // every call goes through a run stand-in, so no test starts a process. The marks live in a temporary state root and
 // home, but for the command-line case: cliCall cannot give the command a home, so it reads the user's own marks folder,
 // read-only, and lists nothing from it, since no host there can list.
@@ -215,6 +215,34 @@ test('a name that is not plain words, a folder or stop line with a hidden charac
   const thrown = fakeHost({ rows: [{ id: '189eaf3d', session: HANDOFF }] }).host;
   thrown.capabilities.backgroundSessions.stopLine = () => { throw new Error('boom'); };
   assert.equal(idleSessions({ hosts: [thrown], env, home, now: NOW }).idle[0].stop, null, 'a stop line that throws reads null');
+});
+
+// A folder holds any character a path may, so one with a backtick or a colon and space could make the line read as
+// two stop lines to whoever copies from it: it is left out, whether the host's listing or the mark gives it.
+test('a folder with a backtick or a colon and space is left out, from the host listing and from the mark alike', (t) => {
+  const { env, home } = place(t);
+  const trap = '/work/a: `claude stop 306d6ea0` stops it';
+  markUnattended(HANDOFF, { root: '/work/app', cwd: '/work/a: claude stop 306d6ea0', env, now: NOW });
+  markUnattended(ATTEMPT, { root: '/work/app', env, now: NOW });
+  markUnattended(SHORT, { root: '/work/app', cwd: '/work/`tick`', env, now: NOW });
+  markUnattended(WORKING, { root: '/work/app', env, now: NOW });
+  const { host } = fakeHost({
+    rows: [
+      { id: '189eaf3d', session: HANDOFF, startedAt: NOW - 4 * MINUTE },
+      { id: '42cf8d0a', session: ATTEMPT, cwd: trap, startedAt: NOW - 3 * MINUTE },
+      { id: 'abcd1234', session: SHORT, startedAt: NOW - 2 * MINUTE },
+      { id: '306d6ea0', session: WORKING, cwd: '/work/b:c d', startedAt: NOW - MINUTE },
+    ],
+  });
+  const read = idleSessions({ hosts: [host], env, home, now: NOW });
+  assert.deepEqual(read.idle.map(({ id, cwd }) => [id, cwd]), [['189eaf3d', null], ['42cf8d0a', null], ['abcd1234', null], ['306d6ea0', '/work/b:c d']],
+    'a mark\'s folder with a colon and space alone, a host\'s with both, a mark\'s with a backtick alone; a colon with no space after it is kept');
+  assert.deepEqual(plainLines(read), [
+    'idle 189eaf3d 4m handoff continuation: `fake stop 189eaf3d` stops it',
+    'idle 42cf8d0a 3m handoff continuation: `fake stop 42cf8d0a` stops it',
+    'idle abcd1234 2m handoff continuation: `fake stop abcd1234` stops it',
+    'idle 306d6ea0 1m handoff continuation in /work/b:c d: `fake stop 306d6ea0` stops it',
+  ]);
 });
 
 test('--json gives { idle, notes } with every field, and the age reads in minutes, hours, and days', (t) => {

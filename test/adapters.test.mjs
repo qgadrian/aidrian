@@ -6,7 +6,6 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -1173,16 +1172,16 @@ test('every host and the unknown host answer backgroundList with rows or a one-l
 });
 
 test('Codex and OpenCode say by design that they hold no idle background session, apart from a failure', () => {
-  const codex = backgroundList(hostOf('codex'), { env: {}, run: () => ({ status: 1 }) });
-  assert.deepEqual(Object.keys(codex).sort(), ['byDesign', 'unsupported']);
-  assert.equal(codex.byDesign, true);
-  assert.match(codex.unsupported, /codex exec/u);
-  const opencode = hostOf('opencode');
-  assert.deepEqual(Object.keys(opencode.capabilities.backgroundSessions), ['unsupported'], 'OpenCode declares its reason and nothing else');
-  for (const read of [backgroundList(opencode, { env: {} }), backgroundHeld(opencode, { sessions: [{ id: 'x' }], env: {} })]) {
-    assert.equal(read.byDesign, true);
-    assert.match(read.unsupported, /starts no background session/u);
-    assert.equal(read.problem, undefined);
+  // Each declares its reason and nothing else, so neither wrapper asks it anything or starts a process.
+  const run = () => { throw new Error('no process may start'); };
+  for (const [id, reason] of [['codex', /codex exec/u], ['opencode', /starts no background session/u]]) {
+    const host = hostOf(id);
+    assert.deepEqual(Object.keys(host.capabilities.backgroundSessions), ['unsupported'], `${id} declares its reason and nothing else`);
+    for (const read of [backgroundList(host, { env: {}, run }), backgroundHeld(host, { sessions: [{ id: 'x' }], env: {}, run })]) {
+      assert.deepEqual(Object.keys(read).sort(), ['byDesign', 'unsupported'], id);
+      assert.equal(read.byDesign, true);
+      assert.match(read.unsupported, reason);
+    }
   }
   for (const host of [fakeHost, UNKNOWN_HOST]) {
     const read = backgroundList(host, { env: {} });
@@ -1205,7 +1204,7 @@ test('Claude Code maps the 2.1.331 row shapes, reading the listing once without 
   }, 'a row still working is never idle, whatever its status says');
 });
 
-test('Claude Code leaves out a row it cannot hold to a background session, and reads an unprintable name or folder as null', () => {
+test('Claude Code leaves out a row it cannot hold to a background session, and backgroundList reads an unprintable name or folder as null', () => {
   const rows = [
     { kind: 'background', id: 'aaaa1111', sessionId: 'no', name: 'short id', cwd: '/x', status: 'idle' },
     { kind: 'background', id: 'bbbb2222', name: 'no session id', cwd: '/x', status: 'idle' },
@@ -1217,7 +1216,12 @@ test('Claude Code leaves out a row it cannot hold to a background session, and r
     'text',
   ];
   const { run, resolve } = agentsListing(rows);
-  assert.deepEqual(listBackground({ env: {}, run, resolve }), {
+  // The adapter passes the listing's name, folder, and start time on as they are: only backgroundList cleans them.
+  assert.deepEqual(listBackground({ env: {}, run, resolve }).sessions.map(({ name, cwd, startedAt }) => [name, cwd, startedAt]), [
+    ['two\nlines', '/x\u202e', undefined], [7, null, '2023-11-14T22:20:00.000Z'], ['stopped', '/x', null], ['   ', ' ', undefined],
+  ]);
+  const host = { ...fakeHost, capabilities: { backgroundSessions: { list: ({ env }) => listBackground({ env, run, resolve }) } } };
+  assert.deepEqual(backgroundList(host, { env: {} }), {
     sessions: [
       { id: 'cccc3333-0000', session: 'cccc3333-0000', name: null, cwd: null, startedAt: null, idle: false, waiting: false },
       { id: 'dddd4444-0000', session: 'dddd4444-0000', name: null, cwd: null, startedAt: null, idle: false, waiting: false },
@@ -1272,35 +1276,6 @@ test('Claude Code\'s adapter answers backgroundList and backgroundHeld through a
   assert.equal(stopLine({ id: '189eaf3d' }), '`claude stop 189eaf3d` stops it');
 });
 
-test('Codex held follows the process table through the run stand-in', { skip: process.platform === 'win32' }, () => {
-  const start = 'Mon Nov 24 10:00:00 2026';
-  const digest = createHash('sha256').update(start).digest('hex').slice(0, 16);
-  const table = new Map([[4100, `S ${start}`], [4200, `Z ${start}`], [4300, 'S Mon Nov 24 11:00:00 2026']]);
-  const asked = [];
-  const run = (_ps, args) => {
-    const pid = Number(args.at(-1));
-    asked.push(pid);
-    if (pid === 4400) return { error: new Error('ps failed') };
-    return table.has(pid) ? { status: 0, stdout: `${table.get(pid)}\n` } : { status: 1, stdout: '' };
-  };
-  const sessions = [
-    { id: `pid-4100-${digest}` },
-    { id: `pid-4200-${digest}` },
-    { id: `pid-4300-${digest}` },
-    { id: `pid-4500-${digest}` },
-    { id: `pid-4400-${digest}` },
-    { id: 'thread-1', session: `pid-4100-${digest}` },
-    { id: 'abcd1234' },
-  ];
-  const held = backgroundHeld(hostOf('codex'), { sessions, env: {}, run });
-  assert.deepEqual(held, { held: [true, false, false, false, null, true, null] },
-    'running, a zombie, a pid another process took over, gone, an unreadable table, the session id, and an id that names no process');
-  assert.deepEqual(asked, [4100, 4200, 4300, 4500, 4400, 4100]);
-  const { stop, stopLine } = hostOf('codex').capabilities.backgroundSessions;
-  assert.equal(stop, undefined, 'a run stops a held session with the project start\'s stop');
-  assert.equal(typeof stopLine({ id: `pid-4100-${digest}` }), 'string');
-});
-
 test('the background session wrappers turn a throw, a promise, and each wrong shape into a problem', () => {
   const answering = (backgroundSessions) => ({ ...fakeHost, capabilities: { ...fakeHost.capabilities, backgroundSessions } });
   const lists = (read) => answering({ list: () => read, held: () => read });
@@ -1314,6 +1289,7 @@ test('the background session wrappers turn a throw, a promise, and each wrong sh
     ['an empty problem', { problem: '' }], ['a blank problem', { problem: '  ' }], ['a problem on two lines', { problem: 'a\nb' }],
     ['a problem with a bidi mark', { problem: 'a\u202eb' }], ['a problem that is no text', { problem: 7 }],
     ['an empty unsupported', { unsupported: '' }], ['an unsupported with a zero-width space', { unsupported: 'a\u200bb' }],
+    ['a call that answers unsupported, which only the whole capability declares', { unsupported: 'it holds none' }],
     ['a rejected promise', rejected], ['a promise', Promise.resolve({ sessions: [] })],
   ];
   for (const [what, read] of wrong) {

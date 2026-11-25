@@ -2422,7 +2422,7 @@ Only a session the host lists as ended is released: one that works or waits on a
 a person's turn runs in a session they attached to, and its attempt prints no `released` line meanwhile. That holds
 only for the turn: once it ends, the next pass of `wait` stops the session, as it stops a session that runs on after its
 issue settled. A session whose attempt has no `gone` row yet is the linger rule's alone.
-On Codex a process that ended is not held, so nothing is stopped or printed.
+Codex by design holds no session after its work, so there nothing is asked, stopped, or printed.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
 A command whose ledger another process holds locked, and a `start` whose read of the team's policy the forge cannot

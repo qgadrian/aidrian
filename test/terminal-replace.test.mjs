@@ -386,10 +386,10 @@ test('a background session the Human typed into ends itself once it hands off, u
   const request = { own: BG_SESSION, shell: null, id: 'efgh5678', next: NEXT_SESSION };
   const started = [];
   const step = (overrides = {}) => endAfterTurn({
-    host: claudeCode, session: BG_SESSION, take: () => request, unattended: () => false, background: () => true, env, run: ATTACHED,
-    start: (each) => started.push(each), ...overrides,
+    host: claudeCode, session: BG_SESSION, take: () => request, unattended: () => false, background: () => true, typedSince: () => false,
+    env, run: ATTACHED, start: (each) => started.push(each), ...overrides,
   });
-  assert.equal(step(), true, 'the background route started it, though the Human typed into it since');
+  assert.equal(step(), true, 'the background route started it, though the Human typed into it before the request');
   assert.deepEqual(started, [{ host: 'claude-code', own: BG_SESSION, session: BG_SESSION, delay: END_DELAY }]);
   for (const [name, overrides] of [
     ['the host says a Human attends it', { env: { ...env, CLAUDE_CODE_SESSION_ATTENDED: '1' } }],
@@ -398,6 +398,7 @@ test('a background session the Human typed into ends itself once it hands off, u
     ['another session asked', { session: 'zzzz0000-0000' }],
     ['the Human typed after the request, so this stop ends a later turn', { typedSince: () => true }],
     ['its transcript cannot tell, and only its floor holds it', { typedSince: () => null }],
+    ['no transcript reader, as a caller that passes none, and only its floor holds it', { typedSince: undefined }],
   ]) {
     started.length = 0;
     assert.equal(step(overrides), false, name);
@@ -405,6 +406,8 @@ test('a background session the Human typed into ends itself once it hands off, u
   }
   started.length = 0;
   assert.equal(step({ unattended: () => true, background: () => false, typedSince: () => null }), true, 'a session its mark holds ends when the transcript cannot tell');
+  started.length = 0;
+  assert.equal(step({ unattended: () => true, background: () => false, typedSince: undefined }), true, 'and when the caller passes no transcript reader');
 });
 
 // A project whose store holds a background session BG_SESSION that the background route started, with its floor and
@@ -478,7 +481,7 @@ test('typedSince reads a later Human prompt from the tail of the session\'s own 
   assert.equal(typedSince(reader([before, tool, after]), at), true, 'a prompt after it');
   assert.equal(typedSince(reader([before, { human: true }]), at), true, 'a prompt with no date counts as after');
   assert.equal(typedSince(reader([before, tool], { still: () => false }), at), null, 'a transcript that moved meanwhile');
-  assert.equal(typedSince(reader([before, tool], { timeOf: undefined }), at), true, 'a host that dates no entry: every Human prompt counts as later');
+  assert.equal(typedSince(reader([before, tool], { timeOf: () => Number.NaN }), at), true, 'a host that dates no entry, as humanPrompts reads one with no entryTime: every Human prompt counts as later');
   assert.equal(typedSince(null, at), null, 'no reader');
   assert.equal(typedSince(reader([before]), undefined), null, 'no time');
   assert.equal(typedSince({ file: path.join(dir, 'missing.jsonl'), isHuman: () => true, timeOf: claudeCode.entryTime, still: () => true }, at), null, 'no transcript');

@@ -11,6 +11,8 @@ Its items are steps 5.1 to 5.5, the numbers the skill's step 6 and Close name.
 4. Read the plan again: a schema plan passes the schema checks of `references/review-lens.md`, and `status` matches reality.
 5. Check the carried findings, when step 3 or 3b carried any under `steps/reruns.md`: each one is recorded as an
    implementation note in the plan's `## Risks`, under the line `Implementation notes from plan review:`.
-   For a missing one, `planning-agent` gets a patch request against the current plan that adds only the missing notes;
-   never resend the original diff. The report names each carried finding, with its gate
-   or the quorum and its run, so the Human sees what goes to the per-slice code and security review instead of a revision.
+   For a missing one, `planning-agent` proposes a patch against the current plan that adds only the missing notes,
+   never the original diff again.
+   The patch goes through step 5's approval like any diff, then this step checks the saved plan holds the notes.
+   The report names each carried finding, with its gate or the quorum and its run,
+   so the Human sees what goes to the per-slice code and security review instead of a revision.

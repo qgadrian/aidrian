@@ -413,6 +413,6 @@ the plan changed runs it under the new hash, with this run's answers as [settled
 Such a rerun follows the stop rule and cap of `plan-review`'s `steps/reruns.md`, as its gates do. When every accepted
 objection is narrower than one the immediately preceding run accepted, and none is `blocking` or adds a required invariant,
 the quorum approves, and its accepted objections are carried to implementation review as notes, never applied as a revision.
-The quorum runs at most 3 times a plan, the first included, counted from its `complete` ledgers for the plan's path.
+The quorum runs at most 3 times in one `plan-review` run, the first included, as that run counts them.
 Past that, accepted objections that are not `blocking` are carried as notes, and a `blocking` one escalates to the Human.
 The Human's answers and the settled answers bind as before: the stop rule decides only where accepted objections go.

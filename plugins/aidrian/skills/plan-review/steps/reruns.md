@@ -1,23 +1,18 @@
 # Gate and quorum re-runs
 
-Read this file for the `plan-review` skill's step 3 or 3b when the plan's `## Revision history` shows that the gate,
-or the quorum, ran on this plan before. It holds the stop rule, the cap, and the carry-forward that the skill's
-steps 3, 3b, 5, and 6 name. It changes only what happens to a re-run's findings, never what a gate checks or its severity scale.
+Read this file for the `plan-review` skill's step 3 or 3b when a gate, or the quorum, runs a second time in this review.
+It holds the stop rule, the cap, and the carry-forward that the skill's steps 3, 3b, 5, and 6 name.
+It changes only what happens to a re-run's findings, never what a gate checks or its severity scale.
 
 ## Counting runs
 
-- When a gate returns, this session appends one line for that run to the plan's `## Revision history`, whatever follows:
-  an apply, a skip, findings only, or an escalation. The line names the run's number, each finding's severity, and its
-  surface, as `security gate run 2: medium, webhook retries`. It is the one edit this session makes to the plan itself,
-  and it records the plan's hash again afterwards, so step 5.1 never reads that line as a change.
-- A gate's runs are counted from those lines. This run takes the next number.
-- The quorum's runs are its `complete` ledgers whose `plan` is this plan's path, which the `quorum` skill's
-  `references/ledger.md` § Settled answers finds, plus this run.
-- A restart from step 5.1 keeps both counts. Only step 6's critique count starts again.
+Count the runs this review made, each gate's and the quorum's. The session keeps the counts and each run's findings itself,
+and writes neither to the plan. A restart from step 5.1 keeps the counts; only step 6's critique count starts again.
+A new `plan-review` run counts from one.
 
 ## The stop rule
 
-On a re-run, compare each finding with the immediately preceding run's findings, as its revision-history line names them.
+On a re-run, compare each finding with the immediately preceding run's findings in this review.
 
 - **Low**: severity `low` on the gate's scale. A quorum objection is never low: only the narrower test applies to it.
 - **Narrower**: it names a smaller surface than, or a sub-case of, a finding the previous run raised,
@@ -27,8 +22,8 @@ On a re-run, compare each finding with the immediately preceding run's findings,
   a required invariant. A blocking finding is never narrower: it goes into the critique as step 3 says.
 
 When the re-run has no blocking finding, and every finding is low or narrower, the gate approves for this plan.
-Its findings are then carried:
-the critique proposes no plan revision for them. For the quorum, its findings are its accepted objections.
+Its findings are then carried: the critique proposes no plan revision for them.
+For the quorum, its findings are its accepted objections.
 With any other finding, the whole verdict goes into the critique as usual.
 
 The stop rule never drops a required invariant: step 3's rule, that a gate's required invariants bind the critique,
@@ -37,11 +32,11 @@ no authority covers that sign-off, and no stop rule clears it.
 
 ## The cap
 
-A gate runs at most 3 times on a plan, the first run included, and so does the quorum. The third run is the last:
+A gate runs at most 3 times in this review, the first run included, and so does the quorum. The third run is the last:
 
 - Its findings that are not blocking are carried, whatever their size.
-- A blocking finding stops the run and escalates to the Human, with the finding and the revision-history entries
-  of the earlier runs.
+- A blocking finding stops the run and escalates to the Human, with the finding and what the earlier runs found.
+- A plan changed after it, which a gate would have to judge again, escalates to the Human too: no gate is skipped.
 
 ## Carrying findings
 

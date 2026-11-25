@@ -101,7 +101,7 @@ Then read [steps/apply.md](steps/apply.md) and follow its steps 5.1 to 5.5.
 One critique, one apply, and one more critique only when step 5.4 finds a new blocking flaw.
 `--extended` adds one refinement pass, never more. Past the cap, escalate to the Human.
 A restart from step 5.1 starts this count again and waits on the Human's next `apply` like the first.
-A gate or the quorum runs at most 3 times a plan, the first included, across restarts; past that,
+A gate or the quorum runs at most 3 times in this review, the first included, across restarts; past that,
 non-blocking findings are carried, and a blocking one escalates.
 A consult that returns a dispute stops the run: escalate both positions and the missing evidence; never settle on a compromise.
 

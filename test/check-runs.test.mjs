@@ -461,6 +461,16 @@ test('a block quote ends a table', () => {
   assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '| `npm test` | 35 |', '> `vitest run` | was not run']), [['npm test', [35]]]);
 });
 
+test('an empty list marker, a bullet or 1, ends a table', () => {
+  for (const marker of ['-', '*', '+', '1.', '1)']) {
+    assert.deepEqual(claimPairs(['| `npm test` |', '| --- |', marker, '  `vitest run` 34 passed']), [['vitest run', [34]]], marker);
+  }
+});
+
+test('a number other than 1 is a row of its table', () => {
+  assert.deepEqual(claimPairs(['| Command | Passed |', '| --- | --- |', '2. notes | 2', '| `npm test` | 35 |']), [['npm test', [35]]]);
+});
+
 test('an id of only digits under a Commit header is a commit id', () => {
   for (const [label, id] of [['Commit', '3854814'], ['commit', '`3854814`']]) {
     const [claim] = passClaims(BODY([`| Command | ${label} | Passed |`, '| --- | --- | --- |', `| \`npm test\` | ${id} | 35 |`]));

@@ -2550,9 +2550,9 @@ Two checks read it:
   paragraph, or table row at a time with its wrapped lines joined, split at `;` and sentence ends. A table row is read
   as its own item, each cell before its header cell, after the header and any line right above it, and apart from the
   other rows. Every line after the delimiter row is a row, one with no `|` a row of one cell, to a blank line, a heading,
-  a list marker, a block quote, or a thematic break, which starts its own item; a line with a `|` and no delimiter row
-  after it is a paragraph. A cell past the header's last is not read, and one under "Commit" reads as "commit" and the
-  cell. A clause that names a test command,
+  a block quote, a thematic break, or a list marker, empty or not, which starts its own item; a number other than 1, as
+  in `2.`, is a row. A line with a `|` and no delimiter row after it is a paragraph. A cell past the header's last is
+  not read, and one under "Commit" reads as "commit" and the cell. A clause that names a test command,
   in backticks or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or
   "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
   or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. An id of digits

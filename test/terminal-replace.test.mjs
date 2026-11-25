@@ -6,25 +6,27 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { projectStore } from '../plugins/aidrian/lib/handoff-continue.mjs';
-import { ENDING_WINDOW, FOLLOW_AGE, noteEnding, noteFollow, openStore, readFollow, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { projectStore, unattendedHere } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { ENDING_WINDOW, FOLLOW_AGE, noteEnding, noteFollow, noteFrom, openStore, OWN_ENDING_WINDOW, readFollow, sweep, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { nameMatcher, stopOwnBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { terminalRecordWriteDenial } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { stopMarkerPath } from '../plugins/aidrian/lib/session-length.mjs';
-import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { liftAttended, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { TEST_HOME } from './fixtures/test-home.mjs';
 import { shellInit } from '../plugins/aidrian/lib/shell-init.mjs';
-import { END_DELAY, endAfterTurn, endHost, NAME_BYTES, NEXT_WINDOW, readFollows, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
+import { END_DELAY, endAfterTurn, endHost, NAME_BYTES, NEXT_WINDOW, readFollows, terminalFolder, typedSince, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
+const { endsTerminal } = await import(HOOK);
 const claudeCode = HOSTS.find((host) => host.id === 'claude-code');
 const codex = HOSTS.find((host) => host.id === 'codex');
 const SESSION = 'session-1';
@@ -61,6 +63,15 @@ function fakeClaude(t) {
   return { child, exited };
 }
 
+// takeEnding's answer with its `at`, when the gate noted it, checked as a time and left out, so a test compares the rest.
+function requestOf(store, session, options) {
+  const request = takeEnding(store, session, options);
+  if (request === null) return null;
+  const { at, ...rest } = request;
+  assert.ok(Number.isFinite(at), 'a request carries the time it was noted');
+  return rest;
+}
+
 const withTimeout = (promise, ms) => Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve('timeout'), ms))]);
 
 test('a request to end acts once, holds for its window, and refuses a wrong shape', (t) => {
@@ -70,7 +81,7 @@ test('a request to end acts once, holds for its window, and refuses a wrong shap
   assert.equal(takeEnding(store, SESSION, { now: now + ENDING_WINDOW + 1 }), null, 'past its window it is none, and goes');
   assert.equal(takeEnding(store, SESSION, { now }), null, 'and it is gone');
   noteEnding(store, SESSION, { hostPid: 4343, shell: 4242, id: 'abcd1234' });
-  assert.deepEqual(takeEnding(store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234', next: null });
+  assert.deepEqual(requestOf(store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234', next: null });
   assert.equal(takeEnding(store, SESSION), null, 'taken once');
   for (const bad of [{ hostPid: 1, shell: 4242, id: 'abcd1234' }, { hostPid: 4343, shell: 0, id: 'abcd1234' }, { hostPid: 4343, shell: 4242, id: 'a b' }, { hostPid: '4343', shell: 4242, id: 'abcd1234' }, { hostPid: null, own: 'abcd1234', shell: null, id: 'efgh5678' }]) {
     assert.equal(noteEnding(store, SESSION, bad, { now }), null, JSON.stringify(bad));
@@ -320,12 +331,12 @@ const NEXT_SESSION = 'efgh5678-0000-4000-8000-000000000002';
 test('a request names one way to end, and the store says which shell follows a session, under its id or a short one', (t) => {
   const store = openStore(folder(t, 'aidrian-store-'), { maxChain: 3 });
   assert.ok(noteEnding(store, BG_SESSION, { own: 'abcd1234', shell: 4242, id: 'efgh5678', next: NEXT_SESSION }));
-  assert.deepEqual(takeEnding(store, BG_SESSION), { own: 'abcd1234', shell: 4242, id: 'efgh5678', next: NEXT_SESSION });
+  assert.deepEqual(requestOf(store, BG_SESSION), { own: 'abcd1234', shell: 4242, id: 'efgh5678', next: NEXT_SESSION });
   assert.equal(noteEnding(store, BG_SESSION, { own: 'abcd1234', hostPid: 4343, shell: 4242, id: 'efgh5678' }), null, 'never both');
   assert.equal(noteEnding(store, BG_SESSION, { shell: 4242, id: 'efgh5678' }), null, 'never neither');
   assert.equal(noteEnding(store, BG_SESSION, { own: 'a b', shell: 4242, id: 'efgh5678' }), null);
   assert.ok(noteEnding(store, BG_SESSION, { own: 'abcd1234', shell: null, id: 'efgh5678' }), 'a background session no terminal follows only stops');
-  assert.deepEqual(takeEnding(store, BG_SESSION), { own: 'abcd1234', shell: null, id: 'efgh5678', next: null });
+  assert.deepEqual(requestOf(store, BG_SESSION), { own: 'abcd1234', shell: null, id: 'efgh5678', next: null });
   assert.equal(noteEnding(store, SESSION, { hostPid: 4343, shell: null, id: 'efgh5678' }), null, 'an attended session ends only for a shell');
   assert.equal(noteEnding(store, BG_SESSION, { own: 'abcd1234', id: 'efgh5678' }), null, 'no shell is null, never missing');
 
@@ -341,6 +352,144 @@ test('a request names one way to end, and the store says which shell follows a s
   assert.ok(noteFollow(store, BG_SESSION, { shell: 4242 }));
   assert.deepEqual(readFollow(store, BG_SESSION), { shell: 4242, id: BG_SESSION });
   assert.equal(readFollow(store, BG_SESSION, { now: later }), null, 'under the full id, past FOLLOW_AGE');
+});
+
+test('a request that names a session\'s own id holds as long as the start record of the session that took its work; one that names a host process 30 minutes', (t) => {
+  const store = openStore(folder(t, 'aidrian-store-'), { maxChain: 3 });
+  const HOUR = 60 * 60 * 1000;
+  assert.equal(OWN_ENDING_WINDOW, 24 * HOUR, 'one window of 24 hours');
+  const at = Date.now();
+  // The file's own time is the request's, as a turn that waited on a question finds it.
+  const noted = (session, request) => {
+    const file = noteEnding(store, session, request, { now: at });
+    assert.ok(file);
+    utimesSync(file, new Date(at), new Date(at));
+  };
+  const own = { own: 'abcd1234', shell: null, id: 'efgh5678', next: NEXT_SESSION };
+  noted(BG_SESSION, own);
+  assert.deepEqual(takeEnding(store, BG_SESSION, { now: at + 2 * HOUR }), { ...own, at }, 'two hours later it still acts, with the time it was noted');
+  assert.equal(takeEnding(store, BG_SESSION, { now: at + 2 * HOUR }), null, 'once');
+  noted(BG_SESSION, own);
+  assert.equal(takeEnding(store, BG_SESSION, { now: at + OWN_ENDING_WINDOW + 1 }), null, 'past 24 hours it is none');
+  noted(SESSION, { hostPid: 4343, shell: 4242, id: 'abcd1234' });
+  assert.equal(takeEnding(store, SESSION, { now: at + ENDING_WINDOW + 1 }), null, 'a host process\'s request is none past 30 minutes');
+  // The sweep keeps a request as long as it can act.
+  noted(BG_SESSION, own);
+  sweep(store, at + 2 * HOUR);
+  assert.ok(existsSync(path.join(store.dir, `ending-${BG_SESSION}.json`)), 'kept past 30 minutes');
+  sweep(store, at + OWN_ENDING_WINDOW + 1000);
+  assert.equal(existsSync(path.join(store.dir, `ending-${BG_SESSION}.json`)), false, 'gone past 24 hours');
+});
+
+test('a background session the Human typed into ends itself once it hands off, unless the host says a Human attends it', (t) => {
+  const env = { ...process.env, XDG_STATE_HOME: folder(t, 'aidrian-xdg-') };
+  const request = { own: BG_SESSION, shell: null, id: 'efgh5678', next: NEXT_SESSION };
+  const started = [];
+  const step = (overrides = {}) => endAfterTurn({
+    host: claudeCode, session: BG_SESSION, take: () => request, unattended: () => false, background: () => true, typedSince: () => false,
+    env, run: ATTACHED, start: (each) => started.push(each), ...overrides,
+  });
+  assert.equal(step(), true, 'the background route started it, though the Human typed into it before the request');
+  assert.deepEqual(started, [{ host: 'claude-code', own: BG_SESSION, session: BG_SESSION, delay: END_DELAY }]);
+  for (const [name, overrides] of [
+    ['the host says a Human attends it', { env: { ...env, CLAUDE_CODE_SESSION_ATTENDED: '1' } }],
+    ['the background route did not start it', { background: () => false }],
+    ['no background reader, as a caller that passes none', { background: undefined }],
+    ['another session asked', { session: 'zzzz0000-0000' }],
+    ['the Human typed after the request, so this stop ends a later turn', { typedSince: () => true }],
+    ['its transcript cannot tell, and only its floor holds it', { typedSince: () => null }],
+    ['no transcript reader, as a caller that passes none, and only its floor holds it', { typedSince: undefined }],
+  ]) {
+    started.length = 0;
+    assert.equal(step(overrides), false, name);
+    assert.deepEqual(started, [], name);
+  }
+  started.length = 0;
+  assert.equal(step({ unattended: () => true, background: () => false, typedSince: () => null }), true, 'a session its mark holds ends when the transcript cannot tell');
+  started.length = 0;
+  assert.equal(step({ unattended: () => true, background: () => false, typedSince: undefined }), true, 'and when the caller passes no transcript reader');
+});
+
+// A project whose store holds a background session BG_SESSION that the background route started, with its floor and
+// its mark, and, with `lift`, the record that the Human typed into it, which lifts the mark: unattendedHere no longer
+// holds it. Its request to end, noted an hour ago, as by a turn that then waited on a question. `prompt`, when given, is
+// the time of a Human prompt in the session's transcript, which `prompts` reads as hosts/index.mjs humanPrompts would.
+function typedStop(t, { lift = true, prompt } = {}) {
+  const dir = folder(t, 'aidrian-stop-typed-');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const project = findProject(dir);
+  const { config } = loadConfig(project);
+  const store = projectStore(project, config);
+  const env = { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ATTENDED: '0', XDG_STATE_HOME: folder(t, 'aidrian-xdg-') };
+  const at = Date.now() - 60 * 60 * 1000;
+  const transcript = path.join(dir, `${BG_SESSION}.jsonl`);
+  const entries = [{ type: 'user', human: false, timestamp: new Date(at - 2 * 60 * 1000).toISOString() }];
+  if (prompt !== undefined) entries.push({ type: 'user', human: true, timestamp: new Date(prompt).toISOString() });
+  writeFileSync(transcript, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+  assert.ok(noteFrom(store, BG_SESSION, { slug: 'widget', chain: 1, brief: path.join(dir, '2026-11-24-widget.md'), route: 'background' }));
+  assert.ok(markUnattended(BG_SESSION, { root: dir, env }));
+  if (lift) assert.equal(liftAttended(BG_SESSION, transcript, { env, home: TEST_HOME, isHuman: () => true }), true);
+  assert.equal(unattendedHere(BG_SESSION, { store, env, home: TEST_HOME, now: Date.now() }), !lift, lift ? 'the Human\'s prompt lifted the mark' : 'the mark holds');
+  const file = noteEnding(store, BG_SESSION, { own: BG_SESSION, shell: null, id: 'efgh5678', next: NEXT_SESSION }, { now: at });
+  utimesSync(file, new Date(at), new Date(at));
+  const prompts = { file: transcript, isHuman: (entry) => entry.human === true, timeOf: claudeCode.entryTime, still: () => true };
+  const started = [];
+  const stop = (options = {}) => endsTerminal(claudeCode, project, config, { session_id: BG_SESSION, transcript_path: transcript }, { env, home: TEST_HOME, start: (each) => started.push(each), prompts, ...options });
+  return { at, file, started, stop };
+}
+const OWN_STOP = [{ host: 'claude-code', own: BG_SESSION, session: BG_SESSION, delay: END_DELAY }];
+
+test('the Stop hook of a background session the Human typed into, whose request is an hour old, stops that session', async (t) => {
+  // The Human's prompt that lifted the mark came before the request: this stop ends the turn that handed off.
+  const { file, started, stop } = typedStop(t, { prompt: Date.now() - 61 * 60 * 1000 });
+  assert.equal(await stop(), true);
+  assert.deepEqual(started, OWN_STOP);
+  assert.equal(existsSync(file), false, 'the request is taken');
+});
+
+test('a Human prompt after the request means a later turn: the Stop hook drops the request and ends nothing', async (t) => {
+  // The turn that handed off ended by an interrupt, which runs no Stop hook; the Human typed again since.
+  const later = typedStop(t, { prompt: Date.now() - 10 * 60 * 1000 });
+  assert.equal(await later.stop(), false);
+  assert.deepEqual(later.started, [], 'nothing ends');
+  assert.equal(existsSync(later.file), false, 'the request is gone, so no later stop takes it');
+  // A transcript that cannot answer: a session the Human typed into stays open; one its mark holds still ends.
+  const typed = typedStop(t);
+  assert.equal(await typed.stop({ prompts: null }), false, 'no reader for a session the Human typed into');
+  assert.deepEqual(typed.started, []);
+  const marked = typedStop(t, { lift: false });
+  assert.equal(await marked.stop({ prompts: null }), true, 'no reader for a session its mark holds');
+  assert.deepEqual(marked.started, OWN_STOP);
+  // Its mark holds it, but the transcript shows a later prompt: it ends nothing either.
+  const markedLater = typedStop(t, { lift: false, prompt: Date.now() - 10 * 60 * 1000 });
+  assert.equal(await markedLater.stop(), false);
+});
+
+test('typedSince reads a later Human prompt from the tail of the session\'s own transcript, and says when it cannot tell', (t) => {
+  const dir = folder(t, 'aidrian-typed-');
+  const at = Date.parse('2026-11-24T12:00:00Z');
+  const file = path.join(dir, 'session.jsonl');
+  const reader = (entries, extra = {}) => {
+    writeFileSync(file, entries.map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry))).join('\n'));
+    return { file, isHuman: (entry) => entry.human === true, timeOf: claudeCode.entryTime, still: () => true, ...extra };
+  };
+  const before = { human: true, timestamp: '2026-11-24T11:59:00Z' };
+  const after = { human: true, timestamp: '2026-11-24T12:01:00Z' };
+  const tool = { human: false, timestamp: '2026-11-24T12:00:30Z' };
+  assert.equal(typedSince(reader([before, tool]), at), false, 'the prompt of the turn that noted it');
+  assert.equal(typedSince(reader([before, tool, after]), at), true, 'a prompt after it');
+  assert.equal(typedSince(reader([before, { human: true }]), at), true, 'a prompt with no date counts as after');
+  assert.equal(typedSince(reader([before, tool], { still: () => false }), at), null, 'a transcript that moved meanwhile');
+  assert.equal(typedSince(reader([before, tool], { timeOf: () => Number.NaN }), at), true, 'a host that dates no entry, as humanPrompts reads one with no entryTime: every Human prompt counts as later');
+  assert.equal(typedSince(null, at), null, 'no reader');
+  assert.equal(typedSince(reader([before]), undefined), null, 'no time');
+  assert.equal(typedSince({ file: path.join(dir, 'missing.jsonl'), isHuman: () => true, timeOf: claudeCode.entryTime, still: () => true }, at), null, 'no transcript');
+  // A tail of PROMPT_TAIL bytes that starts after `at` may have cut a prompt off; one that reaches back to it does not.
+  const filler = (time) => ({ human: false, timestamp: time, text: 'x'.repeat(1000) });
+  const long = Array.from({ length: 400 }, () => filler('2026-11-24T12:00:10Z'));
+  assert.equal(typedSince(reader([before, ...long]), at), null, 'the tail starts after the request');
+  assert.equal(typedSince(reader([before, ...Array.from({ length: 400 }, () => filler('2026-11-24T11:59:30Z')), tool]), at), false, 'the tail reaches back to it');
 });
 
 test('the shell function\'s record says which shell shows a session, under its id or a short one, while fresh and its own', (t) => {

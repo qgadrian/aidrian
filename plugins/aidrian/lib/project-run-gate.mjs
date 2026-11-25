@@ -70,7 +70,7 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
 import { credentialStores, detectHost, nestedGlobs, otherPlaceholders, protectedPaths, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
-import { chainEnded, lingerLine, lingerProblem, notStopped, settleLingering, stopChain } from './project-linger.mjs';
+import { chainEnded, lingerLine, lingerProblem, notStopped, releaseAttempts, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
 import { recheckHalt } from './project-recheck.mjs';
@@ -1049,7 +1049,9 @@ function startLines({ result, state, run, key, attempt, session, base, proof, pr
 // any other ends its attempt (`limit KEY KIND until TIME -> open`, or `limit KEY KIND halt -> open` past LIMIT_WAITS,
 // `-> parked attempts` once the issue's attempt numbers ran out); it
 // waits on a session that runs on after its issue settled, and stops it once LINGER_GRACE has passed (`lingered KEY
-// attempt N ended|stopped`, lib/project-linger.mjs); then it removes the folders of confined attempts whose session ended.
+// attempt N ended|stopped`, lib/project-linger.mjs); it stops each session the host still holds after its `gone` row
+// (`released KEY attempt N`, `not released KEY attempt N: ...`, or `note sessions: REASON`, each printed once when the
+// wait returns or refuses, and none of them a reason to return); then it removes the folders of confined attempts whose session ended.
 // It returns once any issue settles, none runs, none runs on, and the run is not paused, or the time is up, with a line
 // for each: `settled KEY STATE`, `result KEY STATUS -> STATE`, `ended KEY REASON -> STATE`, `orphan ...`, `running KEY`,
 // `lingering KEY attempt N`, `paused until TIME` while a pause lasts, or `idle` when none runs or runs on.
@@ -1081,7 +1083,8 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   if (held.problem) return refuse(held.problem);
   const facade = forge ?? forgeFor(project.root);
   const { policy, note } = settlePolicy(project, teamPolicy(project, opened.found.init.repository, facade));
-  const cap = detectHost({ env }).capabilities.projectStart;
+  const host = detectHost({ env });
+  const cap = host.capabilities.projectStart;
   if (!cap) return refuse('this host declares no way to read a project run\'s sessions (capabilities.projectStart)');
   if (held.role === 'successor') {
     const moved = appendToRun(state, run, () => ({ rows: custodyRows(held, session, now) }));
@@ -1093,13 +1096,16 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   // The slowest read so far, in ms, and the answer of the last read, which a read that would not fit returns.
   let slowest = 0;
   let last = null;
+  // The release's lines end no wait: each prints once, after the lines that did, when the wait returns (mergeRelease).
+  let released = [];
   for (let pass = 0; ; pass += 1) {
     const began = time();
     if (last && until - began < slowest + WAIT_MARGIN) return last;
     const at = pass === 0 ? now : began;
-    const { lines, lingering } = waitPass({ state, run, store, cap, env, home, spawn, policy, forge: facade, now: at });
+    const { lines, lingering, release } = waitPass({ state, run, store, cap, host, env, home, spawn, policy, forge: facade, now: at });
+    if (release) released = mergeRelease(released, release);
     const found = readRun(state, run);
-    if (found.problem) return refuse(found.problem);
+    if (found.problem) return { ...refuse(found.problem), out: released };
     for (const [key, was] of before) {
       const is = found.states.get(key);
       if (was.state === 'running' && is && is.state !== 'running' && !lines.some((line) => line.includes(` ${key} `))) lines.push(`settled ${key} ${is.state}${is.decision ? ` ${is.decision}` : ''}`);
@@ -1108,7 +1114,7 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
     const paused = pauseOf(found, time());
     const busy = running.length > 0 || lingering.length > 0;
     slowest = Math.max(slowest, time() - began);
-    last = { exitCode: 0, out: [...note, ...lines, ...running.map((key) => `running ${key}`), ...lingering.map(lingerLine), ...(paused ? [`paused until ${paused.until}`] : []), ...(busy ? [] : ['idle'])], err: [] };
+    last = { exitCode: 0, out: [...note, ...lines, ...released, ...running.map((key) => `running ${key}`), ...lingering.map(lingerLine), ...(paused ? [`paused until ${paused.until}`] : []), ...(busy ? [] : ['idle'])], err: [] };
     // An idle run waits out its pause with the driver, up to the deadline, and returns once the pause is over; a session
     // that runs on after its issue settled is waited on as an issue that runs is.
     if (lines.length || (!busy && !paused) || time() >= until) return last;
@@ -1116,6 +1122,15 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
     // The last pause ends where the next read, as slow as the slowest, still ends by the deadline.
     pause(Math.max(0, Math.min(WAIT_STEP, pauseLeft, until - time() - slowest - WAIT_MARGIN)));
   }
+}
+
+// The release lines one wait prints (project-linger.mjs releaseAttempts): `held`, those of its passes so far, with
+// `lines`, those of one more, each once. A `not released KEY attempt N: ...` line of an earlier pass stays only while the
+// latest pass that could read that attempt repeats it, so a session that runs no more is never left for the Human to stop
+// by hand: one whose `unread` names the attempt keeps it. A `note sessions:` line is the latest pass's alone.
+export function mergeRelease(held, { lines, unread }) {
+  const stands = (line) => line.startsWith('released ') || unread.some((attempt) => line.startsWith(`not released ${attempt}:`));
+  return [...held.filter((line) => !lines.includes(line) && stands(line)), ...lines];
 }
 
 // The policy `wait` settles a run's issues under, from the team's policy `team` (teamPolicy): { policy, note }, where
@@ -1146,8 +1161,9 @@ function settlePolicy(project, team) {
 const hoursOf = (policy, start) => (typeof policy.hoursOf === 'function' ? policy.hoursOf(start) : policy.issueHours);
 
 // One read of `wait`: orphans, handed-over results, ended sessions, then sessions that run on after their issue
-// settled (project-linger.mjs), and the sweep of ended attempts' folders: { lines, lingering }.
-function waitPass({ state, run, store, cap, env, home, spawn, policy, forge, now }) {
+// settled, the stop of each the host still holds after its `gone` row (project-linger.mjs), and the sweep of ended
+// attempts' folders: { lines, lingering, release }, with releaseAttempts' answer in `release`, null when it asked no host.
+function waitPass({ state, run, store, cap, host, env, home, spawn, policy, forge, now }) {
   const lines = settleOrphans({ state, run, store, cap, env, spawn, now });
   const dropped = readRun(state, run);
   if (!dropped.problem) lines.push(...ingestDrops({ state, run, found: dropped, forge, now }));
@@ -1155,8 +1171,10 @@ function waitPass({ state, run, store, cap, env, home, spawn, policy, forge, now
   const lingered = settleLingering({ state, run, store, cap, env, spawn, now, wait: true });
   lines.push(...lingered.lines);
   const after = readRun(state, run);
-  if (!after.problem) lines.push(...sweepAttempts({ state, run, found: after, cap, env, home, spawn, forge }));
-  return { lines, lingering: lingered.lingering };
+  if (after.problem) return { lines, lingering: lingered.lingering, release: null };
+  const release = releaseAttempts({ found: after, store, cap, host, env, spawn, now });
+  lines.push(...sweepAttempts({ state, run, found: after, cap, env, home, spawn, forge }));
+  return { lines, lingering: lingered.lingering, release };
 }
 
 // The issues of run `run` whose session ended with no result, ran past `policy.issueHours`, or met a usage or rate
@@ -1305,7 +1323,9 @@ export function recordHandoff({ project, config, run, brief, env = process.env, 
 
 // Records, for the driver of run `run`, the run's end at the end of its loop: an `end` row, which ends the run for
 // project-run.mjs activeRuns and releases the driver's hold (run-driver.mjs runDriver), so its session may sign off
-// again. It refuses while an issue runs, or a session runs on after its issue settled (project-linger.mjs). Only the run's current driver records it, by custody; the end of a run whose issues are parked is the driver's
+// again. It refuses while an issue runs, or a session runs on after its issue settled (project-linger.mjs). First it
+// stops each session the host still holds after its `gone` row (releaseAttempts), and prints its lines before the
+// sweep's; one it cannot stop, or a host that cannot say, refuses no end. Only the run's current driver records it, by custody; the end of a run whose issues are parked is the driver's
 // to record too, after its report names them. A run that ended starts no issue. It then sweeps the attempts' folders a
 // last time (project-start.mjs sweepAttempts), printing a line for each clone it keeps. Returns { exitCode, out, err }.
 export function endRun({ project, config, run, env = process.env, home, now = Date.now(), spawn, forge }) {
@@ -1320,8 +1340,11 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
   const held = custody({ found, store, session, now, env });
   if (held.problem) return refuse(held.problem);
   // A session that ran on after its issue settled and that the host now lists as ended is recorded gone first.
-  const cap = detectHost({ env }).capabilities.projectStart;
+  const host = detectHost({ env });
+  const cap = host.capabilities.projectStart;
   if (cap) settleLingering({ state, run, store, cap, env, spawn, now });
+  const settled = cap ? readRun(state, run) : { problem: 'no host' };
+  const released = settled.problem ? [] : releaseAttempts({ found: settled, store, cap, host, env, spawn, now }).lines;
   // An issue that still runs, or a session that runs on after its issue settled, is one the run still answers for: end
   // only once none is.
   const written = appendToRun(state, run, (fresh) => {
@@ -1331,12 +1354,12 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
     if (lingers) return { problem: `${lingers}; run it until it prints idle, then end the run` };
     return { rows: [...custodyRows(held, session, now), { event: 'end', session, at: iso(now) }] };
   });
-  if (written.problem) return refuse(written.problem);
+  if (written.problem) return { ...refuse(written.problem), out: released };
   // The last sweep: every session has ended, so no forge token stays in a host file, and every clone with work the
   // forge does not have is named.
   const last = cap ? readRun(state, run) : { problem: 'no host' };
   const swept = last.problem ? [] : sweepAttempts({ state, run, found: last, cap, env, home, spawn, forge: forge ?? forgeFor(project.root) });
-  return { exitCode: 0, out: [...swept, `end: run ${run} ended, and its driver's hold is released`], err: [] };
+  return { exitCode: 0, out: [...released, ...swept, `end: run ${run} ended, and its driver's hold is released`], err: [] };
 }
 
 // Lifts the halt of run `run` (project-run.mjs haltOf) for the Human's own shell, which names no session, or an attended

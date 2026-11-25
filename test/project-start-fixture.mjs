@@ -180,7 +180,9 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
 
 // A stand-in for spawnSync that answers like Claude Code 2.1.326: the driver session is listed, then each session `--bg`
 // starts, in the folder it started in, under its name, with the ids of STARTED in order. `states` sets a listed
-// session's state by its full id ('working' by default); `stop` marks it stopped. `start` replaces the answer of `--bg`.
+// session's state by its full id ('working' by default); `stop` marks it stopped. `--all` lists every session; the plain
+// listing, as 2.1.331's, only those the host still holds: each one still working, and each full id in `held`, which keeps
+// a session listed after its state says it ended until `stop` lets it go. `start` replaces the answer of `--bg`.
 // With `env`, each session `--bg` lists files its beacon under that environment, as the agent gate hook does on the
 // session's first tool call; `beacon: false` files none, as a host that does not run the plugin's hooks. Where the
 // start wrote a sandbox proof plan beside the clone, each such session also hands over the verdict `confine` gives for
@@ -190,17 +192,23 @@ export function fakeClaude({ dir, start = null, hidden = false, env = null, beac
   const calls = [];
   const sessions = [];
   const states = {};
+  const held = new Set();
   const run = (command, args, options) => {
     calls.push({ command, args, cwd: options.cwd });
     if (args[0] === 'stop') {
       // As 2.1.330 does: `claude stop` takes the listed short id and refuses a full session id.
       const found = sessions.find((each) => each.id === args[1]);
       // As 2.1.326 lists a session `claude stop` stopped: `stopped`, not `done`.
-      if (found && stoppable) states[found.sessionId] = 'stopped';
+      if (found && stoppable) {
+        states[found.sessionId] = 'stopped';
+        held.delete(found.sessionId);
+      }
       return { status: found && stoppable ? 0 : 1, stdout: '', stderr: '' };
     }
     if (args[0] === 'agents') {
-      const listed = [{ sessionId: DRIVER, name: 'driver', kind: 'interactive', cwd: dir, state: 'working' }, ...sessions.map((each) => ({ ...each, state: states[each.sessionId] ?? 'working' }))];
+      const rows = sessions.map((each) => ({ ...each, state: states[each.sessionId] ?? 'working' }));
+      const holds = (row) => args.includes('--all') || !ENDED_STATES.has(row.state) || held.has(row.sessionId);
+      const listed = [{ sessionId: DRIVER, name: 'driver', kind: 'interactive', cwd: dir, state: 'working' }, ...rows.filter(holds)];
       return { status: 0, stdout: JSON.stringify(listed), stderr: '' };
     }
     const ids = STARTED[sessions.length];
@@ -215,8 +223,11 @@ export function fakeClaude({ dir, start = null, hidden = false, env = null, beac
     if (!hidden && confine) handVerdict(options.cwd, ids.session, confine);
     return { status: 0, stdout: `backgrounded · ${ids.id} · ${name}\n`, stderr: '' };
   };
-  return { run, calls, sessions, states, starts: () => calls.filter((call) => call.args[0] === '--bg') };
+  return { run, calls, sessions, states, held, starts: () => calls.filter((call) => call.args[0] === '--bg') };
 }
+
+// The states in which the fake host's plain listing drops a session it does not hold (fakeClaude `held`).
+const ENDED_STATES = new Set(['done', 'stopped', 'failed']);
 
 // The verdict of a session whose sandbox refused every probe of `plan`, as `aidrian project confine` writes it.
 export const passVerdict = (plan, session) => ({ version: 1, run: plan.run, key: plan.key, attempt: plan.attempt, nonce: plan.nonce, session, pass: true, failed: [], probes: 12, at: new Date().toISOString() });

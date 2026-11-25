@@ -147,6 +147,12 @@ test('the usage fits 100 columns, with one line for each form of a command and i
   assert.deepEqual(lines.filter((line) => line.startsWith('  aidrian lesson ')).map((line) => line.split(' ')[4]), ['add', 'list', 'resolve', 'update', 'stats', 'nudge', 'migrate']);
   assert.deepEqual(lines.filter((line) => line.startsWith('  aidrian worktree ')).map((line) => line.split(' ')[4]), ['new', 'cleanup']);
   assert.ok(lines.some((line) => line.startsWith('  aidrian session snapshot [--session ID] [--transcript PATH]')), 'the usage lists session snapshot');
+  assert.ok(lines.includes('  aidrian sessions idle [--json]'), 'the usage lists sessions idle');
+  for (const args of [['sessions'], ['sessions', 'idle', '--bogus']]) {
+    const wrong = await run(args);
+    assert.equal(wrong.status, 1, args.join(' '));
+    assert.match(wrong.stderr, /aidrian sessions idle \[--json\]/u, args.join(' '));
+  }
   assert.ok(lines.includes('  aidrian commit-msg (--file PATH | --message TEXT) [--project DIR]'), 'a choice in parentheses is one form');
   assert.ok(lines.includes('  aidrian pre-commit [--project DIR]'));
   const preflight = lines.indexOf('  aidrian push-preflight [--cwd DIR]');

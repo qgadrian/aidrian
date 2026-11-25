@@ -57,12 +57,17 @@ export const hasControl = (text) => /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.
 export const MARKER_CAP = 64 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const DAY = 24 * 60 * 60 * 1000;
-// How long a session's request to end itself holds: the turn that ran the gate ends well inside it.
+// How long a start record holds: a gate run reads the session it started for a day after the start.
+const STARTED_AGE = DAY;
+// How long a request to end a host process holds: the turn that ran the gate ends well inside it.
 export const ENDING_WINDOW = 30 * 60 * 1000;
+// How long a request that names a session's own id holds: as long as the start record of the session that took its
+// work, so a turn that waited on a question or a permission prompt still ends the session once it ends.
+export const OWN_ENDING_WINDOW = STARTED_AGE;
 // How long a record that a terminal follows a background session holds: a hop's session rarely runs longer.
 export const FOLLOW_AGE = 12 * 60 * 60 * 1000;
 // How long each kind of file lives: a read past it ignores the file, and the sweep deletes it.
-const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, claim: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: ENDING_WINDOW, follow: FOLLOW_AGE, worktree: 30 * DAY };
+const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: STARTED_AGE, claim: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: OWN_ENDING_WINDOW, follow: FOLLOW_AGE, worktree: 30 * DAY };
 const KIND = /^(armed|ready|checked|tasks|taken|started|claim|from|gone|continued|ending|follow|worktree)-/u;
 // The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
 // the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
@@ -699,11 +704,14 @@ export function noteEnding(store, session, { hostPid, own, shell, id, next = nul
   return isEnding(value) ? writeMarker(store, sessionFile('ending', session), value) : null;
 }
 
-// Takes the request of `session` to end itself, written in the last ENDING_WINDOW, and deletes it, so it acts once:
-// { shell, id, next } with `hostPid` or `own`, or null. Never throws on a missing or refused store.
+// Takes the request of `session` to end itself and deletes it, so it acts once: { shell, id, next, at } with `hostPid` or
+// `own`, or null. One that names a host process holds ENDING_WINDOW, one that names the session's own id
+// OWN_ENDING_WINDOW. `at` is when the gate noted it, so the Stop hook can tell a later turn's stop
+// (lib/terminal-replace.mjs endAfterTurn). Never throws on a missing or refused store.
 export function takeEnding(store, session, { now = Date.now() } = {}) {
   const name = sessionFile('ending', session);
-  const value = readMarker(store, name, { now, field: 'at', shape: isEnding });
+  const value = readMarker(store, name, { now, field: 'at', window: ENDING_WINDOW, shape: isEnding })
+    ?? readMarker(store, name, { now, field: 'at', window: OWN_ENDING_WINDOW, shape: (each) => isEnding(each) && each.host_pid === undefined });
   try {
     remove(store, name);
   } catch {
@@ -711,7 +719,7 @@ export function takeEnding(store, session, { now = Date.now() } = {}) {
   }
   if (!value) return null;
   const way = value.host_pid === undefined ? { own: value.own } : { hostPid: value.host_pid };
-  return { shell: value.shell, id: value.id, next: value.next, ...way };
+  return { shell: value.shell, id: value.id, next: value.next, ...way, at: value.at };
 }
 
 const isFollow = (value) => isObject(value) && isPid(value.shell) && Number.isFinite(value.at);

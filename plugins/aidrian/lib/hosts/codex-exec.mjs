@@ -118,6 +118,9 @@ export function processEnded({ id, run = runCommand }) {
   return Boolean(state.gone || state.zombie || state.digest !== own.digest);
 }
 
+// Why Codex holds no background session: `codex exec` runs one turn and exits, so none stays idle after its work.
+export const NO_IDLE = 'a `codex exec` session exits once its turn ends, so none stays idle in the background';
+
 // Sends `signal` to the process group of `pid`, else to `pid` alone: whether it went.
 function signalGroup(pid, signal) {
   for (const target of [-pid, pid]) {

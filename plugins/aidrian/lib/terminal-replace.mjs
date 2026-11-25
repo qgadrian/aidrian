@@ -16,15 +16,23 @@
 // opens a session by a plain id, typed or from a record, or by another typed target, such as the session's name:
 // `<state root>/handoff-terminals/follows-<shell pid>`, `<id> <epoch seconds>` or `~<hex of the target> <epoch seconds>`,
 // deleted once that program exits (readFollows); the host adapter says which session a name opens (nameMatcher).
-// A background session runs with no Human attending it
-// as the hooks know it, and it carries no SHELL_VAR; when it hands off in turn, the gate notes a request that names its
-// own id instead of a host process, with the shell whose terminal follows it, by the store or the shell's own record,
+// A session the background route started carries no SHELL_VAR, and the host does not say a Human attends it, whether or
+// not the Human typed into it since; when it hands off in turn, the gate notes a request that names its own id instead
+// of a host process, with the shell whose terminal follows it, by the store or the shell's own record,
 // while that shell runs the host's client (replaceTerminal.hasClient), or with no shell. Its Stop hook ends that session
 // alone, through the host's own stop command (replaceTerminal.endOwn), never another process, so the host lists it as
 // done rather than idle; with a shell, it first writes the shell's record and passes the follow on. The client in the
-// shell then exits, and the shell function opens the next one. The chain floor and its cap bound the hops. This is a
-// provisional decision of the harness: dropping the second way of ending, `own`, leaves the later hops idle and puts
-// them back on the plain line the Human acts on.
+// shell then exits, and the shell function opens the next one. Such a request holds as long as the start record of the
+// session that took the work (handoff-markers.mjs OWN_ENDING_WINDOW), so a turn that waited on a question or a
+// permission prompt still ends the session once it ends; one that names a host process holds 30 minutes (ENDING_WINDOW).
+// It ends only the turn that noted it: a Human prompt after it in the session's own transcript (typedSince) drops it.
+// A residual: where the host keeps no transcript its adapter vouches for, the agent gate cannot lift the session's mark
+// either, so the mark still holds it, and a request a turn the Human interrupted left ends it at the end of a later
+// turn the Human typed, within OWN_ENDING_WINDOW (docs/handoff.md#replacing-the-terminal).
+// A former background session a Human resumed as an interactive session, which the host says a Human attends, never
+// names itself.
+// A background session that stays open after its successor started says why in the gate's say line. The chain floor
+// and its cap bound the hops.
 // Which host process, which signal, and which program and words open a session are the host adapter's
 // `capabilities.handoffContinue.replaceTerminal`; this file names no host.
 
@@ -38,6 +46,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { FOLLOW_AGE, isPid, readOwnFile } from './handoff-markers.mjs';
 import { HOSTS } from './hosts/index.mjs';
 import { stateRoot } from './project.mjs';
+import { transcriptTail } from './unattended-mark.mjs';
 
 export const TERMINAL_FOLDER = 'handoff-terminals';
 // The variable the shell function sets for the host's program: the shell's own pid.
@@ -164,19 +173,23 @@ export function readFollows(session, { env = process.env, now = Date.now(), live
 
 // The Stop hook's step, in the session `session`: takes the request `take()` returns, as handoff-markers.mjs takeEnding,
 // or null, and when this session's own facts confirm it, writes the shell's record, notes through `follow` that the
-// shell's terminal follows the next session, and starts the helper. `unattended()` says no Human attends this session.
+// shell's terminal follows the next session, and starts the helper. `unattended()` says no Human attends this session,
+// and `background()` that the background route started it (handoff-markers.mjs startedInBackground), though the Human
+// may have typed into it since. `typedSince(at)` says whether the Human typed into it after the request's time `at`, as
+// typedSince below reads it: true, false, or null when it cannot tell, which a caller that passes none answers, so only
+// a session its unattended mark holds ends.
 // An attended session's request names its host process, which its own environment must name as the shell's child, and
 // it ends nothing without the shell's record. A background session's names its own id, which `session` must start
-// with, on a host that can end its own session: it ends whether or not a terminal follows it, and writes the shell's
-// record only while the shell it names is alive and the parent of the host's client, as a terminal attached to the
-// session is (replaceTerminal.hasClient). Returns whether the session is ending.
-export function endAfterTurn({ host, session, take, unattended, follow = () => null, env = process.env, now = Date.now(), run, start = startHelper }) {
+// with, on a host that can end its own session and does not say a Human attends it: it ends whether or not a terminal
+// follows it, and writes the shell's record only while the shell it names is alive and the parent of the host's
+// client, as a terminal attached to the session is (replaceTerminal.hasClient). Returns whether the session is ending.
+export function endAfterTurn({ host, session, take, unattended, background = () => false, typedSince: typed = () => null, follow = () => null, env = process.env, now = Date.now(), run, start = startHelper }) {
   const replace = replacer(host);
   if (!replace) return false;
   const request = take();
   if (!request) return false;
   const byProcess = request.own === undefined;
-  const ending = byProcess ? ownProcess({ host, request, unattended, env, run }) : ownSession({ replace, request, session, unattended, env });
+  const ending = byProcess ? ownProcess({ host, request, unattended, env, run }) : ownSession({ replace, request, session, unattended, background, typed, env });
   if (!ending) return false;
   const attached = byProcess || (request.shell !== null && replace.hasClient?.({ shell: request.shell, run }) === true);
   const handed = attached && writeNext({ shell: request.shell, id: request.id, env, now }) !== null;
@@ -193,11 +206,39 @@ function ownProcess({ host, request, unattended, env, run }) {
   return own && own.shell === request.shell && own.hostPid === request.hostPid ? { pid: own.hostPid, shell: own.shell } : null;
 }
 
-// The helper's arguments for a background session whose own id `session` is the request's, or starts with it, which no
-// Human attends, as the host and the store tell it.
-function ownSession({ replace, request, session, unattended, env }) {
-  if (typeof replace.endOwn !== 'function' || typeof session !== 'string' || replace.attended(env) || !unattended()) return null;
-  return session === request.own || session.startsWith(request.own) ? { own: request.own, session } : null;
+// The helper's arguments for a background session whose own id `session` is the request's, or starts with it, which the
+// host does not say a Human attends, and which the store holds as unattended or as one the background route started.
+// The request ends only the turn that noted it: a Human prompt after it, `typed(request.at)`, means this stop ends a
+// later turn, as after a turn the Human interrupted or an API error ended, neither of which runs the Stop hook, so it
+// ends nothing. When the transcript cannot tell, a session its unattended mark holds still ends, since no Human typed
+// into it as the store knows; one held only by its floor, which the Human did type into, stays open.
+function ownSession({ replace, request, session, unattended, background, typed, env }) {
+  if (typeof replace.endOwn !== 'function' || typeof session !== 'string' || replace.attended(env)) return null;
+  const marked = unattended();
+  if (!marked && !background()) return null;
+  if (session !== request.own && !session.startsWith(request.own)) return null;
+  const later = typed(request.at);
+  if (later === true || (later === null && !marked)) return null;
+  return { own: request.own, session };
+}
+
+// Whether the Human typed into a session after `at`, as `prompts` (hosts/index.mjs humanPrompts) reads the session's own
+// transcript, each entry's time by its `timeOf`: true when a Human prompt in its tail is dated after `at`, or carries no
+// date it can read; false when none is and the tail reaches back to `at`; null when it cannot tell: no reader, no time,
+// a transcript it cannot read or that moved meanwhile, or a tail that starts after `at`, which may have cut a prompt off.
+export function typedSince(prompts, at) {
+  if (!prompts || !Number.isFinite(at)) return null;
+  let tail;
+  try {
+    tail = transcriptTail(prompts.file);
+    if (!tail || prompts.still() !== true) return null;
+  } catch {
+    return null;
+  }
+  // `timeOf` answers NaN for an entry it cannot date, which counts as after `at` and never as at or before it.
+  if (tail.entries.some((entry) => prompts.isHuman(entry) && !(prompts.timeOf(entry) <= at))) return true;
+  if (!tail.cut || tail.entries.some((entry) => prompts.timeOf(entry) <= at)) return false;
+  return null;
 }
 
 // Starts scripts/end-host.mjs detached, so it outlives the hook and the session it ends: `pid <pid> <shell>` for a host

@@ -187,5 +187,7 @@ export default {
     // Nothing here says whether OpenCode would let a session push to the remote.
     pushPermission: () => ({ answer: 'unknown' }),
     handoffContinue: { routes: [] },
+    // The harness starts no session here: no handoff route and no project start. docs/providers/opencode.md#limits.
+    backgroundSessions: { unsupported: 'the harness starts no background session here, so none can stay after its work' },
   },
 };

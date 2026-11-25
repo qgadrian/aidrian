@@ -4,6 +4,7 @@
 
 import path from 'node:path';
 
+import { plainLine } from '../hidden-text.mjs';
 import claudeCode from './claude-code.mjs';
 import codex from './codex.mjs';
 import opencode from './opencode.mjs';
@@ -72,15 +73,21 @@ export const humanAnswer = (entry, hosts = HOSTS) => hosts.some((host) => host.h
 export const transcriptFolders = (home, { env = process.env, hosts = HOSTS } = {}) => hosts.flatMap((host) => host.transcriptFolders?.(home, env) ?? []);
 
 // The prompt the Human typed into a session, as the adapter of the host the call runs under (`input`, a hook's
-// payload) reads its transcript: { file, isHuman }, where `file` is the real path of the session's own transcript, kept
-// where the session cannot write (an adapter's `ownTranscript`), and `isHuman(entry)` its `humanPrompt`; null when that
-// host has neither, or the payload's transcript is not the session's own. Never another host's adapter.
+// payload) reads its transcript: { file, isHuman, timeOf, still }, where `file` is the real path of the session's own
+// transcript, kept where the session cannot write (an adapter's `ownTranscript`), `isHuman(entry)` its `humanPrompt`,
+// `timeOf(entry)` when the entry was written, in epoch milliseconds, by its `entryTime`, NaN when it cannot tell or
+// declares none, and `still()` whether the path names that transcript yet; null when that host has neither
+// `humanPrompt` nor `ownTranscript`, or the payload's transcript is not the session's own. Never another host's adapter.
 export function humanPrompts(input, hosts = HOSTS) {
   const host = detectHost({ input }, hosts);
   if (typeof host.humanPrompt !== 'function' || typeof host.ownTranscript !== 'function') return null;
   const file = host.ownTranscript(input?.transcript_path, { session: input?.session_id });
   // Checked again after the read: the entries count only while the path still names the session's own transcript.
-  return file ? { file, isHuman: (entry) => host.humanPrompt(entry) === true, still: () => host.ownTranscript(file, { session: input?.session_id }) === file } : null;
+  const timeOf = (entry) => {
+    const time = host.entryTime?.(entry);
+    return Number.isFinite(time) ? time : Number.NaN;
+  };
+  return file ? { file, isHuman: (entry) => host.humanPrompt(entry) === true, timeOf, still: () => host.ownTranscript(file, { session: input?.session_id }) === file } : null;
 }
 
 // `raw`, a hook's payload, in the standard names the shared code reads: `tool_name` as mcp__<server>__<tool> for an MCP tool.
@@ -304,6 +311,92 @@ export function pushPermission(host, ask) {
     return clear && path.isAbsolute(denial.file) ? { answer: 'denied', ...denial } : UNKNOWN_PUSH;
   } catch {
     return UNKNOWN_PUSH;
+  }
+}
+
+// What a host says of the background sessions it holds (docs/providers/adding-a-host.md, capabilities.backgroundSessions).
+// Each wrapper below never throws and answers one of three shapes: the answer; { unsupported, byDesign: true }, a
+// one-line reason the host by design holds no such session, from a host that declares `unsupported` as its whole
+// capability; or { problem }, a one-line reason it cannot say now, for a host with no capability, a call that throws or
+// answers a promise, and an answer of the wrong shape.
+const isLine = (text) => plainLine(text) !== null;
+const isRow = (row) => row !== null && typeof row === 'object' && isLine(row.id);
+
+// The wrappers' own reasons, each one line that follows the host's name, as `note <host name>: <reason>` prints it.
+const NO_CAPABILITY = 'its adapter says nothing of the background sessions it holds';
+const LATE = 'its adapter answered later than asked about its background sessions';
+const FAILED = 'its adapter failed while it read its background sessions';
+const BAD_LIST = 'its adapter gave background sessions in a shape the harness cannot read';
+const BAD_HELD = 'its adapter answered which background sessions it holds in a shape the harness cannot read';
+
+// The host's call `member` of capabilities.backgroundSessions with `ask`: { answer }, or a wrapper's other shape.
+function askBackground(host, member, ask) {
+  try {
+    const capability = host?.capabilities?.backgroundSessions;
+    if (isLine(capability?.unsupported)) return { unsupported: capability.unsupported, byDesign: true };
+    if (typeof capability?.[member] !== 'function') return { problem: NO_CAPABILITY };
+    const read = capability[member](ask);
+    if (typeof read?.then === 'function') {
+      Promise.resolve(read).catch(() => {});
+      return { problem: LATE };
+    }
+    if (read !== null && typeof read === 'object' && !Array.isArray(read) && isLine(read.problem)) return { problem: read.problem };
+    return { answer: read };
+  } catch {
+    return { problem: FAILED };
+  }
+}
+
+// A host's name for a person, or its id, read through a guard: what a wrapper's reason follows.
+export function hostName(host) {
+  try {
+    return plainLine(host?.name) ?? plainLine(host?.id) ?? 'a host';
+  } catch {
+    return 'a host';
+  }
+}
+
+// The background sessions `host` holds, `ask` being { env, run }: { sessions: [{ id, session, name, cwd, startedAt,
+// idle, waiting }] }, with `id` one line of plain text, `session`, `name`, and `cwd` plain text or null, `startedAt` in
+// milliseconds or null, and `idle` and `waiting` booleans; or a wrapper's other shape.
+export function backgroundList(host, ask) {
+  const read = askBackground(host, 'list', ask);
+  if (!('answer' in read)) return read;
+  try {
+    const sessions = read.answer?.sessions;
+    if (!Array.isArray(sessions) || !sessions.every(isRow)) return { problem: BAD_LIST };
+    return {
+      sessions: sessions.map((row) => ({
+        id: row.id,
+        session: plainLine(row.session),
+        name: plainLine(row.name),
+        cwd: plainLine(row.cwd),
+        startedAt: Number.isFinite(row.startedAt) ? row.startedAt : null,
+        idle: row.idle === true,
+        waiting: row.waiting === true,
+      })),
+    };
+  } catch {
+    return { problem: FAILED };
+  }
+}
+
+// Which of `ask.sessions`, each { id, session } as a start record names it, `host` still holds: { held: [true | false
+// | null, ...] } in their order, null where it cannot tell; or a wrapper's other shape, which an answer of another
+// length or with another value is.
+export function backgroundHeld(host, ask) {
+  try {
+    const sessions = ask?.sessions;
+    if (!Array.isArray(sessions) || !sessions.every((each) => each !== null && typeof each === 'object')) {
+      return { problem: 'the sessions to look for are not a list of start records' };
+    }
+    const read = askBackground(host, 'held', ask);
+    if (!('answer' in read)) return read;
+    const held = read.answer?.held;
+    const clear = Array.isArray(held) && held.length === sessions.length && held.every((each) => each === true || each === false || each === null);
+    return clear ? { held: [...held] } : { problem: BAD_HELD };
+  } catch {
+    return { problem: FAILED };
   }
 }
 

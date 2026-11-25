@@ -15,6 +15,7 @@ import test from 'node:test';
 import { chainOf, checkBrief } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { stopLine as claudeStopLine } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { stopLine as codexStopLine } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
 import { LINGER_GRACE, notStopped } from '../plugins/aidrian/lib/project-linger.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
@@ -251,6 +252,8 @@ test('a could-not-be-stopped line names the session, and falls back to the host\
   assert.equal(notStopped({ stopLine: ({ id }) => `\`stop ${id}\` stops it` }, { id: 'c0ffee01' }), 'a session of it, c0ffee01, could not be stopped; `stop c0ffee01` stops it');
   assert.equal(notStopped({ stopLine: ({ id }) => `\`stop ${id}\` stops it` }, { id: 'c0ffee01' }, 'ran on and '), 'a session of it, c0ffee01, ran on and could not be stopped; `stop c0ffee01` stops it', 'what it did first');
   assert.equal(notStopped({}, { id: 'c0ffee01' }), plain, 'no stopLine');
+  const full = STARTED[0].session;
+  assert.equal(notStopped({ stopLine: claudeStopLine }, { id: full }), `a session of it, ${full}, could not be stopped; the host's own command stops it`, 'a full id, which claude stop refuses');
   assert.equal(notStopped({ stopLine: () => { throw new Error('x'); } }, { id: 'c0ffee01' }), plain, 'a stopLine that throws');
   for (const [why, text] of [
     ['a control character', 'clear\u001b[2J'],
@@ -260,6 +263,7 @@ test('a could-not-be-stopped line names the session, and falls back to the host\
     ['a zero-width space', '`st\u200Bop x` stops it'],
     ['a tab', '`stop x`\tstops it'],
     ['an empty line', ''],
+    ['spaces only', '   '],
   ]) {
     assert.equal(notStopped({ stopLine: () => text }, { id: 'c0ffee01' }), plain, why);
   }

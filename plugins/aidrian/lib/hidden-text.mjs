@@ -11,3 +11,7 @@ const ANY_HIDDEN = new RegExp(HIDDEN_CLASS, 'u');
 
 // Whether `text` holds a hidden character. A non-global pattern, so no call leaves state for the next.
 export const hasHidden = (text) => ANY_HIDDEN.test(text);
+
+// `text` when it is a string with something besides spaces and no hidden character, else null: the one test for a
+// line a host or a file gives that a person reads as it is.
+export const plainLine = (text) => (typeof text === 'string' && text.trim() !== '' && !hasHidden(text) ? text : null);

@@ -24,7 +24,7 @@ import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { startHeld } from '../plugins/aidrian/lib/session-start-gate.mjs';
 import { END_DELAY, endAfterTurn, terminalFolder } from '../plugins/aidrian/lib/terminal-replace.mjs';
-import { markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { liftAttended, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { TEST_HOME } from './fixtures/test-home.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -85,6 +85,15 @@ function setup(t, { handoff = { continue: 'background' }, committed = handoff, l
   const env = { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: SESSION, CLAUDE_CONFIG_DIR: claudeConfig, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ...(home ? { HOME: home } : {}) };
   const store = openStore(state, { checkouts: [dir], maxChain: 3 });
   return { root, dir, state, file, store, env, git, bin, transcripts };
+}
+
+// takeEnding's answer with its `at`, when the gate noted it, checked as a time and left out, so a test compares the rest.
+function requestOf(store, session, options) {
+  const request = takeEnding(store, session, options);
+  if (request === null) return null;
+  const { at, ...rest } = request;
+  assert.ok(Number.isFinite(at), 'a request carries the time it was noted');
+  return rest;
 }
 
 const passCheck = (setting) => assert.equal(checkBrief(setting.file, undefined, 0, { store: setting.store }).exitCode, 0);
@@ -428,7 +437,7 @@ test('the gate and unattendedHere read the unattended marks of the home folder t
     writeFileSync(path.join(marked, `.local/state/aidrian/unattended/${SESSION}.json`), JSON.stringify({ root: each.dir, at: Date.now() }), { mode: 0o600 });
     const result = gate(each, { run: withPs(fakeRun({ own: each.dir }).run, line), env: { ...each.env, ...wrapped, XDG_STATE_HOME: xdg }, home: given });
     assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
-    return { say: result.out[1], ending: takeEnding(each.store, SESSION) };
+    return { say: result.out[1], ending: requestOf(each.store, SESSION) };
   };
   const handed = auto(WRAPPED, undefined, marked);
   assert.ok(handed.say.endsWith(PLAIN), `marked: ${handed.say}`);
@@ -717,11 +726,17 @@ test('a start the gate cannot hold to a floor is stopped and falls back; one it 
   assert.deepEqual(calls.filter((call) => call.args[0] === 'stop').map((call) => call.args), [['stop', 'abcd1234']]);
   assert.equal(readStarted(setting.store, SESSION), null);
 
-  // It runs on with no floor: the gate names it and the command that stops it, and arms no clear beside it.
-  const unstoppable = gate(setting, { run: fakeRun({ own: setting.dir, stop: { status: 1 } }).run });
+  // It runs on with no floor: the gate names it and arms no clear beside it. The start printed no id and the listing
+  // gives no short one, so it names the full id, and no `claude stop`, which refuses one.
+  const listing = fakeRun({ own: setting.dir, printId: false, stop: { status: 1 } }).run;
+  const unnamed = (command, args, options) => {
+    const answer = listing(command, args, options);
+    return args[0] === 'agents' ? { ...answer, stdout: JSON.stringify(JSON.parse(answer.stdout).map((row) => ({ ...row, id: undefined }))) } : answer;
+  };
+  const unstoppable = gate(setting, { run: unnamed });
   assert.deepEqual(unstoppable.out, [
     'continue: none',
-    'fallback: the background session abcd1234 started, but its chain floor, unattended mark, and start record could not all be recorded, and it could not be stopped, so it is still running: `claude stop abcd1234` stops it. Stop it before anything else resumes the brief widget; then a person resumes the brief',
+    `fallback: the background session ${NEW_SESSION} started, but its chain floor, unattended mark, and start record could not all be recorded, and it could not be stopped, so it is still running: the host's own command stops it. Stop it before anything else resumes the brief widget; then a person resumes the brief`,
   ]);
   assert.equal(unstoppable.exitCode, 0);
   assert.equal(readArmed(setting.store, SESSION), null, 'no clear continuation armed beside the running session');
@@ -1628,7 +1643,7 @@ test('in auto mode, a session the shell function started asks to end once its tu
   const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run), env: { ...setting.env, ...WRAPPED } });
   assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
   assert.ok(result.out[1].endsWith(SWITCHES), result.out[1]);
-  assert.deepEqual(takeEnding(setting.store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234', next: NEW_SESSION });
+  assert.deepEqual(requestOf(setting.store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234', next: NEW_SESSION });
   assert.equal(takeEnding(setting.store, SESSION), null, 'the request acts once');
 });
 
@@ -1720,9 +1735,10 @@ test('a background session the gate started ends itself once its turn ends, in a
     ['the shell function opened it by a part of its name', { mode: 'auto' }, 'part', 'stop', { name: 'staff-perm · 0' }],
     ['the shell function opened another session by its name', { mode: 'auto' }, 'other name', 'stop'],
     ['no terminal follows it', { mode: 'auto' }, null, 'stop'],
-    ['ask mode', { mode: 'ask', continue: 'background' }, 'store', null],
+    // A background session that stays open says why (docs/handoff.md#replacing-the-terminal).
+    ['ask mode', { mode: 'ask', continue: 'background' }, 'store', 'stays'],
     ['a Human attends it, as a former background session resumed', { mode: 'auto' }, 'store', null, { attended: { CLAUDE_CODE_SESSION_ATTENDED: '1' } }],
-    ['ask mode, opened by its name', { mode: 'ask', continue: 'background' }, 'name', null],
+    ['ask mode, opened by its name', { mode: 'ask', continue: 'background' }, 'name', 'stays'],
   ]) {
     const { attended = {}, rows = ATTACHED } = options;
     const setting = setup(t, { handoff });
@@ -1753,12 +1769,93 @@ test('a background session the gate started ends itself once its turn ends, in a
     // A session named otherwise names its next hop otherwise too.
     const said = sessionName
       ? { switch: /this terminal switches to the new one, `[^`]+`, once this turn ends\.$/u, stop: /stops once this turn ends; the new one is `[^`]+`, open it with `claude attach abcd1234`\.$/u }[ending]
-      : { switch: SWITCHES, stop: STOPS }[ending] ?? PLAIN;
+      : { switch: SWITCHES, stop: STOPS, stays: STAYS('the base branch\'s session.handoff.mode is not "auto"') }[ending] ?? PLAIN;
     assert.ok(typeof said === 'string' ? result.out[1].endsWith(said) : said.test(result.out[1]), `${name}: ${result.out[1]}`);
     const own = follows === 'short' ? 'session-' : SESSION;
     const expected = { switch: { own, shell: follows === 'both' ? 4343 : 4242 }, stop: { own: SESSION, shell: null } }[ending];
-    assert.deepEqual(takeEnding(setting.store, SESSION), expected ? { ...expected, id: 'abcd1234', next: NEW_SESSION } : null, name);
+    assert.deepEqual(requestOf(setting.store, SESSION), expected ? { ...expected, id: 'abcd1234', next: NEW_SESSION } : null, name);
   }
+});
+
+// The session SESSION as the background route started it, with its floor and its mark, and, with `typed`, the record that
+// the Human typed into it since, which lifts the mark: unattendedHere no longer holds it.
+function typedInto(t, setting, { typed = true } = {}) {
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const env = { ...setting.env, XDG_STATE_HOME: xdg };
+  assert.ok(noteFrom(setting.store, SESSION, { slug: 'widget', chain: 0, brief: setting.file, route: 'background' }));
+  assert.ok(markUnattended(SESSION, { root: setting.dir, env }));
+  if (typed) {
+    const transcript = path.join(setting.transcripts, `${SESSION}.jsonl`);
+    assert.equal(liftAttended(SESSION, transcript, { env, home: TEST_HOME, isHuman: () => true }), true);
+    assert.equal(unattendedHere(SESSION, { store: setting.store, env, home: TEST_HOME, now: Date.now() }), false, 'the Human\'s prompt lifted the mark');
+  }
+  return env;
+}
+const STAYS = (why, id = 'abcd1234') => `This session has ended its work and stays open, since ${why}; the new one is \`harness-handoff · 1\`, open it with \`claude attach ${id}\`. \`aidrian sessions idle\` lists it, with the command that stops it.`;
+
+test('a background session the Human typed into still asks to end once it hands off, and its say line says it stops', (t) => {
+  const setting = setup(t, { handoff: { mode: 'auto' } });
+  passCheck(setting);
+  const env = typedInto(t, setting);
+  const result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env });
+  assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
+  assert.ok(result.out[1].endsWith(STOPS), result.out[1]);
+  assert.deepEqual(requestOf(setting.store, SESSION), { own: SESSION, shell: null, id: 'abcd1234', next: NEW_SESSION });
+});
+
+test('a background session the Human resumed in a terminal the shell function started switches by its host process', (t) => {
+  const setting = setup(t, { handoff: { mode: 'auto' } });
+  passCheck(setting);
+  const env = { ...typedInto(t, setting), ...WRAPPED };
+  const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run), env });
+  assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
+  assert.ok(result.out[1].endsWith(SWITCHES), result.out[1]);
+  assert.deepEqual(requestOf(setting.store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234', next: NEW_SESSION });
+});
+
+test('a background session that stays open after its successor started says why, and names the command that lists it', (t) => {
+  const replace = claudeCode.capabilities.handoffContinue.replaceTerminal;
+  for (const [name, handoff, typed, why, prepare = () => {}, id = 'abcd1234'] of [
+    ['ask mode', { mode: 'ask', continue: 'background' }, false, 'the base branch\'s session.handoff.mode is not "auto"'],
+    ['ask mode, typed into', { mode: 'ask', continue: 'background' }, true, 'the base branch\'s session.handoff.mode is not "auto"'],
+    ['a host that cannot end its own session', { mode: 'auto' }, true, 'this host cannot end a session from inside it', () => {
+      const { endOwn } = replace;
+      replace.endOwn = undefined;
+      return () => { replace.endOwn = endOwn; };
+    }],
+    ['a store that cannot record the request', { mode: 'auto' }, false, 'the continuation store could not record its request to end', (setting) => {
+      mkdirSync(path.join(setting.store.dir, `ending-${SESSION}.json`), { recursive: true });
+    }],
+    // No current host prints such an id: the start stands in for one that does, a session id no shell would open.
+    ['a host that names the new session by an id no request can hold', { mode: 'auto' }, true, 'the host named the new session by an id no request to end can hold', () => {
+      const handoff = claudeCode.capabilities.handoffContinue;
+      const { startBackground: original } = handoff;
+      handoff.startBackground = (args) => {
+        const started = original(args);
+        return started.problem ? started : { ...started, id: '_abcd1234', session: null };
+      };
+      return () => { handoff.startBackground = original; };
+    }, '_abcd1234'],
+  ]) {
+    const setting = setup(t, { handoff });
+    passCheck(setting);
+    const env = typedInto(t, setting, { typed });
+    const restore = prepare(setting);
+    let result;
+    try {
+      result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env });
+    } finally {
+      if (typeof restore === 'function') restore();
+    }
+    assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
+    assert.ok(result.out[1].endsWith(STAYS(why, id)), `${name}: ${result.out[1]}`);
+    assert.equal(takeEnding(setting.store, SESSION), null, `${name}: no request to end`);
+  }
+  // A session the background route never started keeps the plain line.
+  const setting = setup(t, { handoff: { mode: 'ask', continue: 'background' } });
+  passCheck(setting);
+  assert.ok(gate(setting, { run: fakeRun({ own: setting.dir }).run }).out[1].endsWith(PLAIN));
 });
 
 test('the terminal follows a chain of background hops the shell function attached: each hop switches it, and stops itself', (t) => {

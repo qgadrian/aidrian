@@ -328,6 +328,17 @@ Codex residuals, each open until the live checks hold:
 - The keep files of `drop` and `cache` are not denied here: a session may remove either folder and put a link in its
   place, which the agent gate hook then refuses to write through.
 
+## Background sessions
+
+The harness starts a background session here only for a project run's attempt, a detached `codex exec --json`
+process; Codex has no handoff route. `codex exec` runs one turn and exits, so no session stays idle after its work, and
+one that hangs is still running, which `aidrian project wait` stops as a lingering or overdue one.
+So the adapter's `capabilities.backgroundSessions` ([the adapter's fields](adding-a-host.md#the-adapters-fields)) is
+`{ unsupported }` with that reason and nothing else, which `backgroundList` and `backgroundHeld` pass on as
+`byDesign: true`, never as a failure: `aidrian sessions idle` prints nothing for Codex, and `aidrian project wait`
+and `end` stop no settled attempt's session there and print no `released`, `not released`, or `note sessions:` line.
+Verified by `node --test` (`test/adapters.test.mjs`, `test/project-start-codex.test.mjs`); no live `codex exec` has run it.
+
 ## Session ids
 
 Read in Codex's source at `rust-v0.166.0` on 2026-11-18, and again at `rust-v0.172.0` on 2026-11-25, not live:

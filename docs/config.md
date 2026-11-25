@@ -2418,6 +2418,9 @@ It appends that row with no ledger lock, so a ledger another process holds never
 the report's tracker calls, and a refusal to try again would send it back through `wait`, whose next settle lists the
 report again and posts its comment twice.
 `end RUN` refuses while any issue still runs, naming them, or while a session runs on after its issue settled.
+Before it writes the `end` row it stops each attempt's session the host still holds after its `gone` row, as `wait`
+does below, and prints those lines before the sweep's; a session it cannot stop, or a host that cannot say, refuses no
+end: the `end` row is written and the command exits 0.
 
 Every session a start held counts toward the run's caps until the host lists it ended, not only the session of an issue
 that runs (`lib/project-linger.mjs`). An issue settles once `wait` takes in its result, often while its session still
@@ -2435,7 +2438,29 @@ stops it by hand, such as `` `claude stop <id>` stops it ``; so do the `overdue`
 could not stop, `a session of it, <id>, could not be stopped; <how>`. An id of no session's shape is left out, and a
 `<how>` that is empty or holds a character no display text keeps, such as a control, a line or paragraph separator,
 a bidirectional mark, or a zero-width character, becomes `the host's own command stops it`.
-The write-ahead row of a start asks the ledger again under its lock, so no start passes beside such a session.
+The write-ahead row of a start asks the ledger again under its lock, so no start passes beside a session that runs on
+after its issue settled.
+A `gone` row says the host listed the session ended, which says its work ended, not that the host let it go: Claude
+Code keeps a finished background session in its plain `claude agents --json` listing until `claude stop`. Such a
+session no longer counts toward the run's caps, and a start passes beside it. Each pass of `wait`, and each `end`, asks
+the host once which sessions of the attempts with a `gone` row it still holds (`capabilities.backgroundSessions`) and
+stops each one with the project start's `stop`, printing `released <issue> attempt <n>` once every session of the
+attempt the host held ended and stopped, `not released <issue> attempt <n>: a session of it, <id>, stayed with the host
+after its work ended and could not be stopped; <how>` when a stop failed, and `note sessions: <host name>: <reason>`
+when the host cannot say now which sessions it holds, or whether one it holds ended. A stop that worked on one session
+of a chain whose other held session works again prints nothing that pass. None of the three ends a `wait`: each prints once, after
+the lines that did, when it returns, or with the refusal of a `wait` that could no longer read the run, and `wait` still
+prints `idle`. Within one `wait`, a `not released` line of an earlier pass stays only while the latest pass that could
+read its attempt repeats it, so a session that runs no more, stopped by a later pass or by hand, is not named. A pass
+that printed a `note sessions:` line keeps the line of each attempt it could not read and prints none of: every one when
+the host cannot say which sessions it holds, else one with a held session it cannot say ended. A `released` line of any
+pass stays, and a `note sessions:` line is the latest pass's alone.
+Only a session the host lists as ended is released: one that works or waits on a response again is left alone, as while
+a person's turn runs in a session they attached to, and its attempt prints no `released` line meanwhile. That holds
+only for the turn, and, as Claude Code has no conditional stop, only for a turn the host already listed when that session
+was read, right before its own stop: once the turn ends, the next pass of `wait` stops the session, as it stops a
+session that runs on after its issue settled. A session whose attempt has no `gone` row yet is the linger rule's alone.
+Codex by design holds no session after its work, so there nothing is asked, stopped, or printed.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
 A command whose ledger another process holds locked, but `recorded`, and a `start` whose read of the team's policy the

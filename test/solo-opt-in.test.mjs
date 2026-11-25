@@ -183,12 +183,18 @@ test('a local off wins over solo, and the waiver then reads nothing from the for
 test('a tracked or broken local file wins over solo', (t) => {
   for (const [name, options] of [
     ['a tracked file that sets nothing', { local: {}, tracked: true }],
-    ['a file with an unknown key', { local: { nonsense: true } }],
+    ['a file with a bad value', { local: { reviewApprovals: 'maybe' } }],
     ['a file that is no JSON', { local: '{ not json' }],
   ]) {
     const project = repo(t, options).project();
     assert.deepEqual(onOff(switches(project, fakeForge())), ALL_OFF, name);
   }
+});
+
+test('an unknown key in the local file is ignored, so the switches it leaves unset follow solo as if it were not there', (t) => {
+  const project = repo(t, { local: { nonsense: true } }).project();
+  assert.deepEqual([project.errors, project.warnings], [[], [`${LOCAL}: unknown key "nonsense"`]]);
+  assert.deepEqual(onOff(switches(project, fakeForge())), ALL_ON);
 });
 
 test('a working copy that alone says solo turns nothing on, even when the forge says solo and the local ref does not', (t) => {

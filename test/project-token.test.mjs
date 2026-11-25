@@ -126,8 +126,8 @@ test('the local file\'s projectRun.forgeTokenKeychain is checked, and read only 
   assert.deepEqual(localForgeTokenKeychain({ projectRun: { forgeTokenKeychain: ENTRY } }, errors), ENTRY);
   assert.deepEqual(errors, []);
   for (const bad of [
-    { projectRun: true }, { projectRun: { forgeTokenKeychain: ENTRY, allow: true } }, { projectRun: { forgeTokenKeychain: { service: 'x' } } },
-    { projectRun: { forgeTokenKeychain: { ...ENTRY, extra: 1 } } }, { projectRun: { forgeTokenKeychain: { service: ' ', account: 'a' } } },
+    { projectRun: true }, { projectRun: { forgeTokenKeychain: { service: 'x' } } }, { projectRun: { forgeTokenKeychain: 'x' } },
+    { projectRun: { forgeTokenKeychain: { service: ' ', account: 'a' } } },
     { projectRun: { forgeTokenKeychain: { service: 'a\nb', account: 'a' } } }, { projectRun: { forgeTokenKeychain: { service: 'x'.repeat(256), account: 'a' } } },
   ]) {
     const found = [];
@@ -142,6 +142,21 @@ test('the local file\'s projectRun.forgeTokenKeychain is checked, and read only 
   const tracked = findProject(fx.dir);
   assert.equal(tracked.localForgeTokenKeychain, null, 'a tracked file could travel with a branch');
   assert.ok(tracked.errors.some((each) => /git tracks it, so a branch could carry it; "projectRun\.forgeTokenKeychain" is ignored/u.test(each)), tracked.errors.join('\n'));
+});
+
+test('the local file\'s projectRun and its keychain entry warn on a field a newer release adds, and keep the entry', (t) => {
+  const found = [];
+  const raw = { projectRun: { forgeTokenKeychain: { ...ENTRY, label: 'work' }, retries: 2 } };
+  assert.deepEqual(localForgeTokenKeychain(raw, found, '.aidrian.local.json'), ENTRY);
+  assert.deepEqual(found, ['.aidrian.local.json: unknown key "projectRun.retries"', '.aidrian.local.json: unknown key "projectRun.forgeTokenKeychain.label"']);
+  const fx = runFixture(t, { init: false, local: raw });
+  const project = findProject(fx.dir);
+  assert.deepEqual([project.localForgeTokenKeychain, project.errors, project.warnings], [ENTRY, [], found]);
+  // A bad value of a field the entry reads stays an error, beside the warning.
+  const bad = [];
+  assert.equal(localForgeTokenKeychain({ projectRun: { forgeTokenKeychain: { service: '', account: 'me', label: 'work' } } }, bad, '.aidrian.local.json'), null);
+  assert.equal(bad.length, 2);
+  assert.match(bad[1], /"projectRun" must be \{ "forgeTokenKeychain"/u);
 });
 
 // The claim the start gave the session it launched, from the inline settings of its `claude --bg`.

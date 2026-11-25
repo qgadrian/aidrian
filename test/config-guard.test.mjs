@@ -714,10 +714,12 @@ test('a subagent may not change the keychain entry a project run takes its forge
   writeFileSync(local, `${JSON.stringify({ names: { human: 'off' }, projectRun: { forgeTokenKeychain: { service: 'aidrian-forge', account: 'me' } } }, null, 2)}\n`);
   const edit = (from, to) => ['Edit', { file_path: local, old_string: from, new_string: to }];
   const patch = (file, ...lines) => ({ command: `*** Begin Patch\n*** Update File: ${file}\n@@\n${lines.join('\n')}\n*** End Patch\n` });
+  // A field the reader does not know, beside projectRun's key or the entry's, is ignored, so the entry stays as it was.
   for (const [tool, toolInput] of [
-    // A sibling under projectRun makes the reader drop the whole setting, so the token falls to the next source.
     edit('"projectRun": {', '"projectRun": {\n    "x": 1,'),
     edit('"service": "aidrian-forge"', '"service": "aidrian-forge", "extra": 1'),
+  ]) assert.equal((await run(subagent(dir, tool, toolInput))).status, 0, JSON.stringify(toolInput));
+  for (const [tool, toolInput] of [
     edit('"account": "me"', '"account": "other"'),
     ['Write', { file_path: local, content: JSON.stringify({ names: { human: 'off' } }) }],
     // A patch is not applied: while the file selects an entry, any line it adds or removes counts.

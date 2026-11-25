@@ -147,12 +147,16 @@ test('.aidrian.local.json github.autoMerge: "off" when unset; "on" or "off" opts
     const project = findProject(dir);
     assert.deepEqual([project.errors, project.localAutoMerge], [[], value], 'the object form');
   }
-  for (const wrong of [{ enabled: 'yes' }, { enabled: true, strategy: 'merge' }, { allow: true }, {}, true, 'unset', null]) {
+  for (const wrong of [{ enabled: 'yes' }, { allow: true }, {}, true, 'unset', null]) {
     writeFileSync(local, JSON.stringify({ github: { autoMerge: wrong } }));
     const project = findProject(dir);
     assert.equal(project.localAutoMerge, 'off', JSON.stringify(wrong));
     assert.equal(project.errors.length, 1, JSON.stringify(wrong));
   }
+  // A field beside `enabled` is one this plugin does not read: a warning, and `enabled` still applies.
+  writeFileSync(local, JSON.stringify({ github: { autoMerge: { enabled: true, strategy: 'merge' } } }));
+  const extra = findProject(dir);
+  assert.deepEqual([extra.errors, extra.warnings, extra.localAutoMerge], [[], ['.aidrian.local.json: unknown key "github.autoMerge.strategy"'], 'on']);
 });
 
 test('.aidrian.local.json with an error reads "off", never "unset", so it cannot follow a team default of "on"', (t) => {
@@ -160,9 +164,14 @@ test('.aidrian.local.json with an error reads "off", never "unset", so it cannot
   execFileSync('git', ['init', '-q'], { cwd: dir });
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
-  for (const broken of [{ stray: 1 }, { sources: 'no-list' }, { github: 1 }, { github: { other: 1 } }]) {
+  for (const broken of [{ reviewApprovals: 'maybe' }, { sources: 'no-list' }, { github: 1 }, { github: { autoMerge: 'maybe' } }]) {
     writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(broken));
     assert.equal(findProject(dir).localAutoMerge, 'off', JSON.stringify(broken));
+  }
+  // An unknown key is no error: the switch resolves as if it were not there.
+  for (const unknown of [{ stray: 1 }, { github: { other: 1 } }]) {
+    writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(unknown));
+    assert.equal(findProject(dir).localAutoMerge, 'unset', JSON.stringify(unknown));
   }
   writeFileSync(path.join(dir, '.aidrian.local.json'), '{ not json');
   assert.equal(findProject(dir).localAutoMerge, 'off', 'unparsable');
@@ -212,7 +221,7 @@ test('a worktree\'s own .aidrian.local.json never sets the auto-merge switch: on
   const local = (autoMerge) => JSON.stringify({ names: { human: 'Own' }, github: { autoMerge } });
   writeFileSync(path.join(worktree, '.aidrian.local.json'), local('on'));
   assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).localNames], ['unset', { human: 'Own' }], 'the main checkout has no file');
-  for (const broken of [{ stray: 1 }, { sources: 'no-list' }]) {
+  for (const broken of [{ reviewApprovals: 'maybe' }, { sources: 'no-list' }]) {
     writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(broken));
     assert.equal(findProject(worktree).localAutoMerge, 'off', `a worktree's copy hides no error: ${JSON.stringify(broken)}`);
   }
@@ -359,18 +368,18 @@ for (const [name, github, errors] of localGithubCases) {
 
 // A key the team sets is one the local file does not read: a warning, never an error, and never the team's value.
 for (const [name, github, key] of [['a strategy', { strategy: 'squash' }, 'strategy'], ['the ceiling', { allow: true }, 'allow']]) {
-  test(`.aidrian.local.json github ignores ${name} with a warning, and auto-merge stays off`, (t) => {
+  test(`.aidrian.local.json github ignores ${name} with a warning, and auto-merge stays unset`, (t) => {
     const dir = tempDir(t);
     mkdirSync(path.join(dir, '.aidrian'));
     writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
     writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github }));
     const project = findProject(dir);
     const warning = `.aidrian.local.json: unknown key "github.${key}"; only "github.autoMerge" and "github.unattendedWaiver" are machine settings`;
-    assert.deepEqual([project.errors, project.warnings, project.localAutoMerge], [[], [warning], 'off']);
+    assert.deepEqual([project.errors, project.warnings, project.localAutoMerge], [[], [warning], 'unset']);
   });
 }
 
-test('.aidrian.local.json warns on a key from a newer release, keeps the rest, and reads an unset switch "off"', (t) => {
+test('.aidrian.local.json warns on a key from a newer release, keeps the rest, and resolves the switches as if it were not there', (t) => {
   const dir = tempDir(t);
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
@@ -380,9 +389,32 @@ test('.aidrian.local.json warns on a key from a newer release, keeps the rest, a
   assert.deepEqual([project.errors, project.warnings, project.unreadable], [[], ['.aidrian.local.json: unknown key "dir"'], []]);
   assert.equal(project.sources.length, 2, 'its sources still apply');
   assert.deepEqual([project.localReviewApprovals, project.localHandoffBackground], ['off', 'off'], 'a switch it sets holds');
-  // An unknown key may be a misspelt switch, so one the file leaves unset follows no team default and no solo.
-  assert.deepEqual([project.localAutoMerge, project.localUnattendedWaiver, project.localUnattendedSignoff], ['off', 'off', 'off']);
+  assert.deepEqual([project.localAutoMerge, project.localUnattendedWaiver, project.localUnattendedSignoff], ['unset', 'unset', 'unset'], 'one it leaves unset stays unset');
 });
+
+// A field a newer release adds inside a setting this plugin reads: a warning, and the setting's own field still applies.
+// A bad value of the field it reads stays an error.
+const localFieldCases = [
+  ['github.autoMerge', { github: { autoMerge: { enabled: false, until: 'tomorrow' } } }, 'localAutoMerge', 'off', 'github.autoMerge.until',
+    { github: { autoMerge: { enabled: 'no', until: 'tomorrow' } } }, '"github.autoMerge" must be { "enabled": true } or { "enabled": false }'],
+  ['github.unattendedWaiver', { github: { unattendedWaiver: { enabled: false, until: 'tomorrow' } } }, 'localUnattendedWaiver', 'off', 'github.unattendedWaiver.until',
+    { github: { unattendedWaiver: { until: 'tomorrow' } } }, '"github.unattendedWaiver" must be { "enabled": true } or { "enabled": false }'],
+  ['handoff', { handoff: { background: 'off', delay: 5 } }, 'localHandoffBackground', 'off', 'handoff.delay',
+    { handoff: { background: 'yes', delay: 5 } }, '"handoff" must be { "background": "on" } or { "background": "off" }'],
+];
+for (const [name, local, key, value, field, bad, error] of localFieldCases) {
+  test(`.aidrian.local.json ${name} warns on a field a newer release adds, and keeps its own`, (t) => {
+    const dir = tempDir(t);
+    mkdirSync(path.join(dir, '.aidrian'));
+    writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+    writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(local));
+    const project = findProject(dir);
+    assert.deepEqual([project.errors, project.warnings, project[key]], [[], [`.aidrian.local.json: unknown key "${field}"`], value]);
+    writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(bad));
+    const broken = findProject(dir);
+    assert.deepEqual([broken.errors, broken.warnings, broken[key]], [[`.aidrian.local.json: ${error}`], [`.aidrian.local.json: unknown key "${field}"`], 'off']);
+  });
+}
 
 test('.aidrian.local.json github must be an object, and auto-merge stays off', (t) => {
   const dir = tempDir(t);

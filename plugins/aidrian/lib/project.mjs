@@ -12,7 +12,7 @@ import path from 'node:path';
 import { anchorReaders } from './attempt-clone.mjs';
 import { loadConfig, pluginRepository } from './config.mjs';
 import { localForgeTokenKeychain, splitUnknownKeys } from './config-local.mjs';
-import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, readJson } from './fs.mjs';
+import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, knownFields, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, readOriginUrl, readPrefix, readRemoteUrls, repositoryCheckouts, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
@@ -445,9 +445,8 @@ const OFF_SWITCHES = Object.freeze({ autoMerge: 'off', unattendedWaiver: 'off', 
 // This machine's switches, from the main checkout's file as checkedLocal read it: each "unset" when there is no file,
 // and "off" when it cannot be read. An error anywhere in the file, a tracked-file one too, reads an unset auto-merge
 // "off", so it never follows a team default of "on", and the waiver "off" though it says "on": a wrong local file never
-// turns merging on, nor lets a verdict stand in for the Human. A key the plugin does not read is no error, and a switch
-// the file sets still holds, but each switch the file leaves unset reads "off", so a misspelt switch never follows a
-// team default or `solo`.
+// turns merging on, nor lets a verdict stand in for the Human. A key the plugin does not read is no error: the switches
+// resolve as if it were not there, and the check's warning names it.
 // `tracked` gives git's status for the question whether it tracks the file (readLocal).
 function machineSwitches(file, tracked, errors) {
   if (file === undefined) return UNSET_SWITCHES;
@@ -460,14 +459,12 @@ function machineSwitches(file, tracked, errors) {
   const handoffBackground = untrackedSwitch(file.handoffBackground, 'handoff.background', tracked, problems);
   errors.push(...problems);
   const broken = file.problems.length > 0 || problems.length > 0;
-  const unsetOff = (value) => ((broken || file.unknown.length > 0) && value === 'unset' ? 'off' : value);
-  const guarded = (value) => (broken ? 'off' : unsetOff(value));
   return {
-    autoMerge: unsetOff(autoMerge),
-    unattendedWaiver: guarded(unattendedWaiver),
+    autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge,
+    unattendedWaiver: broken ? 'off' : unattendedWaiver,
     reviewApprovals,
-    unattendedSignoff: guarded(unattendedSignoff),
-    handoffBackground: guarded(handoffBackground),
+    unattendedSignoff: broken ? 'off' : unattendedSignoff,
+    handoffBackground: broken ? 'off' : handoffBackground,
   };
 }
 
@@ -539,7 +536,8 @@ function githubGroup(raw) {
   const read = (key) => {
     if (!Object.hasOwn(raw.github, key)) return 'unset';
     const given = raw.github[key];
-    const value = isObject(given) && Object.keys(given).length === 1 && typeof given.enabled === 'boolean' ? (given.enabled ? 'on' : 'off') : given;
+    const known = isObject(given) ? knownFields(given, ['enabled'], `github.${key}`, LOCAL, problems) : null;
+    const value = known ? (typeof known.enabled === 'boolean' ? (known.enabled ? 'on' : 'off') : null) : given;
     if (value === 'on' || value === 'off') return value;
     problems.push(`${LOCAL}: "github.${key}" must be { "enabled": true } or { "enabled": false }`);
     return 'off';
@@ -586,12 +584,12 @@ function localUnattendedSignoff(raw, errors) {
 
 // The local file's `handoff.background` as "on", "off", or "unset": whether this machine lets a handoff start a new
 // session in the background with no Human, when the team's base branch resolves session.handoff.continue to
-// "background" (docs/handoff.md#the-background-route). `handoff` takes that one key; anything else is an error and reads "off".
+// "background" (docs/handoff.md#the-background-route). `handoff` reads that one key, and any other is an unknown key
+// (knownFields); a value that is neither is an error and reads "off".
 function localHandoffBackground(raw, errors) {
   if (!Object.hasOwn(raw, 'handoff')) return 'unset';
-  const given = raw.handoff;
-  const keys = isObject(given) ? Object.keys(given) : [];
-  if (isObject(given) && keys.every((key) => key === 'background') && ['on', 'off', undefined].includes(given.background)) return given.background ?? 'unset';
+  const given = isObject(raw.handoff) ? knownFields(raw.handoff, ['background'], 'handoff', LOCAL, errors) : null;
+  if (given && ['on', 'off', undefined].includes(given.background)) return given.background ?? 'unset';
   errors.push(`${LOCAL}: "handoff" must be { "background": "on" } or { "background": "off" }`);
   return 'off';
 }

@@ -270,6 +270,18 @@ export function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// The fields of the object `value`, at `at` in `file`, that `fields` names, as a new object. Each other field adds
+// `<file>: unknown key "<at>.<field>"` to `errors`, which the local settings file reads as a warning and ignores
+// (config-local.mjs splitUnknownKeys), so a field a newer release adds to a group fails no older plugin.
+export function knownFields(value, fields, at, file, errors) {
+  const kept = {};
+  for (const [key, field] of Object.entries(value)) {
+    if (fields.includes(key)) kept[key] = field;
+    else errors.push(`${file}: unknown key "${at}.${key}"`);
+  }
+  return kept;
+}
+
 // A glob as a regular expression over a `/`-separated relative path: `*` matches within one path segment, `**` across
 // segments, and `**/` also matches no folder at all.
 export function globPattern(glob) {

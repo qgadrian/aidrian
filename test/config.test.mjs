@@ -1148,6 +1148,26 @@ test('models: .aidrian.local.json wins over config.json one field at a time, and
   assert.throws(() => { config.models.claude.agents.explorer.model = 'opus'; }, TypeError);
 });
 
+// A setting a newer release extends: the local file warns on what this plugin does not read, and keeps the rest.
+// config.json, the team's, keeps each an error, read with `requires.aidrian`.
+const localUnknownCases = [
+  ['an agent this plugin does not ship, in models', { models: { claude: { agents: { 'next-agent': { model: 'opus' }, explorer: { model: 'haiku' } } } } },
+    /^\.aidrian\.local\.json: unknown agent "models\.claude\.agents\.next-agent"; the plugin's agents are /u, (config) => config.models.claude.agents.explorer, { model: 'haiku' }],
+  ['a field of review.visual', { review: { visual: { baseUrl: 'http://localhost:3000', viewport: 1024 } } },
+    /^\.aidrian\.local\.json: unknown key "review\.visual\.viewport"$/u, (config) => config.reviewVisual, { baseUrl: 'http://localhost:3000' }],
+];
+for (const [name, local, warning, read, kept] of localUnknownCases) {
+  test(`.aidrian.local.json warns on ${name}, and keeps the rest`, (t) => {
+    const team = project(t, { version: 1 });
+    writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify(local));
+    const { config, errors, warnings } = loadConfig(findProject(team.root));
+    assert.deepEqual(errors, []);
+    assert.equal(warnings.length, 1, warnings.join('\n'));
+    assert.match(warnings[0], warning);
+    assert.deepEqual(read(config), kept);
+  });
+}
+
 test('names: "the Human" and the host\'s name by default; .aidrian.local.json wins over config.json one name at a time', (t) => {
   assert.deepEqual(DEFAULTS.names, { human: 'the Human', ai: null });
   const team = project(t, { version: 1, names: { human: 'the team lead', ai: 'the agent' } });

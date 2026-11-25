@@ -152,10 +152,11 @@ main checkout's git-ignored `.aidrian.local.json`:
 }
 ```
 
-`projectRun` there takes this one key, and the entry exactly a `service` and an `account`; any other shape is a config
-error and reads unset. It is read only while git tracks no `.aidrian.local.json`, and only the main session may write
-it. For one token every github.com project on the machine shares, store it under the default service instead, with no
-local key: `security add-generic-password -s aidrian-project-run -a '<account>' -w`.
+`projectRun` there reads this one key, and the entry a `service` and an `account`; any other field of either is a
+warning and ignored, and any other shape is a config error and reads unset.
+It is read only while git tracks no `.aidrian.local.json`, and only the main session may write it.
+For one token every github.com project on the machine shares, store it under the default service instead, with no local key:
+`security add-generic-password -s aidrian-project-run -a '<account>' -w`.
 On another platform the keychain key is a `note`, and the gh login gives the token.
 
 ## Forge token permissions

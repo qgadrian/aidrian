@@ -4,7 +4,7 @@
 // rule or flow only makes the review ask for less than the project wrote, so the command that plans a review refuses
 // to run on a config with errors (config.mjs commandConfig).
 
-import { isObject } from '../fs.mjs';
+import { isObject, knownFields } from '../fs.mjs';
 import { DEFAULT_IGNORE, DEFAULT_NON_BEHAVIOUR, DEPTHS, HARNESS_FLOW } from './plan.mjs';
 import { SPLIT_DEFAULTS } from './split.mjs';
 
@@ -463,10 +463,12 @@ const ENGINE_PROBLEM = `"review.engine" must be ${ENGINES.map((each) => `"${each
 
 // `review.visual` from the local settings file: { baseUrl }, where this machine serves the app for the visual capture
 // (a local dev server, or a preview). A machine setting, so a committed config never points the capture at a host.
+// Any other field is an unknown key, which the local file reads as a warning (knownFields).
 export function checkLocalVisual(value, file, errors) {
-  const visual = isObject(value) ? value.visual : undefined;
-  if (visual === undefined) return { baseUrl: null };
-  const ok = isObject(visual) && Object.keys(visual).every((key) => key === 'baseUrl') && (visual.baseUrl === undefined || (isText(visual.baseUrl) && /^https?:\/\/[^\s/]+(?:\/\S*)?$/u.test(visual.baseUrl)));
+  const given = isObject(value) ? value.visual : undefined;
+  if (given === undefined) return { baseUrl: null };
+  const visual = isObject(given) ? knownFields(given, ['baseUrl'], 'review.visual', file, errors) : null;
+  const ok = visual !== null && (visual.baseUrl === undefined || (isText(visual.baseUrl) && /^https?:\/\/[^\s/]+(?:\/\S*)?$/u.test(visual.baseUrl)));
   if (!ok) {
     errors.push(`${file}: "review.visual" must be { "baseUrl": "http(s)://host[:port]" }`);
     return { baseUrl: null };

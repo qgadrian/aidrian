@@ -2554,9 +2554,10 @@ Two checks read it:
   recorded passes as such, and the full id of its commit: the one the claim names when the run matches its tree, else
   the one among HEAD's last 100 that holds its files, or that none was found or git could not list them; with no run,
   what leaves no row. For a run that can support a pass claim, at a commit found, one instruction follows: cite one
-  finished run, with its command as written in the call that ran it, its counts, and its commit. For any other, as a
-  failed or unjudged one, one of zero passes, or none, it says to report that outcome or get a passing run. The run's
-  record key only names it, since a key drops quotes and a long one is cut.
+  finished run, with its command as written in the call that ran it, its counts, and its commit. For one whose
+  commit was not found, it says to commit the files it ran on and cite that commit, or run it at the commit cited. For
+  any other, as a failed or unjudged one, one of zero passes, or none, it says to report that outcome or get a passing
+  run. The run's record key only names it, since a key drops quotes and a long one is cut.
 - The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its
   own rows since its run started: a run of the session or of another agent is that one's to report. The report is
   read in one pass over its lines, with fences found as the body rule finds them. A machine handoff's JSON, a

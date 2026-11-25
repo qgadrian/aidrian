@@ -594,12 +594,20 @@ function judgeEvidence(body, call, { config, project, folder, readRuns, listOpen
     const old = new Set(passClaims(own.body, { testing: config.testing }).map(({ clause, key }) => `${key}\n${clause}`));
     claims = claims.filter(({ clause, key }) => !old.has(`${key}\n${clause}`));
   }
+  const revision = (spec) => {
+    const read = runGit(['rev-parse', '--verify', '--quiet', spec], folder);
+    return read.status === 0 ? read.stdout.trim() : null;
+  };
+  // A named commit is resolved to its full id once, and its tree is read from that id, so the tree that picks a run and
+  // the id the deny states are of one commit. A named tree id is no commit, and is read as it is.
+  const ids = new Map();
+  const fullId = (id) => {
+    if (!ids.has(id)) ids.set(id, revision(`${id}^{commit}`));
+    return ids.get(id);
+  };
   const trees = new Map();
   const treeAt = (commit) => {
-    if (!trees.has(commit)) {
-      const read = runGit(['rev-parse', '--verify', '--quiet', `${commit}^{tree}`], folder);
-      trees.set(commit, read.status === 0 ? read.stdout.trim() : null);
-    }
+    if (!trees.has(commit)) trees.set(commit, revision(`${commit === 'HEAD' ? commit : fullId(commit) ?? commit}^{tree}`));
     return trees.get(commit);
   };
   // Digits alone git cannot read are a number, such as "at 1234567 ms", and leave the line to HEAD's tree.
@@ -611,12 +619,9 @@ function judgeEvidence(body, call, { config, project, folder, readRuns, listOpen
   });
   if (!missing.length) return null;
   const commitOf = commitsByTree(folder);
-  const fullId = (id) => {
-    const read = id === null ? null : runGit(['rev-parse', '--verify', '--quiet', `${id}^{commit}`], folder);
-    return read?.status === 0 ? read.stdout.trim() : null;
-  };
+  const namedId = (claim) => (namedCommit(claim) === null ? null : fullId(namedCommit(claim)));
   const facts = missing.slice(0, FACTS_SHOWN)
-    .map((claim) => `For \`${claim.key}\`, ${claimFacts(claim, runs, { tree: claimTree(claim), commitOf, named: () => fullId(namedCommit(claim)) })}`);
+    .map((claim) => `For \`${claim.key}\`, ${claimFacts(claim, runs, { tree: claimTree(claim), commitOf, named: () => namedId(claim) })}`);
   return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section' })} The run must be of the files of HEAD ` +
     `(tree ${String(treeAt('HEAD') ?? 'unknown').slice(0, 12)}), or of the commit the line names, such as "at <commit id>". ` +
     `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.\n\nWhat the record shows: ${facts.join(' ')}`);

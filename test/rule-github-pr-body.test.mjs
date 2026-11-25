@@ -590,14 +590,21 @@ test('a Tests run deny states the nearest recorded run, and a claim written from
   assert.ok(judge('- `npm test`: pass', uncounted).includes(`passed, no counts; at commit ${first}. ${cite}`));
   assert.equal(judge(`- \`npm test\` at ${first}: pass`, uncounted), null);
 
-  // Runs that support no pass claim, or whose commit is not found: the facts, and no instruction to cite them.
+  // A passing run whose commit is not found: how to get one to cite.
+  const unfound = judge('- `npm test`: 12 pass', [run({ tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) })]);
+  assert.ok(unfound.includes("passed, 12 pass, 0 fail; its files' commit not found among HEAD's last 100, or git could not list them. "
+    + 'Commit the files it ran on and cite that commit, or run it at the commit you cite.'), unfound);
+  // A line that names a tree id, which is no commit, is still judged at that tree.
+  assert.match(judge(`- \`npm test\` at ${firstTree}: 11 pass`, [older]) ?? '', /^Blocked/u);
+  assert.equal(judge(`- \`npm test\` at ${firstTree}: 12 pass`, [older]), null);
+
+  // Runs that support no pass claim: the facts, and no instruction to cite them.
   for (const [runs, said] of [
     [[], 'the record holds no finished run of it: a run in the background, inside `sh -c` or `$( )`, or in another session leaves no row.'],
     [[run({ pass: 0 })], `passed, 0 pass, 0 fail; at commit ${head}; it recorded zero passes, which supports no pass.`],
     [[run({ status: 'failed', pass: 0 })], `failed, 0 pass, 0 fail; at commit ${head}; it recorded zero passes, which supports no pass.`],
     [[run({ status: 'failed', pass: 11, fail: 1 })], `failed, 11 pass, 1 fail; at commit ${head}.`],
     [[run({ status: 'unjudged', pass: null, fail: null })], `unjudged, no counts; at commit ${head}; its output showed no count and its exit status is unknown.`],
-    [[run({ tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) })], "passed, 12 pass, 0 fail; its files' commit not found among HEAD's last 100, or git could not list them."],
   ]) {
     const reason = judge('- `npm test`: 12 pass', runs);
     assert.match(reason, /^Blocked: the `## Tests run` section says `npm test` passed, but no run of it/u, 'the first sentence the dispatch log keys on stays');

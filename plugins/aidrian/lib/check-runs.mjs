@@ -643,6 +643,7 @@ export function claimProblem(missing, runs, { where }) {
 // commit's, or null. Only a run that can support a pass claim, at a commit to name, is one to cite. It states what the record holds and composes no line: a record key drops quotes and
 // a long one is cut, so the key only names the run.
 const CITE = 'Cite one finished run: its command as written in the call that ran it, its counts, and its commit.';
+const NO_COMMIT = 'Commit the files it ran on and cite that commit, or run it at the commit you cite.';
 const NO_CITE = 'Report that outcome, or get a passing run.';
 export function claimFacts({ key }, runs, { tree, commitOf = () => null, named = () => null }) {
   const own = runs.filter((run) => run.command === key);
@@ -665,5 +666,6 @@ export function claimFacts({ key }, runs, { tree, commitOf = () => null, named =
     ...(nearest.pass === 0 ? ['it recorded zero passes, which supports no pass'] : []),
     ...(nearest.status === 'unjudged' ? ['its output showed no count and its exit status is unknown'] : []),
   ];
-  return `${facts.join('; ')}. ${passed(nearest) && commit ? CITE : NO_CITE}`;
+  const citable = commit ? CITE : NO_COMMIT;
+  return `${facts.join('; ')}. ${passed(nearest) ? citable : NO_CITE}`;
 }

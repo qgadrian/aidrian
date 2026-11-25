@@ -1089,10 +1089,11 @@ const atCheck = (state, head = HEAD, extra = {}) => {
 
 // The review gate's forge and `aidrian pr extend`'s in one: the pull request is on this checkout's own branch, which,
 // as the default branch, holds `policy` (by default allowing the waiver), so holdToBase and the gate read the same base.
-// `comments` are the pull request's comments; `visibility` answers the forge's reading of the repository.
-function landForge(r, { policy = ALLOW, comments = [], visibility = () => 'PRIVATE', ...options } = {}) {
+// `comments` are the pull request's comments; `visibility` answers the forge's reading of the repository; `branches` adds
+// or replaces branches' policies, for a `base` other than that branch.
+function landForge(r, { policy = ALLOW, branches = {}, comments = [], visibility = () => 'PRIVATE', ...options } = {}) {
   const branch = r.git('branch', '--show-current');
-  const make = teamForge({ main: policy, [branch]: policy }, { base: branch, ...options });
+  const make = teamForge({ main: policy, [branch]: policy, ...branches }, { base: branch, ...options });
   const issue = comments;
   const facade = make({});
   return Object.assign({
@@ -1280,6 +1281,17 @@ test('the unattended rule: the base branch on the forge decides the mode, not a 
     const { code, out } = await extend(t, r, EXTEND_OVER_FLAG, { forge: landForge(r, { policy }) });
     assert.deepEqual([code, out.extension.status, out.extension.by], [0, by === 'judge' ? 'asking' : 'stopped', by], name);
     if (by === 'judge') assert.equal(stepAfter(r, 'ask').status, 'extension_ask', name);
+  }
+});
+
+test('the unattended rule: the base branch decides the mode, not the default branch', async (t) => {
+  for (const [onBase, status, by] of [['ask', 'asking', 'judge'], ['auto', 'stopped', 'unattended']]) {
+    const r = repo(t, { local: ON, config: AUTO });
+    r.git('branch', 'release');
+    r.record(5, atFlaggedCheck('auto'));
+    const forge = landForge(r, { policy: ALLOW_AUTO, base: 'release', branches: { release: { ...ALLOW, github: { ...ALLOW.github, extraRounds: onBase } } } });
+    const { code, out } = await extend(t, r, EXTEND_OVER_FLAG, { forge });
+    assert.deepEqual([code, out.extension.status, out.extension.by], [0, status, by], `the default branch on auto, the base on ${onBase}`);
   }
 });
 

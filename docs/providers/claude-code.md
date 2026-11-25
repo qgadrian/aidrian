@@ -1259,6 +1259,19 @@ verification. Four assumptions follow from the references:
   this repository in no entry is the shape of a run whose push was refused, and the only shape that answers `denied`.
 - `soft_deny` and `hard_deny` are never read: no pattern over prose says whether one forbids a push.
 
+Limits: managed settings and a `--settings` value can add `autoMode` entries the user file does not show, and an entry
+that names one other host and trusts the remote in prose under another word, such as `"Microsoft's forge, and
+gitlab.example.com"`, reads as naming that host only; either can answer `denied` where the classifier would allow the
+push, and the fix still works. The other way round, some
+entries that name another repository answer `allowed`: one on another host whose path is the same, such as
+`gitlab.example.com/acme/widget`, a name that goes on past a `.`, such as `acme/widget.site`, and an `allow` entry
+phrased as a refusal, such as `Never push to github.com/acme/widget`; the run then starts as it would without the
+check. A permission rule that reaches a push some other way, such as a rule for a script that pushes or
+`Bash(git -C <dir> push:*)`, reads as no push rule, and a rule in managed settings or a `--settings` value is not
+read; either can answer `denied` where the push would go through. A deny or ask rule that refuses the push answers
+`unknown`, not `denied`: the run starts, as it did before the check, and stops at its push. A relative `CLAUDE_CONFIG_DIR`
+answers `unknown`. Every shape of `autoMode` the adapter does not know answers `unknown`.
+
 Verified on Claude Code by `node --test` on fixtures (`test/adapters.test.mjs`); not live: no denial of a real
 classifier has been held against the answer. `claude auto-mode config` shows the rules the host applies, as a check by hand.
 
@@ -1299,19 +1312,6 @@ Read on 2026-11-25 from the [permission modes](https://code.claude.com/docs/en/p
 - Prose that names no merge may still cover one, as an entry that trusts all work in a repository may: no matcher reads it.
   So `uncovered` is what was checked, no rule or entry that names a merge, and no proof that the host blocks one.
 - A permission rule that covers a whole MCP server is not read as reaching a merge: a run merges with `gh pr merge` alone.
-
-Limits: managed settings and a `--settings` value can add `autoMode` entries the user file does not show, and an entry
-that names one other host and trusts the remote in prose under another word, such as `"Microsoft's forge, and
-gitlab.example.com"`, reads as naming that host only; either can answer `denied` where the classifier would allow the
-push, and the fix still works. The other way round, some
-entries that name another repository answer `allowed`: one on another host whose path is the same, such as
-`gitlab.example.com/acme/widget`, a name that goes on past a `.`, such as `acme/widget.site`, and an `allow` entry
-phrased as a refusal, such as `Never push to github.com/acme/widget`; the run then starts as it would without the
-check. A permission rule that reaches a push some other way, such as a rule for a script that pushes or
-`Bash(git -C <dir> push:*)`, reads as no push rule, and a rule in managed settings or a `--settings` value is not
-read; either can answer `denied` where the push would go through. A deny or ask rule that refuses the push answers
-`unknown`, not `denied`: the run starts, as it did before the check, and stops at its push. A relative `CLAUDE_CONFIG_DIR`
-answers `unknown`. Every shape of `autoMode` the adapter does not know answers `unknown`.
 
 ## The Claude mod
 

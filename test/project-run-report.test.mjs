@@ -1129,14 +1129,18 @@ test('next lists each settle report still owed, so a driver that takes the run o
   const loop = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/references/loop.md'), 'utf8').replace(/\s+/gu, ' ');
   const first = loop.slice(loop.indexOf('1. `aidrian project next <run>`:'), loop.indexOf('2. `aidrian project start'));
   assert.ok(first.includes('one `owed <key>` line or more, which come last') && first.includes('Step 4 first, then the other lines of this answer, `halted` and `paused` included.'), 'the loop reads the owed line');
-  // A halt or stop reached from another step passes no `next`: it writes what is owed itself. After any start, and before
-  // Retry's wait, the loop asks `next`.
+  // A halt or stop reached from another step passes no `next`: it writes what is owed itself. Before Retry's wait, the
+  // loop asks `next`.
   assert.match(loop.slice(loop.indexOf('## Halt'), loop.indexOf('## Stop')), /2\. Run `aidrian project report <run> --json` and write what it owes/u, 'before the halt waits');
-  assert.ok(loop.includes('after any start, before another `start` or a `wait`, run `aidrian project next <run>` and write the reports it lists as `owed` (step 4):'), 'after any start');
+  // Each start goes back to step 1, so the next one is always a line of a fresh `next`, read after the owed reports.
+  const step2 = loop.slice(loop.indexOf('2. `aidrian project start <run> <key>`:'), loop.indexOf('3. `aidrian project wait'));
+  assert.ok(first.includes('one `next <key> <branch>` line or more: step 2 for the first. Step 1 then lists what is left to start.'), 'one start a pass');
+  assert.match(step2, /§ The started status says\. Then step 1\. - exit 0, `parked <key> unreconciled: \.\.\.`: nothing started; follow \[existing-work\.md\]\(existing-work\.md\), then step 1\./u, 'started and parked');
+  assert.ok(step2.includes('a usage limit paused the run. Not a refusal: step 1, whose `next` says so.'), 'paused');
   assert.ok(loop.includes('Run `aidrian project next <run>` and write the reports it lists as `owed`, then step 3 once, then the same command again.'), 'before the retry\'s wait');
   // The handoff's wait keeps its routing: a withdrawn policy still stops the new driver before it asks `next`.
   const handoff = loop.slice(loop.indexOf('## Hand off'));
-  assert.ok(handoff.includes('Its lines go where step 3 of § Each pass sends them, such as `note policy:` to § Stop; when none goes to § Stop or § Retry, step 1 next, whose `next` lists what is owed.'), 'the handoff wait');
+  assert.ok(handoff.includes('A line of it that step 3 of § Each pass sends to § Stop, such as `note policy:`, or to § Retry goes there first, and § Retry writes no report until this wait exits 0. Otherwise step 1, whatever else it printed, before any further wait.'), 'the handoff wait');
 });
 
 test('a start of one issue that settles another\'s orphan keeps its own outcome, and the next next lists the orphan\'s report', (t) => {

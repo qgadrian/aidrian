@@ -18,17 +18,16 @@ named and go on from that output as step 2 says.
      left. Step 4 first, then the other lines of this answer, `halted` and `paused` included.
    - `halted <cause>`: § Halt.
    - `paused until <time>`: § Pause.
-   - one `next <key> <branch>` line or more: step 2 for each, in order.
+   - one `next <key> <branch>` line or more: step 2 for the first. Step 1 then lists what is left to start.
    - `wait <n> running`: step 3. It counts a session that runs on after its issue settled (`lingering <key> ...`).
    - `done`: § Finish.
    - exit 1: § Stop, with its stderr line as the cause.
-2. `aidrian project start <run> <key>`. Follow its lines as below; but after any start, before another `start` or a
-   `wait`, run `aidrian project next <run>` and write the reports it lists as `owed` (step 4):
+2. `aidrian project start <run> <key>`:
    - exit 0, `started <key> attempt <n> session <id>`: the issue runs in its own session. Set its started status once,
-     as [tracker-writes.md](tracker-writes.md) § The started status says. Next `next` line, else step 3.
-   - exit 0, `parked <key> unreconciled: ...`: nothing started; follow [existing-work.md](existing-work.md). Next `next` line, else step 3.
+     as [tracker-writes.md](tracker-writes.md) § The started status says. Then step 1.
+   - exit 0, `parked <key> unreconciled: ...`: nothing started; follow [existing-work.md](existing-work.md), then step 1.
    - an `unverified:` line is a note, not a refusal.
-   - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: § Pause.
+   - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: step 1, whose `next` says so.
    - a line `halt <cause>`, exit 1: § Halt. A `recheck kept the halt:` line after it names what kept it.
    - exit 0, `recheck lifted the halt: <cause>; ok <checks>`: the start lifted the halt of this issue and launched
      nothing. Run this step again for the same `<key>` at once.
@@ -139,9 +138,9 @@ At the session-length reminder, a usage-limit warning, or the plan offer, hand o
 2. Write the brief with the `session-handoff` skill, slug `project-<run>`. Objective: drive run `<run>`.
    Current state: the run id, and `aidrian project summary <run>`'s counts. Next steps: read this skill's `SKILL.md`
    at its absolute path, then `references/loop.md`, then `aidrian project wait <run> --max-wait 0` first, which moves
-   the run to the new session. Its lines go where step 3 of § Each pass sends them, such as `note policy:` to § Stop; when
-   none goes to § Stop or § Retry, step 1 next, whose `next` lists what is owed. The ledger holds the rest: name no
-   issue's detail.
+   the run to the new session. A line of it that step 3 of § Each pass sends to § Stop, such as `note policy:`, or
+   to § Retry goes there first, and § Retry writes no report until this wait exits 0. Otherwise step 1, whatever else it
+   printed, before any further wait. The ledger holds the rest: name no issue's detail.
 3. Run `aidrian project handoff <run> <brief>` before `aidrian handoff continue <brief>`: custody moves only to a session
    started from a brief the driver recorded this way. Then follow the `session-handoff` skill's continue step.
 4. When `aidrian handoff continue` answers `continue: none` or `continue: clear`, or refuses twice, keep driving in this

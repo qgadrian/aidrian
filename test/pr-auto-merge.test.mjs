@@ -64,8 +64,9 @@ const BASE_TIP = 'b'.repeat(40);
 // each a list or a function standing in for the call. `restFiles` is the paged file list `changeFiles` gives, or a
 // function standing in for it (by default a 404); `pullHead` is the head `pull` gives, or a function standing in for it.
 // A `files` value that is a list of names is a folder: `contents` lists it. `modes` maps a path from the top of the
-// repository to its git mode at the head, over every changed file of the view, which is a regular file unless named;
-// `tree` reads a folder of that tree by its SHA, the head itself for the root, or is a function standing in for it.
+// repository to its git mode at the head, over every file `files` holds there and every changed file of the view, each a
+// regular file unless named; `tree` reads a folder of that tree by its SHA, the head itself for the root, or is a function
+// standing in for it, given the SHA and the tree's folders by SHA.
 // What gh prints and how each call reads it is the adapter's (test/forge-github.test.mjs).
 // The head's tree as the forge gives it, one folder a SHA: the root is HEAD, a folder `tree:<path>`. `modes` maps a path
 // from the top of the repository to its git mode; a folder on the way is a tree entry.
@@ -86,7 +87,6 @@ function headTree(modes) {
   }
   return folders;
 }
-const SHA_REF = /^[0-9a-f]{40}$/u;
 const notStubbed = () => {
   throw Object.assign(new Error('Command failed: gh api'), { stderr: 'gh: Not Found (HTTP 404)\n' });
 };
@@ -100,7 +100,8 @@ function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configTex
   const described = { number: 7, headRefOid: HEAD, baseRefName: 'main', baseRefOid: BASE_TIP, author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view };
   const present = Array.isArray(described.files) ? described.files.filter((file) => typeof file?.path === 'string' && file.changeType !== 'DELETED').map((file) => file.path) : [];
   const paged = Array.isArray(restFiles) ? restFiles.filter((entry) => typeof entry?.filename === 'string' && entry.status !== 'removed').map((entry) => entry.filename) : [];
-  const folders = headTree({ ...Object.fromEntries([...present, ...paged].map((file) => [file, '100644'])), ...modes });
+  const held = Object.keys(files).filter((key) => key.includes(`@${HEAD}:`)).map((key) => key.slice(key.indexOf(':') + 1));
+  const folders = headTree({ ...Object.fromEntries([...held, ...present, ...paged].map((file) => [file, '100644'])), ...modes });
   const forge = {
     change: (target, fields) => {
       calls.push(['change', target, fields]);
@@ -114,14 +115,6 @@ function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configTex
       calls.push(['contents', repo, file, ref, host]);
       assert.match(ref, /^(?:refs\/heads\/.|[0-9a-f]{40}$)/u, 'a branch, never a tag of the same name, or a commit by its SHA');
       const key = `${repo}@${ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref}:${file}`;
-      // A folder at a commit that `files` does not name lists what `files` holds below it at that commit: each a
-      // regular file, or a folder for a deeper path.
-      const below = `${repo}@${ref}:${file === '' ? '' : `${file}/`}`;
-      const held = Object.keys(files).filter((each) => each.startsWith(below) && each !== below.slice(0, -1));
-      if (!Object.hasOwn(files, key) && SHA_REF.test(ref) && held.length) {
-        const names = new Map(held.map((each) => each.slice(below.length).split('/')).map((parts) => [parts[0], parts.length > 1 ? 'dir' : 'file']));
-        return [...names].map(([name, type]) => ({ type, name, path: `${file === '' ? '' : `${file}/`}${name}` }));
-      }
       if (!Object.hasOwn(files, key)) throw Object.assign(new Error(`Command failed: gh api ${repo} ${file}\ngh: Not Found (HTTP 404)`), { stderr: 'gh: Not Found (HTTP 404)\n' });
       if (typeof files[key] === 'function') return files[key]();
       if (Array.isArray(files[key])) return files[key].map((name) => ({ type: 'file', name, path: `${file}/${name}` }));
@@ -133,7 +126,7 @@ function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configTex
     },
     tree: (repo, sha, { host } = {}) => {
       calls.push(['tree', repo, sha, host]);
-      if (typeof tree === 'function') return tree(sha);
+      if (typeof tree === 'function') return tree(sha, folders);
       if (!folders.has(sha)) throw Object.assign(new Error(`Command failed: gh api ${repo} tree ${sha}`), { stderr: 'gh: Not Found (HTTP 404)\n' });
       return { sha, tree: folders.get(sha), truncated: false };
     },
@@ -1010,21 +1003,67 @@ test('includeGuardedPaths true on the default branch and the base lets a guarded
   assert.match(run(t, r, ['7'], onStack(relocated, '.aidrian/config.json')).out[0], /its config at head abcdef1 is "tools\/policy\/config\.json", not "\.aidrian\/config\.json"/u, 'a pointer the base changed underneath');
   const malformed = { ...branches(policies, policies), [`acme/notes@${HEAD}:.aidrian.json`]: '{ "dir": ', [`acme/notes@${HEAD}:.aidrian/config.json`]: configText(policies) };
   assert.match(run(t, r, ['7'], onStack(malformed, '.aidrian/config.json')).out[0], /cannot be read whole \(\.aidrian\.json: invalid JSON/u, 'a malformed pointer with a valid fallback config');
-  // Each policy file the head holds is a regular file there: a config, or a pointer, the head's listing calls a link is off.
-  const linking = (folder, name) => ({ [`acme/notes@${HEAD}:${folder}`]: () => [{ type: 'symlink', name, path: folder ? `${folder}/${name}` : name }] });
-  const symlinked = run(t, r, ['7'], { ...headed(configText(policies)), files: { ...headed(configText(policies)).files, ...linking('.aidrian', 'config.json') } });
-  assert.deepEqual([symlinked.code, symlinked.out[0]], [1, 'auto-merge off for #7: ".aidrian/config.json" at head abcdef1 is a symlink, not a regular file, which includePolicyFiles never lets through']);
-  const pointerLink = { ...headed(configText(policies)).files, [`acme/notes@${HEAD}:`]: () => [{ type: 'dir', name: '.aidrian', path: '.aidrian' }, { type: 'symlink', name: '.aidrian.json', path: '.aidrian.json' }] };
-  assert.match(run(t, r, ['7'], { ...headed(configText(policies)), files: pointerLink }).out[0], /"\.aidrian\.json" at head abcdef1 is a symlink, not a regular file/u, 'a pointer that is a link');
-  const unlisted = { ...headed(configText(policies)).files, [`acme/notes@${HEAD}:.aidrian`]: () => { throw Object.assign(new Error('gh: Server Error (HTTP 500)'), { stderr: 'gh: Server Error (HTTP 500)\n' }); } };
-  assert.match(run(t, r, ['7'], { ...headed(configText(policies)), files: unlisted }).out[0], /the folder of "\.aidrian\/config\.json" at head abcdef1 cannot be listed/u, 'a listing that fails');
-  assert.deepEqual(reasonOf(t, r, headed(configText(policies))), [0, null], 'a regular config and no pointer');
-  // A listing of 1,000 entries or more may be cut at GitHub's cap: one that leaves out the pointer, or the config, is off.
-  const many = (keep) => () => [...keep, ...Array.from({ length: 1000 - keep.length }, (_, i) => ({ type: 'file', name: `f${i}.md`, path: `f${i}.md` }))];
-  const rootCut = { ...headed(configText(policies)).files, [`acme/notes@${HEAD}:`]: many([{ type: 'dir', name: '.aidrian', path: '.aidrian' }]) };
-  assert.match(run(t, r, ['7'], { ...headed(configText(policies)), files: rootCut }).out[0], /the forge lists 1000 entries of "\." at head abcdef1, at or past its cap of 1000, so whether "\.aidrian\.json" is a regular file cannot be told/u, 'a capped listing that omits the pointer');
-  const folderCut = { ...headed(configText(policies)).files, [`acme/notes@${HEAD}:.aidrian`]: many([]) };
-  assert.match(run(t, r, ['7'], { ...headed(configText(policies)), files: folderCut }).out[0], /the forge lists 1000 entries of "\.aidrian" at head abcdef1, at or past its cap of 1000, so whether "\.aidrian\/config\.json" is a regular file cannot be told/u, 'a capped listing that omits the config');
+  // Each policy file the head holds is a regular file there, by its mode in the head's git tree (issue #672).
+  const regular = headed(configText(policies));
+  const at = (options) => run(t, r, ['7'], { ...regular, ...options });
+  const plain = at({});
+  assert.deepEqual([plain.code, plain.calls.filter((call) => call[0] === 'tree')], [0, [['tree', 'acme/notes', HEAD, 'github.com'], ['tree', 'acme/notes', 'tree:.aidrian', 'github.com']]], 'a regular config and no pointer: the head, then its folder by the sha its entry gave, each once');
+  assert.deepEqual(plain.calls.filter((call) => call[0] === 'contents' && call[3] === HEAD).map((call) => call[2]), ['.aidrian.json', '.aidrian/config.json'], 'no folder is listed');
+  assert.equal(at({ modes: { '.aidrian/config.json': '100755' } }).code, 0, 'an executable config is a regular file');
+  const throughPointer = run(t, r, ['7'], onStack({ ...pointing('main', 'tools/policy', policies), ...pointing('feat/stack', 'tools/policy', policies), ...pointing(HEAD, 'tools/policy', policies) }, 'tools/policy/config.json'));
+  assert.deepEqual([throughPointer.code, [...new Set(throughPointer.calls.filter((call) => call[0] === 'contents' && call[3] === HEAD).map((call) => call[2]))]], [0, ['.aidrian.json', 'tools/policy/config.json']], 'a regular pointer: the config is read from the folder it names, at the head');
+  assert.deepEqual(throughPointer.calls.filter((call) => call[0] === 'tree').map((call) => call[2]), [HEAD, 'tree:tools', 'tree:tools/policy'], 'a regular pointer: the tree is walked to the folder it names');
+  // The tree as `edit` changes one folder's answer, and a folder grown past the contents route's 1,000 entries.
+  const edited = (folder, edit) => ({ tree: (sha, folders) => {
+    const body = { sha, tree: folders.get(sha), truncated: false };
+    return sha === (folder === '' ? HEAD : `tree:${folder}`) ? { ...body, ...edit(body.tree) } : body;
+  } });
+  const many = Array.from({ length: 1200 }, (_, i) => ({ path: `f${i}.md`, mode: '100644', type: 'blob', sha: 'f'.repeat(40) }));
+  const grown = (folder, change = (entry) => entry) => edited(folder, (entries) => ({ tree: [...many, ...entries.map(change)] }));
+  for (const folder of ['', '.aidrian']) assert.equal(at(grown(folder)).code, 0, `a regular config, 1,200 entries in ${JSON.stringify(folder)}`);
+  const refuses = (options, why, name) => {
+    const result = at(options);
+    assert.equal(result.code, 1, name);
+    assert.ok(result.out[0].startsWith('auto-merge off for #7: '), name);
+    assert.match(result.out[0], why, name);
+  };
+  const link = { mode: '120000', type: 'blob' };
+  const configLink = '".aidrian/config.json" at head abcdef1 is a symlink, not a regular file, which includePolicyFiles never lets through';
+  const symlinked = at({ modes: { '.aidrian/config.json': '120000' } });
+  assert.deepEqual([symlinked.code, symlinked.out[0]], [1, `auto-merge off for #7: ${configLink}`]);
+  assert.equal(at(grown('.aidrian', (entry) => ({ ...entry, ...link }))).out[0], `auto-merge off for #7: ${configLink}`, 'a config link among 1,200 entries');
+  const pointerLink = /"\.aidrian\.json" at head abcdef1 is a symlink, not a regular file/u;
+  refuses({ modes: { '.aidrian.json': '120000' } }, pointerLink, 'a pointer that is a link');
+  refuses(edited('', (entries) => ({ tree: [...many, ...entries, { path: '.aidrian.json', ...link, sha: 'f'.repeat(40) }] })), pointerLink, 'a pointer link among 1,200 entries');
+  refuses({ modes: { '.aidrian.json': '160000' } }, /"\.aidrian\.json" at head abcdef1 is a submodule, not a regular file/u, 'a submodule');
+  refuses({ modes: { '.aidrian.json/x': '100644' } }, /"\.aidrian\.json" at head abcdef1 is a folder, not a regular file/u, 'a folder');
+  refuses({ modes: { '.aidrian/config.json': '100664' } }, /"\.aidrian\/config\.json" at head abcdef1 is an entry of mode 100664, not a regular file/u, 'an unknown mode');
+  // A folder on the way that is a link, a submodule, or a file.
+  for (const [mode, type, kind] of [['120000', 'blob', 'a symlink'], ['160000', 'commit', 'a submodule'], ['100644', 'blob', 'a file']]) {
+    refuses(edited('', (entries) => ({ tree: entries.map((entry) => ({ ...entry, mode, type })) })), new RegExp(`"\\.aidrian" at head abcdef1, on the path to "\\.aidrian/config\\.json", is ${kind}, not a folder, which includePolicyFiles never lets through`, 'u'), `the config folder is ${kind}`);
+  }
+  refuses(edited('.aidrian', () => ({ tree: [] })), /head abcdef1 holds no "\.aidrian\/config\.json"/u, 'a config the tree does not hold');
+  refuses(edited('.aidrian', (entries) => ({ tree: entries.map((entry) => ({ ...entry, path: 'CONFIG.json' })) })), /head abcdef1 holds no "\.aidrian\/config\.json"/u, 'a config in another case');
+  // A tree that cannot be read whole refuses, at the root, where the pointer may be absent, and at the config's folder.
+  const missing = () => { throw Object.assign(new Error('gh'), { stderr: 'gh: Not Found (HTTP 404)\n' }); };
+  for (const [folder, named, where] of [['', '"\\.aidrian\\.json"', 'the repository root'], ['.aidrian', '"\\.aidrian/config\\.json"', '"\\.aidrian"']]) {
+    const told = `, so whether ${named} is a regular file cannot be told`;
+    const unread = (why) => new RegExp(`it changes a policy file, and ${why}${told}`, 'u');
+    refuses(edited(folder, missing), unread("the head's tree at abcdef1 cannot be read \\(gh: Not Found \\(HTTP 404\\)\\)"), `a 404 of ${where}`);
+    refuses(edited(folder, serverError), unread("the head's tree at abcdef1 cannot be read \\(gh: Server Error \\(HTTP 500\\)\\)"), `a failed read of ${where}`);
+    const partial = unread(`the forge returned no whole tree of ${where} at head abcdef1`);
+    for (const [name, edit] of [
+      ['truncated', () => ({ truncated: true })], ['no truncated', () => ({ truncated: undefined })], ['no list', () => ({ tree: undefined })], ['a list that is an object', (entries) => ({ tree: { ...entries } })],
+      ['a name twice', (entries) => ({ tree: [...entries, ...entries] })], ['an entry that is null', (entries) => ({ tree: [...entries, null] })],
+      ...['path', 'mode', 'type', 'sha'].map((key) => [`an entry with no ${key}`, (entries) => ({ tree: entries.map((entry) => ({ ...entry, [key]: undefined })) })]),
+      ['a regular mode on a submodule', (entries) => ({ tree: entries.map((entry) => ({ ...entry, mode: '100644', type: 'commit' })) })],
+    ]) refuses(edited(folder, edit), partial, `${name}, in ${where}`);
+  }
+  // Below the repository root, a project folder the tree does not hold holds no pointer, and one that is a link refuses.
+  const below = (tree) => headPolicyProblem({ ...fakeForge({ files: { [`acme/notes@${HEAD}:apps/web/.aidrian/config.json`]: configText(LIFTED) } }).forge, ...tree }, { repo: 'acme/notes', head: HEAD, base: 'main', baseOid: BASE_TIP }, { policy: JSON.parse(configText(policies)), basePolicy: JSON.parse(configText(policies)), policyFiles: [], configFile: 'apps/web/.aidrian/config.json', main: 'main' }, [{ path: 'apps/web/.aidrian/config.json' }], 'apps/web/');
+  assert.match(below({ tree: (repoName, sha) => ({ sha, tree: [], truncated: false }) }) ?? '', /head abcdef1 holds no "apps\/web\/\.aidrian\/config\.json"/u, 'no project folder: the pointer passes as absent, the config refuses');
+  assert.match(below({ tree: (repoName, sha) => ({ sha, tree: [{ path: 'apps', ...link, sha: 'x' }], truncated: false }) }) ?? '', /"apps" at head abcdef1, on the path to "apps\/web\/\.aidrian\.json", is a symlink, not a folder/u, 'a linked folder above the project');
+  assert.match(below({ tree: undefined }) ?? '', /the head's tree at abcdef1 cannot be read/u, 'a forge with no tree reader');
   assert.equal(headPolicyProblem(null, { repo: 'acme/notes', head: HEAD }, { policy: JSON.parse(configText(LIFTED)), basePolicy: JSON.parse(configText(LIFTED)), policyFiles: [] }, [{ path: '.aidrian/config.json' }]), null, 'no lift, no read');
 });
 

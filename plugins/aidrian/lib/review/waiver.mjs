@@ -363,8 +363,9 @@ export function budgetedForge(make, deadline, now = Date.now) {
   };
   return {
     change: call('change', VIEW_TIMEOUT_MS), repository: call('repository', READ_TIMEOUT_MS), contents: call('contents', READ_TIMEOUT_MS),
-    // The head's compare with its base, which the policy-file lift reads (pr-auto-merge.mjs headPolicyProblem).
-    compare: call('compare', READ_TIMEOUT_MS),
+    // The head's compare with its base, and its git tree, which the policy-file lift reads (pr-auto-merge.mjs
+    // headPolicyProblem).
+    compare: call('compare', READ_TIMEOUT_MS), tree: call('tree', READ_TIMEOUT_MS),
     // The merge guard's trust read for a session no Human attends (merge-review.mjs), one GraphQL call, as long as a view.
     reviewTrail: call('reviewTrail', VIEW_TIMEOUT_MS),
   };

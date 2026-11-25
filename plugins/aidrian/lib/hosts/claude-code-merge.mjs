@@ -1,11 +1,12 @@
 // Claude Code's answer to capabilities.mergePermission (docs/providers/claude-code.md#merge-permission-in-auto-mode):
-// whether nothing in the settings it can read covers the merge of a pull request no human approved, which auto mode's
-// classifier blocks by default (code.claude.com/docs/en/permission-modes and auto-mode-config, read on 2026-11-25, with
-// no live run). That block is the Human's to keep or to except, in settings of their own: this file only reads, and
-// its answer allows nothing. `uncovered` is given for one shape alone: auto mode, a user settings file that is read, no
-// permission rule in a readable settings file that may reach a merge, and lists of auto mode this file knows, where the
-// built-in block rules stand and no entry mentions a merge. Every other shape answers `unknown`, and nothing here throws
-// on one. Managed settings and a `--settings` flag are not read. It reads no network and starts no process.
+// whether the settings it can read hold no rule or entry that names a merge, where auto mode's classifier blocks by
+// default the merge of a pull request no human approved (code.claude.com/docs/en/permission-modes and
+// auto-mode-config, read on 2026-11-25, with no live run). That block is the Human's to keep or to except, in settings
+// of their own: this file only reads, and its answer allows nothing. `uncovered` is given for one shape alone: auto
+// mode, a user settings file that is read, no permission rule in a readable settings file that may reach a merge, and
+// lists of auto mode this file knows, where the built-in block rules stand and no entry names a merge. Prose that names
+// none may still cover one, which no matcher reads. Every other shape answers `unknown`, and nothing here throws on
+// one. Managed settings and a `--settings` flag are not read. It reads no network and starts no process.
 
 import path from 'node:path';
 
@@ -22,6 +23,8 @@ const MERGE_WORD = /merge/iu;
 const CHANGE_WORD = /(?<![\p{L}\p{N}])(?:gh|prs?|pulls?)(?![\p{L}\p{N}])|pull.?request/iu;
 // An auto mode entry that may speak of a merge: the prose is the classifier's to read, so any such word is enough.
 const MERGE_PROSE = /merg|pull.?request|(?<![\p{L}\p{N}])prs?(?![\p{L}\p{N}])/iu;
+// What the host blocks, and what of its settings was checked: never that nothing covers a merge.
+const WHY = 'in auto mode it blocks by default a merge of a pull request no human approved, and the settings this check can read hold no rule or entry that names a merge';
 // The lists of auto mode: the two a custom entry may except a merge in, and the two whose built-in rules block one,
 // which a custom list keeps only with "$defaults" in it.
 const PROSE_LISTS = ['environment', 'allow'];
@@ -62,5 +65,5 @@ export function mergePermission({ session, cwd, env = process.env, readMode = se
   const user = readSettings(file);
   if (user === MISSING || user === null) return UNKNOWN;
   if (![user, ...projectFiles(cwd).map(readSettings)].every(rulesLeaveMerge) || !autoModeLeavesMerge(user)) return UNKNOWN;
-  return { answer: 'uncovered', setting: 'autoMode.allow', file, why: 'in auto mode it blocks a merge of a pull request no human approved' };
+  return { answer: 'uncovered', setting: 'autoMode.allow', file, why: WHY };
 }

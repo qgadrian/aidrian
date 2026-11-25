@@ -1262,7 +1262,7 @@ verification. Four assumptions follow from the references:
 ## Merge permission in auto mode
 
 The adapter's `capabilities.mergePermission` ([the adapter's fields](adding-a-host.md#the-adapters-fields)),
-in `lib/hosts/claude-code-merge.mjs`, says whether auto mode blocks an unattended merge with nothing that covers it.
+in `lib/hosts/claude-code-merge.mjs`, says whether the settings it can read hold no rule or entry that names a merge.
 Auto mode's classifier blocks "Merging a pull request no human has approved" by default
 ([permission modes](https://code.claude.com/docs/en/permission-modes)), and a project run's pull request has no human approval.
 `aidrian project preflight` prints a note for `uncovered`, and nothing for `unknown`. It blocks and allows nothing.
@@ -1292,6 +1292,8 @@ Read on 2026-11-25 from the [permission modes](https://code.claude.com/docs/en/p
   The note therefore speaks of the settings this check can read.
 - The server's built-in rules can differ from the ones the docs list, and the denial seen named only a broad policy.
   That the rule above caused it is a reading, not a proof.
+- Prose that names no merge may still cover one, as an entry that trusts all work in a repository may: no matcher reads it.
+  So `uncovered` is what was checked, no rule or entry that names a merge, and no proof that the host blocks one.
 - A permission rule that covers a whole MCP server is not read as reaching a merge: a run merges with `gh pr merge` alone.
 
 Limits: managed settings and a `--settings` value can add `autoMode` entries the user file does not show, and an entry

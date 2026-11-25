@@ -318,7 +318,8 @@ export const pushPermission = (host, ask) => askPermission(host, 'pushPermission
 
 // What a host says of a merge no human approved, for a note before a run no Human attends
 // (docs/providers/adding-a-host.md, capabilities.mergePermission). `ask` is { session, cwd, env }. It allows nothing and
-// blocks nothing: 'uncovered' says only that the host blocks such a merge and no setting it can read excepts one.
+// blocks nothing: 'uncovered' says only that the host blocks such a merge by default, and that no setting it can read
+// names one: prose that names none may still cover it.
 export const MERGE_ANSWERS = Object.freeze(['uncovered', 'unknown']);
 const UNCOVERED_FIELDS = ['setting', 'file', 'why'];
 

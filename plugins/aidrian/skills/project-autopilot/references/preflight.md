@@ -52,7 +52,8 @@ such as preview deploys and ChatOps bots, that act on an issue's push or comment
 A `note local-binding` line says the team set `projectRun.localBinding`, so issue sessions may run local services, such as
 a database or an API server for their tests, and names the host's risk, such as other local processes and machines
 reaching them; it blocks nothing. Bind each test server to `127.0.0.1`, never `0.0.0.0`.
-A `note merge-permission` line says the host blocks an unattended merge that no setting the check can read covers, so
+A `note merge-permission` line says the host blocks an unattended merge by default, and the settings the check can
+read hold no rule or entry that names a merge, so
 an issue's pull request may end open, for the Human's merge. It blocks nothing, and what to do about it is the Human's
 choice alone: give the line and its setup link, and neither change a host setting nor ask for a change.
 `ask labels` names the tracker's label and status reads: the decision label, and `projectRun.blockedStatus` when set,

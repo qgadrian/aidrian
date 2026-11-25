@@ -16,7 +16,7 @@ import test from 'node:test';
 
 import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { cleanText, mergeRelease, RESULT_CAP, validateResult, WAIT_MARGIN, waitRun } from '../plugins/aidrian/lib/project-run-gate.mjs';
-import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
+import { DROP_FILE, ingestDrops } from '../plugins/aidrian/lib/project-result.mjs';
 import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
 import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
 import { detectHost } from '../plugins/aidrian/lib/hosts/index.mjs';
@@ -55,6 +55,14 @@ function started(t, options, make = runFixture) {
   };
   return { ...fx, file, result, recorded };
 }
+
+// Writes a drop of the running ENG-1 of `fx` as its session could by hand, its stopCause the JSON text `stopCause`.
+function dropWith(fx, stopCause) {
+  const { drop, attempt } = fx.rows().findLast((row) => row.event === 'start' && row.key === 'ENG-1');
+  writeFileSync(path.join(drop, DROP_FILE), `{"run":"launch","key":"ENG-1","attempt":${attempt},"status":"pr_open","pr":12,"stop":"x","stopCause":${stopCause}}`);
+}
+// The step of `wait` that takes drops in, alone: its lines.
+const takeIn = (fx) => ingestDrops({ state: fx.state, run: 'launch', found: fx.run(), forge: fx.forge, now: Date.now() });
 
 const merged = (more = {}) => ({ state: 'MERGED', mergedAt: new Date(Date.now() + 60_000).toISOString(), headRefName: 'feat/eng-1-export', baseRefName: 'main', url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false, ...more });
 
@@ -130,8 +138,11 @@ test('a result that parks the issue records the head the forge shows its branch 
   const theirs = closed.forge.change;
   closed.forge.change = (ref, fields, options) => (ref === '12' ? { state: 'CLOSED', headRefName: 'feat/eng-1-export', headRefOid: head, url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false } : theirs(ref, fields, options));
   closed.forge.branchHead = () => head;
-  assert.deepEqual(closed.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['result ENG-1 pr_open -> parked pr-open']);
-  assert.equal(closed.rows().find((row) => row.event === 'result').head, null);
+  // It waits for no merge either, so a merge the host denied on it keeps its cause in the row alone, out of the summary.
+  assert.deepEqual(closed.recorded({ status: 'pr_open', pr: 12, stop: 'review', stopCause: HOST_DENIED_MERGE }).out, ['result ENG-1 pr_open -> parked pr-open']);
+  const closedRow = closed.rows().find((row) => row.event === 'result');
+  assert.deepEqual([closedRow.head, closedRow.stopCause], [null, HOST_DENIED_MERGE]);
+  assert.doesNotMatch(summaryText('launch', closed.run()), /the host denied/u);
   const failed = started(t);
   failed.forge.branchHead = () => head;
   assert.deepEqual(failed.recorded({ status: 'failed', pr: null, stop: 'flaky' }).out, ['result ENG-1 failed -> open']);
@@ -224,6 +235,12 @@ test('merged is kept only when the forge shows the pull request merged from the 
   flaky.forge.branchHead = () => head;
   assert.deepEqual(flaky.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['running ENG-1']);
   assert.equal(flaky.rows().filter((row) => row.event === 'result').length, 0, 'read again on a later wait');
+  // A drop the session wrote by itself, with a token as its stopCause, ends the attempt, and no part of it is kept.
+  const token = `ghp_${'a1B2'.repeat(9)}`;
+  dropWith(flaky, JSON.stringify(token));
+  assert.deepEqual(takeIn(flaky), ['ended ENG-1 bad_result -> open']);
+  assert.equal(flaky.rows().find((row) => row.event === 'ended').why, STOP_CAUSE_REFUSED);
+  assert.equal(JSON.stringify(flaky.rows()).includes(token), false);
   // A second read the forge answers with no such pull request ends the attempt at once, as the first read's would.
   const gone = started(t);
   const fixture = gone.forge.change;
@@ -253,6 +270,8 @@ test('merged is kept only when the forge shows the pull request merged from the 
   assert.equal(none.rows().find((row) => row.event === 'ended').why, 'the result names no pull request');
 });
 
+const STOP_CAUSE_REFUSED = '"stopCause" is not "host_denied_merge"; leave it out for any other stop';
+
 test('a stopCause on another status, or of another value, is refused', () => {
   const named = { decisions: [{ question: 'Which?', options: ['a', 'b'], recommended: 0, class: 'other' }], stop: 'x', pr: 12 };
   for (const status of ['merged', 'parked', 'blocked', 'failed', 'environment']) {
@@ -263,7 +282,7 @@ test('a stopCause on another status, or of another value, is refused', () => {
     const { result, problems } = validateResult({ status: 'pr_open', pr: 12, stop: 'x', stopCause });
     assert.equal(result, null, JSON.stringify(stopCause));
     assert.equal(problems.length, 1);
-    assert.match(problems[0], /^"stopCause" .* is not "host_denied_merge"; leave it out for any other stop$/u);
+    assert.equal(problems[0], STOP_CAUSE_REFUSED);
   }
   assert.deepEqual(validateResult({ status: 'pr_open', pr: 12, stop: 'x' }).result, { status: 'pr_open', pr: 12, decisions: [], stop: 'x' });
 });
@@ -317,6 +336,11 @@ test('a result of a wrong shape, too large, not JSON, or behind a symlink is ref
   symlinkSync(real, link);
   assert.match(fx.cmd(['result', 'launch', 'ENG-1', '--file', link], { session: CHILD }).err[0], /is a symlink/u);
   assert.equal(fx.run().states.get('ENG-1').state, 'running', 'nothing recorded');
+  // A stopCause nested too deep for JSON.stringify, in a drop the session wrote by itself: refused, and the wait goes on.
+  dropWith(fx, '['.repeat(20_000) + ']'.repeat(20_000));
+  const waited = fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  assert.deepEqual([waited.exitCode, waited.out[0]], [0, 'ended ENG-1 bad_result -> open'], waited.err.join('\n'));
+  assert.equal(fx.rows().find((row) => row.event === 'ended').why, STOP_CAUSE_REFUSED);
 });
 
 test('an issue\'s session that stops with no result is sent back once; after its result, or for another session, nothing holds', (t) => {

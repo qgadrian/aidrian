@@ -1282,7 +1282,7 @@ test('Claude Code\'s adapter answers denied from a transcript in auto mode and s
   assert.deepEqual(pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-2', cwd, env: { CLAUDE_CONFIG_DIR: config } }), { answer: 'unknown' }, 'a session with no transcript');
 });
 
-// capabilities.mergePermission: whether a host blocks a merge no human approved that no setting it can read covers.
+// capabilities.mergePermission: whether a host blocks by default a merge no human approved, and no setting it can read names one.
 // Shared code reads it only through mergePermission in lib/hosts/index.mjs, for a preflight note. Claude Code answers
 // `uncovered` for one shape alone, checked on fixtures only, from its documentation.
 const UNCOVERED = { answer: 'uncovered', setting: 'a.setting', file: '/x/settings.json', why: 'it blocks a merge' };
@@ -1317,7 +1317,7 @@ test('the merge permission is unknown for a host without it, one that throws, a 
 const askMerge = (config, extra = {}) => claudeMergePermission({ session: 'session-1', cwd: config, env: { CLAUDE_CONFIG_DIR: config }, readMode: inAuto, ...extra });
 const rules = (list, ...entries) => ({ permissions: { [list]: entries } });
 
-test('Claude Code in auto mode answers uncovered when no readable setting covers a merge, and unknown beside any that may', (t) => {
+test('Claude Code in auto mode answers uncovered when no readable setting names a merge, and unknown beside any that may', (t) => {
   const cases = [
     ['no permissions and no auto mode list', {}, 'uncovered'],
     ['narrow rules that reach no merge', { permissions: { allow: ['Bash(git push:*)', 'Bash(git merge-base:*)', 'Bash(npm test)', 'Read(**)'], deny: ['Bash(rm:*)'], ask: ['Bash(gh pr create *)'] } }, 'uncovered'],
@@ -1361,7 +1361,7 @@ test('Claude Code in auto mode answers uncovered when no readable setting covers
       continue;
     }
     assert.deepEqual([read.setting, read.file], ['autoMode.allow', path.join(config, 'settings.json')], name);
-    assert.match(read.why, /blocks a merge of a pull request no human approved/u, name);
+    assert.match(read.why, /blocks by default a merge of a pull request no human approved, and the settings this check can read hold no rule or entry that names a merge$/u, name);
     assert.deepEqual(mergePermission({ capabilities: { mergePermission: () => read } }, {}), read, 'the registry passes it on');
   }
 });

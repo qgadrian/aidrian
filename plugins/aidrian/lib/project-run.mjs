@@ -1080,10 +1080,11 @@ export function summaryText(run, found) {
 export const HOST_DENIED_MERGE = 'host_denied_merge';
 
 // The section of summary.md for the parked issues whose latest result carries HOST_DENIED_MERGE, or none: the cause once,
-// where the setup doc says what the Human may do about it, and each issue's pull request.
+// where the setup doc says what the Human may do about it, and each issue's pull request. One the result's own check found
+// closed (a null `head`, project-result.mjs droppedPullProblem) waits for no merge, so it is left out.
 function deniedMergeLines(found) {
   const denied = found.snapshot.issues.map(({ key }) => found.rows.findLast((row) => row.event === 'result' && row.key === key))
-    .filter((row) => row?.status === 'pr_open' && row.stopCause === HOST_DENIED_MERGE && Number.isInteger(row.pr) && found.states.get(row.key)?.state === 'parked');
+    .filter((row) => row?.status === 'pr_open' && row.stopCause === HOST_DENIED_MERGE && row.head !== null && Number.isInteger(row.pr) && found.states.get(row.key)?.state === 'parked');
   if (!denied.length) return [];
   return [
     '## Merges the host denied',

@@ -23,7 +23,7 @@
 // and workflow pushes, and the forge holds what a script it runs does with the token, unless the team accepts running
 // without that backstop (projectRun.forgeProtectionAccepted). Notes say the forge runs a
 // branch's workflow files with the repository's secrets on every push, and other services act on a push or a comment;
-// and, where the host says so, that it blocks an unattended merge no setting it can read covers (mergeNotes).
+// and, where the host says so, that it blocks an unattended merge by default and no setting it can read names one (mergeNotes).
 // A read the forge or the tracker lacks becomes an `ask` line, which the driver answers with its own tools.
 
 import path from 'node:path';
@@ -295,15 +295,15 @@ function autoMergeProblem({ project, repository, facade }) {
   return null;
 }
 
-// The `note merge-permission:` line, or none: where the host says that it blocks a merge no human approved and that
-// nothing in the settings it can read covers one (capabilities.mergePermission), for the session this runs in, whose
+// The `note merge-permission:` line, or none: where the host says that it blocks by default a merge no human approved and that
+// the settings it can read hold no rule or entry that names a merge (capabilities.mergePermission), for the session this runs in, whose
 // permission mode the run's sessions have, and the settings of the main checkout `main`. It is the Human's to know
 // before they leave, and blocks nothing: what the host blocks stays blocked, and the setup doc holds their choices.
 export function mergeNotes({ main, env, host = detectHost({ env }) }) {
   const said = mergePermission(host, { session: host.sessionId(env), cwd: main, env });
   if (said.answer !== 'uncovered') return [];
-  return [`note merge-permission: ${hostName(host)} says ${said.why}, and nothing in the settings this check can read covers one (${said.setting} in ${said.file} has no such entry), `
-    + `so each issue's pull request may wait for the Human's merge; what to do about that is the Human's choice alone${setupPointer('auto-merge')}`];
+  return [`note merge-permission: ${hostName(host)} says ${said.why} (${said.setting} in ${said.file} among them); `
+    + `prose that names none may still cover one, but each issue's pull request may wait for the Human's merge; what to do about that is the Human's choice alone${setupPointer('auto-merge')}`];
 }
 
 // Whether a comment by the review bot's login shows a review it finished: its usage-limit notice does not, and nor does

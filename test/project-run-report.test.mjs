@@ -552,7 +552,7 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   const settings = path.join(ready.env.CLAUDE_CONFIG_DIR, 'settings.json');
   writeFileSync(settings, JSON.stringify({ autoContinueAtUsageLimit: true }));
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({ projects: { [ready.state]: { hasTrustDialogAccepted: true } } }));
-  // The driver runs in auto mode, where the host blocks a merge no human approved, with no setting that covers one.
+  // The driver runs in auto mode, where the host blocks by default a merge no human approved, with no setting that names one.
   const transcript = path.join(ready.env.CLAUDE_CONFIG_DIR, 'projects', ready.dir.replace(/[^A-Za-z0-9]/gu, '-'), `${DRIVER}.jsonl`);
   writeFileSync(transcript, `${JSON.stringify({ type: 'permission-mode', permissionMode: 'auto', sessionId: DRIVER })}\n`);
   let asked = null;
@@ -579,7 +579,7 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.equal(ready.claude.starts().length, 0);
   const mergeNote = (out) => out.filter((line) => line.startsWith('note merge-permission:'));
   assert.deepEqual(mergeNote(ok.out).length, 1, 'one note, and it blocks nothing');
-  assert.ok(mergeNote(ok.out)[0].includes(`nothing in the settings this check can read covers one (autoMode.allow in ${settings} has no such entry)`), mergeNote(ok.out)[0]);
+  assert.ok(mergeNote(ok.out)[0].includes(`the settings this check can read hold no rule or entry that names a merge (autoMode.allow in ${settings} among them); prose that names none may still cover one`), mergeNote(ok.out)[0]);
   assert.ok(mergeNote(ok.out)[0].endsWith(`may wait for the Human's merge; what to do about that is the Human's choice alone (setup: ${setupDocUrl()}#auto-merge-and-ci)`), mergeNote(ok.out)[0]);
   assert.equal(readFileSync(settings, 'utf8'), JSON.stringify({ autoContinueAtUsageLimit: true }), 'no host setting is written');
   // A setting that may cover a merge is unknown: no note, and no other line and no exit code differ.
@@ -619,7 +619,7 @@ test('a host with no merge permission, or one that fails to answer, gives no not
   assert.deepEqual(mergeNotes({ main: '/x', env: {}, host: host(() => ({ answer: 'allowed' })) }), []);
   let asked = null;
   const said = host((ask) => ((asked = ask), { answer: 'uncovered', setting: 'a.setting', file: '/x/settings.json', why: 'it blocks a merge' }));
-  assert.match(mergeNotes({ main: '/x', env: { A: '1' }, host: said })[0], /^note merge-permission: Fake says it blocks a merge, and nothing in the settings this check can read covers one \(a\.setting in \/x\/settings\.json/u);
+  assert.match(mergeNotes({ main: '/x', env: { A: '1' }, host: said })[0], /^note merge-permission: Fake says it blocks a merge \(a\.setting in \/x\/settings\.json among them\); prose that names none may still cover one/u);
   assert.deepEqual(asked, { session: 's', cwd: '/x', env: { A: '1' } });
 });
 

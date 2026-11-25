@@ -78,8 +78,10 @@ export function validateResult(value) {
   if (value.status === 'environment' && (typeof value.stop !== 'string' || !cleanText(value.stop, CAPS.stop))) problems.push('an environment result names in "stop" what failed');
   const stop = value.stop === undefined || value.stop === null || typeof value.stop !== 'string' ? null : cleanText(maskSecrets(value.stop), CAPS.stop);
   if (value.stop !== undefined && value.stop !== null && typeof value.stop !== 'string') problems.push('"stop" is not text or null');
+  // The message quotes nothing of the value: a token in it would reach the ended row, and a deeply nested one overflows
+  // JSON.stringify, which would stop every later wait on the same drop.
   const { stopCause } = value;
-  if (stopCause !== undefined && stopCause !== HOST_DENIED_MERGE) problems.push(`"stopCause" ${quote(stopCause)} is not "${HOST_DENIED_MERGE}"; leave it out for any other stop`);
+  if (stopCause !== undefined && stopCause !== HOST_DENIED_MERGE) problems.push(`"stopCause" is not "${HOST_DENIED_MERGE}"; leave it out for any other stop`);
   else if (stopCause !== undefined && value.status !== 'pr_open') problems.push('"stopCause" is for a pr_open result alone');
   if (problems.length) return { result: null, problems };
   return { result: { status: value.status, pr, decisions, stop, ...(stopCause === undefined ? {} : { stopCause }) }, problems };

@@ -343,7 +343,8 @@ The choices, each one yours to make in your own settings, outside any session of
   The plugin's [merge guard](hooks.md#merge-guard) still does, where the plugin is on.
 
 `aidrian project preflight` prints `note merge-permission` when the session runs in auto mode and the settings it can
-read hold nothing that covers a merge ([Claude Code](providers/claude-code.md#merge-permission-in-auto-mode)).
+read hold no rule or entry that names a merge ([Claude Code](providers/claude-code.md#merge-permission-in-auto-mode)).
+Prose that names no merge may still cover one, so the note is no proof that the host blocks it.
 It blocks nothing, and it prints nothing where it cannot tell: a missing note is no promise that a merge goes through.
 
 Checked on: Claude Code, documentation only, its docs read on 2026-11-25. No live run proved the block or an exception.

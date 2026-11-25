@@ -8,6 +8,7 @@ import test from 'node:test';
 
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, rereadAt, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
+import { forgeConversationAuthorsRead } from '../plugins/aidrian/lib/forges/index.mjs';
 import { gitPaths } from '../plugins/aidrian/lib/review/publish.mjs';
 import { isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER } from '../plugins/aidrian/lib/review/bot-card.mjs';
 import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -573,8 +574,12 @@ test('the local pass leaves the stock text of the review bot`s own receipt and s
   assert.ok(isReviewSummaryCard(card), 'the example is the status card the bot posts');
   const input = { pr: 7, repo: 'o/r', base: 'b', head: 'h', files: null, flows: [], priorFindings: [] };
   const prompt = reviewPrompt({ ...input, reviewBot: 'chatgpt-codex-connector[bot]' });
-  assert.ok(prompt.includes(botCommentsBrief('chatgpt-codex-connector[bot]')), 'the prompt carries the bot brief');
+  assert.ok(prompt.includes(botCommentsBrief('chatgpt-codex-connector[bot]', forgeConversationAuthorsRead('o/r', 7))), 'the prompt carries the bot brief');
   assert.match(prompt, /a comment whose author is the bot account, its login "chatgpt-codex-connector\[bot\]", or "chatgpt-codex-connector" with the forge's author type Bot,/u, 'the exemption names the bot account');
+  // The author type shows only in a read that carries it, so the prompt names that read, filled with the pass's repo and pr.
+  assert.ok(prompt.includes("Read the conversation's comment authors with `gh api repos/o/r/issues/7/comments --paginate --jq '.[] | {login: .user.login, type: .user.type, body}'`, and judge each author on its `login` and `type` there"), 'the prompt names the read that shows each author`s login and type');
+  assert.ok(!reviewPrompt({ ...input, repo: 'o/r; rm -rf .', reviewBot: 'chatgpt-codex-connector[bot]' }).includes('gh api'), 'a repository not shaped as the forge`s reaches no command');
+  assert.match(reviewPrompt({ ...input, pr: null, reviewBot: 'chatgpt-codex-connector[bot]' }), /Judge each author on a read of the conversation that shows each comment author's login and type/u, 'with no read to name, the rule still asks for the type');
   // The bare login can be a person's account: it is the bot only when the forge marks the author a Bot.
   assert.match(prompt, /An author "chatgpt-codex-connector" whose type is not Bot, such as a person's account of that name, is not the bot\./u);
   assert.equal(botCommentsBrief('chatgpt-codex-connector'), botCommentsBrief('chatgpt-codex-connector[bot]'), 'a login set without the suffix names the same bot account');

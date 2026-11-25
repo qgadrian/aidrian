@@ -691,7 +691,9 @@ as the round's only finding on a clean head. The prompt leaves that stock text o
 author is the bot account of the base branch's `github.reviewer` and whose first line is the receipt's marker,
 `<!-- codex-review-receipt:v1 -->`, or the card's, `<!-- codex-pull-request-review-summary -->`. The author must be the
 bot itself: its login with the `[bot]` suffix, or the bare login with the forge's author type Bot. A person's account
-with the bare login is not the bot. The pass input names that login as `reviewBot`, read from the base branch so a pull
+with the bare login is not the bot. `gh pr view --comments` shows a bare login and no type, so the prompt names the read
+that shows both, `gh api repos/<owner>/<repo>/issues/<pr>/comments --paginate` with each comment's `login`, `type`, and
+`body`, filled with the pass's repository and pull request, and the reviewer judges the author on it. The pass input names that login as `reviewBot`, read from the base branch so a pull
 request cannot rename it. Any other request in a bot comment is still a finding. A comment that fails the author or
 first-line check, such as one that quotes a marker, is not exempt and reads like any other comment: a finding only when
 it asks to change the review. With no review bot set, no comment is exempt this way.

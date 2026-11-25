@@ -5,7 +5,7 @@
 // is forgeFor's methods, and the helpers below. repoIdentity is the facade's; the others are GitHub's today, as the
 // payloads are: a second forge reshapes them with its adapter.
 
-import { apiWrite, changeNotFound, CONFIG_COMMANDS, createGithubForge, diffTooLarge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REF_COMMANDS, REVIEWS_PAGE, servedRepository, TOKEN_VARS, WORKFLOW_FOLDERS } from './github.mjs';
+import { apiWrite, changeNotFound, CONFIG_COMMANDS, conversationAuthorsCommand, createGithubForge, diffTooLarge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REF_COMMANDS, REVIEWS_PAGE, servedRepository, TOKEN_VARS, WORKFLOW_FOLDERS } from './github.mjs';
 import { gitHelperValue, loginStep, tokenNote, tokenVarFor } from './github-token.mjs';
 import { remoteIdentity, repoIdentity } from './identity.mjs';
 
@@ -54,6 +54,10 @@ export const forgeTokenVar = (host) => tokenVarFor(host);
 export const forgeGitHelper = (env) => gitHelperValue(env);
 export const forgeLoginStep = (host) => loginStep(host);
 export const forgeTokenNote = (token) => tokenNote(token);
+
+// The shell command that reads a pull request's comments with each author's login and type, for a model reviewer to run
+// (lib/review/reviewers.mjs botCommentsBrief), or null for a repository or number the forge does not name that way.
+export const forgeConversationAuthorsRead = (repo, n) => conversationAuthorsCommand(repo, n);
 
 // Whether a comment's author belongs to the repository. Each forge method object carries it too.
 export { isTrustedCommenter };

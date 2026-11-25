@@ -571,11 +571,11 @@ test('a Tests run deny names what clears each claim, and the line or the run it 
 
   // A pass of an earlier commit: the deny names that commit, and the line that says so passes.
   const stale = judge('- `npm test`: 12 pass', [older]);
-  assert.match(stale, new RegExp(`its last pass was of commit ${first}, and the files have changed since: rerun it, the exact command copied from its own shell call, in the foreground at HEAD, or say which commit it ran on, with "at ${first}" in the line\\.`, 'u'));
+  assert.match(stale, new RegExp(`its last pass was of commit ${first}, and the files have changed since: rerun it, the exact command copied from the call that ran it, in the foreground at HEAD, or say which commit it ran on, with "at ${first}" in the line\\.`, 'u'));
   assert.match(judge(`- \`npm test\` at commit ${git('rev-parse', 'HEAD').slice(0, 7)}: 12 pass`, [older]), new RegExp(`with "at ${first}" in the line in place of "at [0-9a-f]{7}"`, 'u'));
   assert.equal(judge(`- \`npm test\` at ${first}: 12 pass`, [older]), null);
   assert.match(judge('- `npm test`: 12 pass', [run({ tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) })]),
-    /its last pass was of other files, and no commit among HEAD's last 100 holds them, or git could not list them: rerun it, the exact command copied from its own shell call, in the foreground at HEAD\./u);
+    /its last pass was of other files, and no commit among HEAD's last 100 holds them, or git could not list them: rerun it, the exact command copied from the call that ran it, in the foreground at HEAD\./u);
 
   // No finished run, a run of zero tests, only unjudged runs, or only failed ones: the deny names the run to make, and
   // that run, finished in the foreground with its summary, is a row that supports the line. A line that names a commit

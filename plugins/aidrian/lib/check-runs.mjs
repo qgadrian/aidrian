@@ -648,7 +648,7 @@ export function claimFix({ key, counts }, runs, { tree, commitOf = () => null, n
   const passes = (run) => (typeof run.pass === 'number' ? `${run.pass} passes` : 'a pass');
   const keep = named ? `, and keep "at ${named.slice(0, 7)}"` : '';
   const drop = named ? ` and drop "at ${named.slice(0, 7)}" from the line` : '';
-  const rerun = `rerun it, the exact command copied from its own shell call, in the foreground at HEAD${drop}`;
+  const rerun = `rerun it, the exact command copied from the call that ran it, in the foreground at HEAD${drop}`;
   const here = own.filter((run) => passed(run) && atTree(run, tree)).at(-1);
   if (here) return `its run at these files printed ${passes(here)}, and the line states ${counts.join(', ')}: write the count it printed${keep}.`;
   const runner = key.split(' ')[0];

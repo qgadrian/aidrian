@@ -109,7 +109,8 @@ A consult that returns a dispute stops the run: escalate both positions and the 
 ## Close
 
 The run is done only when each gate is cleared or not applicable, the Human answered step 4, an applied plan passed step 5.4,
-the report names each carried finding, and no dispute or blocked consult was dropped. Otherwise report `blocked` or `needs_input` with the step to resume from.
+the report names each carried finding, and no dispute or blocked consult was dropped.
+Otherwise report `blocked` or `needs_input` with the step to resume from.
 
 End with the next step: the `issue-implement` skill for an issue-anchored plan, `plan-implement` for any other,
 design imports included. The report names a changed design-import plan as a file change.

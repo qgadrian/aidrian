@@ -5,12 +5,10 @@ description: Review a local plan before anyone implements it. Use when asked to 
 
 # plan-review
 
-Run one critique-and-refine pass over a plan before anyone implements it.
-This session coordinates: it finds the plan, runs the gates, has `planning-agent` critique the plan and propose a diff,
-and apply it only after the Human approves it.
-It never critiques or rewrites the plan itself, and never commits it.
+One critique-and-refine pass before anyone implements a plan. This session runs the gates and has `planning-agent`
+critique the plan, propose a diff, and apply it on the Human's approval. It never commits the plan.
 
-Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the flows the project declares critical,
+Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the critical flows
 and `security` docs for the surfaces that need a security pass.
 
 ## Inputs
@@ -33,21 +31,21 @@ Plans live in `<state>/plans/`, where `<state>` is the folder `aidrian state` pr
 A design import keeps its plan at `docs/design-imports/<slug>/plan.md` in its worktree, on branch `feat/design-<slug>`.
 Skip backups, editor and temporary files, and `.json` files. Without a path, take the first of these that finds a plan:
 
-1. The issue: the argument, else the key in the current branch name, in the format the project's `issue_tracker` knowledge gives.
+1. The issue: the argument, else the key in the current branch name, as the project's `issue_tracker` knowledge writes it.
    Look for `<state>/plans/<key>-*.md`, with the key in lowercase, and for a plan whose `issue_id` is the key.
 2. A plan whose `workspace_decision.branch_name` is the current branch.
 3. The newest plan whose `status` is not `complete`.
 
 Several candidates: list up to five, newest first, and ask. None: stop, and point to the `planning-agent` skill,
-or the `issue-plan` skill for an issue. Never build a plan from the conversation.
+or `issue-plan` for an issue. Never build a plan from the conversation.
 
 ## 2. Preflight
 
 - Read the plan. With YAML frontmatter it is a schema plan of its `plan_kind`; without `plan_kind`, review it as `implementation`
-  and add a finding. Without frontmatter it is a free-form plan: it gets the generic lens, never a penalty for the missing schema.
+  and add a finding. Without frontmatter it is a free-form plan, with the generic lens and no penalty for the missing schema.
 - `status: complete`: ask whether to review it again.
 - An issue-anchored plan whose `ticket_updated_at` is older than the issue's `updatedAt` is stale. Ask: the Human revises it
-  by running the `issue-plan` skill with `--mode revise`, which only the Human starts; review it as it is; or stop.
+  with the `issue-plan` skill's `--mode revise`, which only the Human starts; review it as it is; or stop.
   On a critical flow, offer only revise or stop.
 - Record the plan's hash, `git hash-object <plan>`, for step 5.
 
@@ -55,7 +53,7 @@ or the `issue-plan` skill for an issue. Never build a plan from the conversation
 
 Both run before the critique; their verdicts go into its brief as authoritative.
 A gate's brief carries the plan path, the trigger (the plan lines and the flow or surface they touch), and the knowledge
-docs to check against. It carries nothing of your own: no suspected findings, risks, or hints. The gate reviews the plan unanchored.
+docs to check against. It carries nothing of your own: no suspected findings, risks, or hints.
 
 - **Critical flow.** The plan's goal, scope, approach, affected surfaces, or slice files touch a flow the project's
   `product_sensitive` knowledge declares critical (the whole text, for a free-form plan): `product-manager` first.
@@ -63,13 +61,16 @@ docs to check against. It carries nothing of your own: no suspected findings, ri
 - **Security.** The plan touches auth, sessions, tokens, tenancy, permissions, payments, webhooks, uploads, redirects, secrets,
   untrusted content, privileged access, or a surface the project's `security` knowledge lists: `security-engineer` first.
   Its verdict and required invariants bind the critique; no critique finding drops them.
+- **Re-runs.** A re-run whose findings are all `low`, or all narrower than the last run's, approves;
+  [steps/reruns.md](steps/reruns.md) carries them as implementation notes. A blocking finding is never narrower.
 
 ## 3b. Quorum
 
 When a gate in step 3 ran, or the plan names a decision-record path or the `adr-writer` skill, load the `quorum` skill
 and follow it, with the gate verdicts and the trigger. Its `references/ledger.md` § Under plan-review defines the
-triggers, its reruns, and the `blocked on quorum` stop that resumes here. Its accepted objections, the Human's answers,
-and its Report's revision-history line go into step 4's brief as authoritative. Skip it when it is not installed.
+triggers, its reruns under step 3's stop rule and cap, and the `blocked on quorum` stop that resumes here.
+Its accepted objections, the Human's answers, and its Report's revision-history line go into step 4's brief as authoritative.
+Skip it when it is not installed.
 
 ## 4. Critique
 
@@ -91,24 +92,26 @@ Then report, in this order, and stop:
 
 ## 5. Apply
 
-Only on the Human's explicit `apply` in this session, after step 4 in this same session: it needs step 2's hash and step 4's diff.
+Only on the Human's explicit `apply` after step 4 in this same session: it needs step 2's hash and step 4's diff.
 `--apply` without both: refuse, and say to rerun without `--apply`.
-Then read [steps/apply.md](steps/apply.md) and follow its steps 5.1 to 5.4.
+Then read [steps/apply.md](steps/apply.md) and follow its steps 5.1 to 5.5.
 
 ## 6. Cap
 
 One critique, one apply, and one more critique only when step 5.4 finds a new blocking flaw.
 `--extended` adds one refinement pass, never more. Past the cap, escalate to the Human.
-A restart from step 5.1 reviews a different plan, so its count starts again; it waits on the Human's next `apply` like the first.
+A restart from step 5.1 starts this count again and waits on the Human's next `apply` like the first.
+A gate or the quorum runs at most 3 times a plan, the first included, across restarts; past that,
+non-blocking findings are carried, and a blocking one escalates.
 A consult that returns a dispute stops the run: escalate both positions and the missing evidence; never settle on a compromise.
 
 ## Close
 
-The run is done only when each gate is cleared or not applicable, the Human answered step 4, an applied plan passed step 5.4,
+The run is done only when each gate is cleared or not applicable, the Human answered step 4, an applied plan passed steps 5.4 and 5.5,
 and no dispute or blocked consult was dropped. Otherwise report `blocked` or `needs_input` with the step to resume from.
 
 End with the next step: the `issue-implement` skill for an issue-anchored plan, and the `plan-implement` skill for any other,
-design imports included. A changed design-import plan is a file change the report names; this skill never commits it.
+design imports included. The report names a changed design-import plan as a file change.
 
 ## Do not
 

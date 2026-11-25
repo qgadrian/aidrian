@@ -1324,6 +1324,34 @@ test('each dispatcher of a deciding agent runs the resolve, and each deciding ag
   }
 });
 
+test('plan-review gates stop re-running on minor findings, cap their runs, and carry the rest to the slice reviews', () => {
+  // A plan once went through seven security-gate runs and three quorum rounds, each finding a smaller edge case than
+  // the last, and grew to about 1,180 lines with no code written (issue 269). A re-run that adds only low or narrower
+  // findings approves, a cap ends the loop, and the findings reach the per-slice code and security review instead.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const section = (text, from, to) => text.slice(text.indexOf(from), text.indexOf(to, text.indexOf(from) + from.length));
+  const skill = read('skills/plan-review/SKILL.md');
+  const gates = section(skill, '## 3. Gates', '## 3b. Quorum');
+  assert.match(gates, /A re-run whose findings are all `low`, or all narrower than the last run's, approves; \[steps\/reruns\.md\]\(steps\/reruns\.md\) carries them as implementation notes\. A blocking finding is never narrower\./);
+  assert.match(section(skill, '## 3b. Quorum', '## 4. Critique'), /its reruns under step 3's stop rule and cap/);
+  assert.match(section(skill, '## 5. Apply', '## 6. Cap'), /follow its steps 5\.1 to 5\.5\./);
+  assert.match(section(skill, '## 6. Cap', '## Close'), /A gate or the quorum runs at most 3 times a plan, the first included, across restarts; past that, non-blocking findings are carried, and a blocking one escalates\./);
+  const reruns = read('skills/plan-review/steps/reruns.md');
+  assert.match(reruns, /\*\*Narrower\*\*: it names a smaller surface than, or a sub-case of, a finding the previous run raised, and it adds no new required invariant\./);
+  assert.match(reruns, /\*\*Blocking\*\*: severity `critical` or `high`, a quorum objection of severity `blocking`, or any finding that adds a required invariant\. A blocking finding is never narrower/);
+  assert.match(reruns, /The stop rule never drops a required invariant\./);
+  assert.match(reruns, /no authority covers that sign-off, and no stop rule clears it/);
+  assert.match(reruns, /A restart from step 5\.1 keeps both counts\./);
+  assert.match(reruns, /A blocking finding stops the run and escalates to the Human/);
+  assert.match(reruns, /under the line `Implementation notes from plan review:`/);
+  // The carry-forward holds only when the applied plan records the notes, the next run can count, and the slice reviewers read them.
+  assert.match(read('skills/plan-review/steps/apply.md'), /5\. Check the carried findings, .* recorded as an implementation note in the plan's `## Risks`, under the line `Implementation notes from plan review:`\. .* The report names each carried finding/);
+  assert.match(read('skills/plan-review/references/review-lens.md'), /It also names each gate run the brief carries, with its number, severity, and surface/);
+  assert.match(read('skills/quorum/references/ledger.md'), /Such a rerun follows the stop rule and cap of `plan-review`'s `steps\/reruns\.md`, as its gates do\./);
+  assert.match(read('skills/quorum/references/ledger.md'), /The quorum runs at most 3 times a plan, the first included, counted from its `complete` ledgers for the plan's path\./);
+  assert.match(read('skills/issue-implement/steps/phases-1-4-implement.md'), /When the plan's `## Risks` holds `Implementation notes from plan review:`, each reviewer's brief carries that list/);
+});
+
 test('autopilot parks a decision only under ask, and reports what an agent decided', () => {
   const autopilot = readFileSync(path.join(PLUGIN, 'skills/autopilot/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
   assert.ok(autopilot.includes(`as \`${DECISION_RULE}\` says. Under \`decide\`, follow its order to the end and record the \`decided_provisional\` in the report.`));

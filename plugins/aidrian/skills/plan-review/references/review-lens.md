@@ -86,6 +86,8 @@ Your machine handoff carries these in `artifacts`:
 - `open_questions`: the plan's own, word for word;
 - `proposed_diff`: a unified diff of the plan file, except under `--findings-only`;
 - `revision_history_entry`: the line to append under `## Revision history` on apply: the UTC date, a one-line summary, the finding ids.
+  It also names each gate run the brief carries, with its number, severity, and surface, as `security gate run 2: medium, webhook retries`:
+  the next `plan-review` counts gate runs and compares findings from these lines, as its `steps/reruns.md` says.
   When the brief carries the quorum Report's revision-history line, the entry includes it: its objection ids, and each
   Human answer word for word. A later quorum run on the revised plan cites this line to keep those answers settled;
 - `preserves_intent` and `decision_complete_after_apply`: true or false;

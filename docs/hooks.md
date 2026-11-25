@@ -2491,11 +2491,27 @@ A key past 300 characters keeps its first 300 and a digest of the whole, so a ru
 A configured command is still matched as a prefix of the whole command, so a long `testing.changedCommand` with files after it is a run.
 A call stopped, started in the background, or moved there at its timeout records nothing: no hook sees it end.
 A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
-The row goes to the session folder of the project the call's folder is in. When that folder holds none, as when another
+The folder a run ran in is the call's own when nothing before it on its line moves it, else the one the line writes out:
+`env -C <path>` on the run, or a `cd <path>` or `pushd <path>` that opens the line and that `&&` alone joins to the run.
+Any other move leaves the folder unknown, since no variable's value is read and a run may outlive a `cd` that failed:
+`env -C "$W"`, `cd "$W" &&`, `cd ~/x &&`, a `cd` that does not open the line, a negated one, and one with a `;`, `||`, pipe,
+`&`, `!`, or subshell between it and the run, such as `cd <path> && true; node --test` or `cd <path> && x | node --test`.
+An absolute `env -C <path>` names the folder after any of those; a relative one is unknown when the shell's folder is.
+No redirection or substitution of the line is judged for it.
+Such a run's row has `folder: "unknown"`, null trees, and no untracked files, so it never holds the session's own
+checkout's. It supports no pull request body line, which is held to a tree: that refusal says the run's folder could not
+be told from its command, and to run it again with a literal absolute path.
+It still supports a subagent's report, which is read at any tree, since it finished in the session with that count.
+A row with no `folder` field ran in a known folder, or is from a version before the field, and reads by its trees.
+An accepted residual: a directory change the lexer does not read as one (`builtin cd`, `chdir`, or one inside `eval`,
+a sourced file, a function, or an alias) is not followed, so the run keeps the folder known before it.
+The row goes to the session folder of the project the call's folder is in, one whose folder is unknown too, so a refusal
+can name it. When that folder holds none, as when another
 session removed the worktree a session started in and the host sends the home folder as its cwd, each run goes to the
 project of the folder it runs in, such as the worktree of `cd <worktree> && node --test` or `env -C <worktree> npm test`,
 and is read with that project's `testing` config: another project's command on the line takes no run, and one project's
-test command is no run in another. The line's one count goes to a run only when it is the line's one run: every run any
+test command is no run in another. One whose folder is unknown goes nowhere, since no project is known to hold it.
+The line's one count goes to a run only when it is the line's one run: every run any
 config of the line, the defaults included, reads on it counts once, by its command and folder, so a run in no project,
 or one only another project's config reads, withholds the count.
 
@@ -2552,12 +2568,13 @@ Two checks read it:
   request's current body does not already hold.
   The deny ends with what the record shows for each of its first three claims: the facts of the nearest recorded run,
   which is a pass of the command at those files, else one of the same program with other words there, else the
-  command's last pass at other files, else its last run. It states that run's status, its pass and fail counts, zero
+  command's last pass at other files in a known folder, else its last run. It states that run's status, its pass and fail counts, zero
   recorded passes as such, and the full id of its commit: the one the claim names when the run matches its tree, else
   the one among HEAD's last 100 that holds its files, or that none was found or git could not list them; with no run,
   what leaves no row. For a run that can support a pass claim, at a commit found, one instruction follows: cite one
   finished run, with its command as written in the call that ran it, its counts, and its commit. For one whose
   commit was not found, it says to commit the files it ran on and cite that commit, or run it at the commit cited. For
+  one whose folder is unknown, it says so in place of the commit, and to run it again with a literal absolute path. For
   any other, as a failed or unjudged one, one of zero passes, or none, it says to report that outcome or get a passing
   run. The run's record key only names it, since a key drops quotes and a long one is cut.
 - The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its

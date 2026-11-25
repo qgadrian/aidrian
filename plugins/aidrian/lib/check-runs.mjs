@@ -8,10 +8,13 @@
 // A row is `{ at, agentId, command, tree, trackedTree, status, pass, fail }`: `command` the test invocation's words with
 // wrappers and redirects dropped (commandKey); `tree` the git tree of the folder's files as they are when the run ends,
 // untracked files git does not ignore included, and `trackedTree` the same of the tracked files alone (workingTree), each
-// null when git cannot say; and `status` `passed`, `failed`, or `unjudged`. On a host whose PostToolUse comes only for a
-// call that exited 0, as Claude Code's, a run whose status is the line's own (only `&&` before and after it) passed unless
-// its counts show a failure. Any other run, and every run on a host that sends the hook failed calls too, as Codex, is
-// judged by its counts alone: passed with a pass count above 0 and a fail count of 0, failed with a fail count above 0,
+// null when git cannot say; and `status` `passed`, `failed`, or `unjudged`. A run whose folder the command does not tell,
+// as `env -C "$W"` or a `cd` after `;`, has `folder: 'unknown'` too, which no other row has: its trees are null, never
+// those of the session's own checkout, so it supports no claim held to a tree (unplaced).
+// On a host whose PostToolUse comes only for a call that exited 0, as Claude Code's, a run whose status is the line's
+// own (only `&&` before and after it) passed unless its counts show a failure.
+// Any other run, and every run on a host that sends the hook failed calls too, as Codex, is judged by its counts alone:
+// passed with a pass count above 0 and a fail count of 0, failed with a fail count above 0,
 // and `unjudged` when it printed no count, since its exit status is unknown. A call whose output the host kept in a file,
 // as Claude Code does with one too long for the payload, is read from the tail of that file (outputText).
 
@@ -119,9 +122,16 @@ function keyOfText(text) {
 // runs one file, and is no full suite.
 export const isFullSuite = (invocation, testing = {}) => !invocation.dynamic && (testing.fullSuite ?? []).map(keyOfText).includes(fullKey(invocation));
 
-// The test runs on the top level of `command`, as { key, folder, carries }: `folder` the folder it runs in (shell-lex
-// walkCommands), and `carries` whether the line's exit status of 0 says the run exited 0: no separator before or after it
-// but `&&`. After `;` or `||` the run may not have run at all, or another command's status is the line's.
+// The test runs on the top level of `command`, as { key, folder, carries }: `folder` the folder it runs in, `cwd` when
+// nothing on the line moves it, or null when the command does not tell it, as with a folder a variable holds, whose value
+// is never read. A `cd`'s folder counts only when that `cd` opens the line and every link from it to the run is `&&`, so
+// the run cannot outlive its failure: where walkCommands' `folder`, which follows a leading `cd`, and `chained`, which a
+// `;`, `||`, pipe, `!`, or subshell after a `cd` ends, agree. An absolute `env -C` on the run gives both whatever the
+// shell's folder, and a relative one neither without it. Nothing else of the line, such as a redirection, is judged.
+// A directory change the lexer does not read as one (`builtin cd`, `chdir`, or one inside `eval`, a sourced file, a
+// function, or an alias) is not followed.
+// `carries` is whether the line's exit status of 0 says the run exited 0: no separator before or after it but `&&`. After
+// `;` or `||` the run may not have run at all, or another command's status is the line's.
 // A run the lexer marks `uncertain`, which the shell may never run, as behind `repeat 0`, is no run.
 // A run inside a substitution or a nested shell is not read.
 export function testRuns(command, cwd, testing = {}) {
@@ -137,7 +147,8 @@ export function testRuns(command, cwd, testing = {}) {
     next += 1;
     if (segment.length === 0 || invocation.uncertain || !isTestRun(invocation, testing)) return;
     const carries = separators.every((separator) => separator === '&&' || separator === null || separator === undefined);
-    runs.push({ key: commandKey(invocation), folder: entry?.folder ?? null, carries });
+    const told = entry !== undefined && entry.folder === entry.chained;
+    runs.push({ key: commandKey(invocation), folder: told ? entry.folder ?? null : null, carries });
   });
   return runs;
 }
@@ -241,6 +252,11 @@ export function runStatus({ pass, fail }, exitZero) {
   return pass !== null && pass > 0 && fail === 0 ? 'passed' : 'failed';
 }
 
+// A row's `folder` when the command does not tell the run's folder, and whether a row is of such a run.
+const UNKNOWN_FOLDER = 'unknown';
+const unplaced = (run) => run.folder === UNKNOWN_FOLDER;
+const RUN_PLACED = 'Run it again with a literal absolute path, `env -C <path> ...`.';
+
 // The most untracked code and test files a row names.
 const UNTRACKED_MAX = 20;
 
@@ -309,8 +325,9 @@ export function outputText(output, persisted = null) {
 
 // The rows a finished shell call adds, one a test run on its top level: `exitZero` as runStatus takes it, before the
 // line's own reach, and `persisted` as outputText takes it. `tree` reads a folder's trees (workingTree), once a folder;
-// a row whose trees git cannot give keeps them null, so a claim it cannot support names why. `keep` picks the runs by the
-// folder each runs in, as the PostToolUse hook files each run with the project it runs in; `lineRuns`, how many runs
+// a row whose trees git cannot give keeps them null, so a claim it cannot support names why, and a run whose folder is
+// unknown reads none and says so. `keep` picks the runs by the folder each runs in, null when unknown, as the PostToolUse
+// hook files each run with the project it runs in; `lineRuns`, how many runs
 // the whole line holds when other projects' configs read some of them, so the line's one count goes to a lone run only.
 export function checkRows({
   command, cwd, output, persisted = null, exitZero, testing = {}, agentId = null, at = new Date().toISOString(), tree = workingTree, keep = () => true, lineRuns = null,
@@ -320,14 +337,14 @@ export function checkRows({
   const counts = runCounts(outputText(output, persisted));
   const trees = new Map();
   return runs.flatMap(({ key, folder, carries }) => {
-    const where = folder ?? cwd;
-    if (!keep(where)) return [];
-    if (!trees.has(where)) trees.set(where, tree(where) ?? {});
-    const { tree: full = null, trackedTree = null, untrackedCode = [] } = trees.get(where);
+    if (!keep(folder)) return [];
+    if (!trees.has(folder)) trees.set(folder, folder === null ? {} : tree(folder) ?? {});
+    const { tree: full = null, trackedTree = null, untrackedCode = [] } = trees.get(folder);
     // One count for the line: with two runs on it, only the one whose status the line carries is judged by its exit.
     const own = (lineRuns ?? runs.length) === 1 ? counts : { pass: null, fail: null };
     const status = runStatus(own, exitZero && carries);
-    return [{ at, agentId, command: key, tree: full, trackedTree, untrackedCode, status, pass: own.pass, fail: own.fail }];
+    const row = { at, agentId, command: key, tree: full, trackedTree, untrackedCode, status, pass: own.pass, fail: own.fail };
+    return [folder === null ? { ...row, folder: UNKNOWN_FOLDER } : row];
   });
 }
 
@@ -603,7 +620,8 @@ function units(lines) {
 // Whether a row supports a claim at `tree`: the same command, passed with more than 0 passes when it printed a count
 // (a run of no tests proves nothing), at that tree when one is given, and with each count the claim states. The tree is
 // the row's full one, or its tracked one only while no untracked code or test file sat beside the run, which it may
-// have loaded and the commit lacks.
+// have loaded and the commit lacks. A run whose folder is unknown has null trees, so it is at none that is given, and
+// still supports a claim read at any tree, as a subagent's report's: it finished in this session with that count.
 const atTree = (run, tree) => tree === null || run.tree === tree || (run.trackedTree === tree && !run.untrackedCode?.length);
 const supports = (run, { key, counts }, tree) => run.command === key && run.status === 'passed' && run.pass !== 0
   && atTree(run, tree) && (run.pass === null || run.pass === undefined || counts.every((count) => count === run.pass));
@@ -613,12 +631,16 @@ export function unsupportedClaims(claims, runs, { tree = null } = {}) {
   return claims.filter((claim) => !runs.some((run) => supports(run, claim, tree)));
 }
 
-// What a report is told about `missing` claims: what was looked for and what the record holds.
-export function claimProblem(missing, runs, { where }) {
+// What a report is told about `missing` claims: what was looked for and what the record holds. `byTree` says the claims
+// are held to a tree, so a run whose folder is unknown is one to run again.
+export function claimProblem(missing, runs, { where, byTree = false }) {
   const named = [...new Set(missing.map(({ key }) => `\`${key}\``))].join(', ');
   const held = runs.filter((run) => missing.some(({ key }) => run.command === key));
   const counted = (run) => (run.pass === null && run.fail === null ? '' : ` (pass ${run.pass ?? 'unknown'}, fail ${run.fail ?? 'unknown'})`);
-  const at = (run) => (run.tree ? `at tree ${String(run.tree).slice(0, 12)}` : 'at a tree git could not read');
+  const at = (run) => {
+    if (unplaced(run)) return 'in a folder its command does not tell';
+    return run.tree ? `at tree ${String(run.tree).slice(0, 12)}` : 'at a tree git could not read';
+  };
   const shown = held.slice(-3).map((run) => `${run.status}${counted(run)} ${at(run)}`);
   // A run of the same program with other words, such as other test files, is named, since a claim quotes its run as it ran.
   const runner = (key) => key.split(' ')[0];
@@ -631,14 +653,17 @@ export function claimProblem(missing, runs, { where }) {
   const untracked = beside.length
     ? ` Untracked code beside the run, which the commit lacks: ${beside.map((file) => `\`${file}\``).join(', ')}; \`git add\` it, or remove it, and rerun.`
     : '';
+  const unknown = byTree && held.some(unplaced)
+    ? ` A run's folder could not be told from its command, as with one a variable holds, so that run supports no claim here. ${RUN_PLACED}`
+    : '';
   return `${where} says ${named} passed, but no run of it that a shell call finished with a pass, ${stated}` +
-    `is on this session's record. ${record}${untracked} Quote only output a tool returned in this session; a run stopped or still running ` +
+    `is on this session's record. ${record}${untracked}${unknown} Quote only output a tool returned in this session; a run stopped or still running ` +
     'is "not finished", never a result, and a CI result is quoted from the checks the forge shows. ' +
     'To get a result, run the command in the foreground to its end, or `aidrian test changed` for the test files this change touches.';
 }
 
 // The facts of the recorded run nearest to a claim no run supports at `tree`: a pass of the command there, else one of
-// the same program with other words there, else the command's last pass anywhere, else its last run. `named()` gives the
+// the same program with other words there, else the command's last pass in a known folder, else its last run. `named()` gives the
 // full id of the commit the claim names, or null, used when the run matches its tree; `commitOf(tree)` gives another
 // commit's, or null. Only a run that can support a pass claim, at a commit to name, is one to cite. It states what the record holds and composes no line: a record key drops quotes and
 // a long one is cut, so the key only names the run.
@@ -651,7 +676,7 @@ export function claimFacts({ key }, runs, { tree, commitOf = () => null, named =
   const runner = key.split(' ')[0];
   const others = runs.filter((run) => run.command !== key && run.command.split(' ')[0] === runner);
   const passedHere = (run) => passed(run) && atTree(run, tree);
-  const nearest = own.findLast(passedHere) ?? others.findLast(passedHere) ?? own.findLast(passed) ?? own.at(-1);
+  const nearest = own.findLast(passedHere) ?? others.findLast(passedHere) ?? own.findLast((run) => passed(run) && !unplaced(run)) ?? own.at(-1);
   if (!nearest) {
     return 'the record holds no finished run of it: a run in the background, inside `sh -c` or `$( )`, or in another ' +
       `session leaves no row. ${NO_CITE}`;
@@ -660,12 +685,16 @@ export function claimFacts({ key }, runs, { tree, commitOf = () => null, named =
     ?? commitOf(nearest.tree) ?? (nearest.untrackedCode?.length ? null : commitOf(nearest.trackedTree));
   const held = typeof nearest.pass === 'number' || typeof nearest.fail === 'number';
   const counts = held ? `${nearest.pass ?? 'unknown'} pass, ${nearest.fail ?? 'unknown'} fail` : 'no counts';
+  const unfound = unplaced(nearest)
+    ? 'its folder could not be told from its command'
+    : "its files' commit not found among HEAD's last 100, or git could not list them";
   const facts = [
     `the nearest recorded run is of \`${nearest.command}\`: ${nearest.status}, ${counts}`,
-    commit ? `at commit ${commit}` : "its files' commit not found among HEAD's last 100, or git could not list them",
+    commit ? `at commit ${commit}` : unfound,
     ...(nearest.pass === 0 ? ['it recorded zero passes, which supports no pass'] : []),
     ...(nearest.status === 'unjudged' ? ['its output showed no count and its exit status is unknown'] : []),
   ];
-  const citable = commit ? CITE : NO_COMMIT;
+  const uncited = unplaced(nearest) ? RUN_PLACED : NO_COMMIT;
+  const citable = commit ? CITE : uncited;
   return `${facts.join('; ')}. ${passed(nearest) ? citable : NO_CITE}`;
 }

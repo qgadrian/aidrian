@@ -622,7 +622,7 @@ function judgeEvidence(body, call, { config, project, folder, readRuns, listOpen
   const namedId = (claim) => (namedCommit(claim) === null ? null : fullId(namedCommit(claim)));
   const facts = missing.slice(0, FACTS_SHOWN)
     .map((claim) => `For \`${claim.key}\`, ${claimFacts(claim, runs, { tree: claimTree(claim), commitOf, named: () => namedId(claim) })}`);
-  return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section' })} The run must be of the files of HEAD ` +
+  return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section', byTree: true })} The run must be of the files of HEAD ` +
     `(tree ${String(treeAt('HEAD') ?? 'unknown').slice(0, 12)}), or of the commit the line names, such as "at <commit id>". ` +
     `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.\n\nWhat the record shows: ${facts.join(' ')}`);
 }

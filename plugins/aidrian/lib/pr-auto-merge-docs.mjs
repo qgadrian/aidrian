@@ -62,13 +62,15 @@ export const startUnreadable = (loaded) =>
   (typeof loaded === 'string' ? `the default branch's knowledge cannot say which docs the start hook loads into every session (${loaded})` : null);
 
 // Why the changed file `file`, from the top of the repository, is one the start hook loads, by `loaded`, or null: an
-// `always` doc of a bucket, or a file in the knowledge folder whose indexes name them. Compared ignoring case, as the
-// policy files are, since a disk that ignores case loads either spelling.
+// `always` doc of a bucket, or a file in the knowledge folder whose indexes name them; or the folder's own path, or a
+// parent of it or of such a doc, where a changed path can only be a link, a file, or a submodule, which puts other files
+// in their place. Compared ignoring case, as the policy files are, since a disk that ignores case loads either spelling.
 export function startLoadProblem(file, loaded) {
   const lower = file.toLowerCase();
   const named = JSON.stringify(file);
   if (loaded.docs.some((doc) => doc.toLowerCase() === lower)) return `it changes ${named}, a knowledge doc the start hook loads into every session`;
   if (loaded.folder && lower.startsWith(`${loaded.folder.toLowerCase()}/`)) return `it changes ${named}, in the default branch's knowledge folder, which decides what the start hook loads`;
+  if ([...loaded.docs, ...(loaded.folder ? [`${loaded.folder}/`] : [])].some((each) => each.toLowerCase().startsWith(`${lower}/`))) return `it changes ${named}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`;
   return null;
 }
 

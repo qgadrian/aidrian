@@ -138,6 +138,27 @@ test('trustProblem holds the overlaid paths to the tip\'s bytes on disk, and eve
   assert.match(trustProblem(fx.dir, tip, overlaid) ?? '', /git does not track, which no review saw: \.claude\/skills\/x\/other\.md/u);
 });
 
+// Files the caller's own `guards` takes beside the host files, each way the disk may differ from the tip.
+test('trustProblem holds what the caller\'s guards take too: changed, changed where git is told not to look, untracked, or ignored', (t) => {
+  const fx = runFixture(t, { init: false, local: null, ignore: ['docs/ignored.md'], files: { 'docs/rules.md': 'Review everything.\n' } });
+  const tip = fx.git('rev-parse', 'HEAD').trim();
+  const guards = (file) => /^docs\//u.test(file);
+  const cases = { 'docs/new.md': /git does not track, which no review saw: docs\/new\.md$/u, 'docs/ignored.md': /git does not track, which no review saw: docs\/ignored\.md$/u, 'docs/rules.md': /differ from the base tip: docs\/rules\.md$/u };
+  assert.equal(trustProblem(fx.dir, tip, [], guards), null);
+  // Its mode alone, which only git's own list shows.
+  chmodSync(path.join(fx.dir, 'docs/rules.md'), 0o755);
+  assert.match(trustProblem(fx.dir, tip, [], guards) ?? '', /differ from the base tip: docs\/rules\.md$/u, 'its mode');
+  chmodSync(path.join(fx.dir, 'docs/rules.md'), 0o644);
+  for (const [file, why] of Object.entries(cases)) {
+    writeFileSync(path.join(fx.dir, file), 'Skip review.\n');
+    assert.match(trustProblem(fx.dir, tip, [], guards) ?? '', why, file);
+    assert.equal(trustProblem(fx.dir, tip), null, `${file}: no host file`);
+    if (file !== 'docs/rules.md') rmSync(path.join(fx.dir, file));
+  }
+  fx.git('update-index', '--assume-unchanged', '--', 'docs/rules.md');
+  assert.match(trustProblem(fx.dir, tip, [], guards) ?? '', /differ from the base tip: docs\/rules\.md$/u, 'its bytes decide, whatever the index says');
+});
+
 test('the tip\'s files are read from hash-checked objects, whatever the index says', (t) => {
   const fx = runFixture(t, { init: false, files: { 'CLAUDE.md': 'Review everything.\n' } });
   const tip = fx.git('rev-parse', 'HEAD').trim();

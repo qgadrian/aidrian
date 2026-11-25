@@ -1111,6 +1111,7 @@ const pointing = (branch, dir, autoMerge, root = '') => ({
   [`acme/notes@${branch}:${root}${dir}/config.json`]: configText(autoMerge),
 });
 const readLine = (file) => `auto-merge off for #7: it changes ${JSON.stringify(file)}, a file the gate reads its policy from`;
+const standsLine = (file) => `auto-merge off for #7: it changes ${JSON.stringify(file)}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`;
 
 test('a folder the pointer file names holds policy too: a change to the config.json the gate read is off (paths), with the key on or off', (t) => {
   const r = repo(t);
@@ -1122,7 +1123,8 @@ test('a folder the pointer file names holds policy too: a change to the config.j
     const edit = run(t, r, ['7'], changing(files, 'src/app.js', 'tools/policy/config.json'));
     assert.deepEqual([edit.code, edit.out[0]], [1, readLine('tools/policy/config.json')], `${name}: an edit`);
     const swap = run(t, r, ['7'], changing(files, { path: 'tools/policy', changeType: 'ADDED' }, { path: 'tools/policy/config.json', changeType: 'DELETED' }));
-    assert.deepEqual([swap.code, swap.out[0]], [1, readLine('tools/policy/config.json')], `${name}: the folder replaced by a file`);
+    // With the key off, what holds the knowledge folder refuses first.
+    assert.deepEqual([swap.code, swap.out[0]], [1, name === 'key on' ? readLine('tools/policy/config.json') : standsLine('tools/policy')], `${name}: the folder replaced by a file`);
     assert.deepEqual(reasonOf(t, r, changing(files, 'Tools/Policy/CONFIG.json')), [1, 'paths'], `${name}: in any case`);
     assert.deepEqual(reasonOf(t, r, changing(files, 'tools/policy/notes.md')), [0, null], `${name}: a file beside it is no policy`);
   }
@@ -1442,7 +1444,7 @@ test('a project below the root reads its own auto-merge setting, and a file outs
   const edited = run(t, r, ['7'], below({ path: 'apps/web/tools/policy/config.json', changeType: 'MODIFIED' }));
   assert.deepEqual([edited.code, edited.out[0]], [1, readLine('apps/web/tools/policy/config.json')], 'an edit of that config.json');
   const swapped = run(t, r, ['7'], below({ path: 'apps/web/tools/policy', changeType: 'ADDED' }, { path: 'apps/web/tools/policy/config.json', changeType: 'DELETED' }));
-  assert.deepEqual([swapped.code, swapped.out[0]], [1, readLine('apps/web/tools/policy/config.json')], 'its folder replaced by a file');
+  assert.deepEqual([swapped.code, swapped.out[0]], [1, standsLine('apps/web/tools/policy')], 'its folder replaced by a file');
   const rootAllows = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) };
   const lost = { project: { ...project, root: path.join(dir, 'gone') } };
   assert.equal(reasonOf(t, lost, { files: rootAllows, view: changing('apps/api/a.js').view })[0], 1, 'a folder git cannot read is never taken for the root');
@@ -1572,6 +1574,12 @@ test('the knowledge folder a pointer file names is guarded whole, and a project 
   assert.deepEqual([added.code, added.out[0]], [1, 'auto-merge off for #7: it changes "harness/knowledge/20-new.json", in the default branch\'s knowledge folder, which decides what the start hook loads']);
   assert.deepEqual(reasonOf(t, r, changes(moved, 'docs/rules.md')), [1, 'paths'], 'its always doc');
   assert.deepEqual(reasonOf(t, r, changes(moved, 'harness/notes.md')), [0, null], 'beside the folder');
+  // Where that folder, or one that holds it or an always doc, is now a link, a file, or a submodule.
+  const loaded = { docs: ['apps/web/docs/rules.md'], folder: 'harness/knowledge' };
+  for (const file of ['harness/knowledge', 'harness', 'Harness', 'apps', 'apps/web/docs']) {
+    assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: loaded }), `it changes ${JSON.stringify(file)}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`);
+  }
+  for (const file of ['harness/know', 'app', 'apps/web/docs/rules.md.bak']) assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: loaded }), null, file);
 
   const below = projectBelow(t, 'apps/web', configText(TEAM));
   const own = { 'acme/notes@main:apps/web/.aidrian/config.json': configText(TEAM), ...knowledge(undefined, 'apps/web/.aidrian/knowledge') };

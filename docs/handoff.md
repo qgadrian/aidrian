@@ -699,7 +699,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   that same host session, which keeps its id; on a halted run, it lifts the halt and the driver stays.
 - **Host files no review saw.** A run never discards or rebuilds existing work unless a person asks.
   A later attempt goes on on the issue's branch.
-  When that branch's head changes a host config or instruction file, the session loads the branch's own copies only
+  When that branch's head changes a host config or instruction file, or what the start hook loads (the knowledge folder
+  and each `always` doc), as the base tip has them, the session loads the branch's own copies only
   when the review bot, github.reviewer on the default branch, passed exactly that head on the forge, with the Human's
   sign-off where [Project run](config.md#project-run) asks for one; otherwise its clone holds the base branch's copies,
   git leaves them out of its commits, and a push that changes one is refused.
@@ -733,8 +734,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
   It parks a pull request into another branch than the default.
   On a conflict its line names the one route, on the branch the clone is on, its commits kept, once HEAD holds the forge's branch.
-  A host file `git merge-tree` names as conflicting records `pr_open` with that path in its stop; else `git merge origin/<base>`, never a rebase.
-  It never edits a host file: git merges the base copies in the index alone and leaves them on disk.
+  A host file or a base copy `git merge-tree` names as conflicting records `pr_open` with that path in its stop; else `git merge origin/<base>`, never a rebase.
+  It never edits a host file or a base copy by hand: git merges the base copies in the index alone and leaves them on disk.
   The push guard lets that merge's host files through only as git merges them ([agent gates](hooks.md#agent-gates)).
   A branch the run's ledger cannot account for, or base copies that cannot be made safely, park the issue as
   unreconciled, with the branch and pull request untouched ([Project run](config.md#project-run) lists each case).

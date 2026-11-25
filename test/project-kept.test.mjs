@@ -787,7 +787,8 @@ test('a fast-forward that fails ends its attempt, whose clone the sweep removes 
 });
 
 test('an attempt on base copies fast-forwards to its offered commits with the copies in place, and the next holds base copies again', (t) => {
-  const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n', '.claude/skills/x/SKILL.md': 'base skill\n' } });
+  const always = { '.aidrian/knowledge/docs.json': '{"dir":"docs","always":["rules.md"],"docs":{}}\n', 'docs/rules.md': 'base rules\n' };
+  const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n', '.claude/skills/x/SKILL.md': 'base skill\n', ...always } });
   assert.equal(startAgain(fx), null, 'no kept clone, no line');
   // The branch on the forge changes one host file and deletes another, so attempt 2 holds the base's copies of both.
   inClone(fx, 1)('rm', '-q', '.claude/skills/x/SKILL.md');
@@ -818,9 +819,12 @@ test('an attempt on base copies fast-forwards to its offered commits with the co
   git('update-index', '--no-skip-worktree', '--', 'CLAUDE.md');
   writeFileSync(path.join(clone, 'CLAUDE.md'), '# rules the session wrote\n');
   git('add', '--sparse', '--', 'CLAUDE.md');
+  // With an always doc, which the start hook loads.
+  writeFileSync(path.join(clone, 'docs/rules.md'), 'rules the session wrote\n');
+  git('add', '--', 'docs/rules.md');
   git('commit', '-q', '-m', 'rules');
   assert.match(limited(fx, 3), /^kept ENG-1 attempt 3: /u);
-  assert.equal(startAgain(fx), 'not taken ENG-1 attempt 3: its commits change 1 host config, instruction, policy, or workflow file');
+  assert.equal(startAgain(fx), 'not taken ENG-1 attempt 3: its commits change 2 host config, instruction, policy, or workflow files');
   assert.deepEqual([lastStart(fx).head, lastStart(fx).overlay, Object.hasOwn(lastStart(fx), 'took')], [forgeHead, forgeHead, false]);
   assert.ok(existsSync(folderOf(fx, 3)));
 });

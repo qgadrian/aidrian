@@ -12,6 +12,7 @@ import { checkDeadline, remainingMs } from './deadline.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { INDEX_RECIPE, PLAIN_FILE } from './index-edits.mjs';
+import { startLoadProblem } from './pr-auto-merge-docs.mjs';
 import { GUARDED_PATHS, isPolicyPath } from './project.mjs';
 import { namedFiles } from './project-trust.mjs';
 
@@ -50,17 +51,18 @@ function ownCloneProblem(folder, root, pushUrl, fold) {
 }
 
 // Why the commits a push from `folder` carries change a host config or instruction file (GUARDED_PATHS), or a policy
-// file (isPolicyPath, with `policyFiles`, the ones the gate resolved at the start), from `overlay`, the branch head its
+// file (isPolicyPath, with `policyFiles`, the ones the gate resolved at the start), or what the start hook loads
+// (startLoadProblem, with `startLoaded`, as the base tip had it at the start, null when its row keeps none), from `overlay`, the branch head its
 // attempt started from on the base branch's copies of them (lib/project-start.mjs prepareAttempt), or null, as for an
 // attempt with none. The one change it lets through is a merge of the base (mergedProblem): each such file as git's
 // clean merge of `overlay` and the base gives it, and none that conflicted in that merge, whatever bytes HEAD holds.
 // An exact path of `indexFiles`, the knowledge index files the start let the attempt edit in git's index, is no such
 // file but for a conflict; indexProblem holds what its commits leave there.
 // A git call that fails refuses the push.
-function overlayProblem(folder, overlay, policyFiles, indexFiles) {
+function overlayProblem(folder, overlay, { policyFiles, startLoaded, indexFiles }) {
   if (!overlay) return null;
   const editable = new Set(indexFiles.map((each) => each.path));
-  const held = (file) => file !== '' && (GUARDED_PATHS.test(file) || isPolicyPath(file, policyFiles));
+  const held = (file) => file !== '' && (GUARDED_PATHS.test(file) || isPolicyPath(file, policyFiles) || (startLoaded !== null && startLoadProblem(file, startLoaded) !== null));
   const guarded = (file) => held(file) && !editable.has(file);
   const diff = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', overlay, 'HEAD', '--'], folder);
   if (diff.status !== 0) return `it pushes, and ${SLOW} which files its commits change from ${overlay.slice(0, 7)}, the head its attempt started from on the base branch's copies of the host config and instruction files`;
@@ -217,8 +219,8 @@ const shellWord = (file) => (/^[\w./@%+=:,-]+$/u.test(file) ? file : `'${file.re
 
 // Why the exact push from `folder` may not run, or null (see the header). `root` is the session's root that holds it
 // ({ root, common }), `pushUrl` the URL its issue's start pinned, `overlay` the head that start recorded its base copies
-// over, or null, with `policyFiles` and `indexFiles`, and `fold(path)` gives a path as `root` holds them.
-export function pushCheckoutProblem(folder, { root, pushUrl, fold, overlay = null, policyFiles = [], indexFiles = [] }) {
+// over, or null, with `policyFiles`, `startLoaded`, and `indexFiles`, and `fold(path)` gives a path as `root` holds them.
+export function pushCheckoutProblem(folder, { root, pushUrl, fold, overlay = null, policyFiles = [], startLoaded = null, indexFiles = [] }) {
   const paths = workflowPaths();
-  return ownCloneProblem(folder, root, pushUrl, fold) ?? overlayProblem(folder, overlay, policyFiles, indexFiles) ?? committedProblem(folder, paths) ?? uncommittedProblem(folder, paths);
+  return ownCloneProblem(folder, root, pushUrl, fold) ?? overlayProblem(folder, overlay, { policyFiles, startLoaded, indexFiles }) ?? committedProblem(folder, paths) ?? uncommittedProblem(folder, paths);
 }

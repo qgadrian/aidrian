@@ -49,9 +49,9 @@ export const HARDENED_PAIRS = Object.freeze([
   ['diff.ignoreSubmodules', 'dirty'], ['protocol.ext.allow', 'never'], ['log.showSignature', 'false'], ['core.useReplaceRefs', 'false'],
 ]);
 export const GATE_CONFIG = Object.freeze(HARDENED_PAIRS.flatMap(([key, value]) => ['-c', `${key}=${value}`]));
-// The options each subcommand adds after its name: a diff runs no external diff and no textconv, and a status reads no
-// submodule.
-const GATE_ARGS = Object.freeze({ diff: ['--no-ext-diff', '--no-textconv'], status: ['--ignore-submodules=dirty'] });
+// The options each subcommand adds after its name: a diff runs no external diff and no textconv, and neither it nor a
+// status reads a submodule, or lets a submodule's own `ignore` setting, as `.gitmodules` holds one, hide its entry.
+const GATE_ARGS = Object.freeze({ diff: ['--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty'], status: ['--ignore-submodules=dirty'] });
 // How long a gate's git call may take unless it says otherwise: a fetch or a clone may take a while.
 const GATE_TIMEOUT_MS = 120_000;
 

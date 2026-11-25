@@ -270,7 +270,7 @@ export function stateWorkFolders(state, { env, home }) {
 // turns signing off (UNSIGNED) and git's own packing (UNPACKED); a clone whose commits would still sign (signingProblem)
 // is { halt }.
 // A later attempt whose head differs from the tip in a file `guards` takes, the host config and instruction files
-// (project-trust.mjs isGuarded) and the policy files the gate resolved, and that the tip does not already hold, asks
+// (project-trust.mjs isGuarded), the policy files the gate resolved, and what the start hook loads, and that the tip does not already hold, asks
 // `reviewed(head, changed)`, `changed` every path the head changes from the tip: null keeps the branch's own files
 // (`reviewed` is the head, which trustProblem compares the clone with); a reason gives the clone the tip's copies of
 // those files instead (`overlay`: { sha, files, why }), which git is told to skip (skip-worktree) or, for one the branch

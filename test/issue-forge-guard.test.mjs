@@ -95,7 +95,7 @@ function issueFixture(t, options = {}) {
   // `branchWork(work)` commits the branch's own work in the clone before the start records its head.
   options.branchWork?.(work);
   // With `overlay`, the start gave the clone the base branch's copies of its host files over the head it cloned.
-  const overlay = options.overlay ? { overlay: execFileSync('git', ['-C', work, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), policyFiles: options.policyFiles ?? [], ...(options.indexFiles ? { indexFiles: options.indexFiles(work) } : {}) } : {};
+  const overlay = options.overlay ? { overlay: execFileSync('git', ['-C', work, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), policyFiles: options.policyFiles ?? [], ...(options.startLoaded ? { startLoaded: options.startLoaded } : {}), ...(options.indexFiles ? { indexFiles: options.indexFiles(work) } : {}) } : {};
   appendToRun(fx.state, 'launch', () => ({ rows: [
     { event: 'start', key, attempt: 1, session: DRIVER, name: `launch · ${key} · 1`, cwd: work, branch: BRANCH, drop: path.join(attempt, 'drop'), ...(options.pushUrl === undefined ? { pushUrl: fx.dir } : options.pushUrl), ...overlay, at, outcome: 'started', id: 'pid-1-0000000000000000', child: SESSION },
     { event: 'issue', key, state: 'running', at },
@@ -351,17 +351,24 @@ test('an issue session on the base branch\'s host files pushes no merge whose ho
 // changes docs.json, which the base has, and adds new.json, which it lacks.
 const INDEX = '.aidrian/knowledge/docs.json';
 const ADDED = '.aidrian/knowledge/new.json';
+// One the branch leaves alone.
+const BASE_ONLY = '.aidrian/knowledge/other.json';
+// What the start hook loads there: the folder of both, a doc the branch leaves alone, and one it changes.
+const [ALWAYS, OWN_ALWAYS] = ['docs/rules.md', 'docs/own.md'];
+const LOADED = { docs: [ALWAYS, OWN_ALWAYS], folder: '.aidrian/knowledge' };
 const NINE = Array.from({ length: 9 }, (_, line) => `line ${line}\n`);
-const indexFixture = (t, { branch = true } = {}) => {
+const indexFixture = (t) => {
   const identity = ['-c', 'user.name=t', '-c', 'user.email=t@example.com'];
   const gitAt = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...identity, ...args], { encoding: 'utf8', stdio: 'pipe' });
   const fx = issueFixture(t, {
     overlay: true,
     policyFiles: ['.aidrian.json', '.aidrian/config.json'],
-    files: { [INDEX]: NINE.join(''), 'CLAUDE.md': 'base\n' },
+    startLoaded: LOADED,
+    files: { [INDEX]: NINE.join(''), [BASE_ONLY]: 'other\n', 'CLAUDE.md': 'base\n', [ALWAYS]: NINE.join(''), [OWN_ALWAYS]: NINE.join('') },
     branchWork: (work) => {
-      if (branch) writeFileSync(path.join(work, INDEX), NINE.with(0, 'branch\n').join(''));
+      writeFileSync(path.join(work, INDEX), NINE.with(0, 'branch\n').join(''));
       writeFileSync(path.join(work, ADDED), 'added\n');
+      writeFileSync(path.join(work, OWN_ALWAYS), NINE.with(0, 'branch\n').join(''));
       gitAt(work, 'add', '-A');
       gitAt(work, 'commit', '-q', '-m', 'feat: the indexes');
     },
@@ -400,15 +407,18 @@ const indexFixture = (t, { branch = true } = {}) => {
 };
 const EDIT = [INDEX, '100644', NINE.with(0, 'edited\n').join('')];
 
-test('an issue session pushes its edit of a knowledge index its start lets it edit, and no base copy, deletion, or other kind of file there', (t) => {
+test('an issue session pushes its edit of a knowledge index its start lets it edit, and no base copy, deletion, or other kind of file there, and each command of the recipe passes every Bash hook', async (t) => {
   const fx = indexFixture(t);
   assert.deepEqual(fx.own().indexFiles.map((each) => each.path), [INDEX, ADDED]);
-  assert.equal(fx.push(), null, 'the head as the start found it');
   fx.commit(EDIT, [ADDED, '100644', 'edited\n']);
-  assert.deepEqual([fx.push(), fx.asked()], [null, null], 'an edit of both');
+  assert.equal(fx.push(), null, 'an edit of both');
   assert.equal(fx.push(path.join(fx.work, '.aidrian')), null, 'from a subfolder too');
+  // As the hook asks it, with the row's own lists: both edits pass, and an always doc beside them does not.
+  fx.commit([ALWAYS, '100644', 'edited\n']);
+  assert.match(fx.asked(), /: it pushes commits that change 1 host config or instruction file, .*\(docs\/rules\.md differs/u);
+  fx.reset();
   // Each refusal names the file and the recipe.
-  const refused = (what) => new RegExp(`it pushes commits that ${what}, a knowledge index file this attempt may change only in git's index: from the clone's root, \`git show :<path>\` into a temporary file, .*\`git update-index --cacheinfo 100644,<id>,<path>\``, 'u');
+  const refused = (what) => new RegExp(`it pushes commits that ${what}, a knowledge index file this attempt may change only in git's index: from the clone's root, \`git show :<path>\` into a temporary file outside the clone, .*\`git update-index --cacheinfo 100644,<id>,<path> --skip-worktree <path>\``, 'u');
   const name = INDEX.replaceAll('.', '\\.');
   fx.commit([INDEX, '100644', NINE.join('')]);
   assert.match(fx.push(), refused(`put the base branch's copy of ${name} over the branch's own version`));
@@ -436,6 +446,19 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
     process.env.PATH = before;
   }
   assert.equal(fx.push(), null);
+  // The recipe, as the first message gives it.
+  const temp = path.join(fx.root, 'scratch', 'index.json');
+  const id = fx.git('rev-parse', `HEAD:${INDEX}`).trim();
+  const commands = [...INDEX_RECIPE.matchAll(/`(git [^`]+)`/gu)].map((match) => match[1].replace('<temporary file>', temp).replace('<id>', id).replaceAll('<path>', INDEX));
+  assert.equal(commands.length, 4, INDEX_RECIPE);
+  // In one call, where each command is judged on its own words.
+  const command = [`${commands[0]} > ${temp}`, ...commands.slice(1, 3), 'git commit -m "docs: the index"'].join(' && ');
+  for (const script of ['hook-agent-gates.mjs', 'hook-bash.mjs']) {
+    const ran = await hookCall(path.resolve(import.meta.dirname, '../plugins/aidrian/scripts', script), {
+      input: JSON.stringify({ session_id: SESSION, cwd: fx.work, hook_event_name: 'PreToolUse', ...bash(command) }), encoding: 'utf8', env: { ...fx.env, CLAUDECODE: '1', AIDRIAN_TELEMETRY: '0', TMPDIR: path.dirname(temp) },
+    });
+    assert.deepEqual([ran.status, ran.stdout], [0, ''], `${script} ${command}: ${ran.stderr}`);
+  }
 });
 
 test('an edit of a knowledge index lifts the push guard for no other file: an instruction file, the config, the pointer, a nested index, or another case', (t) => {
@@ -447,6 +470,16 @@ test('an edit of a knowledge index lifts the push guard for no other file: an in
     assert.match(reason, /^it pushes commits that change 1 host config or instruction file, and this attempt runs on the base branch's copies of them/u, file);
     assert.ok(reason.includes(`(${file} differs from git's merge of the base)`), reason);
   }
+  // So is what the start hook loads: an always doc, in any case, and a path that stands where one lies, as a link would.
+  fx.reset();
+  fx.commit([ALWAYS, '100644', 'edited\n'], ['docs/RULES.md', '100644', 'edited\n'], [OWN_ALWAYS, '100644', NINE.join('')]);
+  assert.match(fx.push(), /^it pushes commits that change 3 host config or instruction files, /u, 'an edit, another case, and the base copy');
+  // A link in their folder's place, and a submodule, whose own `ignore` setting hides no entry of it from the guard.
+  fx.reset();
+  fx.commit([ALWAYS, null], [OWN_ALWAYS, null], ['docs', '120000', 'elsewhere'], ['.gitmodules', '100644', '[submodule "x"]\n\tpath = .claude/x\n\turl = ./x\n\tignore = all\n'], ['.claude/x', '160000', fx.head]);
+  fx.git('checkout', '-q', 'HEAD', '--', '.gitmodules');
+  assert.equal(fx.git('diff', '--name-only', fx.head, 'HEAD'), '.gitmodules\ndocs\ndocs/own.md\ndocs/rules.md\n', 'git alone leaves the submodule out');
+  assert.match(fx.push(), /^it pushes commits that change 4 host config or instruction files, /u);
   // A folder in the index's place is no edit of it either.
   fx.reset();
   fx.commit([INDEX, null], [`${INDEX}/x.json`, '100644', '{}\n']);
@@ -459,70 +492,7 @@ test('an edit of a knowledge index lifts the push guard for no other file: an in
   assert.equal(indexFiles.length, 2);
   appendToRun(fx.state, 'launch', () => ({ rows: [{ ...before, at: new Date().toISOString() }] }));
   assert.match(fx.push(fx.work, fx.own()), /^it pushes commits that change 1 host config or instruction file/u);
-});
-
-test('an issue session merges a moved base, then edits a knowledge index its start lets it edit, and pushes no merge whose index conflicted', (t) => {
-  const fx = indexFixture(t);
-  fx.moveBase({ [INDEX]: NINE.with(8, 'base\n').join('') });
-  fx.git('merge', '-q', '--no-ff', '--no-edit', 'origin/main');
-  const merged = NINE.with(0, 'branch\n').with(8, 'base\n').join('');
-  assert.equal(fx.git('show', `HEAD:${INDEX}`), merged);
-  assert.equal(fx.push(), null, 'the merge alone');
-  fx.commit([INDEX, '100644', merged.replace('branch', 'edited')]);
-  assert.equal(fx.push(), null, 'the merge, then an edit');
-  fx.commit([INDEX, '100644', NINE.join('')]);
-  assert.match(fx.push(), /put the base branch's copy of .* over the branch's own version/u, 'the copy on disk, after the merge');
-  // A base that changes the line the branch changed: no bytes at HEAD stand in for that conflict, an edit's included.
-  fx.reset();
-  fx.moveBase({ [INDEX]: NINE.with(0, 'base\n').join('') });
-  fx.git('merge', '-q', '--no-ff', '--no-edit', '-X', 'ours', 'origin/main');
-  const conflicts = /^it pushes a merge of the base into the branch in which \.aidrian\/knowledge\/docs\.json conflicts in that merge, which a session never resolves by hand/u;
-  assert.match(fx.push(), conflicts);
-  fx.commit(EDIT);
-  assert.match(fx.push(), conflicts);
-});
-
-// The start's list names an index only the base changed too, whose copy a merge of that base puts at HEAD.
-test('a merge of the base alone passes as git gives it for a knowledge index the branch never changed, the base\'s own copy or its deletion', (t) => {
-  const fx = indexFixture(t, { branch: false });
-  fx.moveBase({ [INDEX]: 'the base\'s own\n' });
-  const base = fx.git('rev-parse', `origin/main:${INDEX}`).trim();
-  const start = fx.rows().findLast((row) => row.event === 'start');
-  appendToRun(fx.state, 'launch', () => ({ rows: [{ ...start, indexFiles: [{ path: INDEX, base }], at: new Date().toISOString() }] }));
-  const push = () => fx.push(fx.work, fx.own());
-  // Put there by hand, with no merge of the base, it is the copy on disk.
-  fx.commit([INDEX, '100644', 'the base\'s own\n']);
-  assert.match(push(), /put the base branch's copy of .* over the branch's own version/u);
-  fx.reset();
-  fx.git('merge', '-q', '--no-ff', '--no-edit', 'origin/main');
-  assert.equal(fx.git('rev-parse', `HEAD:${INDEX}`).trim(), base);
-  assert.equal(push(), null, 'as git merged it');
-  fx.moveBase({ [INDEX]: null });
-  fx.git('merge', '-q', '--no-ff', '--no-edit', 'origin/main');
-  assert.equal(fx.git('ls-tree', 'HEAD', '--', INDEX), '');
-  assert.equal(push(), null, 'deleted as git merged it');
-});
-
-test('each command of the knowledge index recipe passes every Bash hook of an issue session', async (t) => {
-  const fx = indexFixture(t);
-  const temp = path.join(fx.root, 'scratch', 'index.json');
-  const id = fx.git('rev-parse', `HEAD:${INDEX}`).trim();
-  const commands = [...INDEX_RECIPE.matchAll(/`(git [^`]+)`/gu)].map((match) => match[1].replace('<temporary file>', temp).replace('<id>', id).replace('<path>', INDEX));
-  assert.equal(commands.length, 5, INDEX_RECIPE);
-  // In one call, where each command is judged on its own words.
-  const command = [`${commands[0]} > ${temp}`, ...commands.slice(1, 4), 'git commit -m "docs: the index"'].join(' && ');
-  for (const script of ['hook-agent-gates.mjs', 'hook-bash.mjs']) {
-    const ran = await hookCall(path.resolve(import.meta.dirname, '../plugins/aidrian/scripts', script), {
-      input: JSON.stringify({ session_id: SESSION, cwd: fx.work, hook_event_name: 'PreToolUse', ...bash(command) }), encoding: 'utf8', env: { ...fx.env, CLAUDECODE: '1', AIDRIAN_TELEMETRY: '0', TMPDIR: path.dirname(temp) },
-    });
-    assert.deepEqual([ran.status, ran.stdout], [0, ''], `${script} ${command}: ${ran.stderr}`);
-  }
-});
-
-// What a ledger row may hold where the start wrote its list.
-test('ownIssue keeps the start row\'s index files only with an overlay, and drops a malformed entry', (t) => {
-  const fx = indexFixture(t);
-  const start = fx.rows().findLast((row) => row.event === 'start');
+  // What a ledger row may hold where the start wrote its lists: only with an overlay, and no malformed one.
   const own = (row) => {
     appendToRun(fx.state, 'launch', () => ({ rows: [{ ...row, at: new Date().toISOString() }] }));
     return fx.own();
@@ -531,6 +501,51 @@ test('ownIssue keeps the start row\'s index files only with an overlay, and drop
   assert.deepEqual(own({ ...start, indexFiles: [{ path: 7, base: null }, { base: null }, null, 'x', ...good, { path: INDEX }, { path: INDEX, base: 'abc' }, { path: INDEX, base: 'A'.repeat(40) }, { path: INDEX, base: `${'a'.repeat(40)}\n` }] }).indexFiles, good);
   for (const indexFiles of ['x', { path: INDEX, base: null }, [], [{ path: 7 }]]) assert.equal('indexFiles' in own({ ...start, indexFiles }), false, JSON.stringify(indexFiles));
   for (const overlay of [undefined, 'HEAD', 'abc']) assert.equal('indexFiles' in own({ ...start, overlay, indexFiles: good }), false, `overlay ${overlay}`);
+  assert.deepEqual(own({ ...start, startLoaded: { ...LOADED, more: 1 } }).startLoaded, LOADED);
+  for (const startLoaded of [undefined, null, 'x', {}, { docs: [] }, { docs: [], folder: null }, { docs: 'x', folder: 'k' }, { docs: ['x', 7], folder: 'k' }]) assert.equal('startLoaded' in own({ ...start, startLoaded }), false, JSON.stringify(startLoaded));
+  assert.equal('startLoaded' in own({ ...start, overlay: undefined }), false, 'no overlay');
+});
+
+test('an issue session merges a moved base, which may give an index the base\'s own copy, then edits one, and pushes no merge whose index conflicted', (t) => {
+  const fx = indexFixture(t);
+  fx.moveBase({ [INDEX]: NINE.with(8, 'base\n').join(''), [BASE_ONLY]: 'the base\'s own\n', [ALWAYS]: 'the base\'s own\n' });
+  // A start lists an index only the base changed too, whose copy a merge of that base puts at HEAD.
+  const base = fx.git('rev-parse', `origin/main:${BASE_ONLY}`).trim();
+  const facts = fx.own();
+  const given = { ...facts, indexFiles: [...facts.indexFiles, { path: BASE_ONLY, base }] };
+  const push = () => fx.push(fx.work, given);
+  // Put there by hand, with no merge of the base, it is the copy on disk.
+  fx.commit([BASE_ONLY, '100644', 'the base\'s own\n']);
+  assert.match(push(), /put the base branch's copy of .* over the branch's own version/u);
+  fx.reset();
+  fx.git('merge', '-q', '--no-ff', '--no-edit', 'origin/main');
+  assert.equal(fx.git('rev-parse', `HEAD:${BASE_ONLY}`).trim(), base);
+  const merged = NINE.with(0, 'branch\n').with(8, 'base\n').join('');
+  assert.equal(fx.git('show', `HEAD:${INDEX}`), merged);
+  assert.equal(fx.git('show', `HEAD:${ALWAYS}`), 'the base\'s own\n');
+  assert.equal(push(), null, 'the merge alone, an always doc only the base changed with it');
+  fx.commit([INDEX, '100644', merged.replace('branch', 'edited')]);
+  assert.equal(push(), null, 'the merge, then an edit');
+  fx.commit([INDEX, '100644', NINE.join('')]);
+  assert.match(push(), /put the base branch's copy of .* over the branch's own version/u, 'the copy on disk, after the merge');
+  // A base that deletes it: deleted as git merged it.
+  fx.reset();
+  fx.moveBase({ [BASE_ONLY]: null });
+  fx.git('merge', '-q', '--no-ff', '--no-edit', 'origin/main');
+  assert.equal(push(), null, 'deleted as git merged it');
+  // A base that changes the line the branch changed: no bytes at HEAD stand in for that conflict, an edit's included.
+  fx.reset();
+  fx.moveBase({ [INDEX]: NINE.with(0, 'base\n').join(''), [ALWAYS]: NINE.join('') });
+  fx.git('merge', '-q', '--no-ff', '--no-edit', '-X', 'ours', 'origin/main');
+  const conflicts = /^it pushes a merge of the base into the branch in which \.aidrian\/knowledge\/docs\.json conflicts in that merge, which a session never resolves by hand/u;
+  assert.match(push(), conflicts);
+  fx.commit(EDIT);
+  assert.match(push(), conflicts);
+  // An always doc both changed there is no exception either.
+  fx.reset();
+  fx.moveBase({ [INDEX]: NINE.join(''), [OWN_ALWAYS]: NINE.with(0, 'base\n').join('') });
+  fx.git('merge', '-q', '--no-ff', '--no-edit', '-X', 'ours', 'origin/main');
+  assert.match(push(), /docs\/own\.md conflicts in that merge, which a session never resolves by hand/u);
 });
 
 test('an issue session on the base branch\'s host files names a conflicted file the branch spelled with a line break as one clean line', (t) => {

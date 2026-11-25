@@ -63,14 +63,16 @@ import { maskSecrets } from './clean-text.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { changeNotFound, forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
-import { configPathIn, DEFAULT_CONFIG, isPolicyPath, mayFollowTeamDefault, projectId, stateRoot, trailPaths } from './project.mjs';
+import { configPathIn, DEFAULT_CONFIG, isPolicyPath, knowledgeIn, mayFollowTeamDefault, projectId, stateRoot, trailPaths } from './project.mjs';
 import { botProblem, NO_BOT, readHumanSignoffs, signoffProblem } from './review/merge-trust.mjs';
 import { HARNESS_FLOW } from './review/plan.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
 import { credentialStores, detectHost, nestedGlobs, otherPlaceholders, protectedPaths, sessionIdentity } from './hosts/index.mjs';
-import { INDEX_RECIPE, indexFilesOf } from './index-edits.mjs';
+import { INDEX_RECIPE, indexFilesOf, shownPath } from './index-edits.mjs';
+import { indexedAlways } from './knowledge.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
+import { FILE_MODES, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
 import { chainEnded, lingerLine, lingerProblem, notStopped, releaseAttempts, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, liftRow, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
@@ -85,7 +87,7 @@ import { keptLines, keptPrompt } from './project-kept.mjs';
 import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, recordedHead, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
-import { ancestorProblem, commitFiles, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
+import { ancestorProblem, commitFiles, commitGitlinks, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { holdsProblem } from './project-forge-holds.mjs';
 import { pushPreflight } from './push-preflight.mjs';
 import { signoffFolder, signoffFolders, storePathProblem } from './review/signoff-store.mjs';
@@ -271,9 +273,9 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
 // copy, a host file the sandbox and the write guard refuse, or a workflow file. The autopilot skill's project-run rules
 // key on its first words.
 export const POLICY_FILES_LINE = 'The team\'s `github.autoMerge.includePolicyFiles` is on: this session may write host instruction files, such as a `CLAUDE.md` or an `AGENTS.md`, '
-  + `the \`${path.posix.dirname(DEFAULT_CONFIG)}/\` folder, its knowledge index and \`config.json\` among them, and the other policy files, when the issue needs it: no base copy this message lists, but a knowledge index file as it says. `
+  + `the \`${path.posix.dirname(DEFAULT_CONFIG)}/\` folder, its knowledge index and \`config.json\` among them, and the other policy files, when the issue needs it: no base copy this message lists, save a knowledge index file, only in git's index, as it says. `
   + 'A review finding in a file this attempt may write is fixed as any other finding. '
-  + 'This attempt may not write a base copy this message lists (but a knowledge index file as it says), a host settings, skills, agents, commands, hooks, or MCP server file, or a forge workflow file: '
+  + 'This attempt may not write a base copy this message lists (save a knowledge index file, only in git\'s index, as it says), a host settings, skills, agents, commands, hooks, or MCP server file, or a forge workflow file: '
   + 'a finding in one keeps the autopilot skill\'s host-file route, a stated residual or a park.';
 
 // The line of projectPrompt for an attempt whose clone holds the base branch's copies of the host files `file` names,
@@ -565,15 +567,19 @@ function startPlace(context) {
   if (policyRead.problem) return refuse(policyRead.problem, orphans);
   const policyFiles = policyRead.files;
   const reviewed = (head, changed) => reviewedProblem({ project, repository: found.init.repository, facade, policy, policyFiles, main: base.main, branch, pr, head, changed, env });
-  // The host files and the policy files the base tip names, which no attempt loads from a branch no review passed.
-  const guards = (file) => isGuarded(file) || isPolicyPath(file, policyFiles);
   const recorded = recordedHead(current, key) ?? resumed?.head ?? null;
+  // What the start hook loads, as the same tip has it, for an attempt that goes on on existing work: a first one is cut
+  // from the tip itself.
+  const startLoaded = capped.attempt > 1 || recorded !== null ? startDocsAt(project.root, base.tip, policyFiles[1], prefix) : null;
+  const unreadable = startLoaded === null ? null : startUnreadable(startLoaded);
+  if (unreadable) return refuse(unreadable, orphans);
+  const guards = startGuards(policyFiles, startLoaded);
   // An ended attempt's work may wait for a sweep that could not decide it, as through a forge outage: one more, as `wait`
   // runs it, before any later attempt, and the ledger again for the offer (project-kept.mjs keptCandidate).
   if (capped.attempt > 1) orphans.push(...sweepAttempts({ state, run, found: current, cap, env, home, spawn, forge: facade }));
   const ledger = capped.attempt > 1 ? readRun(state, run) : current;
   if (ledger.problem) return refuse(ledger.problem, orphans);
-  const where = { ...context, policy, found: ledger, attempt: capped.attempt, tip: base.tip, branch, resumed, recorded, reviewed, guards, policyFiles, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
+  const where = { ...context, policy, found: ledger, attempt: capped.attempt, tip: base.tip, branch, resumed, recorded, reviewed, guards, policyFiles, startLoaded, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
   const room = confinedRoom(where);
   if (room.halt) return { answer: noted(haltAnswer(room.halt, { lines: orphans })) };
   if (room.retry) return { answer: noted(retryAnswer('start', room.retry, orphans)) };
@@ -663,6 +669,37 @@ export function policyFilesAt(root, tip, prefix) {
   return { files: [trailPaths(prefix).pointer, `${prefix}${config}`] };
 }
 
+// What the start hook loads into every session, as the commit `tip` has it: { docs, folder }, or a string saying why it
+// cannot be read, as pr-auto-merge.mjs startDocs reads a branch on the forge, each path from the top of the repository:
+// the `always` docs of each direct `.json` child of the knowledge folder beside `configFile`, the config.json
+// policyFilesAt located, and that folder. No folder there is no docs. A folder or an index that is a link or a submodule
+// is no answer, since the disk's reader follows a link to what no list here holds.
+export function startDocsAt(root, tip, configFile, prefix) {
+  const folder = knowledgeIn(configFile);
+  const [files, links] = [commitFiles(root, tip), commitGitlinks(root, tip)];
+  if (!files || !links) return `git cannot read the files of the base tip ${tip.slice(0, 7)}`;
+  if (files.has(folder) || links.has(folder)) return `${folder} at the base tip ${tip.slice(0, 7)} is no folder`;
+  const child = (file) => file.startsWith(`${folder}/`) && file.endsWith('.json') && !file.slice(folder.length + 1).includes('/');
+  const docs = [];
+  for (const file of [...files.keys(), ...links].filter(child).sort()) {
+    if (!FILE_MODES.has(files.get(file)?.mode)) return `${file} at the base tip ${tip.slice(0, 7)} is no plain file`;
+    const text = textAt(root, tip, file)?.text;
+    if (typeof text !== 'string') return `git cannot read ${file} at the base tip ${tip.slice(0, 7)}`;
+    try {
+      docs.push(...indexedAlways(text, file).map((doc) => `${prefix}${doc}`));
+    } catch (error) {
+      return error.message;
+    }
+  }
+  return { docs, folder };
+}
+
+// The files no attempt loads from a branch no review passed, as a test of one path from the repository's top: the host
+// files, the policy files `policyFiles` the base tip names, and what the start hook loads there (`startLoaded`,
+// startDocsAt, or null). A folder git lists whole ends with a slash.
+export const startGuards = (policyFiles, startLoaded) => (file) => isGuarded(file) || isPolicyPath(file, policyFiles)
+  || (startLoaded !== null && startLoadProblem(file.replace(/\/$/u, ''), startLoaded) !== null);
+
 // Whether attempt `attempt` of issue `key` ended on a usage or rate limit, as the run `found` records it.
 const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event === 'ended' && row.key === key && row.attempt === attempt && row.reason === 'limit');
 
@@ -683,7 +720,7 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the placeholders go in (placeHolders,
 // clonePlaceholders).
-function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
+function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, startLoaded, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
   const clone = prepareAttempt({ project, state, run, found, key, attempt, branch, recorded, tip, reviewed, guards, env });
@@ -691,7 +728,7 @@ function confinedRoom({ project, state, run, key, branch, resumed, recorded, rev
   if (clone.retry) return { retry: clone.retry };
   if (clone.park) return { park: clone.park };
   if (clone.problem) return { problem: clone.problem };
-  const trust = trustProblem(clone.work, clone.reviewed ?? tip, clone.overlay?.files ?? []) ?? ancestorProblem(clone.work, { project, tip, env }) ?? pushProblem(clone.work, found.init.repository);
+  const trust = trustProblem(clone.work, clone.reviewed ?? tip, clone.overlay?.files ?? [], guards) ?? ancestorProblem(clone.work, { project, tip, env }) ?? pushProblem(clone.work, found.init.repository);
   if (trust) return { problem: `the attempt's clone ${clone.work} is not started: ${trust}` };
   if (typeof cap.cloneProblem === 'function') {
     let outside;
@@ -743,21 +780,20 @@ function confinedRoom({ project, state, run, key, branch, resumed, recorded, rev
   const baseCopies = clone.overlay ? writeBaseCopies(clone.folder, clone.overlay.files, indexFiles.map((each) => each.path)) : null;
   if (baseCopies?.problem) return { problem: baseCopies.problem };
   return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, decision, pushUrl: url || null, claim, branch: clone.branch,
-    head: clone.head, overlay: clone.overlay?.sha ?? null, baseCopies: baseCopies?.file ?? null, indexFiles, policyFiles,
+    head: clone.head, overlay: clone.overlay?.sha ?? null, baseCopies: baseCopies?.file ?? null, indexFiles, policyFiles, startLoaded,
     // The earlier run's work goes on only on its branch as the forge has it: a branch deleted since starts afresh.
     resumed: clone.onForge ? resumed : null, onForge: clone.onForge, kept: clone.kept };
 }
 
 // The file in an attempt's folder that names the host files its clone holds the base branch's copies of.
 export const BASE_COPIES = 'base-copies.txt';
-// The most names it lists, and the most characters of each.
+// The most names it lists.
 const BASE_COPIES_CAP = 200;
-const BASE_COPY_NAME_CAP = 200;
 
-// The names `files`, at most BASE_COPIES_CAP, each cleaned to one bounded line (cleanText), in a fence no name can close,
+// The names `files`, at most BASE_COPIES_CAP, each cleaned to one bounded line (index-edits.mjs shownPath), in a fence no name can close,
 // with how many more there are.
 function fencedNames(files) {
-  const names = files.slice(0, BASE_COPIES_CAP).map((file) => cleanText(file, BASE_COPY_NAME_CAP, { domains: false }) || '(an unprintable name)');
+  const names = files.slice(0, BASE_COPIES_CAP).map((file) => shownPath(file) || '(an unprintable name)');
   const more = files.length > names.length ? [`and ${files.length - names.length} more`] : [];
   const body = [...names, ...more].join('\n');
   const fence = fenceFor(body);
@@ -840,7 +876,7 @@ function decisionLines(decision) {
 function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
   // `policy`: the one the start read once the base was pinned (startPlace), which the launch takes every value from.
-  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, decision, pushUrl, claim, head, overlay, baseCopies, indexFiles, policyFiles, resumed, policy, kept } = place;
+  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, decision, pushUrl, claim, head, overlay, baseCopies, indexFiles, policyFiles, startLoaded, resumed, policy, kept } = place;
   const localBinding = policy.localBinding === true;
   // Whether the team's switch reaches this machine's loopback on this host and platform, as the host declares it: one
   // that keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
@@ -885,10 +921,11 @@ function launchStart(context, place) {
   // The hours the team confirmed for this start, which a wait the forge cannot answer holds the session to (settlePolicy).
   // `head`: the commit the branch was at, which the next attempt's branch must hold (recordedHead). `overlay`: the branch
   // head the attempt started from on the base branch's copies of its host files, with the policy files the pinned base
-  // tip names (`policyFiles`, policyFilesAt) and the knowledge index files it may edit (`indexFiles`), for the push guard. `took`: the attempt whose kept commits it was
+  // tip names (`policyFiles`, policyFilesAt), what the start hook loads there (`startLoaded`, uncut, since a cut list
+  // would let a push change what it leaves out), and the knowledge index files it may edit (`indexFiles`), for the push guard. `took`: the attempt whose kept commits it was
   // offered, and the commit, which a later offer reads (project-kept.mjs keptCandidate). A recorded decision that stood
   // is in the row for the audit alone: nothing reads it back.
-  const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20), ...(indexFiles?.length ? { indexFiles } : {}) } : {};
+  const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20), ...(startLoaded ? { startLoaded } : {}), ...(indexFiles?.length ? { indexFiles } : {}) } : {};
   // `machine`: this machine's auto-merge switch as the main checkout reads it, which a confined session, denied that
   // checkout, reads in its place (attempt-clone.mjs confinedMachine): "unset" only for an untracked local file.
   const local = context.project.localAutoMerge;

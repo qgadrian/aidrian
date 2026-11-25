@@ -1750,7 +1750,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `pushUrl` pinned, read from the clone before its session started (a start that recorded none pushes nothing),
     so a second `remote.origin.pushurl` refuses the push; when that start row names an `overlay`, the branch head whose
     clone took the base branch's copies of the host files it changed, its commits change no host config or instruction
-    file (`GUARDED_PATHS`), nor a policy file the row's `policyFiles` names, the pinned base tip's, from that head
+    file (`GUARDED_PATHS`), nor a policy file the row's `policyFiles` names, the pinned base tip's, nor what the start hook
+    loads, as the row's `startLoaded` names it (`startLoadProblem`), from that head
     (`git diff --name-only --no-renames --no-relative -z <overlay> HEAD`), or it is
     refused with "it pushes commits that change <count> host config or instruction files, and this attempt runs on the
     base branch's copies of them, so it may change none but as git merges the base into the branch", and a diff git cannot give refuses it too.
@@ -1763,7 +1764,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     git's index ([Project run](config.md#project-run)). One that differs from `<overlay>`, and from git's clean merge of a
     newer base, must be a plain file (`git ls-tree -z HEAD`, `100644 blob`) that is not the base's blob the row names. A
     deletion, a link, another mode, or the base copy committed over the branch's version is refused, naming the file and
-    the recipe, and so is one that conflicts in a merge of a newer base.
+    the recipe, and so is one that conflicts in a merge of a newer base. No `always` doc is such a path.
     Origin's remote-tracking ref is the session's own copy; the pull request's review of host files stands behind it. Its
     commits change no file of the forge's workflow folders (`forgeWorkflowFolders`), nor a folder that holds them, as a
     `.github` made a link, from their merge base with origin's default branch (`refs/remotes/origin/HEAD`, else

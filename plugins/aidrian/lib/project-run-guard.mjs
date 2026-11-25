@@ -213,7 +213,8 @@ export function ownAttemptFolder(project, config, mark, { base, home } = {}) {
 // pushUrl, overlay }, the branch the issue's latest start names (project-run.mjs issueBranch), the URL its latest start pinned its clone's origin
 // to push to (null when the start recorded none), and the branch head its clone took the base branch's copies of the
 // host files over (lib/project-start.mjs prepareAttempt), from which no push may change one (null when none), with
-// `policyFiles`, the policy files the gate resolved then, which no such push may change either, and `indexFiles`, when the start gave any, the knowledge
+// `policyFiles`, the policy files the gate resolved then, and `startLoaded`, what the start hook loaded then, when the row keeps it whole,
+// none of which such a push may change either, and `indexFiles`, when the start gave any, the knowledge
 // index files such a push may change (index-edits.mjs), while the issue runs and its latest start row was written ahead or
 // started, in a state folder of `project` (as ownAttemptFolder reads it), or null. The agent gate hook lets that session
 // push only that branch (lib/issue-forge-guard.mjs), and write by hand only the files named for its issue or branch in
@@ -229,11 +230,17 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
     const pushUrl = typeof start.pushUrl === 'string' && start.pushUrl !== '' ? start.pushUrl : null;
     const overlay = typeof start.overlay === 'string' && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(start.overlay) ? start.overlay : null;
     const policyFiles = overlay && Array.isArray(start.policyFiles) ? start.policyFiles.filter((each) => typeof each === 'string') : [];
+    const startLoaded = overlay ? startLoadedIn(start.startLoaded) : null;
     const indexFiles = overlay ? indexFilesIn(start.indexFiles) : [];
-    if (typeof branch === 'string' && branch !== '') return { key: mark.issue, branch, pushUrl, overlay, policyFiles, ...(indexFiles.length ? { indexFiles } : {}), ...slugsShared(found, mark.issue, branch) };
+    if (typeof branch === 'string' && branch !== '') return { key: mark.issue, branch, pushUrl, overlay, policyFiles, ...(startLoaded ? { startLoaded } : {}), ...(indexFiles.length ? { indexFiles } : {}), ...slugsShared(found, mark.issue, branch) };
   }
   return null;
 }
+
+// What a start row keeps of what the start hook loads (project-run-gate.mjs startDocsAt): { docs, folder }, or null unless
+// the folder and every doc are strings.
+const startLoadedIn = (value) => (typeof value?.folder === 'string' && Array.isArray(value.docs) && value.docs.every((each) => typeof each === 'string')
+  ? { docs: value.docs, folder: value.folder } : null);
 
 // A branch as the files named for it spell it (pr-body.mjs bodyFilePath, a dispatch handoff): each `/` a `-`, in lower case.
 export const branchSlug = (branch) => branch.replaceAll('/', '-').toLowerCase();

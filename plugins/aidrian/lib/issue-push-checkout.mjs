@@ -75,9 +75,13 @@ function overlayProblem(folder, overlay, policyFiles, indexFiles) {
 }
 
 // Why HEAD in `folder` leaves a knowledge index file of `indexFiles` (index-edits.mjs indexFilesOf) as no edit of it, or
-// null. One HEAD holds as the recorded head does (none of `changed`), or as git's clean merge of a newer base gives it
-// (none of `differ`, when HEAD holds such a merge), was not edited. Any other must be a plain file that is not the base's
-// copy: the disk holds that one, so a commit of it would take the branch's own version away unseen.
+// null. Each that differs from the recorded head (`changed`) must be a plain file that is not the base's copy: the disk
+// holds that one, so a commit of it would take the branch's own version away unseen. The one reading past that: a path
+// exactly as git's clean merge of a newer base gives it was not edited, since the start lists an index only the base
+// changed too, whose catch-up merge puts the base's own copy, or its deletion, at HEAD, as the guard always let through.
+// That merge is the tree mergedProblem made, of the recorded head and the base commit it checked, and `differ` is what
+// HEAD holds other than it does. With no newer base merged, every changed path is held; where git cannot make that tree,
+// or a conflict in it touches a held file, mergedProblem has refused the push.
 function indexProblem(folder, indexFiles, changed, differ = changed) {
   for (const { path: file, base } of indexFiles.filter((each) => changed.includes(each.path) && differ.includes(each.path))) {
     const listed = budgeted(['ls-tree', '-z', 'HEAD', '--', `:(top,literal)${file}`], folder);

@@ -1122,6 +1122,48 @@ test('with both keys on, an attempt on base copies may edit the knowledge index 
   assert.match(push(), /^it pushes commits that change 1 host config or instruction file, .*\(AGENTS\.md differs from git's merge of the base\)/u);
 });
 
+// The base moved before the start: it changed docs.json, as the branch did, and other.json, which the branch never
+// touched, so the start lists both with the tip's blob, which the catch-up merge puts at HEAD for the second.
+test('an attempt with both keys on pushes its catch-up merge, an index only the base changed included, and never the base\'s copy of one both changed', (t) => {
+  const [docs, other] = ['.aidrian/knowledge/docs.json', '.aidrian/knowledge/other.json'];
+  const lines = (first, last) => [first, ...Array.from({ length: 7 }, (_, line) => `line ${line}`), last, ''].join('\n');
+  const fx = runFixture(t, { config: { github: { autoMerge: BOTH_KEYS } }, files: { [docs]: lines('one', 'nine'), [other]: lines('one', 'nine') } });
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  reopen(fx, 1, 12);
+  branchWith(fx, (scratch) => writeFileSync(path.join(scratch, docs), lines('branch', 'nine')));
+  const base = path.join(fx.root, 'base');
+  execFileSync('git', ['clone', '-q', fx.bare, base], { stdio: 'pipe' });
+  pushFiles(fx, base, { [docs]: lines('one', 'base'), [other]: lines('one', 'base') }, 'main');
+  fx.git('fetch', '-q', fx.bare, '+refs/heads/main:refs/remotes/origin/main');
+  const { clone, row, push } = secondAttempt(fx);
+  const git = (...args) => fx.git('-C', clone, ...args);
+  const tip = (file) => git('rev-parse', `origin/main:${file}`).trim();
+  git('fetch', '-q', fx.bare, '+refs/heads/main:refs/remotes/origin/main');
+  assert.deepEqual(row.indexFiles, [docs, other].map((file) => ({ path: file, base: tip(file) })));
+  git('merge', '-q', '--no-ff', '--no-edit', 'origin/main');
+  assert.deepEqual([git('show', `HEAD:${docs}`), git('rev-parse', `HEAD:${other}`).trim()], [lines('branch', 'base'), tip(other)]);
+  assert.equal(push(), null, 'the merge alone, with the tip\'s blob where the branch changed nothing');
+  // With no clean merge to compare with, nothing passes.
+  const bin = path.join(fx.root, 'no-merge-tree');
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nfor word; do [ "$word" = merge-tree ] && exit 128; done\nexec "${execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()}" "$@"\n`, { mode: 0o755 });
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${before}`;
+  try {
+    assert.match(push(), /git could not say in time how the base merges/u);
+  } finally {
+    process.env.PATH = before;
+  }
+  // The tip's copy of the one both changed, in place of git's merge of them, takes the branch's version away.
+  indexEdit(fx, clone, docs, () => lines('one', 'base'));
+  assert.equal(git('rev-parse', `HEAD:${docs}`).trim(), tip(docs));
+  assert.match(push(), /^it pushes commits that put the base branch's copy of \.aidrian\/knowledge\/docs\.json over the branch's own version, /u);
+  // An edit of either on top of the merge passes.
+  indexEdit(fx, clone, docs, () => lines('edited', 'base'));
+  indexEdit(fx, clone, other, () => lines('edited', 'base'));
+  assert.equal(push(), null);
+});
+
 test('with either key off, or the bot\'s pass on the head, an attempt lists no knowledge index to edit, and its push guard is as before', (t) => {
   for (const autoMerge of [{ includeGuardedPaths: true }, { includePolicyFiles: true }, {}]) {
     const { fx, head } = indexRun(t, autoMerge);

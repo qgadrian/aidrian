@@ -8,7 +8,6 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { consequenceLines, judgeResiduals, pairResiduals, residualItems, supersededAdr } from '../plugins/aidrian/lib/decisions.mjs';
-import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
 import { markKept, recordHash, residualHash, saveVerdicts, VERDICTS_FILE, withKept } from '../plugins/aidrian/lib/residual-verdicts.mjs';
 import { cliCall } from './cli-call.mjs';
 
@@ -711,15 +710,6 @@ test('rows judged against another record exit 1, and rows that name no record ke
   assert.match((await call(['--body', file], dir)).stdout, new RegExp(`^record ${later.record}$`, 'mu'));
 });
 
-test('a contradiction that cannot be dropped from the store is noted, since a listing still says kept', asRoot, async (t) => {
-  const { dir, write, file, store } = await judgedProject(t);
-  chmodSync(path.dirname(store), 0o555);
-  const late = write('late.json', [row(`- ${THREE[0]}`, 'refund-window', RULE)]);
-  const out = await call(['--body', file, '--judged', late], dir).finally(() => chmodSync(path.dirname(store), 0o755));
-  assert.equal(out.status, 1);
-  assert.match(out.stdout, /^note\tan earlier verdict may still be kept, so list with --rejudge: EACCES$/mu);
-});
-
 test('a store that does not read, or holds what the code does not know, keeps nothing, and the run still answers', async (t) => {
   const { dir, write, file, store } = await judgedProject(t);
   const residuals = THREE.map((each, index) => ({ n: index + 1, residual: `- ${each}` }));
@@ -830,41 +820,79 @@ function skipLockWaits(t) {
   });
 }
 
-test('a judged run that finds the store locked by another run fails, and says to try again; a released or abandoned lock does not', async (t) => {
-  const { dir, write, store } = storeProject(t);
-  const file = write('body.md', body('Accepted residuals', THREE));
-  const { record } = await listed(file, dir);
-  const residuals = THREE.map((each, index) => ({ n: index + 1, residual: `- ${each}`, kept: true }));
-  const [first, ...others] = rowsOf(THREE);
-  const save = (rows, clean = true, named = true) => saveVerdicts(store, record, { residuals, rows, clean, named });
-  save([first, ...others]);
+// Every way the store's lock cannot be taken, as a function that sets it up and gives the one that takes it down.
+const UNWRITABLE = 'a folder that cannot be written';
+const NO_LOCK = {
+  'held by another run': (t, store) => {
+    skipLockWaits(t);
+    return lockHeldBy(process.pid, store).release;
+  },
+  [UNWRITABLE]: (t, store) => {
+    chmodSync(path.dirname(store), 0o555);
+    return () => chmodSync(path.dirname(store), 0o755);
+  },
+  'a lock that cannot be created': (t, store) => {
+    const write = fs.writeFileSync;
+    const swap = (fn) => {
+      fs.writeFileSync = fn;
+      syncBuiltinESMExports();
+    };
+    swap((name, ...rest) => {
+      if (String(name).includes(`${path.basename(store)}.lock.`)) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      return write(name, ...rest);
+    });
+    return () => swap(write);
+  },
+};
+
+for (const [what, unlockable] of Object.entries(NO_LOCK)) {
+  test(`with no store lock, a judged run that needs a kept verdict fails and says to try again, and one with rows of its own answers: ${what}`, what === UNWRITABLE ? asRoot : {}, async (t) => {
+    let undo = () => {};
+    // Registered first, so it runs before the project's folder is deleted.
+    t.after(() => undo());
+    const { dir, write, file, store } = await judgedProject(t);
+    const before = readFileSync(store, 'utf8');
+    const { record } = JSON.parse(before).kept[0];
+    const changed = write('changed.md', body('Accepted residuals', [...THREE, 'The list is slow: it is short.']));
+    const judged = (name, given, at = file, ...extra) => call(['--body', at, '--judged', write(name, given), ...extra], dir);
+    undo = unlockable(t, store);
+    const needs = {
+      'every row from the store': [{ record, rows: [] }],
+      'some rows from the store': [{ record, rows: rowsOf(['The list is slow: it is short.']) }, changed],
+      'rows alone, with no record': [rowsOf(THREE.slice(0, 1))],
+    };
+    for (const [rows, args] of Object.entries(needs)) {
+      const out = await judged('judged.json', ...args);
+      assert.deepEqual([out.status, out.stdout], [1, ''], rows);
+      assert.match(out.stderr, /^the kept verdicts cannot be checked, so run this again, or list and judge with --rejudge: \S.*\n$/u, rows);
+    }
+    // Rows of its own need nothing from the store, so the answer stands and a note says what was not written.
+    for (const extra of [[], ['--rejudge']]) {
+      const own = await judged('own.json', { record, rows: rowsOf([...THREE, 'The list is slow: it is short.']) }, changed, ...extra);
+      assert.deepEqual([own.status, own.stderr], [0, ''], extra.join());
+      assert.match(own.stdout, /^no residual contradicts a decision on record\n(?:.*\n)*note\tno verdict was kept: \S/u);
+    }
+    const against = await judged('against.json', { record, rows: [row(`- ${THREE[0]}`, 'refund-window', RULE)] });
+    assert.deepEqual([against.status, against.stderr], [1, '']);
+    assert.match(against.stdout, /^note\tan earlier verdict may still be kept, so list with --rejudge: \S/mu);
+    assert.equal(readFileSync(store, 'utf8'), before, 'and no run wrote anything');
+    undo();
+    assert.equal((await judged('judged.json', { record, rows: [] })).status, 0, 'the same command answers once the lock can be taken');
+  });
+}
+
+test('a released lock, one whose process is gone, and none at all stop no judged run', async (t) => {
+  const { dir, write, file, store } = await judgedProject(t);
   const before = readFileSync(store, 'utf8');
-  const runs = {
-    'every row from the store': [[]],
-    'some rows from the store': [[first]],
-    'rows alone, with no record': [[first], true, false],
-    'every row its own': [[first, ...others]],
-    'a contradiction to drop': [[row(first.residual, 'refund-window', RULE)], false],
-  };
-  skipLockWaits(t);
-  const other = lockHeldBy(process.pid, store);
-  for (const [what, args] of Object.entries(runs)) {
-    assert.throws(() => save(...args), { code: LOCKED }, what);
-  }
-  // The other run stalls before it drops a verdict, so the store still holds every one.
-  const out = await call(['--body', file, '--judged', write('judged.json', [])], dir);
-  assert.deepEqual([out.status, out.stdout], [1, '']);
-  assert.equal(out.stderr, `${realpathSync(store)} is locked by another process (pid ${process.pid}, ${other.name}); try again\n`);
-  assert.equal(readFileSync(store, 'utf8'), before, 'and it wrote nothing');
-  other.release();
-  assert.deepEqual(save([]), { lost: false, problem: null }, 'released');
-  const noProcess = 2 ** 31 - 1;
-  lockHeldBy(noProcess, store);
-  assert.deepEqual(save([]), { lost: false, problem: null }, 'its process no longer runs');
+  const answers = async (what) => assert.equal((await call(['--body', file, '--judged', write('judged.json', [])], dir)).status, 0, what);
+  lockHeldBy(process.pid, store).release();
+  await answers('released');
+  lockHeldBy(2 ** 31 - 1, store);
+  await answers('its process no longer runs');
   rmSync(path.dirname(store), { recursive: true });
   mkdirSync(path.dirname(store));
   writeFileSync(store, before);
-  assert.deepEqual(save([]), { lost: false, problem: null }, 'no lock was ever taken');
+  await answers('no lock was ever taken');
 });
 
 test('a residual the body holds twice is never kept, and with no project folder nothing is', async (t) => {
@@ -899,7 +927,7 @@ test('pr-write runs the residuals check before the body ships, and the docs say 
   assert.match(step, /the owed residuals alone/u);
   assert.match(step, /another `record` than the run reads exits 1: run step 1 again, and judge again/u);
   assert.match(step, /`\{ "record": <step 1's record>, "rows": \[\.\.\.\] \}`.*`aidrian decisions residuals --body <file> --judged <that file>`, with the same `--adr <folder>` as step 1/u);
-  assert.match(step, /An exit 1 that says `is locked by another process` judged nothing: run the same command again/u);
+  assert.match(step, /An exit 1 that says `the kept verdicts cannot be checked` judged nothing: run the same command again/u);
   assert.match(step, /never reworded on this branch to make a residual pass/u);
   assert.match(step, /one line of why stays in the body/u);
   assert.match(step, /an ADR whose Status starts `Superseded` is skipped/iu);

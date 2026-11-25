@@ -29,8 +29,8 @@ An accepted residual that contradicts a decision on record never ships.
    again. Spell both paths out, with the folder `aidrian state` prints and the branch put in before the command, as the
    body file's is: the Bash hook refuses a write to a path built in a shell variable, such as `> $S/pr-residuals.json`.
    A `kept` residual needs no row; the exit covers the whole body, and on 0 each clean verdict is kept. An exit 1 that
-   says `is locked by another process` judged nothing: run the same command again. To judge every residual again, add
-   `--rejudge` here and in step 1.
+   says `the kept verdicts cannot be checked` judged nothing: run the same command again, and when it says so again,
+   judge every residual again. To judge them all again, add `--rejudge` here and in step 1.
 4. Each printed contradiction goes back to the owner of the change, who fixes the defect or drops the residual; an
    `invalid:` row goes back to `product-manager`. Rerun steps 1 to 3 until the judged run exits 0: the body ships only then.
 

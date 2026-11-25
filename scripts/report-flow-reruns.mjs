@@ -75,6 +75,8 @@ function predecessors(runs, run) {
 // group }, or { unread } with why the record cannot tell. `checkout` is readCheckout's, or a stand-in.
 function groupOf({ record, id, index, head, earlier, checkout, mine }) {
   const { head: from } = earlier;
+  // SHORTCUT: with a head this checkout does not hold, git cannot say, isAncestor throws, and the re-run is not sorted, a
+  // finding its dispatch lists too. It makes the counts a lower floor; fetching the old heads sorts it.
   if (!checkout.isAncestor(from, head)) return { unread: 'the branch was rewritten: the earlier head is no ancestor of this one' };
   const note = record.dispatched?.[id]?.head === head ? record.dispatched[id] : null;
   const owed = Array.isArray(note?.listed) ? note.listed : record.rounds[index - 1].findings?.filter(({ pass }) => mine(pass) && overlaps(pass, id));
@@ -94,6 +96,8 @@ function groupOf({ record, id, index, head, earlier, checkout, mine }) {
 function agreedGroup({ earlier, ...run }) {
   if (earlier.length === 0) return { unread: 'no earlier run is on record, so it may be a first run' };
   const told = earlier.map((each) => groupOf({ ...run, earlier: each }));
+  // SHORTCUT: earlier runs at different heads that agree on the group print as one row, with the first one's `from` alone.
+  // The group is right either way; a list of heads would replace it.
   const groups = new Set(told.map(({ group, unread }) => group ?? unread));
   return groups.size === 1 ? told[0] : { unread: 'the earlier runs of its flows do not point to one group' };
 }

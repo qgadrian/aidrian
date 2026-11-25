@@ -1188,15 +1188,17 @@ the ADR folder. A decision with no wording on record counts with its whole doc, 
 listing over the same record marks such a residual `kept` and names the others in `owed`; with none owed it ends `every
 residual was judged against this record` and exits 0, `nothing: true` in `--json`. `--judged` needs no row for a kept
 residual, though one given counts, and its exit covers the whole body. A kept verdict that another run dropped before
-this one answers exits 1: list again, and judge again. A judged run that cannot take the store's lock, because another
-run still holds it after the wait, prints `is locked by another process` on stderr with no verdict, and exits 1, with
-every row from the store too: run the same command again. A released lock, or one whose process is gone, stops nothing. A changed character of a residual, or any change to the record,
-makes it owed again, and a row that says a kept residual contradicts something drops its verdict. Nothing is kept from a
+this one answers exits 1: list again, and judge again. A judged run that needs a kept verdict and cannot take the store's
+lock, whatever the error, such as another run that holds it past the wait or a folder it may not write, prints `the kept
+verdicts cannot be checked` on stderr with no verdict, and exits 1: run the same command again, or list and judge with
+`--rejudge`. With every row its own, a run needs nothing from the store: its answer stands, and a note says the store was
+not written. A changed character of a residual, or any change to the record, makes it owed again, and a row that says a kept
+residual contradicts something drops its verdict. Nothing is kept from a
 run that exits 1. Nothing is kept or reused under `--residual` or `--path`, with no project folder, for an item the body
 holds twice, or while a decision or an ADR could not be read, or a marker problem is off every listed marker, such as a
 marker that does not parse or one in a doc no index lists; a note then says so. `--rejudge` reuses nothing. A store that
-cannot be read, or that the command does not recognise, holds nothing, and one that cannot be written is a note: the
-run's answer stands. In a confined project run session, where `<state>/decisions/` is not writable, nothing is kept.
+cannot be read, or that the command does not recognise, holds nothing, and a write that fails under the lock is a note. In a confined project run session, where
+`<state>/decisions/` is not writable, nothing is kept, and a run that needs a kept verdict exits 1.
 `--judged <file>` validates the rows: an owed residual with no row, a residual with two, an item the body holds twice, a
 `contradicts` that names nothing listed or an id two markers hold, or one with no evidence is invalid. The command prints each contradiction as
 `residual -> id, doc:line`, or `residual -> path:line` for an ADR line, and exits 1 on any contradiction or invalid row; 0 when

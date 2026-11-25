@@ -582,10 +582,12 @@ lock or a read refuses is not merged.
 
 ### A red flag at the cap
 
-Under `github.extraRounds` `"auto"`, as the base branch commits it on GitHub, with both switches counting for the pull request, the extra-round check asks the
-Human nothing: a judge's `extend` over a red flag (not converging, looping, drifting, bloating) is recorded as a stop,
-`by: "unattended"`, so the review step reports `round_limit` and the route above follows, its judge recording `land` or
-`stop`. A red flag already says more rounds are unlikely to help, so stopping is the safe direction.
+Under `github.extraRounds` `"auto"`, as the base branch commits it on GitHub, with both switches counting for the pull
+request and the check opened under `"auto"` too, the extra-round check asks the Human nothing: a judge's `extend` over a
+red flag (not converging, looping, drifting, bloating) is recorded as a stop, `by: "unattended"`, so the review step
+reports `round_limit` and the route above follows, its judge recording `land` or `stop`. The mode a check opens under is
+read from the local base ref, so a local base still on `"ask"` asks the Human even with GitHub on `"auto"`.
+A red flag already says more rounds are unlikely to help, so stopping is the safe direction.
 The switches are read as the merge guard reads them, the team's from GitHub on the default branch and the base, never
 the working copy, so a branch cannot turn the rule on; a read that fails counts as off.
 `"ask"` still asks, and with either switch off, `"auto"` asks over a red flag as before ([Extra rounds](review.md#extra-rounds)).

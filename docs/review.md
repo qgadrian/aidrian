@@ -1351,8 +1351,9 @@ listed on the pull request.
 Under the `autopilot` skill, and in each issue's session of a [project run](config.md#project-run), no one is there to
 answer at the cap. An extra round goes as [Extra rounds](#extra-rounds) says: under `"ask"`, or over a red flag, it is
 parked as a decision for the Human. Under `"auto"` with the waiver's switches on, an `extend` over a red flag is
-`round_limit` instead, by [the unattended rule](#extra-rounds), and the same review command
-run again, with the options it was run with, any `--with-bot` included, offers the waiver's judge; the bot's cap, from `aidrian pr await-review --request`, offers none and reports the stop.
+`round_limit` instead, by [the unattended rule](#extra-rounds), if the check opened under `"auto"` too, the mode its step
+read from the local base ref, so a local base still on `"ask"` asks the Human whatever GitHub holds. The same review
+command run again, with the options it was run with, any `--with-bot` included, offers the waiver's judge; the bot's cap, from `aidrian pr await-review --request`, offers none and reports the stop.
 What follows on the current head is the [unattended waiver](config.md#unattended-waiver), on one route with no gate command of its own.
 At `extension_check` and at `round_limit`, `aidrian pr review` reports the waiver's gate in its JSON as `waiver`: `{ may, why }`.
 It is the gate `aidrian pr waive <n> --gate` runs, read for the record the step just wrote.

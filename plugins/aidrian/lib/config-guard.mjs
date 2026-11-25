@@ -93,7 +93,7 @@ const SWITCHES = Object.freeze([
   // In a pretty-printed file the value sits on its own line, under a key the patch does not touch.
   Object.freeze({ key: 'productFeedback', valueIn: (parsed) => parsed?.review?.productFeedback, name: 'review.productFeedback', why: 'only the main session may choose whether this machine owes product feedback', patched: /^[+-].*(?:productFeedback|"auto"\s*:)/mu }),
   // Which keychain entry gives a project run's issue sessions their forge token (lib/project-token.mjs), as the reader
-  // takes it, so a sibling key that voids the whole setting changes it too. A patch, which is not applied here, changes
+  // takes it, so a change that voids the whole setting changes it too; a sibling field the reader ignores changes nothing. A patch, which is not applied here, changes
   // it when a line names projectRun or its keys, or, while the file selects an entry, when it adds or removes any line,
   // or deletes or moves a file, which no added or removed line shows.
   Object.freeze({

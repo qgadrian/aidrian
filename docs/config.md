@@ -1161,6 +1161,19 @@ clear route, and the gate's `fallback:` line names that edit. `continue: "none"`
 A project that adopts [`github.autoMerge`](#auto-merge), [`github.unattendedWaiver`](#unattended-waiver), or [`tracker`](#tracker) does the same,
 since an older plugin rejects the key.
 
+`.aidrian.local.json` needs no such floor. It is per machine and git-ignored, written once for the newest plugin while
+older ones still run on the same machine, so a key the plugin does not read there, such as one a newer release adds, is
+a warning, not an error: `aidrian check` prints `warning: .aidrian.local.json: unknown key "<key>"` and passes, the plugin
+ignores the key, and the rest of the file applies as if it were not there. That holds at the top level, in every group,
+and for a field inside a setting the plugin reads, such as `github.autoMerge`, `handoff`, `projectRun.forgeTokenKeychain`,
+`review.visual`, or `decisions.unreviewed.pauseDomainAt`; an agent in `models` that this plugin does not ship is warned
+and ignored too. `config.json` keeps each of them an error.
+A known key with a bad value stays an error, and so does an unknown key in an agent's gates (`agents.<name>`),
+since a misspelt `deny` would lift a gate. A misspelt machine switch is unset, so it follows the team's default or
+[`solo`](#solo), and the warning names it.
+A key that only `config.json` sets, such as `github.strategy` or `solo`, is unknown there too: warned, ignored, and the team's value holds.
+A message that names a key as the team's, such as `"decisions.maxMode" is the team's`, or a `review.publish` key, stays an error.
+
 ## Attribution
 
 `attribution` says which agents wrote a commit or a pull request. The values come from the hook payload, the session

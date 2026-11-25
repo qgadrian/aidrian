@@ -302,7 +302,7 @@ export function handoffReason(mode, { cost = null, tokens = null, next, route = 
 // context. It fires at r ≥ 1 + (costRatio − 1) / 2, halfway from a fresh session's 1 to costRatio, or at half of
 // maxTokens when the ceiling is set (offerReached, which handoffStatus's `offer` reads too). `continuation` is the hooks'
 // { route, how, capped }: with the clear route the build starts in the session the clear begins, and with the background
-// route in the session the gate starts, never here. At the chain cap it offers nothing: the gate would not continue it.
+// route in the session the gate starts, never here. With `capped`, continuation's answer, it offers nothing.
 export function planApprovedContext(handoff, usage, { route = 'none', how = null, capped = false } = {}) {
   if (handoff.mode === 'off' || !usage.calls || capped) return null;
   const cost = handoffCost(usage, { resumeTokens: handoff.resumeTokens });

@@ -174,8 +174,8 @@ export const atChainCap = (chain, routed, store) => Number.isInteger(chain) && c
 
 // Whether the next handoff of `session` is at the chain cap of `routed`, effectiveRoute's answer for `project` and its
 // loaded `config`: the highest chain floor the session was given, 0 with none, is the least Chain its next brief may hold
-// (decide), and atChainCap holds for it. The session-length hooks read it so they ask for no handoff the gate would
-// refuse to continue (lib/session-length.mjs continuation). False for the route `none`, which reads no chain, an id
+// (decide), and atChainCap holds for it. The session-length hooks read it, for each route the gate could take, so they
+// stay silent only when all of them are capped (lib/session-length.mjs continuation). False for the route `none`, which reads no chain, an id
 // SESSION_ID refuses, a refused store, or a read that throws: then the hooks word the handoff as before.
 export function sessionAtChainCap(routed, project, config, session, { env = process.env, now = Date.now() } = {}) {
   if (routed.route === 'none' || typeof session !== 'string' || !SESSION_ID.test(session)) return false;

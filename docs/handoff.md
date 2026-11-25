@@ -53,14 +53,15 @@ start the new session, so a Human who is not watching is no reason to stay. `ask
 The hooks word the route the gate would take: a background route this machine or the base branch has not turned on
 is worded as the clear route it falls back to ([the switches](#the-background-route)).
 
-**At the chain cap.** On a route other than `none`, a session whose [chain floor](#the-chain) is at that route's
-`maxChain` gets no reminder and no plan offer: the gate would continue its next brief by no route, and a background
+**At the chain cap.** On a route other than `none`, a session whose [chain floor](#the-chain) is at the
+`maxChain` of every route the gate could take gets no reminder and no plan offer: the gate would continue its next brief by no route, and a background
 session nobody attends would end in a manual resume, with a message the host shows the Human as a problem.
 Both hooks read the gate's own check, `sessionAtChainCap` in `lib/handoff-continue.mjs`, and stay silent only when every
 route the gate could take is at its cap. A background route the hooks take by trusting the local ref's `solo`, which the gate still
 asks the forge to confirm, counts as at the cap only when the route the gate falls back to is at its own cap too.
 So where the forge decides the route, the hooks may still ask for a handoff the gate then refuses at the background cap:
-a guess never silences a handoff the gate would continue, and a refused one costs only the turn it asked in.
+a guess never silences a handoff the gate would continue, and a refused one ends, as any refusal does, in the manual
+resume the handoff skill prints.
 The Stop hook still records the firing in its marker, so the reminder backs off as after a skipped one.
 With `maxChain: "unlimited"`, or the `none` route, which reads no chain, the reminder is as before.
 

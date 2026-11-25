@@ -347,7 +347,7 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
   if (!later && listed.status === 0) return park(null, `the forge has ${branch}, and the ledger records no head of it`);
   if (!later && listed.status !== 2) return failed('ls-remote', listed);
   if (later) {
-    kept = keptCandidate({ found, run, key, branch, folderOf: (each) => attemptFolder(state, run, key, each), refs: cloneRefs });
+    kept = keptCandidate({ found, key, branch, folderOf: (each) => attemptFolder(state, run, key, each), refs: cloneRefs });
     if (listed.status === 0) {
       const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
       if (fetched.status !== 0) return failed('fetch', fetched);
@@ -359,10 +359,6 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
       // The recorded commit, or one after it: exit 1 is another history, and 128 a commit the fetch did not bring.
       const ours = own ? git(['merge-base', '--is-ancestor', own, from]) : null;
       if (ours && ours.status !== 0) return park(own, `its head ${from.slice(0, 7)} does not hold ${own.slice(0, 7)}, the commit this project's runs recorded it at`);
-      if (kept?.retry) {
-        remove();
-        return { retry: kept.retry };
-      }
       if (kept?.head) kept = takeKept({ candidate: kept, folder, work, gitFolder, forgeHead: onHead, guards, git });
       if (kept?.problem) return gone(kept.problem);
       const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--']);
@@ -391,7 +387,7 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
       }
     } else if (listed.status !== 2) return failed('ls-remote', listed);
     // A branch a person deleted on the forge starts the issue over, its kept commits included.
-    else if (kept?.head || kept?.retry) kept = { attempt: kept.attempt, why: 'the forge has no branch of the issue' };
+    else if (kept?.head) kept = { attempt: kept.attempt, why: 'the forge has no branch of the issue' };
   }
   const checkout = git(['checkout', '--quiet', '-b', branch, from]);
   if (checkout.status !== 0) return failed('checkout', checkout);

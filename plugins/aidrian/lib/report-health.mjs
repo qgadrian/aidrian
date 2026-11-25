@@ -10,9 +10,9 @@ import { summarizeDocs } from './report-docs.mjs';
 import { NO_BOT } from './report-reviews.mjs';
 import { endedSessions, latestRows } from './jsonl.mjs';
 import { priceTables } from './hosts/index.mjs';
-import { SEND_BACK_CAUSES, sendBackCauses, sendBackStates } from './dispatch-log.mjs';
+import { SEND_BACK_CAUSES } from './dispatch-log.mjs';
 import { lessonStats } from './lesson-inbox.mjs';
-import { agentOwner, deliverySignal, denialSignal, idleChildrenSignal, roundLimitSignal } from './lesson-signals.mjs';
+import { deliverySignal, denialSignal, roundLimitSignal } from './lesson-signals.mjs';
 import { priceFor, rowCostUsd, STALE_DAYS, staleTables } from './model-prices.mjs';
 import { summarizeSessions } from './report-sessions.mjs';
 
@@ -104,8 +104,7 @@ function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lesson
 // Sets each problem's `resolved` and `since_resolution`, both null unless a resolved lesson holds its lesson key.
 // `resolved` is that lesson's { id, at, outcome }. `since_resolution` is { n, status }: the same problem judged on the
 // rows dated after the resolution alone, so that capturing it reopens the fix only on evidence the fix could have
-// changed, never on the failures that led to it; a sent-back lesson is judged by its own causes (lessonCauses), whichever
-// cause leads the runs since. A resolution before the window predates every row, so the problem
+// changed, never on the failures that led to it. A resolution before the window predates every row, so the problem
 // stands as judged; the reviews cannot be split by time, so after a resolution inside the window they are `unavailable`.
 function sinceResolution(problems, input) {
   const inboxes = { project: input.lessons ?? [], plugin: input.pluginLessons ?? input.lessons ?? [] };
@@ -122,13 +121,8 @@ function sinceResolution(problems, input) {
   }
 }
 
-function judgedAfter({ kind, subject, sample, lesson }, resolvedMs, input, later) {
+function judgedAfter({ kind, subject, sample }, resolvedMs, input, later) {
   if (!Number.isFinite(resolvedMs)) return { n: null, status: UNAVAILABLE };
-  // A sent-back lesson is judged by its own causes, whichever cause leads, on the runs from the later of the window's
-  // start and the first instant after its resolution: the problem the window shows may be another cause's.
-  const causes = kind === 'sent-back' ? lessonCauses(lesson?.key, subject) : null;
-  if (causes) return sentBackSince(input, subject, causes, Math.max(resolvedMs + 1, input.sinceMs ?? 0));
-  // Any other problem is the lesson's own: resolved before the window, it stands as judged on rows all after the fix.
   if (resolvedMs < (input.sinceMs ?? 0)) return { n: sample.n, status: PROBLEM };
   // Strictly after, as an occurrence must be to count against a fix.
   if (!later.has(resolvedMs)) later.set(resolvedMs, judge({ ...input, sinceMs: resolvedMs + 1, reviews: null, lessons: [] }));
@@ -141,25 +135,6 @@ function judgedAfter({ kind, subject, sample, lesson }, resolvedMs, input, later
   const part = signal.agents ? (agent?.[kind === 'redispatch' ? 'redispatch' : 'sent_back'] ?? { n: 0, status: NOT_ENOUGH })
     : { n: signal.sample?.n ?? null, status: signal.status };
   return { n: part.n, status: part.status === NOT_ENOUGH || part.status === UNAVAILABLE ? part.status : OK };
-}
-
-// The send-back causes a sent-back lesson's key stands for: those sentBackLesson gives that key, so the two never
-// drift apart; null for a key it gives no cause.
-function lessonCauses(key, agentType) {
-  const causes = Object.keys(SEND_BACK_CAUSES).filter((cause) => sentBackLesson(agentType, cause).key === key);
-  return causes.length ? causes : null;
-}
-
-// The share of `agentType`'s runs with a known send-back, among the stop rows from `fromMs` on, that one of `causes`
-// sent back, judged against telemetry.health.sentBackPercent and minSample as the agents signal judges its share.
-function sentBackSince({ rows, config }, agentType, causes, fromMs) {
-  const { minSample, sentBackPercent } = config.telemetry.health;
-  const stops = rows.filter((row) => row.event === 'stop' && row.agent_type === agentType && Date.parse(row.ts) >= fromMs);
-  const ofCause = sendBackCauses(stops);
-  const known = [...sendBackStates(stops)].filter(([, state]) => state !== null);
-  const hit = known.filter(([run, state]) => state && [...ofCause.get(run)].some((cause) => causes.includes(cause))).length;
-  const percent = percentOf(hit, known.length);
-  return { n: known.length, status: known.length < minSample || percent === null ? NOT_ENOUGH : percent > sentBackPercent ? PROBLEM : OK };
 }
 
 // The `always` docs against knowledge.budgets.alwaysBytes and each tagged doc against taggedDocBytes, as on disk now.
@@ -221,22 +196,10 @@ function docsSignal(rows, sinceMs, { indexed, tags }, { minSample, topDocPercent
   return { status: heavy || unread.length ? PROBLEM : OK, ...base };
 }
 
-// The lesson of a sent-back problem, by its leading cause (dispatch-log.mjs SEND_BACK_CAUSES): each recorded cause takes
-// a key of its own, `health:sent-back:<cause>:<agent>`, judged by that cause alone (lessonCauses), owned by whoever owns
-// the agent (lesson-signals.mjs agentOwner), since the fix is to that agent's prompt. Two exceptions share a stop-hook
-// lesson's key, each in the inbox that lesson is filed to: a plugin agent's background task, the background check's
-// `idle-with-children:<agent>`; and a cause not recorded, `delivery-check:<agent>`, the key every sent-back problem held
-// before rows named causes, so a lesson resolved then still holds it.
-function sentBackLesson(agentType, cause) {
-  const target = agentOwner(agentType);
-  if (cause === 'background' && target === 'plugin') return labels(idleChildrenSignal({ agentType, children: [] }));
-  if (cause === 'unrecorded') return labels(deliverySignal({ agentType, missing: [] }));
-  return { tier: 'P2', kind: 'improvement', target, key: `health:sent-back:${cause}:${agentType}` };
-}
-
 // Per agent type: the share of dispatches that repeat a task, over its dispatches, and the share of runs the stop hook
 // sent back, over its runs whose stop rows say so, with `leading`, the cause that sent the most runs back, as
-// { cause, runs }, or null. A run that named a missing file before stop rows recorded `sent_back` is unknown: it leaves
+// { cause, runs }, or null. The problem's summary names that cause; its lesson is the agent's one sent-back lesson,
+// whatever the cause. A run that named a missing file before stop rows recorded `sent_back` is unknown: it leaves
 // the sample as it leaves the rate, and counts in `unknown`. The shares come from the counts, since summarize() rounds its rates.
 function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPercent }, add) {
   const rate = (n, count, threshold) => {
@@ -250,13 +213,13 @@ function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPer
     const [cause, runs] = agent.sent_back_causes[0] ?? [];
     const leading = cause ? { cause, runs } : null;
     const sentBack = { ...rate(agent.runs - unknown, agent.sent_back, sentBackPercent), unknown, leading };
-    const lesson = sentBackLesson(agent.agent_type, cause ?? 'unrecorded');
+    const sentBackLesson = labels(deliverySignal({ agentType: agent.agent_type, missing: [] }));
     if (redispatch.status === PROBLEM) {
       add('redispatch', {
         subject: agent.agent_type, value: redispatch.percent, threshold: redispatchPercent, sample: { n: redispatch.n, of: 'dispatches' },
         summary: `${agent.agent_type}: ${redispatch.percent}% of ${redispatch.n} dispatches repeated a task already dispatched in the same session, ` +
           `over ${redispatchPercent}%.`,
-        lesson: { tier: 'P2', kind: 'improvement', target: agentOwner(agent.agent_type), key: `health:redispatch:${agent.agent_type}` },
+        lesson: { tier: 'P2', kind: 'improvement', target: sentBackLesson.target, key: `health:redispatch:${agent.agent_type}` },
       });
     }
     if (sentBack.status === PROBLEM) {
@@ -265,7 +228,7 @@ function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPer
         subject: agent.agent_type, value: sentBack.percent, threshold: sentBackPercent, sample: { n: sentBack.n, of: 'runs with a known send-back' },
         summary: `${agent.agent_type}: the stop hook sent back ${agent.sent_back} of ${sentBack.n} runs (${sentBack.percent}%), over ${sentBackPercent}%; ` +
           `the leading cause, in ${plural(leading.runs, 'run')}: ${words}${check ? `, from ${check}` : ''}.`,
-        lesson,
+        lesson: sentBackLesson,
       });
     }
     return { agent_type: agent.agent_type, redispatch, sent_back: sentBack };

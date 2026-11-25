@@ -9,7 +9,6 @@ import test from 'node:test';
 import { DEFAULTS, pluginRepository } from '../plugins/aidrian/lib/config.mjs';
 import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
-import { deliverySignal, idleChildrenSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { staleTables } from '../plugins/aidrian/lib/model-prices.mjs';
 import { FIXES, formatHealth, summarizeHealth } from '../plugins/aidrian/lib/report-health.mjs';
 import { reviewRounds } from '../plugins/aidrian/lib/report-reviews.mjs';
@@ -116,7 +115,7 @@ test('summarizeHealth ranks the problems worst first, each with its value, thres
   const byKind = Object.fromEntries(problems.map((item) => [item.kind, item]));
   assert.deepEqual(byKind.redispatch.lesson, { tier: 'P2', kind: 'improvement', target: 'plugin', key: 'health:redispatch:aidrian:explorer' });
   // The problems the plugin already records as automatic lessons take those lessons' keys and labels.
-  assert.deepEqual(byKind['sent-back'].lesson, { tier: 'P2', kind: 'improvement', target: 'plugin', key: 'health:sent-back:missing_file:aidrian:explorer' });
+  assert.deepEqual(byKind['sent-back'].lesson, { tier: 'P2', kind: 'bug', target: 'plugin', key: 'delivery-check:aidrian:explorer' });
   assert.deepEqual(byKind['deny-hot-spot'].lesson, { tier: 'P2', kind: 'gap', target: 'plugin', key: 'hook-deny:git-amend' });
   assert.deepEqual(byKind['review-rounds'].lesson, { tier: 'P2', kind: null, target: 'project', key: 'review-rounds' });
   assert.equal(byKind['p1-lesson'].lesson, null, 'a lesson problem is a lesson already');
@@ -196,7 +195,7 @@ test('summarizeHealth: a run that named a missing file before stop rows recorded
   assert.match(formatHealth(enough, { file: 'f', since: '30d', skipped: 0 }), /\n {4}planner: .*, 20% sent back \(n=5, 2 unknown; most often missing file\)\n/);
 });
 
-test('summarizeHealth names the leading cause of the send-backs, and files the lesson of that cause', () => {
+test('summarizeHealth names the leading cause of the send-backs, and keeps one sent-back lesson an agent whatever the cause', () => {
   // aidrian:fixer: 5 runs, 3 sent back for a background task, 1 for a handoff marker, and 1 before rows named causes.
   const rows = [
     ...['f1', 'f2', 'f3'].flatMap((task) => run('aidrian:fixer', 's9', task, { sentBack: true, cause: 'background' })),
@@ -204,121 +203,20 @@ test('summarizeHealth names the leading cause of the send-backs, and files the l
     ...run('aidrian:fixer', 's9', 'f5', { sentBack: true, cause: null }),
   ];
   const health = (list) => summarizeHealth({ rows: list, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith() });
+  const lesson = (agentType) => ({ tier: 'P2', kind: 'bug', target: agentType.startsWith('aidrian:') ? 'plugin' : 'project', key: `delivery-check:${agentType}` });
   const [background] = health(rows).problems.filter((item) => item.kind === 'sent-back');
   assert.equal(background.summary, 'aidrian:fixer: the stop hook sent back 5 of 5 runs (100%), over 10%; the leading cause, in 3 runs: background task, from the background check.');
-  assert.deepEqual(background.lesson, { tier: 'P2', kind: 'gap', target: 'plugin', key: 'idle-with-children:aidrian:fixer' }, 'the background check`s own lesson');
   assert.doesNotMatch(background.summary, /delivery check/u);
   assert.match(formatHealth(health(rows), { file: 'f', since: '30d' }), /\n {4}aidrian:fixer: .*, 100% sent back \(n=5; most often background task\)\n/);
-  // A marker leads: a key of its own. A cause not recorded leads: the delivery check's key, as before rows named causes.
+  // Another cause leading changes the words, never the lesson: the agent's one sent-back lesson, as before rows named causes.
   const marker = [...rows.slice(6), ...['f6', 'f7'].flatMap((task) => run('aidrian:fixer', 's9', task, { sentBack: true, cause: 'marker' }))];
   const [byMarker] = health(marker).problems.filter((item) => item.kind === 'sent-back');
   assert.match(byMarker.summary, /the leading cause, in 3 runs: handoff marker, from the marker check\.$/u);
-  assert.deepEqual(byMarker.lesson, { tier: 'P2', kind: 'improvement', target: 'plugin', key: 'health:sent-back:marker:aidrian:fixer' });
-  // A project's own agent led by a background task: the fix is to its prompt, so the lesson is the project's, under a
-  // key of its own, since the stop hook files the background check's key in the plugin's inbox.
-  const own = ['p1', 'p2', 'p3', 'p4', 'p5'].flatMap((task) => run('fixer', 's9', task, { sentBack: true, cause: 'background' }));
-  assert.deepEqual(health(own).problems.find((item) => item.kind === 'sent-back').lesson,
-    { tier: 'P2', kind: 'improvement', target: 'project', key: 'health:sent-back:background:fixer' });
+  assert.deepEqual([background.lesson, byMarker.lesson], [lesson('aidrian:fixer'), lesson('aidrian:fixer')]);
   const legacy = ['f8', 'f9'].flatMap((task) => run('code-reviewer', 's9', task, { sentBack: true, cause: null }));
   const [unrecorded] = health([...legacy, ...['g1', 'g2', 'g3'].flatMap((task) => run('code-reviewer', 's9', task))]).problems;
   assert.equal(unrecorded.summary, 'code-reviewer: the stop hook sent back 2 of 5 runs (40%), over 10%; the leading cause, in 2 runs: cause not recorded.');
-  assert.deepEqual(unrecorded.lesson, { tier: 'P2', kind: 'bug', target: 'project', key: 'delivery-check:code-reviewer' });
-});
-
-test('a send-back lesson shares a stop hook lesson`s key only in the inbox the hook files it in', () => {
-  // The stop hook's own lessons: an agent left idle with a background task, and the delivery check's.
-  for (const agentType of ['aidrian:fixer', 'fixer']) {
-    const hooks = [idleChildrenSignal({ agentType, children: [] }), deliverySignal({ agentType, missing: [] })];
-    for (const cause of ['background', 'missing_file', 'handoff', 'marker', 'evidence', null]) {
-      const rows = ['k1', 'k2', 'k3', 'k4', 'k5'].flatMap((task) => run(agentType, 's9', task, { sentBack: true, cause }));
-      const { lesson } = summarizeHealth({ rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith() })
-        .problems.find((item) => item.kind === 'sent-back');
-      const label = `${agentType}, ${cause ?? 'not recorded'}`;
-      assert.equal(lesson.target, agentType.startsWith('aidrian:') ? 'plugin' : 'project', label);
-      // One key, one inbox: a shared key is the same lesson seen again, so it must land where the hook's does.
-      for (const hook of hooks) assert.ok(lesson.key !== hook.key || lesson.target === hook.target, `${label}: ${JSON.stringify(lesson)}`);
-    }
-  }
-});
-
-test('a resolved send-back lesson is reopened only by send-backs of its own cause', () => {
-  // Before the fix, ten days ago: 6 runs, each sent back for `before`. After it, two days ago: 6 runs, 3 sent back for `after`.
-  const window = (before, after, agentType = 'aidrian:fixer') => [
-    ...['b1', 'b2', 'b3', 'b4', 'b5', 'b6'].flatMap((task) => run(agentType, 'o1', task, { sentBack: true, cause: before })).map((row) => ({ ...row, ts: at(24 * 10) })),
-    ...['a1', 'a2', 'a3', 'a4', 'a5', 'a6'].flatMap((task, i) => run(agentType, 'n1', task, { sentBack: i < 3, cause: after })),
-  ];
-  const resolved = (key) => fold([
-    { event: 'add', id: 'cccc0001', at: at(24 * 20), tier: 'P2', note: 'sent back', key },
-    { event: 'resolve', id: 'cccc0001', at: at(24 * 5), outcome: 'mechanism', link: 'abc1234' },
-  ]).lessons;
-  // The resolved lesson sits in the inbox its key belongs to: the plugin's for a plugin agent, the project's otherwise.
-  const sentBack = (rows, key, inbox = 'plugin') => summarizeHealth({
-    rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith(),
-    lessons: inbox === 'project' ? resolved(key) : [], pluginLessons: inbox === 'plugin' ? resolved(key) : [],
-  }).problems.find((item) => item.kind === 'sent-back');
-  // A project agent's background lesson, under its own key in the project's inbox, holds and reopens the same way.
-  const project = sentBack(window('background', 'missing_file', 'fixer'), 'health:sent-back:background:fixer', 'project');
-  assert.deepEqual([project.lesson.key, project.resolved?.id, project.since_resolution], ['health:sent-back:background:fixer', 'cccc0001', { n: 6, status: 'ok' }]);
-  assert.deepEqual(sentBack(window('background', 'background', 'fixer'), 'health:sent-back:background:fixer', 'project').since_resolution, { n: 6, status: 'problem' });
-  // The background check's lesson leads the window; only missing files came back after its fix: it held.
-  const background = sentBack(window('background', 'missing_file'), 'idle-with-children:aidrian:fixer');
-  assert.deepEqual([background.lesson.key, background.resolved?.id, background.since_resolution], ['idle-with-children:aidrian:fixer', 'cccc0001', { n: 6, status: 'ok' }]);
-  // A missing-file lesson leads; only background tasks came back after its fix: it held too.
-  const missing = sentBack(window('missing_file', 'background'), 'health:sent-back:missing_file:aidrian:fixer');
-  assert.deepEqual([missing.lesson.key, missing.resolved?.id, missing.since_resolution], ['health:sent-back:missing_file:aidrian:fixer', 'cccc0001', { n: 6, status: 'ok' }]);
-  // The same cause after the fix reopens it.
-  assert.deepEqual(sentBack(window('background', 'background'), 'idle-with-children:aidrian:fixer').since_resolution, { n: 6, status: 'problem' });
-  // A missing file and a handoff file are two causes, each with its own lesson: a switch from one to the other after a
-  // fix reopens neither, and the same cause reopens it.
-  const handoff = sentBack(window('missing_file', 'handoff'), 'health:sent-back:missing_file:aidrian:fixer');
-  assert.deepEqual([handoff.resolved?.id, handoff.since_resolution], ['cccc0001', { n: 6, status: 'ok' }]);
-  assert.deepEqual(sentBack(window('handoff', 'missing_file'), 'health:sent-back:handoff:aidrian:fixer').since_resolution, { n: 6, status: 'ok' });
-  assert.deepEqual(sentBack(window('handoff', 'handoff'), 'health:sent-back:handoff:aidrian:fixer').since_resolution, { n: 6, status: 'problem' });
-  // The delivery check's key, the one every sent-back problem held before rows named causes, stands for a cause not
-  // recorded alone: recorded missing files after its fix leave it held.
-  const legacy = sentBack(window(null, 'missing_file'), 'delivery-check:aidrian:fixer');
-  assert.deepEqual([legacy.lesson.key, legacy.resolved?.id, legacy.since_resolution], ['delivery-check:aidrian:fixer', 'cccc0001', { n: 6, status: 'ok' }]);
-});
-
-test('a resolved send-back lesson reads the same whether the window starts before or after its resolution', () => {
-  // A marker fix resolved three days ago; two days ago, 10 runs: 1 sent back for a marker and 1 for a test claim. The
-  // window's problem (20%, over 10%) is led by the marker, but 1 marker run in 10 is within the threshold.
-  const rows = [
-    ...run('aidrian:fixer', 's1', 'w1', { sentBack: true, cause: 'marker' }),
-    ...run('aidrian:fixer', 's1', 'w2', { sentBack: true, cause: 'evidence' }),
-    ...['w3', 'w4', 'w5', 'w6', 'w7', 'w8', 'w9', 'w10'].flatMap((task) => run('aidrian:fixer', 's1', task)),
-  ];
-  const key = 'health:sent-back:marker:aidrian:fixer';
-  const pluginLessons = fold([
-    { event: 'add', id: 'eeee0001', at: at(24 * 20), tier: 'P2', note: 'marker', key },
-    { event: 'resolve', id: 'eeee0001', at: at(72), outcome: 'rule', link: 'abc1234' },
-  ]).lessons;
-  const judged = (sinceMs) => summarizeHealth({ rows, sinceMs, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, lessons: [], pluginLessons, config: configWith() })
-    .problems.find((item) => item.kind === 'sent-back');
-  const before = judged(Date.parse(at(73)));
-  const after = judged(Date.parse(at(71)));
-  assert.deepEqual([before.lesson.key, after.lesson.key], [key, key]);
-  assert.deepEqual([before.since_resolution, after.since_resolution], [{ n: 10, status: 'ok' }, { n: 10, status: 'ok' }]);
-});
-
-test('a resolved send-back lesson is judged by its own cause, whichever cause leads since', () => {
-  // A handoff marker fix, resolved five days ago. Before it, ten days ago: 6 runs sent back for a marker. After it: of
-  // 10 runs, 2 still for a marker and 3 for a test claim, which leads; 20% for a marker is over the 10% threshold.
-  const before = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'].flatMap((task) => run('aidrian:fixer', 'o1', task, { sentBack: true, cause: 'marker' }))
-    .map((row) => ({ ...row, ts: at(24 * 10) }));
-  const after = (causes) => causes.flatMap((cause, i) => run('aidrian:fixer', 'n1', `r${i}`, { sentBack: cause !== null, cause: cause ?? 'missing_file' }));
-  const key = 'health:sent-back:marker:aidrian:fixer';
-  const pluginLessons = fold([
-    { event: 'add', id: 'dddd0001', at: at(24 * 20), tier: 'P2', note: 'marker', key },
-    { event: 'resolve', id: 'dddd0001', at: at(24 * 5), outcome: 'rule', link: 'abc1234' },
-  ]).lessons;
-  const judged = (rows) => summarizeHealth({ rows: [...before, ...rows], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, lessons: [], pluginLessons, config: configWith() })
-    .problems.find((item) => item.kind === 'sent-back');
-  const still = judged(after(['marker', 'marker', 'evidence', 'evidence', 'evidence', null, null, null, null, null]));
-  assert.deepEqual([still.lesson.key, still.resolved?.id, still.since_resolution], [key, 'dddd0001', { n: 10, status: 'problem' }], 'the marker fix did not hold');
-  // One marker run in 10 is within the threshold, while test claims lead at 40%: the marker fix held.
-  const held = judged(after(['marker', 'evidence', 'evidence', 'evidence', 'evidence', null, null, null, null, null]));
-  assert.deepEqual(held.since_resolution, { n: 10, status: 'ok' });
+  assert.deepEqual(unrecorded.lesson, lesson('code-reviewer'));
 });
 
 test('the session cost trend compares only sessions priced at today`s tables, and counts those that kept their logged price', () => {
@@ -457,7 +355,7 @@ test('summarizeHealth judges a problem whose lesson was resolved again on the ro
     ...(i < blocks ? [block(`n${i}`, 48)] : []),
   ]).flat();
   // A lesson for each of the three problems, resolved `hoursAgo`; `more` adds rows to the inbox.
-  const keys = ['hook-deny:git-amend', 'health:sent-back:missing_file:aidrian:explorer', 'review-rounds'];
+  const keys = ['hook-deny:git-amend', 'delivery-check:aidrian:explorer', 'review-rounds'];
   const inbox = (hoursAgo, more = []) => fold([
     ...keys.flatMap((key, i) => [
       { event: 'add', id: `bbbb000${i}`, at: at(24 * 20), tier: 'P2', note: `Seen as ${key}`, key },

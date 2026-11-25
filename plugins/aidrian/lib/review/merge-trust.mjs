@@ -33,7 +33,8 @@ export const sameBot = (login, reviewer) => botName(login) !== null && botName(l
 // reviewTrail of the pull request; `reviewer` the default branch's `github.reviewer`, read from the forge. A review or a
 // comment counts only when its author is a bot account of that name. Passed: an approving review of exactly `head`, or
 // the bot's status card, whose every edit the bot made, saying its code review of exactly `head` completed with
-// `has_any_findings` and `has_unresolved_findings` both false; and no review of `head` by the bot in any other state.
+// `has_any_findings` and `has_unresolved_findings` both false; and no review of `head` by the bot in any other state,
+// in a review list the forge gave whole (`reviewsComplete`), so the guard and `aidrian pr auto-merge` judge it alike.
 // The two flags are the bot's ledger of its findings that still stand at that commit, equal on every card seen: the bot
 // clears both itself on a later run once its findings are fixed, and neither a receipt nor a resolved thread clears
 // them. A card that names `head` with a flag not false says so in the refusal. A clean receipt or a 👍 never
@@ -44,6 +45,8 @@ export function botProblem(trail, head, reviewer) {
   const sha7 = head.slice(0, 7);
   if (typeof reviewer !== 'string' || reviewer === '') return NO_BOT;
   if (typeof trail?.head !== 'string' || trail.head.toLowerCase() !== head.toLowerCase()) return `the forge gives its head as ${String(trail?.head ?? 'none').slice(0, 7)}, not ${sha7}`;
+  // A review of `head` in another state may lie past a list the forge gave only in part (the trail reads the newest 100).
+  if (trail.reviewsComplete !== true) return `the forge gave only part of its reviews, so whether ${reviewer} reviewed head ${sha7} in a state that does not pass cannot be told`;
   const onHead = (trail.reviews ?? []).filter((review) => review.bot && sameBot(review.login, reviewer) && typeof review.commit === 'string' && review.commit.toLowerCase() === head.toLowerCase());
   const other = onHead.find((review) => review.state !== 'APPROVED');
   if (other) return `${reviewer} reviewed head ${sha7} as ${String(other.state ?? 'unknown').toLowerCase()}, so its review of that commit did not pass`;

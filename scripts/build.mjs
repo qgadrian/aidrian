@@ -333,8 +333,13 @@ export function routeMatcher(matcher) {
   if (matcher === undefined || matcher === null) return null;
   if (matcher === '*') return '*';
   if (typeof matcher !== 'string' || matcher === '') throw new Error(`matcher ${JSON.stringify(matcher)} is not a pattern; use "*" for every tool`);
+  // Accepted residual: a comma or a space inside a character class is legal there and still refused here; that fails
+  // safe, by refusing the build, and no hooks.json matcher needs one.
   if (/[\s,]/u.test(matcher)) throw new Error(`matcher ${JSON.stringify(matcher)} holds a comma or whitespace, which a host may read as a list; separate names with "|"`);
   if (NAME_LIST.test(matcher)) return `^(?:${matcher})$`;
+  // Accepted residuals: only the forms known to differ are refused, so a rare matcher Codex's Rust regex rejects or reads
+  // otherwise may still pass; no hooks.json matcher uses one, and emulating that regex in full costs more than the gap.
+  // And a lookahead opener inside a character class is legal there and still refused here, which fails safe.
   if (RUST_UNSUPPORTED.test(matcher)) {
     throw new Error(`matcher ${JSON.stringify(matcher)} holds a lookaround or a backreference, which Codex's Rust regex, that reads hooks.json too, rejects`);
   }

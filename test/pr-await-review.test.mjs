@@ -21,6 +21,7 @@ import {
   flooredInstant,
   awaitReview,
   isQuotaNotice,
+  isFailureNotice,
   isReviewSummaryCard,
   REVIEW_SUMMARY_CARD_MARKER,
   exitCodeFor,
@@ -773,6 +774,46 @@ test('awaitReview --request: a quota notice older than the head re-requests once
   assert.equal(forge.posts.length, 1, 'the stale notice predates the head, so the new head is asked once');
   assert.equal(r.status, 'received');
   assert.equal(r.signal.kind, 'review');
+});
+
+// Verbatim lead of the bot's notice that its run failed on its side; its help text quotes the trigger.
+const FAILURE_BODY =
+  'Codex Review: Something went wrong. Try again later by commenting \u201c@codex review\u201d.\n\n```\nUnknown error\n```\n\n' +
+  '<details> <summary>About Codex in GitHub</summary>\n\n- Comment "@codex review".\n</details>';
+const failedCard = (sha, at) => ({ id: 3, user: BOT, created_at: T(1), updated_at: at, body: `${REVIEW_SUMMARY_CARD_MARKER}\n<!-- codex-review-state:v1 {"code_review":{"commit_sha":"${sha}","has_any_findings":null,"has_unresolved_findings":null,"status":"failed"}} -->` });
+
+test('latestBotSignal: the bot`s failure notice is no signal and no request; the quota notice keeps its kind', () => {
+  assert.equal(isFailureNotice(FAILURE_BODY), true);
+  assert.equal(isFailureNotice(QUOTA_BODY), false);
+  assert.equal(isFailureNotice('A finding: the banner says "Codex Review: Something went wrong."'), false, 'a comment that quotes the phrase is no failure');
+  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: T(5) };
+  const notice = { id: 6863267738, user: BOT, created_at: T(6), body: FAILURE_BODY };
+  assert.equal(latestBotSignal({ ...base, issueComments: [notice] }), null);
+  assert.equal(latestBotSignal({ ...base, issueComments: [failedCard(B40, T(7))] }), null, 'a failed status card is no signal either');
+  assert.equal(latestBotSignal({ ...base, issueComments: [{ ...notice, body: QUOTA_BODY }] }).kind, 'quota_exhausted');
+  const trigger = { id: 1, user: { login: 'someone' }, created_at: T(5), body: requestCommentBody('bbb') };
+  assert.equal(latestTrigger({ issueComments: [trigger, notice] }), T(5), 'the notice quotes the trigger in its help text and is none');
+});
+
+test('awaitReview: a failed bot run is no answer, so the wait times out with its retry and posts nothing more', async () => {
+  // The bot acknowledged the trigger for the head, then its run failed: by its notice, or by its status card.
+  const trigger = { id: 1, user: { login: 'someone' }, created_at: T(5), body: requestCommentBody(B40), reactions: { eyes: 1 } };
+  for (const failure of [{ id: 2, user: BOT, created_at: T(6), body: FAILURE_BODY }, failedCard(B40, T(6))]) {
+    const forge = fakeForge([{ issueComments: [trigger, failure] }], { head: B40 });
+    const c = clock();
+    const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, now: c.now, sleep: c.sleep });
+    assert.deepEqual([r.status, r.retry_recommended, r.signal, forge.posts.length], ['timed_out', true, null, 0], `failure ${failure.id}`);
+    assert.equal(r.trigger_at, T(5), 'the trigger is still the request, not the notice');
+  }
+});
+
+test('awaitReview: a failed bot run with no acknowledgement times out with no retry recommended', async () => {
+  const trigger = { id: 1, user: { login: 'someone' }, created_at: T(5), body: requestCommentBody(B40), reactions: { eyes: 0 } };
+  const notice = { id: 2, user: BOT, created_at: T(6), body: FAILURE_BODY };
+  const forge = fakeForge([{ issueComments: [trigger, notice] }], { head: B40 });
+  const c = clock();
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { forge, now: c.now, sleep: c.sleep });
+  assert.deepEqual([r.status, r.retry_recommended, r.signal, r.acknowledged_at, forge.posts.length], ['timed_out', false, null, null, 0]);
 });
 
 test('main exits by exitCodeFor, so a blocked_quota run is distinguishable from timed_out and success', () => {

@@ -65,6 +65,7 @@ const trailOf = (text, over = {}) => ({
   reviews: [], reviewsComplete: true, comments: [card()], commentsComplete: true,
   branches: { default: { name: 'main', pointer: null, config: text, knowledge: null }, base: { name: 'main', pointer: null, config: text } },
   headRef: 'feat/eng-1-export', title: 'feat(export): add CSV export', body: 'Fixes ENG-1', messages: [{ oid: HEAD, message: 'feat: export' }], messagesComplete: true,
+  closingIssues: [], closingIssuesComplete: true,
   ...over,
 });
 // The bot's clean receipt as it posts one on every clean pass, its footer quoting the trigger, by the bot, every edit
@@ -253,6 +254,16 @@ test('the bot`s verdict counts only as the bot`s own, on exactly the head, with 
   assert.match(passes(base({ comments: [], commentsComplete: false })) ?? '', /more comments than the forge read gives/u);
 });
 
+test('the bot`s verdict needs the whole review list: a cut one refuses even beside its passing card, so auto-merge and the guard agree (#448)', () => {
+  const reviewer = `${BOT}[bot]`;
+  for (const over of [{ reviewsComplete: false }, { reviewsComplete: undefined }]) {
+    assert.match(botProblem(trailOf('{}', over), HEAD, reviewer) ?? '', /the forge gave only part of its reviews, so whether chatgpt-codex-connector\[bot\] reviewed head abcdef1 in a state that does not pass cannot be told/u, JSON.stringify(over));
+  }
+  const approved = { comments: [], reviews: [{ login: BOT, bot: true, state: 'APPROVED', commit: HEAD, at: 'x' }] };
+  assert.match(botProblem(trailOf('{}', { ...approved, reviewsComplete: false }), HEAD, reviewer) ?? '', /only part of its reviews/u, 'an approval in a cut list');
+  assert.equal(botProblem(trailOf('{}', approved), HEAD, reviewer), null, 'the same approval in a whole list');
+});
+
 test('a card of the head that still holds a finding of the bot`s own is refused by name, beside a clean receipt; one with both flags false passes', () => {
   const reviewer = `${BOT}[bot]`;
   const passes = (over) => botProblem(trailOf('{}', over), HEAD, reviewer);
@@ -303,6 +314,11 @@ test('an unattended merge names its number and full head, in the repository the 
   assert.match(merge(r, `gh pr merge 7 --match-head-commit ${HEAD.slice(0, 7)}`) ?? '', /full head commit/u, 'a short head');
   assert.match(merge(r, `gh pr merge 7 -R acme/other --match-head-commit ${HEAD}`) ?? '', /it names acme\/other, and this session works in acme\/notes/u);
   assert.match(merge(r, `gh pr merge 7 --auto --match-head-commit ${HEAD}`, { calls }) ?? '', /`--auto` leaves the merge to GitHub/u);
+  // gh reads the last `--auto`; with a word the shell fills in, which may be an `--auto` or eat a false one, it counts as on.
+  for (const command of [`gh pr merge 7 --auto=false --auto --match-head-commit ${HEAD}`, `gh pr merge 7 --auto=false --match-head-commit ${HEAD} "$X"`,
+    `gh pr merge 7 --match-head-commit ${HEAD} "$X"`, `gh pr merge 7 $A --match-head-commit ${HEAD}`]) {
+    assert.match(merge(r, command, { calls }) ?? '', /`--auto` leaves the merge to GitHub/u, command);
+  }
   // The Codex connector's auto-merge tool names no head.
   assert.match(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7 }) ?? '', /does not name both its number and its full head/u);
   assert.deepEqual(calls, [], 'no forge read for a merge refused before it');
@@ -310,6 +326,10 @@ test('an unattended merge names its number and full head, in the repository the 
   assert.deepEqual(calls, [['reviewTrail', 'acme/notes', 7, 'github.com', { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' }]],
     'one forge read, the trail, which holds both branches` configs: the pinned repository and its host, passed explicitly');
   assert.equal(merge(r, `gh api -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`), null, 'the API merge naming its head');
+  // A last `--auto` that is off merges at once, at the head it names: judged as that merge, never as auto-merge.
+  assert.equal(merge(r, `gh pr merge 7 --auto --auto=false --match-head-commit ${HEAD}`), null, 'auto-merge turned off is a merge');
+  // Any word the shell fills in, a quoted body included, makes the switches unknown: refused as a possible auto-merge.
+  assert.match(merge(r, `gh pr merge 7 --auto=false --body "$BODY" --match-head-commit ${HEAD}`) ?? '', /`--auto` leaves the merge to GitHub/u);
   // The GitHub MCP server's own merge tool names the head as expectedHeadSha, which GitHub's merge enforces.
   assert.equal(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, expectedHeadSha: HEAD }), null);
   const failing = merge(r, MERGE, { trail: () => { throw new Error('gh: Bad credentials (HTTP 401)'); } });
@@ -332,10 +352,12 @@ test('an unattended merge naming another host, in any spelling gh takes, is refu
   ]) assert.match(merge(r, command) ?? '', /^Blocked: no Human attends this session, and this merges pull request #7, but it names the host ghe\.example\.com, and this session works in acme\/notes on github\.com\./u, command);
   // curl is no merge the guard reads: a write to a merge URL is refused, on any host.
   assert.match(merge(r, `curl -X PUT https://api.github.com/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`) ?? '', /^Blocked: this curl call names a pull request's merge URL/u);
-  for (const command of [`gh pr merge 7 -R "$R" ${named}`, `GH_HOST=$H gh pr merge 7 ${named}`, `GH_REPO="$R" gh pr merge 7 ${named}`,
+  for (const command of [`GH_HOST=$H gh pr merge 7 ${named}`, `GH_REPO="$R" gh pr merge 7 ${named}`,
     `gh api --hostname "$H" -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`]) {
     assert.match(merge(r, command) ?? '', /but it names its repository or its host in a word the shell builds/u, command);
   }
+  // A word the shell fills in among gh's own words may be an `--auto`: refused as a possible auto-merge before the host read.
+  assert.match(merge(r, `gh pr merge 7 -R "$R" ${named}`) ?? '', /holds a word the shell fills in that may be it/u);
   for (const command of [
     MERGE,
     `gh pr merge https://github.com/acme/notes/pull/7 ${named}`,
@@ -1015,6 +1037,25 @@ test('the merge guard refuses a run issue\'s merge whose body, title, commits, o
   assert.match(run(`gh pr merge 7 -F body.md --match-head-commit ${HEAD}`) ?? '', /comes from a file or a variable the guard cannot read/u);
   assert.match(mcpRun({ owner: 'acme', repo: 'widgets', pullNumber: 7, sha: HEAD, commit_message: 'Fixes ENG-2' }) ?? '', /the merge commit's body says "Fixes ENG-2"/u);
   assert.equal(mcpRun({ owner: 'acme', repo: 'widgets', pullNumber: 7, sha: HEAD, commit_message: 'Fixes ENG-1' }), null);
+});
+
+test('the merge guard refuses a run issue\'s merge the forge links to close another issue, by hand in its sidebar included, or a cut list of them (#448)', (t) => {
+  const { run } = closingRun(t);
+  // A sidebar link: no text names #12, and the body still says only Fixes ENG-1.
+  for (const [over, why] of [
+    [{ closingIssues: [{ number: 12, repo: 'acme/widgets' }] }, /the forge links issue acme\/widgets#12 to the pull request to close at the merge, which may be by hand in its sidebar, so its merge would close an issue other than its own issue ENG-1/u],
+    [{ closingIssues: [{ number: 1, repo: 'other/repo' }] }, /links issue other\/repo#1/u],
+    [{ closingIssues: [{ number: null, repo: null }] }, /links issue of no repository#\?/u],
+    [{ closingIssuesComplete: false }, /the forge gave only part of the issues it links to the pull request to close at the merge/u],
+    [{ closingIssues: undefined, closingIssuesComplete: undefined }, /only part of the issues it links/u],
+  ]) assert.match(run(MERGE, { over }) ?? '', why, JSON.stringify(over));
+});
+
+test('a run whose issue is a forge issue merges when the forge links that issue alone (#448)', (t) => {
+  const { fx, run } = closingRun(t);
+  const mark = { root: fx.dir, project: 'launch', issue: '12' };
+  assert.equal(run(MERGE, { mark, over: { body: 'Closes #12', closingIssues: [{ number: 12, repo: 'acme/widgets' }] } }), null, 'its own issue, linked');
+  assert.match(run(MERGE, { mark, over: { body: 'Closes #12', closingIssues: [{ number: 12, repo: 'acme/widgets' }, { number: 13, repo: 'acme/widgets' }] } }) ?? '', /links issue acme\/widgets#13/u);
 });
 
 test('the merge guard holds the run\'s driver, whose mark names no issue, to the issue whose branch the pull request is from; an attended merge reads none of it', (t) => {

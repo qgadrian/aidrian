@@ -34,11 +34,13 @@ it: it was not run here, is not supported, and its case has no code yet. Check i
 | --- | --- |
 | `plugins/aidrian/lib/hosts/<id>.mjs` | The adapter, with the fields below |
 | `plugins/aidrian/lib/hosts/index.mjs` | The adapter in `HOSTS`. `detectHost` runs in two passes: first every adapter's `payloadMark`, in `HOSTS` order, so a hook's payload names its host whatever variables the process inherited; then each `detect` in `HOSTS` order. So the host a shell can start inside another comes first, and a host whose only environment mark another host's process can inherit, as OpenCode's `OPENCODE_SESSION_ID`, comes last |
-| `plugins/aidrian/<id>/routes.mjs` | For a `bridge` host: `EVENTS`, each standard event the bridge runs to the host's own hook, as OpenCode's `{ PostToolUse: 'execute.after' }`. A hook runs on the host once its event is here and its matcher fires on a name the host's leaf returns. A blocking event needs the bridge to handle exit 2 first, so the conformance suite refuses a route of any event but `PostToolUse` |
+| `plugins/aidrian/<id>/routes.mjs` | For a `bridge` host: `EVENTS`, each standard event the bridge runs to the host's own hook, as OpenCode's `{ PostToolUse: 'execute.after' }`. A hook runs on the host once its event is here and its matcher fires on a name the host's leaf returns. A blocking event waits for a live session to record its route refusing a call, so the conformance suite refuses a route of any event but `PostToolUse` |
 | `plugins/aidrian/<id>/routes.generated.json` | For a `bridge` host: the generated route list, every `hooks.json` hook in its order as `{ event, matcher, script, args, timeoutMs }`, which `npm run build` writes and `--check` fails when stale. Never edit it; change `hooks.json` |
 | `plugins/aidrian/lib/hosts/<id>-names.mjs` | For a `bridge` host: the leaf that maps the host's tool names to the standard ones, importing nothing, read by both the adapter and the bridge, so both pick by the same name. `STANDARD_NAMES` is every name it returns; the conformance suite reads the routes a bridge host runs from it |
 | `plugins/aidrian/<id>/route-select.mjs` | For a `bridge` host: the route list half of the bridge, importing `node:` built-ins alone. `readRoutes` reads the generated list and leaves out an entry the bridge cannot spawn as it is; `selectRoutes(routes, events, hook, name)` gives the routes of a host hook whose matcher fires on a standard name, in order |
-| `plugins/aidrian/<id>/bridge.mjs` | For a `bridge` host: the runner. It reads the generated list through `route-select.mjs`, registers one callback a host hook of `EVENTS`, and on each call runs, in parallel, every route `selectRoutes` gives for the leaf's name, each under its own timeout, sending the standard payload on stdin. It does not change for a hook that runs after a call, and the bash-post fixture's `output_path` says where a call's output lies in `tool_response`; a blocking event needs it to turn exit 2 into a throw that keeps the script's stderr first |
+| `plugins/aidrian/<id>/call.mjs` | For a `bridge` host: what a call sends, importing `node:` built-ins alone, as `test/opencode-bridge.test.mjs` holds: the folder the script is spawned in, the session's; the payload's `cwd`, the folder the call runs in; the root session as `session_id` and the calling one as `agent_id`; the cap on the session reads of one call; and the text of a session's last assistant message, read under that cap at idle |
+| `plugins/aidrian/<id>/bridge.mjs` | For a `bridge` host: the runner. It reads the generated list through `route-select.mjs`, registers one callback a host hook of `EVENTS`, and on each call runs, in parallel, every route `selectRoutes` gives for the leaf's name, each under its own timeout through `output.mjs`. It does not change for a hook that runs after a call, and the bash-post fixture's `output_path` says where a call's output lies in `tool_response`. It keeps the host's per-session state a payload needs, such as `stop_hook_active` |
+| `plugins/aidrian/<id>/output.mjs` | For a `bridge` host: the output transformer, importing `node:` built-ins and `lib/hook-result.mjs` alone. It runs each script, pinned to Node with the standard payload on stdin, and reads its answer, a bounded part of its stdout and stderr, through `readHookResult`, merges a call's answers with `combineHookResults`, and applies the verdict to the host's event: a blocking route's refusal rejects, a rewrite replaces the input, and every other callback resolves whatever fails inside it. It holds the byte bound of a script's output |
 | `plugins/aidrian/hooks/hooks.json` | The host's raw names, where they miss a matcher. Matchers run on the raw name, before any mapping reaches a hook |
 | `test/fixtures/hosts/<id>/tracker.json` | Recorded payloads, with `live` and `provenance` saying where they came from |
 | `plugins/aidrian/providers/<id>.json` and a `GENERATORS` entry in `scripts/build.mjs` | The agents: [Adding a provider](../agent-sources.md#adding-a-provider) |
@@ -49,6 +51,12 @@ it: it was not run here, is not supported, and its case has no code yet. Check i
 | `lib/agent-models.mjs` | How `models.<key>` reaches a dispatched agent on this host: a call it rewrites, or a role it installs |
 | `plugins/aidrian/lib/trackers/<tracker>.mjs` | An entry in each tracker's `servers` for this host, read from a live connection. The conformance suite fails without one |
 | `docs/providers/<id>.md` and its index entry | How it installs, and what was verified on it |
+
+A bridge host's blocking route takes four things of the host: a callback that runs before the call and that the host
+awaits, so a script can finish first; a way for that callback to refuse the call with a message the model reads, as
+OpenCode fails a call whose `execute.before` callback rejects; an input the callback can replace, for `updatedInput`;
+and who made the call, so a subagent's call can fail closed when a script does not start. Its kill time is no sooner
+than 1 s past the longest guard budget a script gives itself, so the script's own refusal comes first.
 
 ### The adapter's fields
 
@@ -157,12 +165,16 @@ the command's `status: "created"` result where the host's response holds the cal
 the payload's session id; a host added without that fixture fails it. The hook reads that output only through the
 host's `shellOutput`: a host whose adapter gives none records no worktree.
 
-Why the hook and not `aidrian worktree new` itself: the command would file its row under the session id its shell's
-environment names, and on Codex that id is not the hook's. Codex gives a shell call `CODEX_THREAD_ID`, the thread's own
-id, and its hooks `session_id`, the identity the root thread shares with every thread it starts, which equals the
-root thread's id ([Codex](codex.md#session-ids)): in a subagent's shell the two differ, so its row would land where no
-snapshot of the session reads. The hook files the row where the pull request ledger files its own, on Claude Code,
-Codex, and OpenCode alike.
+Two records, two writers. The PostToolUse hook writes the snapshot link in `links.jsonl`, the row this section
+describes. `aidrian worktree new` itself writes a different record, the continuation-store record that worktree grants
+read, under the session id its shell's environment names. The hook files the link under the payload's `session_id`
+whatever the shell names, where the pull request ledger files its own, on Claude Code, Codex, and OpenCode alike, so
+the link never depends on the shell's id. The grant record does: a host's adapter must make the shell's id the hook
+payload's `session_id` in a subagent's shell too, or the record lands under an id the worktree grant hook never looks
+up, and the subagent's worktree gets no grant. Codex gives a shell call `CODEX_THREAD_ID`, the thread's own id, which
+differs in a subagent's thread, and `CODEX_SESSION_ID`, the root session's id its hooks carry as `session_id`
+([Codex](codex.md#session-ids)): its adapter reads the second. A host whose shell names only a thread's own id would
+file a subagent's grant record under that thread, where the grant hook does not read.
 
 ### What else a new host has to check by hand
 
@@ -313,7 +325,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   `reviewTrail(repo, n, { host })`, what a merge no Human asks for confirms in one call: the head, the base, the first
   100 changed files, the newest 100 reviews, and the first 100 conversation comments, each author's login and whether it
   is a bot, and every editor of a comment ([Merge trust](../review.md#merge-trust)); and the head branch, title, body,
-  and the first 100 commit messages, whole or not, for the closing-word check.
+  and the first 100 commit messages, whole or not, for the closing-word check, with the first 100 issues the forge links
+  to the pull request to close at the merge, a sidebar link included, whole or not (`closingIssues`, `closingIssuesComplete`).
 - The repository: `repo`, `repository`, `branchHead`, the commit a branch points to, `hasCommit(repo, sha, { host })`,
   whether the forge holds a commit on any ref, false only once it confirms it has none (GitHub: a 404 of the commit
   while the same route reads the default branch's head commit), and a throw on any other answer, `contents`, `tree`, one folder of a
@@ -327,7 +340,7 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   (GitHub: the repository, its pull requests, the reactions on one, a commit's statuses, its workflow runs, and a pull
   request's check rollup, `unverified` with no pull request yet), and `unanswered` the names of the reads the forge
   could not answer, whatever the reason, which names no permission. It never throws: a probe that fails is unanswered.
-- Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment(repo, id, { host, pr })`,
+- Conversation: `conversationComments`, the comments on the pull request rather than on its diff, each with its `id`, `html_url`, `body`, and author as `user.login` and `user.type` (`Bot` for a bot account), from which the review step finds the review bot's own receipt and status card ([Reviewers](../review.md)), `comment(repo, id, { host, pr })`,
   one of them by id, held to pull request `pr` when the option names it (null for a comment of any other, or one the forge
   does not find), `postComment`, `editComment`, `deleteComment(repo, id)`, and `reactions`.
   `issue(repo, n, { host })` reads one issue as `{ number, state: 'open' | 'closed', title, body, url, change, created }`,

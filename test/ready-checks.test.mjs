@@ -78,7 +78,9 @@ test('a check on the head that has not finished holds the draft, and the deny na
   for (const rows of pending) {
     // The quoted spellings the shell runs as `gh pr ready 7`, which the ready hold's parser reads, are judged the same.
     for (const command of ['gh pr ready 7', `gh pr ready ${URL7}`, 'gh pr ready', 'gh -R acme/notes pr ready 7', 'git push && gh pr ready 7',
-      'gh pr re""ady 7', 'gh pr rea\\dy 7', "gh pr 'ready' 7", 'gh pr r""eady 7', 'gh pr rea""""dy 7', 'gh pr re""""ady 7', 'gh pr r\\e\\a\\d\\y 7']) {
+      'gh pr re""ady 7', 'gh pr rea\\dy 7', "gh pr 'ready' 7", 'gh pr r""eady 7', 'gh pr rea""""dy 7', 'gh pr re""""ady 7', 'gh pr r\\e\\a\\d\\y 7',
+      // A backslash and a line break inside the word, which the shell drops.
+      'gh pr r\\\neady 7']) {
       const { reason, calls } = judge(dir, { view: draft([...GREEN, ...rows]) }, command);
       assert.match(reason ?? '', /^Blocked: pull request #7 has checks that have not finished/u, `${command}: ${JSON.stringify(rows)}`);
       assert.ok(reason.includes(rows[0].name ?? rows[0].context), reason);

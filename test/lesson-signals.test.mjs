@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { CHILD_SEND_BACKS } from '../plugins/aidrian/lib/child-send-backs.mjs';
+import { BUDGET_CAUSES } from '../plugins/aidrian/lib/deadline.mjs';
 import { deliverySignal, denialSignal, forgetDenials, noteDenial, recordSignal, REPEATED_DENIALS, roundLimitSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { projectAt, projectId, stateDir } from '../plugins/aidrian/lib/project.mjs';
 
@@ -112,6 +113,21 @@ test('noteDenial counts a repeat only within one agent run and for one cause', (
   assert.deepEqual([row.key, row.agent, row.evidence], ['hook-deny:public-text', 'general-purpose', ['session long', 'agent a1']]);
   assert.equal(block('a1', 'the body names a banned term.'), null, 'once per run and cause');
   assert.deepEqual(all().map((lesson) => [lesson.key, lesson.seen]), [['hook-deny:public-text', 1]]);
+});
+
+// A loaded machine once filed a config-guard lesson whose note said the agent was never shown the allowed way, when most
+// of its refusals were the guards running out of time, a refusal whose message gives the retry steps.
+test('noteDenial counts no time budget refusal toward the lesson, and still counts any other cause', (t) => {
+  const { dir, temp, plugin: all } = project(t);
+  const block = (cause) => noteDenial({ session_id: 'busy', cwd: dir, agent_id: 'a1', agent_type: 'general-purpose' }, 'config-guard', { dir: temp, cause });
+  assert.deepEqual([...BUDGET_CAUSES], ['past the guards\' time budget', 'the project run rule ran out of time']);
+  for (const cause of BUDGET_CAUSES) {
+    assert.deepEqual(Array.from({ length: REPEATED_DENIALS }, () => block(cause)), Array(REPEATED_DENIALS).fill(null), cause);
+  }
+  assert.deepEqual(all(), [], 'the machine\'s load files no lesson');
+  const results = Array.from({ length: REPEATED_DENIALS }, () => block('this writes .aidrian/config.json'));
+  assert.deepEqual(results.map(Boolean), [false, false, true]);
+  assert.deepEqual(all().map((lesson) => lesson.key), ['hook-deny:config-guard']);
 });
 
 test('blocks that land at the same time all count, and exactly one of them records the lesson', async (t) => {

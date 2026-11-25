@@ -11,12 +11,17 @@ const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}]/gu;
 // inline code span, which a tracker renders as text and never as a link.
 const DOMAIN = /(?<![\w.@-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(?![\w-])(?:[/:]\S*)?/giu;
 
-// `text` with anything shaped like a credential masked as `[redacted]`: a forge, chat, cloud, or API token by its
-// prefix, a JSON web token, the password of a URL's user part, and the value after an HTTP Authorization scheme.
+// `text` with anything shaped like a credential masked: the whole user part of an HTTP URL as `***`, whatever it holds
+// (`user`, `user:password`, `user:`, or `:password`), up to its last `@` before the path, since a forge takes a token as
+// the user name too; and as `[redacted]` a forge, chat, cloud, or API token by its prefix, a JSON web token, the
+// password of another URL's user part, whose user name, such as SSH's `git`, stays, and the value after an HTTP
+// Authorization scheme. Every message that prints a remote URL masks it with this before it cuts it to length, so no
+// cut leaves part of a credential behind.
 export const maskSecrets = (text) => String(text)
+  .replace(/(\bhttps?:\/\/)[^\s/?#]*@/giu, '$1***@')
   .replace(/\b(?:gh[pousr]_|github_pat_|glpat-|sk-|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/gu, '[redacted]')
   .replace(/\b(?:eyJ[A-Za-z0-9_-]{10,}\.){2}[A-Za-z0-9_-]{10,}/gu, '[redacted]')
-  .replace(/(:\/\/[^\s/:@]+:)[^\s/@]+@/gu, '$1[redacted]@')
+  .replace(/(:\/\/[^\s/:@]*:)[^\s/@]+@/gu, '$1[redacted]@')
   .replace(/\b(authorization\\?["']?\s*[:=]\s*)(?:\\?"(?:\\.|[^"\\])*\\?"|'(?:\\.|[^'\\])*'|[^\n|]*)/giu, '$1[redacted]')
   .replace(/\b((?:basic|bearer|token)\s+)(?!\[redacted\])[A-Za-z0-9+/=._-]{12,}/giu, '$1[redacted]');
 

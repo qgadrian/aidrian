@@ -106,7 +106,8 @@ export const commands = {
         if (prior && samePath(prior, briefPath)) return problem(`--prior ${prior}: the prior is the brief itself: run snapshot without --prior, which saves the brief before the refresh overwrites it`);
         const taken = takeSnapshot(briefPath, prior);
         if (taken?.problem) return problem(`${taken.source} ${taken.problem}`);
-        console.log(taken ? `saved ${taken.source} to ${taken.snapshot}` : 'no brief to supersede; check compares nothing unless given --prior');
+        if (taken?.unchanged) console.log(`${taken.snapshot} already holds ${taken.source}`);
+        else console.log(taken ? `saved ${taken.source} to ${taken.snapshot}` : 'no brief to supersede; check compares nothing unless given --prior');
         return 0;
       }
       // A config with errors exits 2, as an unreadable input does: it is not a finding.

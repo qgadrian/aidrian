@@ -1,9 +1,10 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 
 import { checkBrief, commands, resolvePrior, snapshotPath, takeSnapshot } from '../plugins/aidrian/lib/handoff-brief.mjs';
@@ -64,7 +65,7 @@ test('a bold Supersedes label reads its value without the marks, and an empty on
   assert.match(supersedesProblem('# H\nWritten: x | **Supersedes:**\n'), /^Supersedes: no value in the header/u);
 });
 
-test('a link planted at .prior/<name> is replaced, never written through, by a passing check and by snapshot', (t) => {
+test('a link planted at .prior/<name> is replaced by a passing check and refused by snapshot, never written through', (t) => {
   const dir = tempDir(t);
   const outside = write(tempDir(t), 'target.txt', 'outside\n');
   const file = write(dir, '2026-01-02-widget.md', brief());
@@ -77,9 +78,10 @@ test('a link planted at .prior/<name> is replaced, never written through, by a p
 
   rmSync(snapshotPath(file));
   symlinkSync(outside, snapshotPath(file));
-  assert.equal(takeSnapshot(file).snapshot, snapshotPath(file));
+  const refused = run(dir, 'snapshot', file);
+  assert.deepEqual([refused.status, refused.stderr], [2, `${file} cannot be saved: ${snapshotPath(file)} is not a regular file, and a snapshot replaces nothing: remove it and run snapshot again\n`]);
   assert.equal(readFileSync(outside, 'utf8'), 'outside\n', 'the snapshot left the link target alone');
-  assert.equal(lstatSync(snapshotPath(file)).isSymbolicLink(), false);
+  assert.equal(lstatSync(snapshotPath(file)).isSymbolicLink(), true, 'the snapshot removed nothing');
   assert.deepEqual(readdirSync(path.join(dir, '.prior')), ['2026-01-02-widget.md'], 'no temporary file is left');
 });
 
@@ -92,6 +94,49 @@ test('a .prior that is itself a link is refused: the snapshot reports it, and a 
   assert.match(taken.problem, /^cannot be saved to .*\(ESYMLINK\)$/u);
   assert.equal(checkBrief(file, undefined, 0).exitCode, 0);
   assert.deepEqual(readdirSync(elsewhere), [], 'nothing was written through the link');
+});
+
+test('a snapshot taken after the write keeps the prior and exits 2; the same bytes again are kept with no write', (t) => {
+  const dir = tempDir(t);
+  const file = write(dir, '2026-01-02-widget.md', brief());
+  assert.equal(takeSnapshot(file).snapshot, snapshotPath(file));
+  const { ino } = statSync(snapshotPath(file));
+  const again = run(dir, 'snapshot', file);
+  assert.deepEqual([again.status, again.stdout], [0, `${snapshotPath(file)} already holds ${file}\n`]);
+  assert.equal(statSync(snapshotPath(file)).ino, ino, 'the same bytes are not written again');
+  assert.notEqual(statSync(file).ino, ino, 'the snapshot is a copy, not the brief');
+  chmodSync(path.join(dir, '.prior'), 0o500);
+  const readOnly = run(dir, 'snapshot', file);
+  chmodSync(path.join(dir, '.prior'), 0o700);
+  assert.deepEqual([readOnly.status, readOnly.stderr], [0, ''], 'the same bytes in a read-only .prior need no temporary file');
+
+  writeFileSync(file, brief('Supersedes: 2026-01-01-widget.md'));
+  assert.equal(readFileSync(snapshotPath(file), 'utf8'), brief(), 'a refresh of the brief leaves the snapshot alone');
+  const late = run(dir, 'snapshot', file);
+  assert.equal(late.status, 2);
+  assert.match(late.stderr, new RegExp(`^${file} differs from the snapshot ${snapshotPath(file)}, .*run aidrian handoff check, which compares with it; remove the snapshot only when that prior is known to be wrong\\n$`, 'u'));
+  assert.equal(readFileSync(snapshotPath(file), 'utf8'), brief(), 'the good prior is kept');
+  assert.match(takeSnapshot(file, write(dir, 'other.md', 'other\n')).problem, /^differs from the snapshot /u);
+  assert.equal(readFileSync(snapshotPath(file), 'utf8'), brief(), 'a --prior with other bytes keeps it too');
+  assert.deepEqual(readdirSync(path.join(dir, '.prior')), ['2026-01-02-widget.md'], 'no temporary file is left');
+});
+
+test('a snapshot that is the brief\'s own file, or cannot be read, is kept and exits 2 with its own message', (t) => {
+  const dir = tempDir(t);
+  const file = write(dir, '2026-01-02-widget.md', brief());
+  const other = write(dir, 'other.md', brief());
+  mkdirSync(path.join(dir, '.prior'));
+  linkSync(file, snapshotPath(file));
+  const linked = run(dir, 'snapshot', file, '--prior', other);
+  assert.deepEqual([linked.status, linked.stderr], [2, `${other} cannot be saved: ${snapshotPath(file)} is the brief's own file, a hard link, not a copy a refresh leaves alone: remove that link and run snapshot again\n`]);
+  assert.equal(statSync(snapshotPath(file)).ino, statSync(file).ino, 'the link is left for the session to remove');
+
+  rmSync(snapshotPath(file));
+  writeFileSync(snapshotPath(file), 'an earlier brief of another length\n', { mode: 0o000 });
+  if (process.getuid?.() === 0) return t.diagnostic('root reads a 0000 file: the unreadable case cannot be made here');
+  assert.match(takeSnapshot(file).problem, /^cannot be compared with the snapshot .*, which cannot be read \(EACCES\), so it is kept: restore read access to it, or run aidrian handoff check with --prior naming a known-good readable brief$/u);
+  chmodSync(snapshotPath(file), 0o600);
+  assert.equal(readFileSync(snapshotPath(file), 'utf8'), 'an earlier brief of another length\n', 'the unreadable snapshot was kept');
 });
 
 test('the handoff command says it holds the sections a resume needs', () => {
@@ -144,6 +189,25 @@ test('clearing a stale snapshot removes nothing through a .prior that is a link'
   symlinkSync(elsewhere, path.join(dir, '.prior'));
   assert.equal(takeSnapshot(path.join(dir, '2026-01-02-lone.md')), null);
   assert.equal(readFileSync(kept, 'utf8'), 'not this folder\'s\n');
+});
+
+test('a pipe swapped in between the look and the open returns at once with the not-regular message', (t) => {
+  const dir = tempDir(t);
+  const file = write(dir, '2026-01-02-widget.md', brief());
+  mkdirSync(path.join(dir, '.prior'));
+  writeFileSync(snapshotPath(file), brief());
+  const pipe = path.join(dir, 'pipe');
+  assert.equal(spawnSync('mkfifo', [pipe]).status, 0, 'mkfifo made the pipe');
+  // In a child the parent can kill: an open that waited on the pipe would block the test runner's own thread.
+  const child = `import { renameSync } from 'node:fs';
+    const { takeSnapshot } = await import(process.argv[1]);
+    const [file, pipe] = process.argv.slice(2);
+    process.stdout.write(JSON.stringify(takeSnapshot(file, undefined, { beforeOpen: (snapshot) => renameSync(pipe, snapshot) })));`;
+  const module = pathToFileURL(path.resolve(import.meta.dirname, '../plugins/aidrian/lib/handoff-prior.mjs')).href;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', child, module, file, pipe], { encoding: 'utf8', timeout: 10_000 });
+  assert.deepEqual([result.signal, result.status, result.stderr], [null, 0, ''], 'the child returned before its timeout');
+  assert.equal(JSON.parse(result.stdout).problem, `cannot be saved: ${snapshotPath(file)} is not a regular file, and a snapshot replaces nothing: remove it and run snapshot again`);
+  assert.equal(lstatSync(snapshotPath(file)).isFIFO(), true, 'the pipe is kept');
 });
 
 test('a folder at the snapshot name with nothing to snapshot exits 2 with a message, not a stack trace', (t) => {

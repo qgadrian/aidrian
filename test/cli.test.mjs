@@ -57,6 +57,53 @@ test('check fails with every error, and names the folder it started from when th
   );
 });
 
+// The local file is per machine and git-ignored: written once for the newest plugin, it must not fail an older one's
+// check, or a pre-commit hook that runs it refuses every commit there.
+test('check passes a local file with keys from a newer release, warns on each, and a known key with a bad value still fails', async (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
+  const local = path.join(dir, '.aidrian.local.json');
+  const future = {
+    nextRelease: { background: 'on' },
+    names: { human: 'the lead', nickname: 'x' },
+    github: { unattendedWaiver: 'off', nextSwitch: { enabled: true } },
+    review: { nextKey: 1 },
+    decisions: { nextKey: 1 },
+    telemetry: { nextKey: 1 },
+  };
+  writeFileSync(local, JSON.stringify(future));
+  const ok = await run(['check'], dir);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /^ok: /u);
+  const warned = ok.stderr.split('\n').filter((line) => line.includes('.aidrian.local.json'));
+  assert.deepEqual(warned, [
+    'warning: .aidrian.local.json: unknown key "nextRelease"',
+    'warning: .aidrian.local.json: unknown key "github.nextSwitch"; only "github.autoMerge" and "github.unattendedWaiver" are machine settings',
+    'warning: .aidrian.local.json: unknown key "names.nickname"',
+    'warning: .aidrian.local.json: unknown key "telemetry.nextKey"',
+    'warning: .aidrian.local.json: unknown key "review.nextKey"; only "review.engine", "review.visual", "review.productFeedback.auto", and "review.publish" are machine settings',
+    'warning: .aidrian.local.json: unknown key "decisions.nextKey"',
+  ]);
+  const project = findProject(dir);
+  assert.equal(loadConfig(project).config.names.human, 'the lead', 'the rest of the file applies');
+  assert.equal(project.localUnattendedWaiver, 'off', 'a switch it sets holds');
+
+  // A known key with a bad value stays an error, and so does an unknown key in an agent's gates, which would lift a gate.
+  for (const [extra, error] of [
+    [{ names: { human: 3 } }, '.aidrian.local.json: "names.human" must be a non-empty string'],
+    [{ agents: { explorer: { block: ['Bash'] } } }, '.aidrian.local.json: unknown key "agents.explorer.block"'],
+  ]) {
+    writeFileSync(local, JSON.stringify({ nextRelease: 1, ...extra }));
+    const bad = await run(['check'], dir);
+    assert.equal(bad.status, 1, JSON.stringify(extra));
+    assert.ok(bad.stderr.split('\n').includes(error), bad.stderr);
+    assert.ok(bad.stderr.split('\n').includes('warning: .aidrian.local.json: unknown key "nextRelease"'), bad.stderr);
+  }
+});
+
 test('in a worktree made before the project folder was committed, both commands say so instead of asking for init', async (t) => {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

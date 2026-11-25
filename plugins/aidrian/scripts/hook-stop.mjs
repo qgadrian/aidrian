@@ -26,7 +26,8 @@
 //   in `ask` mode, or climbs one step in `auto` (lib/session-length.mjs nextRatio), and the ceiling once the context
 //   doubles. It reads Claude Code transcripts only. Its text follows the continue route the session's host can do
 //   (lib/session-length.mjs continuation): with `clear` or `background` the agent ends the turn after the brief, and on
-//   the background route in `auto` mode a Human who is not watching is no reason to skip the handoff. The cost model's
+//   the background route in `auto` mode a Human who is not watching is no reason to skip the handoff. At the chain cap,
+//   where the gate would continue no brief, the firing is recorded and the turn is not sent back. The cost model's
 //   B is the project's (lib/resume-tokens.mjs resolvedHandoff), and a stop of a session that resumed from a brief records
 //   that session's sample once, whatever the mode (recordResume). The marker's path
 //   is stopMarkerPath's, which `aidrian session snapshot` reads too; it is read no-follow, capped, and only when this user
@@ -104,9 +105,10 @@ export async function handle(input) {
   const earlier = readOwnText(marker, MARKER_CAP);
   // The route is read only on a stop that fires: on the background route it asks git for the base branch's config.
   if (!stopReminder(text, handoff, earlier)) return;
-  const reminder = stopReminder(text, handoff, earlier, await continuation(handoff, host, project, config));
+  const reminder = stopReminder(text, handoff, earlier, await continuation(handoff, host, project, config, input.session_id));
   writeMarker(marker, `${JSON.stringify(reminder.marker)}\n`);
-  deny(reminder.reason);
+  // At the chain cap the firing is recorded and nothing is asked: the gate would continue no brief.
+  if (reminder.reason) deny(reminder.reason);
 }
 
 if (isMain(import.meta.url)) await runHook(handle);

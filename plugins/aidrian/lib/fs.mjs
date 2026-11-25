@@ -33,7 +33,7 @@ export function readJson(root, rel, errors, scope = 'the project') {
 }
 
 // The text of `file`, following a link as a plain read does, from one open that never waits, checked as a regular file
-// of at most `cap` bytes through that open: { text }, { missing: true } when nothing, or no regular file, is there, or
+// of at most `cap` bytes through that open: { text, bytes }, { missing: true } when nothing, or no regular file, is there, or
 // { problem }. Every hook read of a file under a folder a session may write goes through it or readSmallJson.
 export function readOnce(file, cap = JSON_CAP) {
   let fd;
@@ -54,7 +54,8 @@ export function readOnce(file, cap = JSON_CAP) {
       if (got === 0) break;
       read += got;
     }
-    return { text: buffer.subarray(0, read).toString('utf8') };
+    const bytes = buffer.subarray(0, read);
+    return { text: bytes.toString('utf8'), bytes };
   } catch (error) {
     return { problem: `cannot be read (${error.code ?? 'no code'})` };
   } finally {

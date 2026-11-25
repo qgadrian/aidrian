@@ -283,6 +283,39 @@ test('record --text-file keeps its lines inside one entry, and takes none that o
   await refused(fx, ['record', fx.file, '--by', 'a', '--text-file', fx.root], /is no file|cannot be read/u);
 });
 
+test('record takes no HTML tag or comment outside a code span, so no entry hides a section after it', async (t) => {
+  const fx = fixture(t, `${PLAN}\n## Revision history\n\n## Verification\n\nx\n`);
+  const note = path.join(fx.root, 'note.md');
+  const html = /a record takes no HTML tag or comment outside a code span/u;
+  for (const line of ['<!-- open', '  <details>', '<div', '- <pre>', '> <script>', '1. <x-y>', '</p>', '<?php', '<!DOCTYPE', '<![CDATA[', 'words <!-- open', 'words <textarea>', 'one ` two `<div>`', '\\`<div>`', '``<div>``', '`a`<b>`c`']) {
+    writeFileSync(note, `first\n\n${line}\n\nlast\n`);
+    await refused(fx, ['record', fx.file, '--by', 'a', '--text-file', note], html);
+    await refused(fx, ['record', fx.file, '--by', 'a', `--text=${line}`], html);
+    await refused(fx, ['record', fx.file, `--by=${line}`, '--text', 'x'], html);
+  }
+  // A backtick left open on a line before may pair with one of the span's.
+  writeFileSync(note, 'first ` open\n`<div>`\n');
+  await refused(fx, ['record', fx.file, '--by', 'a', '--text-file', note], html);
+  await refused(fx, ['record', fx.file, '--by', 'a`', '--text', '`<div>`'], html);
+
+  writeFileSync(note, 'ran `aidrian plan set <plan> S1` and `<!-- -->`\n- 1 < 2, x <3, a <- b, `code`\n');
+  await accepted(fx, 'record', fx.file, '--by', 'a', '--text-file', note);
+  assert.match(fx.read(), /: ran `aidrian plan set <plan> S1` and `<!-- -->`\n {2}- 1 < 2, x <3, a <- b, `code`\n\n## Verification\n/u);
+});
+
+test('record --text-file takes U+FFFD written in the file, and no bytes that are not UTF-8', async (t) => {
+  const fx = fixture(t);
+  const note = path.join(fx.root, 'note.md');
+  writeFileSync(note, 'the page shows \ufffd for it\n');
+  await accepted(fx, 'record', fx.file, '--by', 'a', '--text-file', note);
+  await accepted(fx, 'record', fx.file, '--by', 'a', '--text', 'the page shows \ufffd for it');
+  assert.equal(fx.read().match(/: the page shows \ufffd for it\n/gu).length, 2);
+  for (const bytes of [[0xff], [0xc3, 0x28], [0xed, 0xa0, 0x80], [0xe2, 0x82]]) {
+    writeFileSync(note, Buffer.concat([Buffer.from('the page shows \ufffd for it '), Buffer.from(bytes)]));
+    await refused(fx, ['record', fx.file, '--by', 'a', '--text-file', note], /cannot be read as UTF-8/u);
+  }
+});
+
 test('record refuses an empty text, a forged line, two sections, and a plan that leaves a fence open', async (t) => {
   const fx = fixture(t);
   const note = path.join(fx.root, 'note.md');
@@ -594,6 +627,10 @@ test('the orchestrator asks one question before a record, and the skills name th
     assert.match(read(rel), /Plan content: `planning-agent`\. Never rewrite its plan\. A slice's status, notes, or a record that changes no slice: `aidrian plan`\./u, rel);
     assert.match(read(rel), rule, rel);
   }
+  // No entry or note is a gate's approval, whatever it names.
+  const gates = /4\. \*\*Gates\.\*\*[\s\S]*?(?=\n5\. )/u.exec(read('skills/plan-implement/SKILL.md'))[0];
+  assert.match(gates, /A `## Revision history` entry or a slice's `notes` never records either, whatever it names, as anyone may write one\.$/u);
+  assert.doesNotMatch(gates, /handoff/u);
   const steps = read('skills/issue-implement/steps/phases-1-4-implement.md');
   assert.match(steps, /1\. \*\*Plan state\.\*\*[\s\S]*?`aidrian plan set <plan> <slice> in_progress`[\s\S]*?When git tracks the plan file[\s\S]*?`planning-agent` makes this edit and step 9's[\s\S]*?9\. \*\*Commit\.\*\*[\s\S]*?`aidrian plan set <plan> <slice> complete`/u);
   assert.match(read('skills/issue-implement/steps/phases-5-8-close.md'), /`aidrian plan set <plan> INTEGRATION-REVIEW complete --note '[^']+'`\.\nWhen git tracks the plan, `planning-agent` makes that edit/u);

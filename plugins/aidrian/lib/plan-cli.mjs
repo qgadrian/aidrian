@@ -120,13 +120,23 @@ function readPlan(file) {
   try {
     fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const stat = fstatSync(fd);
-    if (stat.isFile()) return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(fd)), mode: stat.mode & 0o777 };
+    const text = stat.isFile() ? decoded(readFileSync(fd)) : undefined;
+    if (text !== undefined) return { text, mode: stat.mode & 0o777 };
   } catch {
-    // Not there, a link, or no UTF-8.
+    // Not there, or a link.
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
   return refuse(`${file} cannot be read as a file of UTF-8 text`);
+}
+
+// The text of `bytes`, every character as it is encoded, or undefined when they are no UTF-8.
+function decoded(bytes) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
 }
 
 // Writes `text` over `file` in one rename, with the mode `mode`, set on the open file so no path decides whose it is.
@@ -287,6 +297,8 @@ function recordEdit(rest, { by, text, 'text-file': from }) {
   const who = plainLine(by)?.trim() ?? refuse(`--by names who decided or did what is recorded. ${oneLine('--by')}`);
   const words = text === undefined ? fileWords(from) : textWords(text);
   const entry = [`- ${today()}, ${who}: ${words[0]}`, ...words.slice(1).map((line) => line && `  ${line}`)];
+  const html = htmlIn(entry);
+  if (html) refuse(`a record takes no HTML tag or comment outside a code span, which could hide what follows it: ${html.trim()}`);
   return (before) => historyEdit(outline(before), entry);
 }
 
@@ -299,11 +311,20 @@ function textWords(text) {
 const MARKERS = /^(?:\s|>|(?:[-*+]|\d+[.)])(?=\s))+/u;
 const opensBlock = (line) => /^[\s>]*(?:=+|-+)\s*$/u.test(line) || /^(?:#{1,6}(?:\s|$)|`{3}|~{3})/u.test(line.replace(MARKERS, ''));
 
+// The first line of a record that opens an HTML tag or comment, at its start or in its text, or undefined: raw HTML can hide
+// the sections after it. A code span, a pair of single backticks on one line, shows it as text; a record with any other
+// backtick has no line whose spans can be told.
+function htmlIn(entry) {
+  const bare = entry.map((line) => line.replace(/(?<!\\)`[^`]+`/gu, ' '));
+  const read = bare.some((line) => line.includes('`')) ? entry : bare;
+  return entry.find((_, at) => /<[a-z/!?]/iu.test(read[at]));
+}
+
 // The lines of a record's text file. They go in one list item, each after the first indented, so none starts an entry.
 function fileWords(from) {
-  const { text, missing } = readOnce(path.resolve(from));
-  // A byte that is no UTF-8 reads as U+FFFD.
-  if (text === undefined || text.includes('\ufffd')) refuse(missing ? `${from} is no file` : `${from} cannot be read as UTF-8 text`);
+  const { bytes, missing } = readOnce(path.resolve(from));
+  const text = bytes && decoded(bytes);
+  if (text === undefined) refuse(missing ? `${from} is no file` : `${from} cannot be read as UTF-8 text`);
   if (text.trim() === '') refuse('the record is empty');
   return text.trim().split(/\r?\n/u).map((raw) => {
     const line = raw.trimEnd();

@@ -13,7 +13,7 @@ import { configCommands } from './hosts/index.mjs';
 import { readings } from './package-runner.mjs';
 import { isFolderIn } from './rules/main-checkout/bash-writes.mjs';
 import { WRITERS, written } from './rules/main-checkout/writers.mjs';
-import { aidrianArgs, readGit, walkCommands } from './shell-lex.mjs';
+import { aidrianArgs, interpreterOf, readGit, walkCommands } from './shell-lex.mjs';
 
 // Programs, besides each host's own (hosts/index.mjs configCommands) and the forge CLI's (forges/index.mjs
 // forgeConfigCommands), whose subcommands write the user's config, login, or jobs. `valueOptions` are the global options
@@ -75,7 +75,8 @@ export const expand = expandKnown;
 // { dynamic, links, programs, manifests, removed, text }.
 //   - dynamic: each target built from a variable or a command, { text, folder }, `text` as expand gives it.
 //   - links: each path a link the command makes points at, { from, to, folder }.
-//   - programs: each write a program makes to its own config, { file, folder, text } or { what, text }.
+//   - programs: each write a program makes to its own config, { file, folder, text } or { what, text }, with `literal` true
+//     for a file the program opens as it is spelled, which is never expanded.
 //   - manifests: each target that may be a review manifest's name, { text, folder, how, sources }, with `mode` true for
 //     a `mkdir` that sets the folder's mode.
 //   - removed: each folder `rmdir` removes, { text, folder }, which no other reader names.
@@ -110,7 +111,7 @@ export function shellWrites(command, cwd, env) {
     }
     found.links.push(...linksOf(program, args, folder, env, command));
     for (const write of programWrites(segment, invocation, folder)) {
-      found.programs.push(write.file ? { ...write, file: expand(write.file, env, command) } : write);
+      found.programs.push(write.file && !write.literal ? { ...write, file: expand(write.file, env, command) } : write);
     }
   }
   return found;
@@ -189,16 +190,40 @@ function programWrites(segment, invocation, folder) {
   return [];
 }
 
+// The actions of `aidrian plan` that edit the plan they name.
+const PLAN_EDITS = ['set', 'record'];
+// Whether the shell passes `token` on as the one word it is written as. The lexer keeps no quotes, so a word the shell
+// would expand unquoted counts as expanded: one with a glob, brace, or parenthesis, or a `~` or `=` at its start.
+const asWritten = (token) => Boolean(token) && !token.dynamic && !/^[~=]|[*?[\]{}()]/u.test(token.text);
+
 // The plan `aidrian plan set` or `record` edits, whatever project or environment the call names: the word right after the
-// action, as the command takes its first operand there. One that is missing, an option, or built at run time, a glob or
-// a brace included, is refused, since which plan it edits cannot be told. A program
-// word built at run time may be aidrian, and an action built at run time may be one of the two.
+// action, as the command takes its first operand there, and the path it opens is that word as written (`literal`).
+// One rule: a call that may be one of the two is refused unless its subcommand, its action, and its file are each one word
+// as written (asWritten), and the file no option, since a word the shell builds may be, or split into, any of them.
 function planTarget(invocation, folder, shown) {
-  const words = aidrianArgs(invocation) ?? (invocation.dynamic ? invocation.args : []);
-  if (words[0]?.text !== 'plan' || !(words[1]?.dynamic || ['set', 'record'].includes(words[1]?.text))) return [];
-  const file = words[2];
-  if (!file || file.dynamic || /^-|[*?[{]/u.test(file.text)) return [{ what: 'a local plan `aidrian plan` edits, whose file is missing, not the first word after the action, or built at run time, so which plan it edits cannot be told', text: shown }];
-  return [{ file: file.text, folder, text: shown }];
+  return planCalls(invocation).flatMap(({ words: [subcommand, action, file], named }) => {
+    const edits = asWritten(action) && PLAN_EDITS.includes(action.text);
+    if (asWritten(subcommand)) {
+      if (subcommand.text !== 'plan' || !action || (asWritten(action) && !edits)) return [];
+      if (edits && asWritten(file) && !file.text.startsWith('-')) return [{ file: file.text, folder, text: shown, literal: true }];
+    } else if (!subcommand || !(named || edits)) return [];
+    return [{ what: 'what may be a local plan `aidrian plan` edits, whose subcommand, action, and file are not each one word written out, the file right after the action, with no variable, glob, brace, parenthesis, or `~`, so which plan it edits cannot be told', text: shown }];
+  });
+}
+
+// The words of each call to aidrian that `invocation` may be, { words, named }, with `named` true when it names aidrian. A
+// program word built at run time may be aidrian, or run one of its words, and node may run any of its words that is
+// aidrian's script or is built at run time: such a call counts by what its words name (planTarget).
+function planCalls(invocation) {
+  const { program, dynamic, args } = invocation;
+  const own = aidrianArgs(invocation);
+  if (program === 'aidrian') return [{ words: own, named: true }];
+  if (!dynamic && interpreterOf(program)?.name !== 'node') return [];
+  const runs = (token) => token.dynamic || aidrianArgs({ program: 'node', args: [token] }) !== null;
+  const calls = args.flatMap((token, at) => (runs(token) ? [{ words: args.slice(at + 1), named: false }] : []));
+  if (dynamic) calls.unshift({ words: args, named: /aidrian/iu.test(program) });
+  else if (own) calls.unshift({ words: own, named: true });
+  return calls;
 }
 
 // The config one program call with the arguments `words` writes, as programWrites reads it, shown as `shown`.

@@ -1762,7 +1762,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     So is one HEAD holds otherwise; the refusal names the file as one clean, bounded line.
     Every path its commits change from origin's default branch, and every uncommitted one, is held to the one spelling
     rule (`spellingRule`): another spelling of a workflow folder, of the row's policy files, or of what the start hook
-    loads, or a guarded path by its fold alone, refuses the push.
+    loads, which every start on existing work keeps, or a guarded path by its fold alone, refuses the push. A folder git
+    lists whole, as an embedded repository, is judged without its trailing slash, and a read whose output outgrows its
+    256 MiB buffer refuses.
     The other exception is an exact path of the row's `indexFiles`, the knowledge index files the attempt may edit in
     git's index ([Project run](config.md#project-run)). One that differs from `<overlay>`, and from git's clean merge of a
     newer base, must be a plain file (`git ls-tree -z HEAD`, `100644 blob`) that is not the base's blob the row names. A

@@ -10,7 +10,7 @@
 import { maskSecrets } from './clean-text.mjs';
 import { checkDeadline, remainingMs } from './deadline.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
-import { runGit } from './git.mjs';
+import { runGit, WHOLE_TREE_BUFFER } from './git.mjs';
 import { INDEX_RECIPE, PLAIN_FILE } from './index-edits.mjs';
 import { startLoadProblem } from './pr-auto-merge-docs.mjs';
 import { foldPath, isGuardedPath, isPolicyPath, spellingRule } from './project.mjs';
@@ -25,11 +25,11 @@ const BASE_REFS = ['refs/remotes/origin/HEAD', 'refs/remotes/origin/main'];
 const NO_BASE = 'it pushes from a checkout where git names no merge base with origin\'s default branch (refs/remotes/origin/HEAD or origin/main), so its commits may change the forge\'s workflow files; run `git fetch origin` (with a git older than 2.48, then `git remote set-head origin --auto`), then push again';
 const SLOW = 'git could not say in time';
 
-// runGit within the guards' budget, in `folder`.
-function budgeted(args, folder) {
+// runGit within the guards' budget, in `folder`; `whole` for a read whose output lists a whole tree's paths.
+function budgeted(args, folder, whole = false) {
   checkDeadline();
   const budget = Number.isFinite(remainingMs()) ? { timeout: Math.max(1, Math.floor(remainingMs())) } : {};
-  return runGit(args, folder, budget);
+  return runGit(args, folder, { ...budget, ...(whole ? { maxBuffer: WHOLE_TREE_BUFFER } : {}) });
 }
 
 // Why the push from `folder`, inside the session's root `root` ({ root, common }, real and case-folded by `fold`), is
@@ -64,7 +64,7 @@ function overlayProblem(folder, overlay, { policyFiles, startLoaded, indexFiles 
   const editable = new Set(indexFiles.map((each) => each.path));
   const held = (file) => file !== '' && (isGuardedPath(file) || isPolicyPath(file, policyFiles) || (startLoaded !== null && startLoadProblem(file, startLoaded) !== null));
   const guarded = (file) => held(file) && !editable.has(file);
-  const diff = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', overlay, 'HEAD', '--'], folder);
+  const diff = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', overlay, 'HEAD', '--'], folder, true);
   if (diff.status !== 0) return `it pushes, and ${SLOW} which files its commits change from ${overlay.slice(0, 7)}, the head its attempt started from on the base branch's copies of the host config and instruction files`;
   const changed = diff.stdout.split('\0');
   const count = changed.filter(guarded).length;
@@ -125,12 +125,12 @@ function mergedProblem(folder, overlay, { held, guarded }, changed) {
     const older = budgeted(['merge-base', '--is-ancestor', base, overlay], folder);
     if (older.status !== 0 && older.status !== 1) return { reason: `${SLOW} whether the head merged a newer base` };
     if (older.status === 0 && !changed) return {};
-    const merge = budgeted(['merge-tree', '--write-tree', '--no-messages', '--name-only', '-z', overlay, base], folder);
+    const merge = budgeted(['merge-tree', '--write-tree', '--no-messages', '--name-only', '-z', overlay, base], folder, true);
     if (merge.status !== 0 && merge.status !== 1) return { reason: `${SLOW} how the base merges` };
     const [tree, ...conflicted] = merge.stdout.split('\0').filter((each) => each !== '');
     const conflict = conflicted.find(held);
     if (conflict) return { conflict };
-    const differ = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', tree, 'HEAD', '--'], folder);
+    const differ = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', tree, 'HEAD', '--'], folder, true);
     if (differ.status !== 0) return { reason: `${SLOW} how the head differs from the merge` };
     const paths = differ.stdout.split('\0');
     const edited = paths.find(guarded);
@@ -165,12 +165,13 @@ export function workflowPaths() {
 // branch and tag rules and its secrets' environments stand behind it (docs/hooks.md#agent-gates names the residual).
 function committedProblem(folder, { counts }, spelling) {
   for (const base of BASE_REFS) {
-    const diff = budgeted(['diff', '--raw', '-z', '--no-renames', '--no-abbrev', '--no-relative', `${base}...HEAD`, '--'], folder);
+    const diff = budgeted(['diff', '--name-only', '-z', '--no-renames', '--no-relative', `${base}...HEAD`, '--'], folder, true);
     if (diff.status === null) return `it pushes, and ${SLOW} which files its commits change, so they may change the forge's workflow files`;
     if (diff.status !== 0) continue;
-    const spelled = rawPaths(diff.stdout).map(spelling).find(Boolean);
+    const paths = diff.stdout.split('\0').filter((file) => file !== '');
+    const spelled = paths.map(spelling).find(Boolean);
     if (spelled) return `it pushes commits that change ${spelled}; take that path out of the commits`;
-    const changed = rawPaths(diff.stdout).filter((file) => counts(file));
+    const changed = paths.filter((file) => counts(file));
     return changed.length ? `it pushes commits that change ${changed[0].slice(0, 120)}, a workflow file the forge runs with the repository's secrets on that push, before any review; an issue that needs such a change is parked for the Human, and one the default branch made counts once \`git fetch origin\` brings it` : null;
   }
   return NO_BASE;
@@ -180,9 +181,10 @@ function committedProblem(folder, { counts }, spelling) {
 // run after the guard read it could commit into the push, or null; first, one at a path in another spelling of a name
 // the harness holds (`spelling`).
 function uncommittedProblem(folder, { counts }, spelling) {
-  const status = budgeted(['status', '--porcelain', '-z', '--untracked-files=all', '--ignored=no', '--'], folder);
+  const status = budgeted(['status', '--porcelain', '-z', '--untracked-files=all', '--ignored=no', '--'], folder, true);
   if (status.status !== 0) return `it pushes, and ${SLOW} whether its checkout holds a change to the forge's workflow files`;
-  const entries = statusEntries(status.stdout);
+  // A folder git lists whole, as an embedded repository, ends with a slash, which no name it may be spelled as has.
+  const entries = statusEntries(status.stdout).map((entry) => ({ ...entry, paths: entry.paths.map((file) => file.replace(/\/+$/u, '')) }));
   const spelled = entries.flatMap(({ paths }) => paths).map(spelling).find(Boolean);
   if (spelled) return `it pushes from a checkout that holds an uncommitted change to ${spelled}, which a command run beside the push could commit into it; take it out, then push again`;
   const found = entries.find(({ paths }) => paths.some((file) => counts(file)));

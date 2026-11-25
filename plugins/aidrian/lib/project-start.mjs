@@ -33,7 +33,7 @@ import path from 'node:path';
 
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS, systemReal } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
-import { gateGit } from './git.mjs';
+import { gateGit, WHOLE_TREE_BUFFER } from './git.mjs';
 import { nestedPathspecs } from './hosts/index.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, keepTokenFiles, sessionToken, tokenDigest, tokenFiles, tokenRecordThere, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
@@ -359,7 +359,7 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
       onHead = from;
       // A path of the head that spells a name the harness holds another way (project-run-gate.mjs spellingAt) refuses.
       if (spelled) {
-        const tree = git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', from]);
+        const tree = git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', from], work, { maxBuffer: WHOLE_TREE_BUFFER });
         if (tree.status !== 0) return failed('ls-tree', tree);
         const why = spelled(tree.stdout.split('\0').filter(Boolean));
         if (why) return gone(`the branch's head ${from.slice(0, 7)} holds ${why}`);

@@ -12,7 +12,7 @@ import path from 'node:path';
 import { anchorReaders } from './attempt-clone.mjs';
 import { loadConfig, pluginRepository } from './config.mjs';
 import { localForgeTokenKeychain, splitUnknownKeys } from './config-local.mjs';
-import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, knownFields, readJson } from './fs.mjs';
+import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, knownFields, quoteName, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, readOriginUrl, readPrefix, readRemoteUrls, repositoryCheckouts, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
@@ -414,7 +414,7 @@ function readLocal(checkouts, { errors, warnings }, unreadable, read) {
 function checkedLocal(raw, dir) {
   const found = [];
   for (const key of Object.keys(raw)) {
-    if (!LOCAL_KEYS.includes(key)) found.push(`${LOCAL}: unknown key ${JSON.stringify(key)}`);
+    if (!LOCAL_KEYS.includes(key)) found.push(`${LOCAL}: unknown key ${quoteName(key)}`);
   }
   const sources = localSources(dir, raw, found);
   const autoMerge = localAutoMerge(raw, found);
@@ -531,7 +531,7 @@ function githubGroup(raw) {
   if (!isObject(raw.github)) return { ...none, problems: [`${LOCAL}: "github" must be an object`] };
   const problems = [];
   for (const key of Object.keys(raw.github)) {
-    if (!MACHINE_GITHUB.includes(key)) problems.push(`${LOCAL}: unknown key ${JSON.stringify(`github.${key}`)}; only "github.autoMerge" and "github.unattendedWaiver" are machine settings`);
+    if (!MACHINE_GITHUB.includes(key)) problems.push(`${LOCAL}: unknown key ${quoteName(`github.${key}`)}; only "github.autoMerge" and "github.unattendedWaiver" are machine settings`);
   }
   const read = (key) => {
     if (!Object.hasOwn(raw.github, key)) return 'unset';

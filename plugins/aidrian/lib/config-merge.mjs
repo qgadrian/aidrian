@@ -8,7 +8,7 @@ import { agentNameProblem, patternProblem } from './agent-gates.mjs';
 import { HANDOFF_MODES, MODEL_CHOICES, REMOVED, RENAMED, TRACKER_GROUPS, TRACKER_SHORT_KEYS } from './config-schema.mjs';
 import { checkToolList, checkTrackerProvider, readToolProblem, readToolReport, trackerToolProblem, unclearedWriteProblem, unreachableWriteProblem } from './config-tracker.mjs';
 import { isText, isTexts, oneOf, TYPES } from './config-types.mjs';
-import { isObject } from './fs.mjs';
+import { isObject, quoteName } from './fs.mjs';
 import { checkReview } from './review/config.mjs';
 import { serverPrefix } from './tracker-guard.mjs';
 import { expandTracker } from './trackers/index.mjs';
@@ -37,7 +37,7 @@ export function merge(schema, defaults, values, prefix, file, errors, gateErrors
     const name = `${prefix}${key}`;
     if (Object.hasOwn(RENAMED, name)) errors.push(`${file}: "${name}" is now "${RENAMED[name]}": rename the key`);
     else if (Object.hasOwn(REMOVED, name)) errors.push(`${file}: "${name}" is gone: ${REMOVED[name]}; delete the key`);
-    else if (!Object.hasOwn(schema, key)) errors.push(`${file}: unknown key "${name}"`);
+    else if (!Object.hasOwn(schema, key)) errors.push(`${file}: unknown key ${quoteName(name)}`);
   }
   const out = {};
   for (const [key, type] of Object.entries(schema)) {
@@ -75,12 +75,12 @@ export function checkModels(value, file, errors, base) {
   }
   for (const [host, groups] of Object.entries(value)) {
     const at = `models.${host}`;
-    if (!Object.hasOwn(MODEL_CHOICES, host)) errors.push(`${file}: unknown key "${at}"`);
+    if (!Object.hasOwn(MODEL_CHOICES, host)) errors.push(`${file}: unknown key ${quoteName(at)}`);
     else if (!isObject(groups)) errors.push(`${file}: "${at}" must be an object`);
     else {
       for (const [key, agents] of Object.entries(groups)) {
         if (key === 'skills') errors.push(`${file}: "${at}.skills" is not supported: neither host lets a project set a plugin skill's model or effort`);
-        else if (key !== 'agents') errors.push(`${file}: unknown key "${at}.${key}"`);
+        else if (key !== 'agents') errors.push(`${file}: unknown key ${quoteName(`${at}.${key}`)}`);
         else if (!isObject(agents)) errors.push(`${file}: "${at}.agents" must be an object`);
         else for (const [name, choice] of Object.entries(agents)) checkAgentChoice(host, name, choice, out[host].agents, file, errors);
       }
@@ -92,7 +92,7 @@ export function checkModels(value, file, errors, base) {
 function checkAgentChoice(host, name, choice, agents, file, errors) {
   const at = `models.${host}.agents.${name}`;
   if (!pluginAgents().includes(name)) {
-    errors.push(`${file}: unknown agent "${at}"; the plugin's agents are ${pluginAgents().join(', ')}`);
+    errors.push(`${file}: unknown agent ${quoteName(at)}; the plugin's agents are ${pluginAgents().join(', ')}`);
     return;
   }
   if (!isObject(choice)) {
@@ -102,7 +102,7 @@ function checkAgentChoice(host, name, choice, agents, file, errors) {
   const kept = {};
   for (const [field, setting] of Object.entries(choice)) {
     const allowed = Object.hasOwn(MODEL_CHOICES[host], field) ? MODEL_CHOICES[host][field] : undefined;
-    if (allowed === undefined) errors.push(`${file}: unknown key "${at}.${field}"`);
+    if (allowed === undefined) errors.push(`${file}: unknown key ${quoteName(`${at}.${field}`)}`);
     else if (allowed === null ? isText(setting) : allowed.includes(setting)) kept[field] = setting;
     else errors.push(`${file}: "${at}.${field}" must be ${allowed === null ? 'a non-empty string' : oneOf(allowed)}`);
   }
@@ -131,7 +131,7 @@ export function checkAgents(value, file, errors, base, gateErrors = []) {
     else {
       const kept = {};
       for (const [list, patterns] of Object.entries(gates)) {
-        if (list !== 'deny' && list !== 'allow') lost(`unknown key "${at}.${list}"`);
+        if (list !== 'deny' && list !== 'allow') lost(`unknown key ${quoteName(`${at}.${list}`)}`);
         else if (!Array.isArray(patterns)) lost(`"${at}.${list}" must be a list of tool patterns`);
         else {
           kept[list] = patterns.filter((pattern) => {

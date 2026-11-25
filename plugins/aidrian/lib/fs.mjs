@@ -270,15 +270,22 @@ export function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// `name`, a key a file gave, as a quoted string for one line of output: JSON's quoting, which escapes C0 controls, with
+// the C1 controls and the line and paragraph separators escaped too, as `\uXXXX`, since JSON leaves them raw and a
+// terminal may read them as a line break or a control sequence.
+export function quoteName(name) {
+  return JSON.stringify(String(name)).replace(/[\u0080-\u009f\u2028\u2029]/gu, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
 // The fields of the object `value`, at `at` in `file`, that `fields` names, as a new object. Each other field adds
 // `<file>: unknown key "<at>.<field>"` to `errors`, which the local settings file reads as a warning and ignores
 // (config-local.mjs splitUnknownKeys), so a field a newer release adds to a group fails no older plugin. The path is
-// quoted as JSON, so a name with a newline or a control character cannot write a line of its own into the output.
+// quoted (quoteName), so a name with a newline or a control character cannot write a line of its own into the output.
 export function knownFields(value, fields, at, file, errors) {
   const kept = {};
   for (const [key, field] of Object.entries(value)) {
     if (fields.includes(key)) kept[key] = field;
-    else errors.push(`${file}: unknown key ${JSON.stringify(`${at}.${key}`)}`);
+    else errors.push(`${file}: unknown key ${quoteName(`${at}.${key}`)}`);
   }
   return kept;
 }

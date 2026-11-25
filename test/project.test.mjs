@@ -8,7 +8,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { DEFAULTS, loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { findProject, GUARDED_PATHS, knowledgeIn, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -407,6 +407,24 @@ test('.aidrian.local.json quotes an unknown name, so a newline in it stays on it
     '.aidrian.local.json: unknown key "handoff.x\\nok: everything passed"',
   ]);
   assert.ok(project.warnings.every((warning) => !/[\n\r]/u.test(warning)));
+});
+
+// JSON leaves the C1 controls and the line and paragraph separators raw, and a terminal may act on them: each is escaped.
+test('.aidrian.local.json escapes a C1 control or a line separator in an unknown name, in every group that names one', (t) => {
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  const csi = 'x\u009b2J';
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ [csi]: 1, handoff: { background: 'off', 'y\u2028z': 1 }, names: { [csi]: 'n' }, review: { [csi]: 1 } }));
+  const project = findProject(dir);
+  const { warnings } = loadConfig(project);
+  assert.deepEqual([...project.warnings, ...warnings], [
+    '.aidrian.local.json: unknown key "x\\u009b2J"',
+    '.aidrian.local.json: unknown key "handoff.y\\u2028z"',
+    '.aidrian.local.json: unknown key "names.x\\u009b2J"',
+    '.aidrian.local.json: unknown key "review.x\\u009b2J"; only "review.engine", "review.visual", "review.productFeedback.auto", and "review.publish" are machine settings',
+  ]);
+  assert.ok([...project.warnings, ...warnings].every((warning) => !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(warning)));
 });
 
 // A field a newer release adds inside a setting this plugin reads: a warning, and the setting's own field still applies.

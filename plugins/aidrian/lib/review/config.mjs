@@ -4,7 +4,7 @@
 // rule or flow only makes the review ask for less than the project wrote, so the command that plans a review refuses
 // to run on a config with errors (config.mjs commandConfig).
 
-import { isObject, knownFields } from '../fs.mjs';
+import { isObject, knownFields, quoteName } from '../fs.mjs';
 import { DEFAULT_IGNORE, DEFAULT_NON_BEHAVIOUR, DEPTHS, HARNESS_FLOW } from './plan.mjs';
 import { SPLIT_DEFAULTS } from './split.mjs';
 
@@ -423,7 +423,7 @@ export function checkLocalReview(value, file, errors) {
     errors.push(`${file}: "review" must be an object`);
     return 'auto';
   }
-  for (const key of Object.keys(value)) if (!['engine', 'visual', 'productFeedback', 'publish'].includes(key)) errors.push(`${file}: unknown key "review.${key}"; only "review.engine", "review.visual", "review.productFeedback.auto", and "review.publish" are machine settings`);
+  for (const key of Object.keys(value)) if (!['engine', 'visual', 'productFeedback', 'publish'].includes(key)) errors.push(`${file}: unknown key ${quoteName(`review.${key}`)}; only "review.engine", "review.visual", "review.productFeedback.auto", and "review.publish" are machine settings`);
   if (Object.hasOwn(value, 'productFeedback')) checkLocalFeedback(value.productFeedback, file, errors);
   if (Object.hasOwn(value, 'publish')) checkLocalPublish(value.publish, file, errors);
   if (value.engine === undefined) return 'auto';
@@ -453,7 +453,7 @@ function checkLocalFeedback(feedback, file, errors) {
     errors.push(`${file}: "review.productFeedback" must be { "auto": true } or { "auto": false }`);
     return;
   }
-  for (const key of Object.keys(feedback)) if (key !== 'auto') errors.push(`${file}: unknown key "review.productFeedback.${key}"; only "review.productFeedback.auto" is a machine setting`);
+  for (const key of Object.keys(feedback)) if (key !== 'auto') errors.push(`${file}: unknown key ${quoteName(`review.productFeedback.${key}`)}; only "review.productFeedback.auto" is a machine setting`);
   if (Object.hasOwn(feedback, 'auto') && typeof feedback.auto !== 'boolean') errors.push(`${file}: "review.productFeedback.auto" must be true or false`);
 }
 

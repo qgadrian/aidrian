@@ -266,12 +266,9 @@ export function attachLine({ id, name }) {
   return `\`claude attach ${id}\` opens it${byName}, and \`claude agents\` lists it`;
 }
 
-// How the Human stops the session `id` by hand, when stopBackground could not.
-export const stopLine = ({ id }) => `\`claude stop ${id}\` stops it`;
-
-// stopLine for a row of listBackground, or null for one whose `id` is its full id: the listing gave no short id, and
-// `claude stop` refuses a full one (stopBackground).
-export const listedStopLine = ({ id, session }) => (id === session ? null : stopLine({ id }));
+// How the Human stops the session `id` by hand, when stopBackground could not, or null for a full id, the id of a
+// session listed with no short one: `claude stop` refuses it.
+export const stopLine = ({ id }) => (FULL_ID.test(id) ? null : `\`claude stop ${id}\` stops it`);
 
 // The folder of the session `session` in the listing `list`, where startBackground starts the session that resumes its
 // brief: an absolute path with no control character, or null.

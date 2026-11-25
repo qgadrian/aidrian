@@ -726,11 +726,17 @@ test('a start the gate cannot hold to a floor is stopped and falls back; one it 
   assert.deepEqual(calls.filter((call) => call.args[0] === 'stop').map((call) => call.args), [['stop', 'abcd1234']]);
   assert.equal(readStarted(setting.store, SESSION), null);
 
-  // It runs on with no floor: the gate names it and the command that stops it, and arms no clear beside it.
-  const unstoppable = gate(setting, { run: fakeRun({ own: setting.dir, stop: { status: 1 } }).run });
+  // It runs on with no floor: the gate names it and arms no clear beside it. The start printed no id and the listing
+  // gives no short one, so it names the full id, and no `claude stop`, which refuses one.
+  const listing = fakeRun({ own: setting.dir, printId: false, stop: { status: 1 } }).run;
+  const unnamed = (command, args, options) => {
+    const answer = listing(command, args, options);
+    return args[0] === 'agents' ? { ...answer, stdout: JSON.stringify(JSON.parse(answer.stdout).map((row) => ({ ...row, id: undefined }))) } : answer;
+  };
+  const unstoppable = gate(setting, { run: unnamed });
   assert.deepEqual(unstoppable.out, [
     'continue: none',
-    'fallback: the background session abcd1234 started, but its chain floor, unattended mark, and start record could not all be recorded, and it could not be stopped, so it is still running: `claude stop abcd1234` stops it. Stop it before anything else resumes the brief widget; then a person resumes the brief',
+    `fallback: the background session ${NEW_SESSION} started, but its chain floor, unattended mark, and start record could not all be recorded, and it could not be stopped, so it is still running: the host's own command stops it. Stop it before anything else resumes the brief widget; then a person resumes the brief`,
   ]);
   assert.equal(unstoppable.exitCode, 0);
   assert.equal(readArmed(setting.store, SESSION), null, 'no clear continuation armed beside the running session');

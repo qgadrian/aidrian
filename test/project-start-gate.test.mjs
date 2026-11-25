@@ -20,6 +20,7 @@ import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { indexFilesOf } from '../plugins/aidrian/lib/index-edits.mjs';
 import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, INDEX_EDITS_LINE, ISSUE_ATTEMPTS, POLICY_FILES_LINE, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, spellingAt, startDocsAt, startGuards, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
+import { startUnreadable } from '../plugins/aidrian/lib/pr-auto-merge-docs.mjs';
 import { commitFiles } from '../plugins/aidrian/lib/project-trust.mjs';
 import { recordHumanSignoff } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
@@ -1027,6 +1028,22 @@ test('policyFilesAt reads a nested project\'s pointer from the whole tree, and r
     const other = git('commit-tree', '-m', 'another spelling', git('write-tree').trim()).trim();
     assert.equal(startDocsAt(app, other, 'app/harness/config.json', 'app/'), `${spelled} at the base tip ${other.slice(0, 7)} is app/harness/knowledge in another spelling, which a disk may read as the same folder`);
   }
+  // A start keeps the always docs whole in its row, so the tip may name at most 64 of them, in at most 16 KiB of JSON.
+  const named = (docs) => {
+    writeFileSync(path.join(top, 'index.json'), JSON.stringify({ dir: 'app/docs', always: docs }));
+    git('read-tree', tip);
+    git('update-index', '--add', '--cacheinfo', `100644,${git('hash-object', '-w', '--', path.join(top, 'index.json')).trim()},app/harness/knowledge/docs.json`);
+    const commit = git('commit-tree', '-m', 'an index', git('write-tree').trim()).trim();
+    return [commit, startDocsAt(app, commit, 'app/harness/config.json', 'app/')];
+  };
+  const many = (count, length = 8) => Array.from({ length: count }, (_, at) => `${String(at).padStart(length, 'd')}.md`);
+  assert.equal(named(many(64))[1].docs.length, 64, 'at the bound');
+  const [over, tooMany] = named(many(65));
+  assert.equal(tooMany, `the knowledge indexes at the base tip ${over.slice(0, 7)} name 65 always docs, and a start keeps at most 64`);
+  assert.match(startUnreadable(tooMany), /^the default branch's knowledge cannot say which docs the start hook loads into every session \(/u);
+  const [long, tooLong] = named(many(10, 1700));
+  assert.equal(tooLong, `the always docs the knowledge indexes at the base tip ${long.slice(0, 7)} name take more than 16384 bytes, which a start keeps at most`);
+  assert.equal(named(many(9, 1700))[1].docs.length, 9, 'under the bytes');
   // A link in another spelling of a folder that holds the knowledge folder, beside it, refuses a start on existing work.
   git('read-tree', tip);
   git('update-index', '--add', '--cacheinfo', `120000,${git('rev-parse', `${tip}:app/.aidrian.json`).trim()},app/HARNESS`);

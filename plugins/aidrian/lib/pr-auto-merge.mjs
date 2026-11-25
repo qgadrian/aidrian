@@ -92,7 +92,7 @@ import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { knownPrefix } from './git.mjs';
 import { indexedAlways } from './knowledge.mjs';
 import { entryKind, FILE_MODES, noneNeededProblem, RELEASE_SCRIPT, startLoadProblem, startUnreadable, treeLookup } from './pr-auto-merge-docs.mjs';
-import { configPathIn, foldPath, isGuardedPath, isPluginRepository, isPolicyPath, knowledgeIn, strictConfigPathIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, trailPaths } from './project.mjs';
+import { configPathIn, foldPath, isGuardedPath, isPluginRepository, isPolicyPath, knowledgeIn, strictConfigPathIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, spellingRule, trailPaths } from './project.mjs';
 import { hostOf } from './remotes.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
@@ -510,6 +510,12 @@ export function wholeFiles(forge, pr) {
 export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuardedPaths = false, includePolicyFiles = false, policyFiles = [], startDocs = { docs: [], folder: null }, pluginRepository = false } = {}) {
   if (prefix === null) return 'git could not give the project\'s folder in the repository';
   if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
+  // Another spelling of a name the gate holds, which a disk that ignores case or Unicode form reads as that name, on
+  // every setting, the lifts included: what the start hook loads, the policy files, and a guarded path by its fold.
+  const loadedNames = typeof startDocs === 'string' ? [] : [...startDocs.docs, ...(startDocs.folder ? [`${startDocs.folder}/`] : [])];
+  const spelling = spellingRule([...loadedNames, ...policyFiles]);
+  const spelled = files.map(({ path }) => spelling(path)).find(Boolean);
+  if (spelled) return `it changes ${spelled}`;
   const hidden = files.find(({ changeType }) => changeType === 'RENAMED' || !changeType);
   if (hidden) return `gh lists ${JSON.stringify(hidden.path)} as ${hidden.changeType || 'no change type'}, which may hide the path it replaced`;
   const outside = files.find(({ path }) => !path.startsWith(prefix));

@@ -45,6 +45,8 @@ const CAPTURE_MS = 15 * 60_000;
 const STDERR_LOG = 'capture-stderr.log';
 // The most uploaded hashes the review record keeps; the oldest go first.
 const MAX_UPLOADED = 600;
+// The most refused routes one capture lists, each with its file; one entry counts the rest.
+const MAX_REFUSED = 20;
 
 const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '') || 'root';
 // A route's part of a capture key: readable, plus a short hash of the exact route, so `/a/b`, `/a-b`, and `/A/b` never
@@ -102,20 +104,18 @@ export function visualRoutes(visual, changes) {
 }
 
 // One entry per route, width, locale, and variant, or per the route's `pairs` and width. A route may hold `{locale}`,
-// filled per locale. A route with an `error` is one entry that carries it, and is never captured. Throws past
-// VISUAL_PER_RUN images, naming the routes, so the review stops loudly rather than capture part of the matrix.
+// filled per locale. A route with an `error` is one entry that carries it, is never captured, and is no image: past
+// MAX_REFUSED of them one entry says how many more there were (`more`). Throws past VISUAL_PER_RUN images, naming the
+// routes, so the review stops loudly rather than capture part of the matrix.
 export function visualMatrix(visual, routes) {
   const locales = visual.locales.length ? visual.locales : [null];
   const variants = visual.variants.length ? visual.variants.map((variant) => variant.id) : ['default'];
   const order = [null, ...visual.locales];
   const entries = [];
-  for (const { route, base, pairs, file, error } of routes) {
-    const name = base ? `${base}:${route}` : route;
-    if (error) {
-      entries.push({ key: `${routeId(`${name} ${file}`)}--no-route`, route, ...(base ? { base } : {}), error });
-      continue;
-    }
-    const id = routeId(name);
+  const nameOf = ({ route, base }) => (base ? `${base}:${route}` : route);
+  const open = routes.filter((each) => !each.error);
+  for (const { route, base, pairs } of open) {
+    const id = routeId(nameOf({ route, base }));
     const wanted = pairs
       ? variants.flatMap((variant) => order.filter((locale) => pairs.some(([v, l]) => v === variant && l === locale)).map((locale) => [variant, locale]))
       : variants.flatMap((variant) => locales.map((locale) => [variant, locale]));
@@ -127,9 +127,15 @@ export function visualMatrix(visual, routes) {
   }
   if (new Set(entries.map((entry) => entry.key)).size !== entries.length) throw new Error('review.visual: two captures share a key; list each locale and route once');
   if (entries.length > VISUAL_PER_RUN) {
-    throw new Error(`the visual capture would take ${entries.length} images, past ${VISUAL_PER_RUN}: narrow review.visual.targets for these routes, or split the pull request: ${routes.map(({ route, base }) => (base ? `${base}:${route}` : route)).join(', ')}`);
+    throw new Error(`the visual capture would take ${entries.length} images, past ${VISUAL_PER_RUN}: narrow review.visual.targets for these routes, or split the pull request: ${open.map(nameOf).join(', ')}`);
   }
-  return entries;
+  return [...entries, ...refusedEntries(routes.filter((each) => each.error), nameOf)];
+}
+
+function refusedEntries(refused, nameOf) {
+  const entries = refused.slice(0, MAX_REFUSED).map(({ route, base, file, error }) => ({ key: `${routeId(`${nameOf({ route, base })} ${file}`)}--no-route`, route, ...(base ? { base } : {}), error }));
+  const more = refused.length - entries.length;
+  return more ? [...entries, { key: 'more--no-route', route: 'routeFrom', more, error: `routeFrom yields no path on the target's base for ${more} more changed file${more === 1 ? '' : 's'}` }] : entries;
 }
 
 // The variants the capture signs in: those with an account that some entry uses. A variant every touched target
@@ -328,17 +334,22 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
   };
   const base = { version: 1, head, platform: visual.platform, at: new Date().toISOString() };
   const authFiles = [];
+  // The entries known to have no capture, each with its error, which every manifest of this run keeps.
+  let refused = entries.filter((entry) => entry.error);
+  // The manifest of a run that ended for one reason before any image: the one place that writes it.
+  const failure = (status, reason) => write({ ...base, status, reason, entries: refused });
   // The manifest of a run whose every entry has its image or its error. Captured only when every image is: a matrix with
   // a failed entry (a server that was down) runs again next time, and its good images still reach the reviewers and the
   // upload.
   const finish = (captured, extra = {}) => {
     const good = captured.filter((entry) => entry.sha256).length;
-    const status = good === captured.length ? 'captured' : good ? 'partial' : 'failed';
-    return write({ ...base, status, ...(status === 'captured' ? {} : { reason: `${captured.length - good} of ${captured.length} captures failed: ${captured.find((entry) => entry.error)?.error}` }), ...extra, entries: captured });
+    const total = captured.reduce((sum, entry) => sum + (entry.more ?? 1), 0);
+    const status = good === total ? 'captured' : good ? 'partial' : 'failed';
+    return write({ ...base, status, ...(status === 'captured' ? {} : { reason: `${total - good} of ${total} captures failed: ${captured.find((entry) => entry.error)?.error}` }), ...extra, entries: captured });
   };
   try {
     // With no route to capture, nothing signs in and no browser starts.
-    if (entries.length && entries.every((entry) => entry.error)) return finish(entries);
+    if (refused.length && refused.length === entries.length) return finish(refused);
     const prepared = await withBase(async (hook) => {
       let url = baseUrl;
       if (!url && visual.preview) url = urlFrom(await hook(visual.preview, { pr, head }), 'review.visual.preview');
@@ -390,7 +401,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       }
       return { profiles, fallback: url, storageStates };
     });
-    if (prepared.status) return write({ ...base, ...prepared, entries: [] });
+    if (prepared.status) return failure(prepared.status, prepared.reason);
     const profileOf = (entry) => {
       const profile = prepared.profiles[entry.variant];
       return profile ? profile.locales[entry.locale] ?? profile : { url: prepared.fallback, bases: {}, auth: null };
@@ -398,11 +409,12 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
     const prefix = (entry) => (entry.base ? profileOf(entry).bases[entry.base] : profileOf(entry).url);
     // An entry with no route, or whose named base this variant's login did not print, is reported, never captured on
     // another host.
-    const refused = new Map(entries.flatMap((entry) => {
+    refused = entries.flatMap((entry) => {
       const error = entry.error ?? (prefix(entry) ? null : `review.visual.login printed no base "${entry.base}" for ${entry.variant}`);
-      return error ? [[entry.key, error]] : [];
-    }));
-    const jobs = entries.filter((entry) => !refused.has(entry.key)).map((entry) => ({
+      return error ? [{ ...entry, error }] : [];
+    });
+    const refusedBy = new Map(refused.map((entry) => [entry.key, entry]));
+    const jobs = entries.filter((entry) => !refusedBy.has(entry.key)).map((entry) => ({
       key: entry.key,
       url: `${prefix(entry)}${entry.locale ? entry.route.replaceAll('{locale}', entry.locale) : entry.route.replaceAll('/{locale}', '').replaceAll('{locale}', '')}`,
       width: entry.width,
@@ -414,11 +426,11 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       cwd: project.root, env, input: JSON.stringify({ outDir: dir, entries: jobs, storageStates: prepared.storageStates }), encoding: 'utf8', timeout: CAPTURE_MS, maxBuffer: 64 * 1024 * 1024,
     });
     const reason = String(run.stderr ?? '').trim().split('\n').at(-1) ?? '';
-    if (run.status === 3 && !run.error) return write({ ...base, status: 'unavailable', reason, entries: [] });
-    if (run.status !== 0 || run.error) return write({ ...base, status: 'failed', reason: failureReason(run, jobs, dir), entries: [] });
+    if (run.status === 3 && !run.error) return failure('unavailable', reason);
+    if (run.status !== 0 || run.error) return failure('failed', failureReason(run, jobs, dir));
     const results = new Map((JSON.parse(run.stdout).results ?? []).map((result) => [result.key, result]));
     const captured = entries.map((entry) => {
-      if (refused.has(entry.key)) return { ...entry, error: refused.get(entry.key) };
+      if (refusedBy.has(entry.key)) return refusedBy.get(entry.key);
       const result = results.get(entry.key);
       const file = path.join(dir, `${entry.key}.png`);
       if (!result || result.error || !existsSync(file)) return { ...entry, error: result?.error ?? 'no image' };
@@ -428,7 +440,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
     });
     return finish(captured, { baseUrl: prepared.fallback });
   } catch (error) {
-    return write({ ...base, status: 'failed', reason: error.message.split('\n')[0], entries: [] });
+    return failure('failed', error.message.split('\n')[0]);
   } finally {
     for (const file of authFiles) rmSync(file, { force: true });
   }

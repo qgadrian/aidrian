@@ -7,6 +7,8 @@ import test from 'node:test';
 
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
+import { fileList } from '../plugins/aidrian/lib/review/diff.mjs';
+import { routeOf } from '../plugins/aidrian/lib/review/visual-route.mjs';
 import { attachMode, captureDir, captureKeys, captureVisual, capturesBody, readManifest, uploadCaptures, visualMatrix, visualRoutes } from '../plugins/aidrian/lib/review/visual.mjs';
 
 const R = (...routes) => routes.map((route) => ({ route, base: null }));
@@ -275,7 +277,70 @@ test('routeFrom keeps the target\'s base, locales, and variants, and the capture
   assert.deepEqual(visualMatrix(visual, routes).map(({ route, base, locale, variant }) => [route, base, locale, variant]), [['/{locale}/book', 'guest', 'de', 'appointments']]);
   const many = Array.from({ length: 201 }, (_, i) => `src/screens/s${i}/view.html`);
   assert.throws(() => visualMatrix(fromConfig(), visualRoutes(fromConfig(), touched(...many))), /201 images, past 200/u);
-  assert.throws(() => visualMatrix(fromConfig(), visualRoutes(fromConfig(), touched(...many.map((file) => file.replace('screens/', 'screens/ '))))), /201 images, past 200/u);
+});
+
+test('refused routes are no images: they never use up the limit, and are listed to a cap with the rest counted', async (t) => {
+  const p = project(t);
+  const visual = fromConfig();
+  const good = (count) => Array.from({ length: count }, (_, i) => `src/screens/s${i}/view.html`);
+  const bad = (count) => Array.from({ length: count }, (_, i) => `src/screens/ s${i}/view.html`);
+  const matrix = (...files) => visualMatrix(visual, visualRoutes(visual, touched(...files)));
+  const capture = (head, entries, spawn) => captureVisual({ project: p, pr: 8, head: head.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => ''), spawn });
+  const alone = await capture('a', matrix(...bad(201)), () => assert.fail('a browser started'));
+  assert.equal(alone.status, 'failed');
+  assert.match(alone.reason, /^201 of 201 captures failed: routeFrom on `/u);
+  assert.equal(alone.entries.length, 21);
+  assert.equal(alone.entries.at(-1).error, 'routeFrom yields no path on the target\'s base for 181 more changed files');
+  assert.match(capturesBody(alone, {}, { mode: 'local', visibility: 'PRIVATE', error: null }), /#### `routeFrom`\n[^]*for 181 more changed files/u);
+  const seen = [];
+  const full = await capture('b', matrix(...good(200), ...bad(1)), fakeAdapter(undefined, seen));
+  assert.equal(seen[0].entries.length, 200, 'a refused route takes no image from the limit');
+  assert.deepEqual([full.status, captureKeys(full).size, full.entries.length], ['partial', 200, 201]);
+  assert.match(full.reason, /^1 of 201 captures failed: routeFrom on `/u);
+  assert.equal(matrix(...bad(20)).some((entry) => entry.more), false);
+  assert.match(matrix(...bad(21)).at(-1).error, /for 1 more changed file$/u);
+  assert.throws(() => matrix(...good(201), ...bad(1)), /201 images, past 200: [^$]*\/s0, \/s1, [^$]*$/u, 'the stop names the routes it would capture');
+});
+
+test('a capture-wide failure keeps the refused routes beside its own reason', async (t) => {
+  const p = project(t);
+  const signed = fromConfig({}, { variants: [{ id: 'staff', account: 'demo' }], login: 'node login.mjs' });
+  const preview = fromConfig({}, { preview: 'node preview.mjs' });
+  const ended = (result) => () => ({ stdout: '', stderr: '', ...result });
+  const url = 'http://localhost:3000';
+  const throws = (message) => async () => { throw new Error(message); };
+  const kinds = [
+    ['no base URL', fromConfig(), null, async () => '', null, 'unavailable', /^no base URL: /u],
+    ['a preview that fails', preview, null, throws('still deploying'), null, 'failed', /^still deploying$/u],
+    ['a preview that prints no URL', preview, null, async () => 'soon', null, 'failed', /printed no http\(s\) URL$/u],
+    ['a failed login', signed, url, throws('bad password'), null, 'failed', /^review\.visual\.login for staff: bad password$/u],
+    ['no adapter', fromConfig(), url, async () => '', ended({ status: 3, stderr: 'Playwright is not installed\n' }), 'unavailable', /^Playwright is not installed$/u],
+    ['an adapter that failed', fromConfig(), url, async () => '', ended({ status: 1, stderr: 'crashed\n' }), 'failed', /^crashed /u],
+    ['an adapter past its limit', fromConfig(), url, async () => '', ended({ status: null, signal: 'SIGTERM', error: Object.assign(new Error('x'), { code: 'ETIMEDOUT' }) }), 'failed', /15-minute limit/u],
+    ['an adapter that prints no JSON', fromConfig(), url, async () => '', ended({ status: 0, stdout: 'nope' }), 'failed', /JSON/u],
+  ];
+  for (const [index, [kind, visual, baseUrl, hook, spawn, status, reason]] of kinds.entries()) {
+    const entries = visualMatrix(visual, visualRoutes(visual, touched('src/screens/ok/view.html', 'src/screens/[id]/view.html')));
+    assert.equal(entries.length, 2);
+    const manifest = await captureVisual({ project: p, pr: 8, head: `${index}`.repeat(40), visual, entries, baseUrl, env: {}, withBase: base(hook), spawn: spawn ?? (() => assert.fail('a browser started')) });
+    assert.equal(manifest.status, status, kind);
+    assert.match(manifest.reason, reason, kind);
+    assert.deepEqual(manifest.entries, entries.filter((entry) => entry.error), kind);
+  }
+});
+
+test('a file name that holds or starts with a tab reaches routeOf whole', () => {
+  const names = ['src/screens/a\tb/view.html', '\tsrc/screens/a/view.html', 'src/screens/gone\t/view.html', 'src/screens/ok/view.html', 'src/screens/ok/view.html\t.png'];
+  const numstat = names.map((name, i) => `${i === 4 ? '-\t-' : '3\t1'}\t${name}\0`).join('');
+  const changes = fileList(numstat, names.map((name, i) => `${i === 2 ? 'D' : 'A'}\0${name}\0`).join(''));
+  assert.deepEqual(changes.map(({ file, added, removed, status }) => [file, added, removed, status]), names.map((name, i) => [name, i === 4 ? 0 : 3, i === 4 ? 0 : 1, i === 2 ? 'D' : 'A']));
+  assert.throws(() => fileList('1\t0\t\0', ''), /no path/u);
+  const from = { pattern: 're:^\\t?src/screens/(.*)/view\\.html$', route: '/$1' };
+  const problem = { problem: routeOf(from, names[0]).problem };
+  assert.match(problem.problem, /yields no path/u);
+  assert.deepEqual(changes.map((change) => routeOf(from, change.file)), [problem, { route: '/a' }, problem, { route: '/ok' }, null]);
+  const visual = fromConfig({ files: ['re:src/'], routeFrom: from });
+  assert.deepEqual(visualRoutes(visual, changes).map((each) => each.file ?? each.route), ['/a', '/ok', names[0]]);
 });
 
 test('a route that is no path on the base is an error in the result, never a capture of another host', async (t) => {
@@ -290,6 +355,11 @@ test('a route that is no path on the base is an error in the result, never a cap
   const routes = visualRoutes(visual, touched(...files, 'src/screens/ok_1.~-/.x/...y/view.html'));
   assert.deepEqual(routes.filter((each) => !each.error), R('/ok_1.~-/.x/...y'));
   assert.deepEqual(routes.filter((each) => each.error).map((each) => each.file).sort(), [...files].sort());
+  for (const { error } of routes.filter((each) => each.error)) {
+    assert.match(error, /^routeFrom on (`+)[^`]{1,80}\1 yields no path on the target's base: /u, 'the file name is the pull request\'s, so it shows as one code span');
+    assert.doesNotMatch(error, /[<>|]|[^\x20-\x7e…]/u);
+    assert.ok(error.length < 260, 'the reason fits the review summary\'s clip');
+  }
   const seen = [];
   const entries = visualMatrix(visual, routes);
   const manifest = await captureVisual({ project: p, pr: 9, head: 'a'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => ''), spawn: fakeAdapter(undefined, seen) });
@@ -297,12 +367,8 @@ test('a route that is no path on the base is an error in the result, never a cap
   assert.equal(manifest.status, 'partial');
   assert.match(manifest.reason, /^34 of 35 captures failed: routeFrom on `src\/screens\//u);
   assert.equal(captureKeys(manifest).size, 1);
-  for (const entry of manifest.entries.filter((each) => each.route === '/$1')) {
-    assert.match(entry.error, /^routeFrom on (`+)[^`]{1,80}\1 yields no path on the target's base: /u, 'the file name is the pull request\'s, so it shows as one code span');
-    assert.doesNotMatch(entry.error, /[<>|]|[^\x20-\x7e…]/u);
-    assert.ok(entry.error.length < 260, 'the reason fits the review summary\'s clip');
-  }
-  const body = capturesBody(manifest, {}, { mode: 'local', visibility: 'PRIVATE', error: null });
+  const html = visualRoutes(visual, touched('src/screens/`<!-- x/view.html'));
+  const body = capturesBody({ ...manifest, entries: visualMatrix(visual, html) }, {}, { mode: 'local', visibility: 'PRIVATE', error: null });
   assert.match(body, /\| `no route` \| kept local \| error: routeFrom on `src\/screens\/\?\?!-- x\/view\.html` yields no path/u);
   // With nothing to capture, no hook runs and no browser starts, and the result still says why.
   const none = await captureVisual({ project: p, pr: 9, head: 'b'.repeat(40), visual, entries: visualMatrix(visual, visualRoutes(visual, touched('src/screens/[id]/view.html'))), baseUrl: null, env: {}, withBase: () => assert.fail('a hook ran'), spawn: () => assert.fail('a browser started') });

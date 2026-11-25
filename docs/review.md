@@ -570,6 +570,8 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   It is at most 150 characters, and each segment holds only letters, digits, and `. _ ~ -`, and is not `.` or `..`.
   So a scheme, a host, a leading `//`, a backslash, an encoded `..`, a query, or a control character is refused, and so is a segment such as `[id]`.
   A refused route is an error entry in the capture's result that names the file, never a capture of another page or host.
+  The result lists the first 20, then one entry that counts the rest, and keeps them when the whole capture fails for another reason.
+  They are no images, so they count toward neither limit below.
   A screen that needs a value in its path, such as an id, goes in `routes` with a value the app serves.
   A `pattern` that is not a `re:` pattern or does not compile, and a template that names a capture the pattern lacks, are config errors.
   An older plugin rejects the key as unknown, so set [`requires.aidrian`](config.md#plugin-version) to the release that ships it.

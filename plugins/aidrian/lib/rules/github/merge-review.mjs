@@ -97,6 +97,7 @@ const VIEW_TIMEOUT_MS = 3000;
 const SHA = /^[0-9a-f]{7,40}$/iu;
 // The options of `gh pr merge` and `gh api` that take a value, from each command's `--help`.
 const MERGE_VALUES = ['-b', '--body', '-F', '--body-file', '-t', '--subject', '-A', '--author-email', '--match-head-commit', '-R', '--repo'];
+const MERGE_VALUE_SET = new Set(MERGE_VALUES);
 const API_VALUES = ['-f', '--raw-field', '-F', '--field', '-X', '--method', '-H', '--header', '-q', '--jq', '-t', '--template', '--input',
   '-p', '--preview', '--hostname', '--cache'];
 
@@ -158,12 +159,12 @@ function readGh(args, environment, env, cwd) {
     return { pr: Number(match[2]), head: sha && SHA.test(sha) ? sha : null, target: null, repo, text: apiMergeText(fields, flags) };
   }
   if (command[0] !== 'pr' || command[1] !== 'merge') return null;
-  const { words, flags } = readWords(args, new Set(MERGE_VALUES));
+  const { words, flags } = readWords(args, MERGE_VALUE_SET);
   // `--help` prints the command's options and merges nothing, so a read of them is never held; nor is `--disable-auto`.
-  // Each exempts only as gh reads it: `-h` anywhere, and a last `--help` or `--disable-auto` that is on with no word the
-  // shell fills in after it (switchValue), so `gh pr merge 7 --help=false`, which merges, is judged as `gh pr merge 7`.
-  const value = (name) => switchValue(args, flags, name);
-  if (flags.some((flag) => flag.name === '-h') || value('--help') === true || value('--disable-auto') === true) return null;
+  // Each exempts only as gh reads it, and only when every word is known (switchValue): `-h` anywhere, and a last `--help`
+  // or `--disable-auto` that is on, so `gh pr merge 7 --help=false`, which merges, is judged as `gh pr merge 7`.
+  const value = (name) => switchValue(args, MERGE_VALUE_SET, name);
+  if (['-h', '--help', '--disable-auto'].some((name) => value(name) === true)) return null;
   const last = (...names) => flags.filter((flag) => names.includes(flag.name)).at(-1)?.value ?? null;
   const target = words[2] ? literal(words[2]) : null;
   const head = literal(last('--match-head-commit'));
@@ -179,7 +180,8 @@ function readGh(args, environment, env, cwd) {
     unreadable: (Boolean(words[2]) && target === null) || selectorsDisagree(target, urlRepo, flagRepo),
     text: mergeText(last('-t', '--subject'), last('-b', '--body'), last('-F', '--body-file')),
     // `--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then. gh reads its last
-    // value: `--auto=false` merges at once. One the rule cannot read counts as on, which a session no Human attends is refused.
+    // value: `--auto=false` merges at once. With words that are not known (switchValue), any of which may be an `--auto`,
+    // it counts as on, which a session no Human attends is refused.
     ...(value('--auto') !== false ? { auto: true } : {}),
   };
 }
@@ -803,7 +805,7 @@ export function unattendedProblem({ project, home = project, merge, mark, forge 
     'A merge no Human asks for rests on the forge as well as this machine\'s review record: the team\'s auto-merge policy, the review bot\'s verdict on exactly the head, ' +
     'and the Human\'s sign-off, from the sign-off store, of every flow that asks for one (docs/review.md, Merge trust). Or the Human merges in their own shell.';
   if (merge.graphql) return deny(`it ${graphqlCall(merge.unreadable)}: merge with \`gh pr merge <PR> --match-head-commit <the 40-character head>\``);
-  if (merge.auto) return deny('`--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then: merge with `gh pr merge <PR> --match-head-commit <the 40-character head>` once every check passed');
+  if (merge.auto) return deny('`--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then, and this command gives it, or holds a word the shell fills in that may be it: merge with `gh pr merge <PR> --match-head-commit <the 40-character head>`, every other word written out, once every check passed');
   if (pr === null || typeof head !== 'string' || !FULL_SHA.test(head)) {
     return deny('it does not name both its number and its full head commit, so the guard cannot confirm what gh merges: merge with `gh pr merge <PR> --match-head-commit <the 40-character head>`');
   }

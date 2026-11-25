@@ -9,7 +9,7 @@ import path from 'node:path';
 import { costUsd, priceFor, promptTokens } from './model-prices.mjs';
 import { isPrompt } from './names.mjs';
 import { readBodyCall, readPrCall } from './rules/github/pr-body.mjs';
-import { readWords, switchValue } from './rules/github/review-request.mjs';
+import { switchValue } from './rules/github/review-request.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 
 const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h'];
@@ -336,12 +336,9 @@ function mergeTarget({ segment, invocation }) {
 // The `gh pr merge` options that take the next word as their value, which is then no option.
 const MERGE_VALUES = new Set(['-b', '--body', '-F', '--body-file', '-t', '--subject', '-A', '--author-email', '--match-head-commit', '-R', '--repo']);
 // Whether a `gh pr merge` command's words may turn auto-merge on or off: the last `--auto` or the last `--disable-auto`
-// is on, or one the rule cannot read (switchValue), so `--auto --auto=false` is a merge. A toggle clears no refusal, so a
+// is on, so `--auto --auto=false` is a merge, or its words are not known (switchValue). A toggle clears no refusal, so a
 // merge read as one only leaves a refusal standing.
-function togglesAutoMerge(args) {
-  const { flags } = readWords(args, MERGE_VALUES);
-  return ['--auto', '--disable-auto'].some((name) => switchValue(args, flags, name) !== false);
-}
+const togglesAutoMerge = (args) => ['--auto', '--disable-auto'].some((name) => switchValue(args, MERGE_VALUES, name) !== false);
 
 // The commands a Bash command line runs that pass `test`; none for a line the lexer cannot read.
 const matching = (command, test) => {

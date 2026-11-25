@@ -314,8 +314,9 @@ test('an unattended merge names its number and full head, in the repository the 
   assert.match(merge(r, `gh pr merge 7 --match-head-commit ${HEAD.slice(0, 7)}`) ?? '', /full head commit/u, 'a short head');
   assert.match(merge(r, `gh pr merge 7 -R acme/other --match-head-commit ${HEAD}`) ?? '', /it names acme\/other, and this session works in acme\/notes/u);
   assert.match(merge(r, `gh pr merge 7 --auto --match-head-commit ${HEAD}`, { calls }) ?? '', /`--auto` leaves the merge to GitHub/u);
-  // gh reads the last `--auto`; one a word the shell fills in may turn on counts as on.
-  for (const command of [`gh pr merge 7 --auto=false --auto --match-head-commit ${HEAD}`, `gh pr merge 7 --auto=false --match-head-commit ${HEAD} "$X"`]) {
+  // gh reads the last `--auto`; with a word the shell fills in, which may be an `--auto` or eat a false one, it counts as on.
+  for (const command of [`gh pr merge 7 --auto=false --auto --match-head-commit ${HEAD}`, `gh pr merge 7 --auto=false --match-head-commit ${HEAD} "$X"`,
+    `gh pr merge 7 --match-head-commit ${HEAD} "$X"`, `gh pr merge 7 $A --match-head-commit ${HEAD}`]) {
     assert.match(merge(r, command, { calls }) ?? '', /`--auto` leaves the merge to GitHub/u, command);
   }
   // The Codex connector's auto-merge tool names no head.
@@ -327,6 +328,8 @@ test('an unattended merge names its number and full head, in the repository the 
   assert.equal(merge(r, `gh api -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`), null, 'the API merge naming its head');
   // A last `--auto` that is off merges at once, at the head it names: judged as that merge, never as auto-merge.
   assert.equal(merge(r, `gh pr merge 7 --auto --auto=false --match-head-commit ${HEAD}`), null, 'auto-merge turned off is a merge');
+  assert.doesNotMatch(merge(r, `gh pr merge 7 --auto=false --body "$BODY" --match-head-commit ${HEAD}`) ?? '', /`--auto`/u,
+    'a quoted body is a value the rule knows: the merge is judged as one, never as auto-merge');
   // The GitHub MCP server's own merge tool names the head as expectedHeadSha, which GitHub's merge enforces.
   assert.equal(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, expectedHeadSha: HEAD }), null);
   const failing = merge(r, MERGE, { trail: () => { throw new Error('gh: Bad credentials (HTTP 401)'); } });

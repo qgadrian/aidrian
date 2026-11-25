@@ -175,7 +175,8 @@ test('with nothing recorded, every way of marking ready is held, and the deny na
   }
   const { reason: inEnv } = owedNow(dir);
   assert.match(check('gh pr ready 7', { now: FROZEN, cwd: dir, env: { GH_REPO: 'acme/notes' }, forge: forgeOver(seam({ head: HEAD }).exec) }) ?? '', /#7 ready/u);
-  for (const command of ['gh pr ready 7 --undo', 'gh pr ready 7 --undo=true', 'gh pr ready 7 --undo=1', 'gh pr ready 7 --undo=false --undo']) assert.equal(inEnv(command), null, command);
+  // A quoted repository is a value the rule knows, so the words are known and the undo runs.
+  for (const command of ['gh pr ready 7 --undo', 'gh pr ready 7 --undo=true', 'gh pr ready 7 --undo=1', 'gh pr ready 7 --undo=false --undo', 'gh pr ready 7 --undo -R "$R"']) assert.equal(inEnv(command), null, command);
 });
 
 test('what the hold cannot read runs with no gh call; only text fed to a shell that names a ready is refused, where git says on', (t) => {

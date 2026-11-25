@@ -84,7 +84,7 @@ export function readReady({ program, args, environment = [] }, env = {}) {
   }
   if (command[0] !== 'pr' || command[1] !== 'ready') return null;
   const { words, flags } = readWords(args, READY_VALUES);
-  if (switchValue(args, flags, '--undo') === true) return null;
+  if (switchValue(args, READY_VALUES, '--undo') === true) return null;
   const word = words[2] ?? null;
   if (word && (unreadable(word) || word.text.startsWith('-'))) return { unreadable: 'a pull request the shell fills in' };
   const target = word?.text ?? null;

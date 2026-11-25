@@ -29,7 +29,7 @@ import { reportName } from '../audits.mjs';
 import { cleanTitle, heldFolders, listRecords, PERSONA } from '../feedback-record.mjs';
 import { isDirectory } from '../fs.mjs';
 import { findProject, stateDir, stateRoot } from '../project.mjs';
-import { aidrianArgs, inlineShellCommand, lexPipeline, readInvocation, readsShellInput, shellPlain, walkCommands } from '../shell-lex.mjs';
+import { aidrianArgs, inlineShellCommand, lexPipeline, quotedScalar, readInvocation, readsShellInput, shellPlain, walkCommands } from '../shell-lex.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 const HUMAN_LEAD = 'Blocked: `aidrian pr product-feedback answer` or `aidrian audits record` with `--by human` records the Human\'s own word on a product feedback item';
@@ -59,8 +59,6 @@ const GIT_TEXT = new Set(['commit', 'log', 'grep', 'show', 'notes', 'tag']);
 const GH_TEXT = new Set(['pr', 'issue']);
 const FEEDS_BLIND = new Set(['xargs', 'parallel']);
 
-// A dynamic word that stays one word whatever it holds: quoted, and no list expansion.
-const quotedScalar = ({ text, dynamic, splits }) => dynamic && !splits && /[$`]/u.test(text) && !/\$@|\[@\]|\[\*\]/u.test(text);
 
 // A word the rule cannot take as written: dynamic, or one the shell expands (shell-lex `expands`: an unquoted glob
 // character, or a brace list or range, wherever in the word, quoted parts around it included).

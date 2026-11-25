@@ -441,7 +441,8 @@ through the `events` seam. None means no OpenCode hook or session read gives the
   ([Agents](../config.md#agents)); none does yet.
   That call still carries the kept root as `session_id`, so a kept child's call keeps its root session's holds:
   a root is kept only from a walk that reached its end for that same session, and a session's parent never changes.
-  A walk that ends at a session kept as a child takes that child's root.
+  A walk that ends at a session kept as a child, and a kept answer whose root was since kept as one, take that child's
+  root.
 - A subagent's own shell names the child session in `OPENCODE_SESSION_ID`, so that command run there shows none of
   the root session's pull requests.
 - A command in an OpenCode that was itself started from a Claude Code or Codex shell reads the outer host's session:

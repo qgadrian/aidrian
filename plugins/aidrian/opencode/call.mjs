@@ -101,8 +101,9 @@ export function folderOf(workdir, dir, home) {
 // A kept root answers only a call whose own read gave the session: one whose read failed is a subagent's, kept or not,
 // with its kept root still as `root`, so a kept child's call keeps its root's session-keyed holds. A kept answer comes
 // only from a walk that reached its end for that same id, and a session's parent never changes, so it still holds. A walk
-// that ends at a session kept as a child goes on to that child's root. A root's folder, from its latest read, its own or
-// a child's walk, is kept for its end (endCall).
+// that ends at a session kept as a child, and a kept answer whose root was since kept as one, go on to that child's root
+// (rootOf). A root's folder, from its latest read, its own or a child's walk, is kept for its end (endCall), and dropped
+// once the session is kept as a child.
 async function sessionOf(runner, get, sessionID) {
   let current;
   try {
@@ -111,11 +112,11 @@ async function sessionOf(runner, get, sessionID) {
     current = null;
   }
   const known = runner.roots.get(sessionID);
-  if (!isSession(current, sessionID)) return { root: known?.root ?? sessionID, agent: sessionID, dir: null, failed: true };
+  if (!isSession(current, sessionID)) return { root: rootOf(runner, sessionID), agent: sessionID, dir: null, failed: true };
   const dir = current.location?.directory ?? null;
   if (known) {
     if (known.agent === null) remember(runner, sessionID, dir);
-    return { ...known, dir };
+    return { ...known, root: rootOf(runner, sessionID), dir };
   }
   let id = sessionID;
   let ended = false;
@@ -134,15 +135,21 @@ async function sessionOf(runner, get, sessionID) {
   } catch {
     ended = false;
   }
-  const above = ended ? runner.roots.get(id) : null;
-  const root = above?.agent ? above.root : id;
-  const answer = { root, agent: !ended || id !== sessionID ? sessionID : null };
+  const root = ended ? rootOf(runner, id) : id;
+  const answer = { root, agent: ended && root === sessionID ? null : sessionID };
   if (ended) {
     if (runner.roots.size >= ROOTS_MAX) runner.roots.clear();
     runner.roots.set(sessionID, answer);
+    if (answer.agent !== null) runner.folders.delete(sessionID);
     if (root === id) remember(runner, id, current.location?.directory);
   }
   return { ...answer, dir, ...(ended ? {} : { failed: true }) };
+}
+
+// The root kept for the session `id`, or, once that root was kept as a child, the child's root; else `id`.
+function rootOf(runner, id) {
+  const root = runner.roots.get(id)?.root ?? id;
+  return runner.roots.get(root)?.root ?? root;
 }
 
 // Keeps `dir`, the folder a read just gave the root session `root`, for its SessionEnd (endCall), which runs once the

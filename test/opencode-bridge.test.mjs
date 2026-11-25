@@ -550,19 +550,21 @@ test('the root cache forgets every answer once it holds 256, so the 257th sessio
 });
 
 // The bridge with the record-only shell route and the SessionEnd route, on ses_top, ses_mid with the parent `parent()` gives
-// on each read, and ses_low, a child of ses_mid. `last()` is the last call's [session_id, agent_id].
-async function middleBridge(name, parent) {
+// on each read, and ses_low, a child of ses_mid; `topParent()` gives ses_top's parent. `prompt` fires the prompt hook, and
+// `last()` is the last call's [session_id, agent_id].
+async function middleBridge(name, parent, topParent = () => undefined) {
   const stream = eventStream();
   const at = { location: { directory: PROJECT_DIR } };
   const kids = Object.fromEntries(Array.from({ length: 257 }, (_, n) => [`ses_kid${n}`, { parentID: 'ses_top', ...at }]));
-  const sessions = { ses_top: at, ses_mid: () => ({ parentID: parent(), ...at }), ses_low: { parentID: 'ses_mid', ...at }, ...kids };
+  const sessions = { ses_top: () => ({ parentID: topParent(), ...at }), ses_mid: () => ({ parentID: parent(), ...at }), ses_low: { parentID: 'ses_mid', ...at }, ...kids };
   const context = fakeContext({ sessions, subscribe: () => stream.iterable });
-  const events = { PostToolUse: EVENTS.PostToolUse, SessionEnd: EVENTS.SessionEnd };
-  const { calls, fire } = await startBridge(name, { context, routes: [END_ROUTE], events });
+  const events = { PostToolUse: EVENTS.PostToolUse, SessionEnd: EVENTS.SessionEnd, UserPromptSubmit: 'prompt' };
+  const { calls, fire } = await startBridge(name, { context, routes: [END_ROUTE, PROMPT_ROUTE], events });
   const call = (sessionID) => fire(shellEvent({ sessionID }));
   const remove = (sessionID) => stream.send([{ type: 'session.deleted', data: { sessionID } }]);
   const last = () => [sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id ?? null];
-  return { call, calls, last, remove };
+  const prompt = (sessionID) => context.hooks.prompt({ sessionID, messageID: 'msg_1', prompt: { text: 'x' }, delivery: 'steer' });
+  return { call, calls, context, last, prompt, remove };
 }
 
 test('a kept child stays a child when a later walk reads no parent for it, its walker goes on to its root, and its delete runs nothing', { timeout: 10_000 }, async () => {
@@ -583,15 +585,38 @@ test('a kept child stays a child when a later walk reads no parent for it, its w
 });
 
 test('a session a grandchild`s walk reached with no parent read, whose own call reads one, is sent as a subagent`s under the root, and its delete runs nothing', { timeout: 10_000 }, async () => {
-  let parentID;
-  const { call, calls, last, remove } = await middleBridge('late-parent', () => parentID);
-  await call('ses_low');
-  assert.deepEqual(last(), ['ses_mid', 'ses_low']);
-  parentID = 'ses_top';
+  for (const others of [0, 257]) {
+    let parentID;
+    const { call, calls, context, last, prompt, remove } = await middleBridge(`late-parent-${others}`, () => parentID);
+    await call('ses_low');
+    assert.deepEqual(last(), ['ses_mid', 'ses_low']);
+    parentID = 'ses_top';
+    await call('ses_mid');
+    assert.deepEqual(last(), ['ses_top', 'ses_mid']);
+    // The grandchild's kept answer goes on to the top, on a tool call and on a session hook.
+    await call('ses_low');
+    assert.deepEqual(last(), ['ses_top', 'ses_low'], 'a tool call');
+    await prompt('ses_low');
+    assert.deepEqual(last(), ['ses_top', 'ses_low'], 'a session hook');
+    const { get } = context.session;
+    context.session.get = async (input) => { if (input.sessionID === 'ses_low') throw new Error('read'); return get(input); };
+    await call('ses_low');
+    assert.deepEqual(last(), ['ses_top', 'ses_low'], 'a call whose read fails');
+    context.session.get = get;
+    // Past the 256 answers the middle session is forgotten, and so is the folder kept while it read as a root.
+    for (let n = 0; n < others; n += 1) await call(`ses_kid${n}`);
+    await remove('ses_mid');
+    assert.deepEqual(ends(calls), [], `${others} others`);
+  }
+});
+
+test('a walk that ends at a session kept under the calling one sends the calling session as the root', async () => {
+  let [parentID, topParent] = ['ses_top', undefined];
+  const { call, last } = await middleBridge('own-root', () => parentID, () => topParent);
   await call('ses_mid');
-  assert.deepEqual(last(), ['ses_top', 'ses_mid']);
-  await remove('ses_mid');
-  assert.deepEqual(ends(calls), []);
+  [parentID, topParent] = [undefined, 'ses_mid'];
+  await call('ses_top');
+  assert.deepEqual(last(), ['ses_top', null]);
 });
 
 test('a failed parent read is not kept: the next call of that session reads again and finds its root', async () => {

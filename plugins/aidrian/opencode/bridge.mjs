@@ -30,7 +30,7 @@
 // `session.synthetic` message the session admitted, and dropped at the session's next idle, which reads it, and on its
 // `session.deleted` event, which also drops its start lines, and which the bridge listens for once it routes a start
 // or SessionEnd, or registered the idle hook. That event runs SessionEnd for a root session alone, known as one by the
-// roots the bridge kept, in its last known folder, before the root's state is dropped; a child's end, a session whose
+// roots or the root folders the bridge kept, in its last known folder, before the root's state is dropped; a child's end, a session whose
 // root-ness the bridge cannot tell, and an archived session run none (call.mjs endCall). This state is one setup's:
 // OpenCode 2.4.1 runs setup once for each Location, and again when it loads the plugin anew.
 //

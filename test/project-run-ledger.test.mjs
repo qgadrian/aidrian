@@ -177,7 +177,7 @@ test('init starts a started issue an earlier run parked on the same branch, and 
     { key: 'ENG-8', branch: 'feat/eng-8-renamed', status: 'unstarted' },
   ], resumed: [{ key: 'ENG-7', run: 'first', pr: null }] };
   // ENG-1's open pull request changes the config: init names it in its first output, after the resumed line.
-  const views = { 12: { number: 12, headRefOid: 'a'.repeat(40), baseRefName: 'main', author: { login: 'adrian' }, url: 'https://github.com/Acme/widgets/pull/12', files: [{ path: '.aidrian/config.json', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], state: 'OPEN' } };
+  const views = { 12: { number: 12, headRefOid: 'a'.repeat(40), baseRefName: 'main', author: { login: 'adrian' }, url: 'https://github.com/Acme/widgets/pull/12', files: [{ path: '.aidrian/config.json', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], state: 'OPEN', headRefName: 'feat/eng-1-export', isCrossRepository: false } };
   const forge = {
     repository: () => ({ default_branch: 'main' }),
     contents: (repo, file) => {

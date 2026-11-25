@@ -2378,7 +2378,8 @@ tabs removed, in `<state>/runs/RUN/issues/ISSUE.json`, never in `snapshot.json`,
 attended first turn, and `init` last, once nothing blocks.
 
 `init` and `init --check` both name, after the `resumed:` and `landed:` lines, each merge the run leaves to the Human that they can see already.
-A resumed issue whose open pull request changes a path auto-merge never merges gets `needs your merge: #<n> changes <path>, which auto-merge never merges`.
+A resumed issue whose open pull request, from the branch it resumes on, changes a path auto-merge never merges gets
+`needs your merge: #<n> changes <path>, which auto-merge never merges`.
 The path rule is the [auto-merge gate's](#auto-merge) own, each changed file judged alone.
 It reads the config of the default branch and of the pull request's own base on the forge, and a lift counts only when both set it.
 Without `github.autoMerge.includeGuardedPaths` a guarded path counts, and without `includePolicyFiles` too a policy file counts.
@@ -2386,6 +2387,7 @@ With both, the pointer file `.aidrian.json` still counts, which no pull request 
 So do the paths no lift covers, such as a renamed file or one outside a nested project's folder.
 An issue the run may still start whose tracker text names a policy file, such as `.aidrian/config.json`, gets a `needs your merge, maybe:` warning.
 Its diff does not exist yet, so the warning reads the text alone, and only for the fixed policy file names and the config the pointer file locates.
+With both lifts on the default branch, only a text that names the pointer file gets it.
 A read the forge cannot answer gives a `needs your merge, unknown:` line that says what cannot be told.
 None of these lines blocks: they reach the Human in the run's first turn, before any issue starts, never when an issue's session reaches auto-merge.
 A run with none prints none.

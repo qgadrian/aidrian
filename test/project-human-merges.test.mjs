@@ -14,6 +14,8 @@ import { landedStates, mayStart, planRun } from '../plugins/aidrian/lib/project-
 const REPOSITORY = { host: 'github.com', owner: 'Acme', name: 'widgets' };
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
+// The branch every resumed issue here goes on on, and every pull request comes from, unless a test says otherwise.
+const BRANCH = 'feat/eng-export';
 const notFound = () => Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)\n' });
 
 const fileOf = (value) => ({ type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(value)).toString('base64') });
@@ -45,13 +47,13 @@ function stubForge({ autoMerge = { allow: true }, branches = {}, views = {}, con
       if (!view) throw notFound();
       if (typeof view === 'function') return view();
       const files = view.files.map((path) => ({ path, changeType: 'MODIFIED' }));
-      return { number: Number(ref), headRefOid: HEAD, baseRefName: view.base ?? 'main', baseRefOid: BASE, author: { login: 'adrian' }, url: `https://github.com/Acme/widgets/pull/${ref}`, files, changedFiles: files.length, reviewDecision: '', latestReviews: [], state: view.state ?? 'OPEN' };
+      return { number: Number(ref), headRefOid: HEAD, baseRefName: view.base ?? 'main', baseRefOid: BASE, author: { login: 'adrian' }, url: `https://github.com/Acme/widgets/pull/${ref}`, files, changedFiles: files.length, reviewDecision: '', latestReviews: [], state: view.state ?? 'OPEN', headRefName: view.branch ?? BRANCH, isCrossRepository: view.fork === true };
     },
   };
   return forge;
 }
 
-const lines = (forge, more) => humanMergeLines({ forge, repository: REPOSITORY, prefix: () => '', ...more });
+const lines = (forge, { resumed = [], ...more }) => humanMergeLines({ forge, repository: REPOSITORY, prefix: () => '', ...more, resumed: resumed.map((each) => ({ branch: BRANCH, ...each })) });
 const LIFTED = { allow: true, includeGuardedPaths: true, includePolicyFiles: true };
 
 test('a resumed issue whose open pull request changes .aidrian/config.json is named with its path, and an issue whose text names a policy file is warned of', () => {
@@ -71,7 +73,7 @@ test('a resumed issue whose open pull request changes .aidrian/config.json is na
     'needs your merge, maybe: ENG-3\'s text names ".aidrian.local.json", a policy file auto-merge never merges, so a pull request that changes it waits for your merge',
   ]);
   // Each pull request is read in the pinned repository, with its state.
-  assert.deepEqual(forge.calls.filter(([method]) => method === 'change').map(([, ref, fields, options]) => [ref, fields.endsWith(',state'), options.repo]), [['12', true, 'github.com/Acme/widgets'], ['13', true, 'github.com/Acme/widgets']]);
+  assert.deepEqual(forge.calls.filter(([method]) => method === 'change').map(([, ref, fields, options]) => [ref, fields.endsWith(',state,headRefName,isCrossRepository'), options.repo]), [['12', true, 'github.com/Acme/widgets'], ['13', true, 'github.com/Acme/widgets']]);
 });
 
 test('a run with none lists nothing, and reads nothing from the forge', () => {
@@ -89,7 +91,7 @@ test('a config the pointer file relocates is warned of when it is the only path 
   const relocated = 'settings/harness/config.json';
   const warning = (path) => [`needs your merge, maybe: ENG-1's text names ${JSON.stringify(path)}, a policy file auto-merge never merges, so a pull request that changes it waits for your merge`];
   const warned = (path, forge, more = {}) => lines(forge, { startable: ['ENG-1'], texts: { 'ENG-1': { description: `Raise the cap in ${path}.` } }, ...more });
-  assert.deepEqual(warned(relocated, stubForge({ dir: 'settings/harness' })), warning(relocated));
+  for (const path of [relocated, `./${relocated}`]) assert.deepEqual(warned(path, stubForge({ dir: 'settings/harness' })), warning(path));
   // With no pointer file, the same path is no policy file.
   assert.deepEqual(warned(relocated, stubForge()), []);
   const nested = () => stubForge({ dir: 'settings/harness', folder: 'apps/web/' });
@@ -115,6 +117,23 @@ test('a pull request is judged by its own base and the default branch together',
   assert.match(unknown, /^needs your merge, unknown: #31 of ENG-1: the config of its base "release" or of the default branch cannot be read on the forge \(could not read \.aidrian\/config\.json on Acme\/widgets release with gh \(gh: Server Error \(HTTP 500\)\)\), so whether auto-merge merges it cannot be told$/u);
   assert.equal(other, 'needs your merge: #32 changes "CLAUDE.md", which auto-merge never merges');
   assert.deepEqual(rest, []);
+});
+
+test('a remembered pull request that is not from the branch the issue resumes on says nothing, and leaves the text its warning', () => {
+  const texts = { 'ENG-1': { description: 'Edit .aidrian/config.json' } };
+  for (const other of [{ branch: 'feat/unrelated' }, { fork: true }]) {
+    const forge = stubForge({ views: { 41: { files: ['CLAUDE.md'], ...other } } });
+    assert.deepEqual(lines(forge, { resumed: [{ key: 'ENG-1', pr: 41 }], startable: ['ENG-1'], texts }), [
+      'needs your merge, maybe: ENG-1\'s text names ".aidrian/config.json", a policy file auto-merge never merges, so a pull request that changes it waits for your merge',
+    ]);
+  }
+});
+
+test('under both lifts a text is warned of only when it names the pointer file', () => {
+  const warned = (named, folder = '') => lines(stubForge({ autoMerge: LIFTED, folder }), { prefix: () => folder, startable: ['ENG-1'], texts: { 'ENG-1': { description: `Edit ${named}` } } }).length;
+  for (const named of ['.aidrian.json', './.aidrian.json', '.AIDRIAN.json']) assert.equal(warned(named), 1, named);
+  for (const named of ['.aidrian.json', 'apps/web/.aidrian.json']) assert.equal(warned(named, 'apps/web/'), 1, named);
+  for (const named of ['.aidrian/config.json', 'other/.aidrian.json']) assert.equal(warned(named), 0, named);
 });
 
 test('the issues a run may start leave out a landed, a canceled, and a skipped one', () => {

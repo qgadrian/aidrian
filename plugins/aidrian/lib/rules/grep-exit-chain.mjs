@@ -9,9 +9,7 @@
 // The deny hands back the line to run instead: the counting grep (its pipeline, under pipefail) wrapped as
 // `{ … || true; }`, which keeps the count and the rest of the chain and drops only that status. It hands back none
 // when a count sits behind a shell word (`if`, `then`, `!`), opens or closes a group, or is in a substitution whose
-// text occurs twice: there the wrap could break the line or land on the wrong copy. After an in-place edit, as in
-// `sed -i 's/a/b/' f && grep -c b f`, where a count often checks that the edit applied, it also hands back that line
-// with the count turned into `grep -q`, a presence gate this rule passes (presenceLine).
+// text occurs twice: there the wrap could break the line or land on the wrong copy.
 
 import { commandLines, excerpt, isLongOption, lexPipeline, readInvocation, readShortOptions } from '../shell-lex.mjs';
 
@@ -35,18 +33,13 @@ const VALUE_FLAGS = GREP_VALUE_FLAGS;
 const SHELL_GROUPING = new Set(['!', '{', '}', '(', ')', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'for', 'select', 'in', 'case', 'esac', 'function', 'time', 'coproc']);
 
 // Whether a segment starts with such a word, or opens or closes a group or a `case` arm glued to a word, as in
-// `(grep`, `f)`, or `a)`: a rewrite of it would unbalance the line. A word ending in `)` closes one when the lexer marks
-// the parenthesis as shell syntax (`paren`), or when the word holds more `)` than `(`: readInvocation drops such an
-// unmatched `)` even inside quotes, as in `grep 'foo)'`, so a rewrite from its words would lose it. A quoted, balanced
-// one, as in `grep -E "a(b|c)"`, is text.
+// `(grep`, `f)`, or `a)`: a rewrite of it would unbalance the line.
 export function startsOrEndsGroup(segment) {
   const words = segment.filter((token) => !token.operator && !token.fdDup);
   const [first] = words;
   if (!first) return false;
   if (SHELL_GROUPING.has(first.text) || /^[({]/u.test(first.text)) return true;
-  // The lexer marks a parenthesis that is shell syntax (`paren`); one inside quotes, as in `grep -E "a(b|c)"`, is text.
-  const unmatched = (text) => text.split(')').length > text.split('(').length;
-  return words.some(({ text, paren }) => text.endsWith('}') || (text.endsWith(')') && (paren || unmatched(text))));
+  return words.some((token) => /[)}]$/u.test(token.text));
 }
 
 // Whether a segment redirects a named descriptor, `{x}>file`. A quoted `'{x}'` is an argument and never one.
@@ -60,22 +53,20 @@ export function check(command, { env = process.env } = {}) {
 }
 
 // The first command line of `command` that chains a count, with where the count sits in `command`: { from, to,
-// wrappable, afterEdit }. A substitution's body is placed by its text, so a body that occurs twice is not wrappable.
+// wrappable }. A substitution's body is placed by its text, so a body that occurs twice is not wrappable.
 function firstChain(command) {
   for (const line of commandLines(command)) {
     const chain = chainedCount(line);
     if (!chain) continue;
     const at = line === command ? 0 : command.indexOf(line);
     const placed = line === command || (at !== -1 && command.lastIndexOf(line) === at);
-    const from = Math.max(0, at) + chain.span[0];
-    return { from, to: Math.max(0, at) + chain.span[1], wrappable: placed && chain.wrappable, afterEdit: placed && chain.afterEdit };
+    return { from: Math.max(0, at) + chain.span[0], to: Math.max(0, at) + chain.span[1], wrappable: placed && chain.wrappable };
   }
   return null;
 }
 
-// Where one command line chains a counting grep's status into `&&`: { span, wrappable, afterEdit }, with `span` the
-// [start, end) of the grep, or of its pipeline under pipefail, in `command`, and `afterEdit` whether it is a lone grep
-// right after an in-place edit joined by `&&`; null when it does not.
+// Where one command line chains a counting grep's status into `&&`: { span, wrappable }, with `span` the [start, end)
+// of the grep, or of its pipeline under pipefail, in `command`; null when it does not.
 function chainedCount(command) {
   const { segments, separators, spans } = lexPipeline(command);
   // `set -o pipefail` applies to what follows. A toggle behind `&&`/`||` may never run, and one in a pipeline or in the
@@ -104,8 +95,7 @@ function chainedCount(command) {
     const gatesWhatFollows = separators[last] === '&&';
     const isGatedLastLink = separators[first - 1] === '&&' && last === segments.length - 1 && separators[last] !== '&';
     if (gatesWhatFollows || isGatedLastLink) {
-      const afterEdit = first === last && separators[i - 1] === '&&' && editsInPlace(readInvocation(segments[i - 1]));
-      return { span: [spans[first][0], spans[last][1]], wrappable: !segments.slice(first, last + 1).some(startsOrEndsGroup), afterEdit };
+      return { span: [spans[first][0], spans[last][1]], wrappable: !segments.slice(first, last + 1).some(startsOrEndsGroup) };
     }
   }
   return null;
@@ -134,25 +124,6 @@ function asksFor(args, short, isLong) {
     if (value?.attached === null) i += 1;
   }
   return false;
-}
-
-// Whether an invocation edits a file in place: `sed -i`, `sed --in-place`, or perl with `-i` in its options.
-function editsInPlace({ program, args }) {
-  const words = args.filter((token) => !token.dynamic).map((token) => token.text);
-  if (program === 'sed') return words.some((text) => /^-[A-Za-z]*i/u.test(text) || text.startsWith('--in-place'));
-  return /^perl[\d.]*$/u.test(program) && words.some((text) => /^-[A-Za-z]*i/u.test(text));
-}
-
-// The line with the first chained count, a lone grep after an in-place edit, asking `-q` in place of `-c`, when this
-// rule passes it; else null. Only a bundle of letters that take no value changes, so `-ec` keeps its pattern.
-function presenceLine(command, found) {
-  if (!found.afterEdit) return null;
-  const count = command.slice(found.from, found.to);
-  const quiet = count.replace(/(^|\s)(?:-([inFEHhsrRwx]*)c([inFEHhsrRwx]*)|--count)(?=\s|$)/u, (match, lead, before, after) =>
-    (before === undefined ? `${lead}--quiet` : `${lead}-${before}q${after}`));
-  if (quiet === count) return null;
-  const line = `${command.slice(0, found.from)}${quiet}${command.slice(found.to)}`;
-  return check(line, { env: {} }) === null ? { text: line, from: found.from, to: found.from + quiet.length } : null;
 }
 
 // true for `set -o pipefail` (also bundled, as in `set -euo pipefail`), false for `set +o pipefail`, null otherwise.
@@ -190,10 +161,6 @@ function rewritten(command) {
 function reason(command, found) {
   const fix = rewritten(command);
   if (!fix) return manualReason(command);
-  const presence = presenceLine(command, found);
-  const afterEdit = presence
-    ? ['To check that the edit applied, gate on presence instead, which runs as it is:', '', `  ${excerpt(presence.text, presence.from, presence.to)}`, '']
-    : [];
   return [
     'Blocked: a counting grep is chained with `&&`, so a clean result reads as a failed check. Run this instead:',
     '',
@@ -207,7 +174,6 @@ function reason(command, found) {
     'for the result you wanted. The braces keep the count and the chain, and drop only that status.',
     'If no match should stop the chain, gate on presence with `grep -q` there, which exits 0 on a match.',
     '',
-    ...afterEdit,
     `Human-only override for the whole session, set before it starts: ${OVERRIDE}=1`,
   ].join('\n');
 }

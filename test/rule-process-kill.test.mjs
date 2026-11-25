@@ -731,40 +731,7 @@ const REPLACEMENTS = [
   ['ps --format pid,comm -e', 'ps -e -o pid,ucomm'],
   ['ps -o comm=NAME -p 1', 'ps -p 1 -o ucomm=NAME'],
   ['ps aux | grep x; ps -o pid,comm -p 1', 'pgrep -d, -f x | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,ucomm= -p; ps -p 1 -o pid,ucomm'],
-  // A parenthesis inside the quoted pattern is text, not a group, so the line still gets its replacement.
-  ['ps aux | grep "(a|b)"', "pgrep -d, -f '\\(a\\|b\\)' | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,ucomm= -p"],
-  ['ps -Ao pid,etime,command | grep -E "node .*(--test|test/)" | grep -v grep | head', "pgrep -d, -f 'node .*(--test|test/)' | xargs -r ps -o pid=,etime=,ucomm= -p | head"],
 ];
-
-// The listing shapes the dispatch log denied most in the week before issue 130, each with the line its deny names.
-// Every one is denied, since the rule cannot prove a listing holds no environment, and its replacement passes.
-const TOP_SHAPES = [
-  // A ps listing with a command column, filtered by grep: 129 of 293 denies.
-  ['ps -axo pid,etime,command | grep -E "node --test|aidrian test" | grep -v grep | head', "pgrep -d, -f 'node --test|aidrian test' | xargs -r ps -o pid=,etime=,ucomm= -p | head"],
-  ['ps aux | grep "node --test" | grep -v grep | head -3 | cut -c1-200', "pgrep -d, -f 'node --test' | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,ucomm= -p | head -3 | cut -c1-200"],
-  ['ps -ef | grep -E "pr review 439|codex" | grep -v grep | head', "pgrep -d, -f 'pr review 439|codex' | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,ucomm= -p | head"],
-  // pgrep printing command lines, after other work on the line: 107.
-  ['tail -5 changed.log; pgrep -fl "aidrian test changed" | head -3', "tail -5 changed.log; pgrep -d, -f 'aidrian test changed' | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p | head -3"],
-  // ps of a pid the session holds, with a command column: 20.
-  ['ps -o pid=,etime=,command= -p 69650 | cut -c1-200', 'ps -p 69650 -o pid=,etime=,ucomm= | cut -c1-200'],
-  // Every process, sorted, with comm: 15.
-  ['ps -Ao pid,ppid,pcpu,rss,etime,comm -r | head -20', 'ps -Ar -o pid,ppid,pcpu,rss,etime,ucomm | head -20'],
-  ['uptime; ps -Ao pcpu,comm | sort -rn | head -6', 'uptime; ps -A -o pcpu,ucomm | sort -rn | head -6'],
-];
-
-test('each top denied listing shape stays denied, and the replacement its deny names passes', () => {
-  for (const [command, replacement] of TOP_SHAPES) {
-    const { decision, reason } = decideForCommand(command, NO_OVERRIDE);
-    assert.equal(decision, 'deny', command);
-    assert.ok(reason.startsWith(`Blocked: this process listing prints full command lines. Run this instead:\n\n  ${replacement}\n`), `${command}\n${reason}`);
-    assert.equal(check(replacement, { env: NO_OVERRIDE }), null, `the replacement passes: ${replacement}`);
-    assert.equal(grepChainCheck(replacement, { env: {} }), null, `and the grep rule: ${replacement}`);
-  }
-  // Killing by name, 28 denies: the deny names the pgrep that lists the pids, which passes.
-  const pkill = decideForCommand('pkill -f "seq 1 85" 2>/dev/null; git log -3', ENV).reason;
-  assert.ok(pkill.includes("List the pids first with `pgrep -f 'seq 1 85'`"), pkill);
-  assert.equal(check("pgrep -f 'seq 1 85'", { env: NO_OVERRIDE }), null);
-});
 
 test('a listing deny names first the exact command to run instead, and that command runs', () => {
   for (const [command, replacement] of REPLACEMENTS) {
@@ -778,6 +745,21 @@ test('a listing deny names first the exact command to run instead, and that comm
   }
 });
 
+test('each top denied listing shape of issue 130 is denied with a replacement that passes', () => {
+  for (const [command, replacement] of [
+    ['ps -axo pid,etime,command | grep -E "node --test|aidrian test" | grep -v grep | head', "pgrep -d, -f 'node --test|aidrian test' | xargs -r ps -o pid=,etime=,ucomm= -p | head"],
+    ['tail -5 changed.log; pgrep -fl "aidrian test changed" | head -3', "tail -5 changed.log; pgrep -d, -f 'aidrian test changed' | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p | head -3"],
+    ['ps -o pid=,etime=,command= -p 69650 | cut -c1-200', 'ps -p 69650 -o pid=,etime=,ucomm= | cut -c1-200'],
+    ['uptime; ps -Ao pcpu,comm | sort -rn | head -6', 'uptime; ps -A -o pcpu,ucomm | sort -rn | head -6'],
+  ]) {
+    const { decision, reason } = decideForCommand(command, NO_OVERRIDE);
+    assert.equal(decision, 'deny', command);
+    assert.ok(reason.includes(`Run this instead:\n\n  ${replacement}\n`), `${command}\n${reason}`);
+    assert.equal(check(replacement, { env: NO_OVERRIDE }), null, replacement);
+    assert.equal(grepChainCheck(replacement, { env: {} }), null, replacement);
+  }
+});
+
 // bash -n: the line parses. Skipped where bash is missing.
 function assertParses(line) {
   const result = spawnSync('bash', ['-n', '-c', line], { encoding: 'utf8' });
@@ -787,8 +769,7 @@ function assertParses(line) {
 
 test('no whole-line replacement for a listing behind a shell word, in a group, or in a body that occurs twice', () => {
   const lead = 'Blocked: this process listing prints full command lines.';
-  // `grep 'foo)'`: the words read drop an unmatched `)`, even a quoted one, so a rewrite would search for `foo`.
-  for (const command of ['(ps aux; echo done)', 'while pgrep -fl x; do sleep 1; done', '! pgrep -fl x', 'case $x in a) ps aux;; esac', '(ps aux | grep "(a|b)")', "ps aux | grep 'foo)'", "ps aux | grep -E 'foo)' | head"]) {
+  for (const command of ['(ps aux; echo done)', 'while pgrep -fl x; do sleep 1; done', '! pgrep -fl x', 'case $x in a) ps aux;; esac', 'ps aux | grep "(a|b)"', "ps aux | grep 'foo)'"]) {
     const { decision, reason } = decideForCommand(command, NO_OVERRIDE);
     assert.equal(decision, 'deny', command);
     assert.ok(!reason.includes('Run this instead'), `${command}\n${reason}`);

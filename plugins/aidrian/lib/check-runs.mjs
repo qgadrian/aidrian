@@ -637,42 +637,30 @@ export function claimProblem(missing, runs, { where }) {
     'To get a result, run the command in the foreground to its end, or `aidrian test changed` for the test files this change touches.';
 }
 
-// What clears one claim no run supports at `tree`, as one sentence, cheapest true fix first: the count the run at
-// these files printed; a run of the same program with other words, to quote as its shell call ran it; the commit its
-// last pass was of, from `commitOf(tree)`, a commit id or null; or the run to make, and why its runs left no pass.
-// `named` is the commit the claim's own line names, or null. A record key is not the command as typed: it drops quotes
-// and a long one is cut, so a fix never hands one back as a command to run or paste, only as a name for the run.
-export function claimFix({ key, counts }, runs, { tree, commitOf = () => null, named = null }) {
+// The facts of the recorded run nearest to a claim no run supports at `tree`: a pass of the command there, else one of
+// the same program with other words there, else the command's last pass anywhere, else its last run. `commitOf(tree)`
+// gives a commit's full id, or null. It states what the record holds and composes no line: a record key drops quotes and
+// a long one is cut, so the key only names the run.
+const CITE = 'Cite one finished run: its command as written in the call that ran it, its counts, and its commit.';
+export function claimFacts({ key }, runs, { tree, commitOf = () => null }) {
   const own = runs.filter((run) => run.command === key);
   const passed = (run) => run.status === 'passed' && run.pass !== 0;
-  const passes = (run) => (typeof run.pass === 'number' ? `${run.pass} passes` : 'a pass');
-  const keep = named ? `, and keep "at ${named.slice(0, 7)}"` : '';
-  const drop = named ? ` and drop "at ${named.slice(0, 7)}" from the line` : '';
-  const rerun = `rerun it, the exact command copied from the call that ran it, in the foreground at HEAD${drop}`;
-  const here = own.filter((run) => passed(run) && atTree(run, tree)).at(-1);
-  if (here) return `its run at these files printed ${passes(here)}, and the line states ${counts.join(', ')}: write the count it printed${keep}.`;
   const runner = key.split(' ')[0];
-  const other = runs.filter((run) => run.command !== key && run.command.split(' ')[0] === runner && passed(run) && atTree(run, tree)).at(-1);
-  if (other) {
-    return `a run of \`${runner}\` with other words, recorded as \`${other.command}\`, passed at these files with ${passes(other)}: ` +
-      `quote that command as its shell call ran it, copied from that call${keep}.`;
+  const others = runs.filter((run) => run.command !== key && run.command.split(' ')[0] === runner);
+  const passedHere = (run) => passed(run) && atTree(run, tree);
+  const nearest = own.findLast(passedHere) ?? others.findLast(passedHere) ?? own.findLast(passed) ?? own.at(-1);
+  if (!nearest) {
+    return 'the record holds no finished run of it: a run in the background, inside `sh -c` or `$( )`, or in another ' +
+      `session leaves no row. ${CITE}`;
   }
-  const earlier = own.filter(passed).at(-1);
-  if (earlier) {
-    const commit = commitOf(earlier.tree) ?? (earlier.untrackedCode?.length ? null : commitOf(earlier.trackedTree));
-    if (!commit) return `its last pass was of other files, and no commit among HEAD's last 100 holds them, or git could not list them: ${rerun}.`;
-    return `its last pass was of commit ${commit.slice(0, 7)}, and the files have changed since: ${rerun}, ` +
-      `or say which commit it ran on, with "at ${commit.slice(0, 7)}" in the line${named ? ` in place of "at ${named.slice(0, 7)}"` : ''}.`;
-  }
-  const last = own.at(-1);
-  // A run of no tests is a pass when the line's status was its own, and a failure by its counts behind a pipe (runStatus).
-  if (last?.pass === 0 && !last.fail) return `its run finished and ran zero tests: check the test selection, such as its file paths or name pattern, then ${rerun}.`;
-  if (last?.status === 'unjudged') {
-    return 'its runs printed no test count in the output the call returned, as when a `tail` cuts the summary or a redirect ' +
-      `sends it to a file, and a pipe or \`;\` hid their exit status: ${rerun}, with its summary in the output and nothing ` +
-      'but `&&` around it.';
-  }
-  if (last?.status === 'failed') return `its last run failed, and a failed run is no pass: fix what failed, then ${rerun}.`;
-  return 'no shell call of this session finished it, and a run in the background, inside `sh -c` or `$( )`, or in another ' +
-    `session leaves no row: run the command the line names in the foreground at HEAD, as a call of its own${drop}.`;
+  const commit = commitOf(nearest.tree) ?? (nearest.untrackedCode?.length ? null : commitOf(nearest.trackedTree));
+  const held = typeof nearest.pass === 'number' || typeof nearest.fail === 'number';
+  const counts = held ? `${nearest.pass ?? 'unknown'} pass, ${nearest.fail ?? 'unknown'} fail` : 'no counts';
+  const facts = [
+    `the nearest recorded run is of \`${nearest.command}\`: ${nearest.status}, ${counts}`,
+    commit ? `at commit ${commit}` : "its files' commit not found among HEAD's last 100, or git could not list them",
+    ...(nearest.pass === 0 ? ['it recorded zero passes, which supports no pass'] : []),
+    ...(nearest.status === 'unjudged' ? ['its output showed no count and its exit status is unknown'] : []),
+  ];
+  return `${facts.join('; ')}. ${CITE}`;
 }

@@ -32,7 +32,7 @@ import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
 import { forgeFor } from '../../forges/index.mjs';
-import { claimFix, claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../../check-runs.mjs';
+import { claimFacts, claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../../check-runs.mjs';
 import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject, projectCheckouts, stateDir } from '../../project.mjs';
@@ -603,23 +603,22 @@ function judgeEvidence(body, call, { config, project, folder, readRuns, listOpen
     return trees.get(commit);
   };
   // Digits alone git cannot read are a number, such as "at 1234567 ms", and leave the line to HEAD's tree.
-  const namedCommit = (claim) => claim.commits.filter((id) => /[a-f]/u.test(id) || treeAt(id) !== null).at(-1) ?? null;
-  const claimTree = (claim) => treeAt(namedCommit(claim) ?? 'HEAD');
+  const claimTree = (claim) => treeAt(claim.commits.filter((id) => /[a-f]/u.test(id) || treeAt(id) !== null).at(-1) ?? 'HEAD');
   const missing = claims.filter((claim) => {
     const tree = claimTree(claim);
     return tree !== null && unsupportedClaims([claim], runs, { tree }).length > 0;
   });
   if (!missing.length) return null;
   const commitOf = commitsByTree(folder);
-  const fixes = missing.slice(0, FIXES_SHOWN)
-    .map((claim) => `For \`${claim.key}\`, ${claimFix(claim, runs, { tree: claimTree(claim), commitOf, named: namedCommit(claim) })}`);
+  const facts = missing.slice(0, FACTS_SHOWN)
+    .map((claim) => `For \`${claim.key}\`, ${claimFacts(claim, runs, { tree: claimTree(claim), commitOf })}`);
   return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section' })} The run must be of the files of HEAD ` +
     `(tree ${String(treeAt('HEAD') ?? 'unknown').slice(0, 12)}), or of the commit the line names, such as "at <commit id>". ` +
-    `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.\n\nWhat clears it: ${fixes.join(' ')}`);
+    `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.\n\nWhat the record shows: ${facts.join(' ')}`);
 }
 
-// How many unsupported claims the deny names a fix for, and how many of HEAD's commits it searches for a run's tree.
-const FIXES_SHOWN = 3;
+// How many unsupported claims the deny gives the record's facts for, and how many of HEAD's commits it searches for a run's tree.
+const FACTS_SHOWN = 3;
 const COMMITS_SEARCHED = 100;
 
 // A function from a git tree to the newest of HEAD's last COMMITS_SEARCHED commits that has it, or null. It reads the

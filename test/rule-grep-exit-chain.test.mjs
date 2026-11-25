@@ -377,40 +377,16 @@ test('asksForQuiet reads -q, a bundle with q, --quiet, and --silent', () => {
   assert.deepEqual(['-q x', '-qE x', '--quiet x', '--qui x', '--silent x', '-e -q f', '-c x'].map(quiet), [true, true, true, true, true, false, false]);
 });
 
-// The counts the dispatch log denied most in the week before issue 130: 49 of 109 counted, right after an in-place edit
-// of the same file, text that edit writes. They stay denied, and the deny names the presence check this rule passes.
-const EDIT_CHECKS = [
-  ["sed -i '' 's/^          retention-days: 1$/          retention-days: 30/' ci.yml && grep -c 'retention-days: 30' ci.yml",
-    "sed -i '' 's/^          retention-days: 1$/          retention-days: 30/' ci.yml && grep -q 'retention-days: 30' ci.yml"],
-  ["sed -i '' 's/state: .failed./state: \"parked\"/g' test/a.test.mjs && grep -c 'parked' test/a.test.mjs && node --test test/a.test.mjs",
-    "sed -i '' 's/state: .failed./state: \"parked\"/g' test/a.test.mjs && grep -q 'parked' test/a.test.mjs && node --test test/a.test.mjs"],
-  ["sed -i 's#@127.0.0.1:54329/app#@127.0.0.1:54339/app#' .env && grep -ci '127.0.0.1:54339' .env", "sed -i 's#@127.0.0.1:54329/app#@127.0.0.1:54339/app#' .env && grep -qi '127.0.0.1:54339' .env"],
-  ["perl -pi -e 's/a/b c/' f && grep --count 'b c' f", "perl -pi -e 's/a/b c/' f && grep --quiet 'b c' f"],
-];
-
-test('a count right after an in-place edit stays denied, and the deny names the presence check, which runs', () => {
-  for (const [command, presence] of EDIT_CHECKS) {
+test('each top denied shape of issue 130 is denied with a wrapped line that passes', () => {
+  for (const [command, fixed] of [
+    ["sed -i '' 's/a/b c/' f && grep -c 'b c' f && npm test", "sed -i '' 's/a/b c/' f && { grep -c 'b c' f || true; } && npm test"],
+    ["sed -i '' 's/a/b c/' f && grep -c 'b c' f", "sed -i '' 's/a/b c/' f && { grep -c 'b c' f || true; }"],
+    ['cp a f && grep -c b f', 'cp a f && { grep -c b f || true; }'],
+    ['git log -1 && grep -c b f && git status', 'git log -1 && { grep -c b f || true; } && git status'],
+  ]) {
     const { decision, reason } = decideForCommand(command, {});
     assert.equal(decision, 'deny', command);
-    assert.ok(reason.includes(`To check that the edit applied, gate on presence instead, which runs as it is:\n\n  ${presence}\n`), `${command}\n${reason}`);
-    assert.equal(decide(presence), 'allow', presence);
-    assertParses(presence);
+    assert.ok(reason.includes(`Run this instead:\n\n  ${fixed}\n`), `${command}\n${reason}`);
+    assert.equal(decide(fixed), 'allow', fixed);
   }
-  // No presence line where turning the count into -q would change the pattern or leave another count in the chain.
-  for (const command of ["sed -i '' 's/a/b/' f && grep -rc b f && grep -c x g", 'cp a f && grep -c b f && y', "sed -i '' 's/a/b/' f && grep -c b f | cat && y"]) {
-    assert.ok(!decideForCommand(command, {}).reason?.includes('gate on presence instead'), command);
-  }
-});
-
-test('a quoted pattern that ends in a balanced parenthesis is text, so the deny still names the wrapped line, which runs', () => {
-  const command = 'grep -cE "node .*(--test|test/)" log && echo next';
-  const fixed = '{ grep -cE "node .*(--test|test/)" log || true; } && echo next';
-  const { decision, reason } = decideForCommand(command, {});
-  assert.equal(decision, 'deny');
-  assert.ok(reason.includes(`Run this instead:\n\n  ${fixed}\n`), reason);
-  assert.equal(decide(fixed), 'allow');
-  assertParses(fixed);
-  // An unmatched one is dropped from the words the rule reads, so no rewrite is built from them.
-  const unmatched = decideForCommand("grep -c 'foo)' log && echo next", {}).reason;
-  assert.ok(!unmatched.includes('Run this instead'), unmatched);
 });

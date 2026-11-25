@@ -238,14 +238,8 @@ What each rule matches:
   and a `ps` format trades `args`, `command`, `cmd`, and `comm` for `ucomm`.
 - Counting grep in `&&`: such as `grep -c x log && npm test`. The deny starts with the line to run instead,
   each such count wrapped as `{ grep -c x log || true; }`, which keeps the count and the chain.
-  When the count is a lone grep right after an in-place edit (`sed -i`, `perl -pi`) joined by `&&`, where it often checks
-  that the edit applied, the deny also names that line with the count asking `-q`, as in
-  `sed -i '' 's/days: 1/days: 30/' ci.yml && grep -q 'days: 30' ci.yml`, a presence gate the rule passes. Only a bundle
-  of letters that take no value, or `--count`, is turned, and the line is named only when the rule passes it.
 - Neither rule rewrites a segment that starts with a shell word (`if`, `while`, `!`), opens or closes a group or a `case`
   arm, or sits in a substitution whose text occurs twice in the line: that deny names the fixes in general.
-  A parenthesis inside quotes, as in `grep -E "a(b|c)"`, is text and closes no group, unless its word holds more `)`
-  than `(`, as `grep 'foo)'` does: the words the rules read drop such a `)`, so a rewrite would lose it.
 - Pull request body: `gh pr create` or `gh pr edit` with a body that lacks a config.json `github.requiredSections` heading,
   or that carries the "Generated with [Claude Code]" footer; `gh pr create --fill`;
   and, when sections are configured, a non-web `gh pr create` with no `--body` or `--body-file`.
@@ -2554,13 +2548,13 @@ Two checks read it:
   request's `headRefName`, and an `owner:` one against its `headRepositoryOwner` too; when several open pull requests
   fit and nothing settles which, the edit is judged as if the body were new. An edit judges only the clauses its pull
   request's current body does not already hold.
-  The deny ends with what clears each of its first three claims, the cheapest true fix first: the count its run at
-  those files printed, keeping the commit the line names; a run of the same program with other words that passed
-  there, to quote as its shell call ran it; the commit among HEAD's last 100 that its last pass was of, to name with
-  "at <commit>", or a rerun at HEAD when none of them holds those files or git cannot list them; and with no pass, the
-  run to make in the foreground, with why its runs left none: no finished run, a run of zero tests, only failed runs,
-  or only unjudged ones, whose summary a `tail` or a redirect cut. A record key drops quotes and a long one is cut, so a
-  fix names a run by its key but never hands one back as a command to run or paste.
+  The deny ends with what the record shows for each of its first three claims: the facts of the nearest recorded run,
+  which is a pass of the command at those files, else one of the same program with other words there, else the
+  command's last pass at other files, else its last run. It states that run's status, its pass and fail counts, zero
+  recorded passes as such, and the full id of the commit among HEAD's last 100 that holds its files, or that none was
+  found or git could not list them; with no run, what leaves no row. One instruction follows: cite one finished run,
+  with its command as written in the call that ran it, its counts, and its commit. The run's record key only names it,
+  since a key drops quotes and a long one is cut.
 - The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its
   own rows since its run started: a run of the session or of another agent is that one's to report. The report is
   read in one pass over its lines, with fences found as the body rule finds them. A machine handoff's JSON, a

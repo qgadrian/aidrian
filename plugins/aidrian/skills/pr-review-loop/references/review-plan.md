@@ -111,8 +111,8 @@ late-round low findings the step accepted, which go into the body's Accepted res
 
 ## `timed_out`
 
-The bot gave no answer in time. Run the step again once when `bot.retry_recommended` is true, which needs the bot to have
-acknowledged the request for the head. Otherwise report that the bot did not answer, with
+The bot gave no answer in time. Run the step again once when `bot.retry_recommended` is true, as the step returns it:
+the wait sets it when the bot acknowledged the request for the head or its status card still runs. Otherwise report that the bot did not answer, with
 `aidrian pr await-review <n> --request` to ask it again.
 
 ## `incomplete`

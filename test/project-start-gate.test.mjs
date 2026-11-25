@@ -6,7 +6,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,6 +15,7 @@ import test from 'node:test';
 import { ownIssue, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
 
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { stubGitSpawn } from '../plugins/aidrian/lib/git.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { indexFilesOf } from '../plugins/aidrian/lib/index-edits.mjs';
 import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, INDEX_EDITS_LINE, ISSUE_ATTEMPTS, POLICY_FILES_LINE, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, spellingAt, startDocsAt, startGuards, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
@@ -2110,6 +2111,13 @@ test('a base tip whose indexes cannot say what the start hook loads, or a tip or
   addEntry(fx, scratch, '.github/work\ufb02ows/ci.yml', 'on: push\n');
   fx.git('-C', scratch, 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
   refuses(fx, 1, 'the branch\'s head [0-9a-f]{7} holds "\\.github/work\ufb02ows/ci\\.yml" is "\\.github/workflows" in another spelling', true);
+  // A head listing git cut at its buffer, with status 0 and an error, is no list: the start refuses.
+  stubGitSpawn((program, args, options) => (args.includes('ls-tree') && args.includes('--full-tree') && args.includes('-r') ? { status: 0, signal: null, stdout: 'src.js\0', stderr: 'spawnSync git ENOBUFS', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : spawnSync(program, args, options)));
+  try {
+    refuses(fx, 1, "the attempt's clone could not be made \\(ls-tree: spawnSync git ENOBUFS\\)", true);
+  } finally {
+    stubGitSpawn();
+  }
   // A first attempt is cut from the tip, and starts; the next one is refused.
   const fresh = runFixture(t, { files: broken });
   // This tip holds the folder in another spelling too.

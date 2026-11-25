@@ -14,6 +14,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkDelivery, unwrittenHandoffs } from '../plugins/aidrian/lib/delivery-check.mjs';
+import { stubGitSpawn } from '../plugins/aidrian/lib/git.mjs';
 import { INDEX_RECIPE } from '../plugins/aidrian/lib/index-edits.mjs';
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
 import { pushCheckoutProblem, rawPaths, statusEntries, workflowPaths } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
@@ -411,30 +412,8 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   const fx = indexFixture(t);
   assert.deepEqual(fx.own().indexFiles.map((each) => each.path), [INDEX, ADDED]);
   fx.commit(EDIT, [ADDED, '100644', 'edited\n']);
-  assert.equal(fx.push(), null, 'an edit of both');
-  // As the hook asks it, with the row's own lists: both edits pass, and an always doc beside them does not.
-  fx.commit([ALWAYS, '100644', 'edited\n']);
-  assert.match(fx.asked(), /: it pushes commits that change 1 host config or instruction file, .*\(docs\/rules\.md differs/u);
-  fx.reset();
-  // Each refusal names the file and the recipe.
-  const refused = (what) => new RegExp(`it pushes commits that ${what}, a knowledge index file this attempt may change only in git's index: from the clone's root, each word that holds \`<path>\` quoted as one shell word, \`git show :./<path>\` into a temporary file outside the clone, .*\`git update-index --cacheinfo 100644,<id>,<path> --skip-worktree -- <path>\``, 'u');
-  const name = INDEX.replaceAll('.', '\\.');
-  fx.commit([INDEX, '100644', NINE.join('')]);
-  // Asked from a subfolder, which reads HEAD's tree from the top all the same.
-  assert.match(fx.push(path.join(fx.work, '.aidrian')), refused(`put the base branch's copy of ${name} over the branch's own version`));
-  for (const [file, spelled] of [[INDEX, name], [ADDED, ADDED.replaceAll('.', '\\.')]]) {
-    fx.reset();
-    fx.commit([file, null]);
-    assert.match(fx.push(), refused(`delete ${spelled}`), file);
-    for (const mode of file === INDEX ? ['120000', '100755', '160000'] : []) {
-      fx.reset();
-      fx.commit([file, mode, mode === '160000' ? fx.head : 'CLAUDE.md']);
-      assert.match(fx.push(), refused(`leave ${spelled} as something other than a plain file`), `${file} ${mode}`);
-    }
-  }
   // A git that cannot read HEAD's tree there refuses the push.
-  fx.reset();
-  fx.commit(EDIT);
+  const name = INDEX.replaceAll('.', '\\.');
   const bin = path.join(fx.root, 'no-ls-tree');
   mkdirSync(bin);
   writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nfor word; do [ "$word" = ls-tree ] && exit 128; done\nexec "${execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()}" "$@"\n`, { mode: 0o755 });
@@ -445,6 +424,37 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   } finally {
     process.env.PATH = before;
   }
+  // With git reading again, the edit of both passes, asked from a subfolder, which reads HEAD's tree from the top all the same.
+  assert.equal(fx.push(path.join(fx.work, '.aidrian')), null, 'an edit of both');
+  // A whole list git cut at its buffer, which spawnSync answers with status 0 and an error, is no list: the push refuses.
+  const plainPush = { ...fx.own(), overlay: null, policyFiles: [], startLoaded: null };
+  for (const [word, why] of [['--name-only', /^it pushes, and git could not say in time which files its commits change/u], ['status', /^it pushes, and git could not say in time whether its checkout holds a change to the forge's workflow files/u]]) {
+    stubGitSpawn((program, args, options) => (args.includes(word) && (word !== '--name-only' || args.some((each) => each.endsWith('...HEAD'))) ? { status: 0, signal: null, stdout: 'src/a.js\0', stderr: '', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : spawnSync(program, args, options)));
+    try {
+      assert.match(fx.push(fx.work, plainPush) ?? '', why, word);
+    } finally {
+      stubGitSpawn();
+    }
+  }
+  // As the hook asks it, with the row's own lists: both edits pass, and an always doc beside them does not.
+  fx.commit([ALWAYS, '100644', 'edited\n']);
+  assert.match(fx.asked(), /: it pushes commits that change 1 host config or instruction file, .*\(docs\/rules\.md differs/u);
+  fx.reset();
+  // Each refusal names the file and the recipe.
+  const refused = (what) => new RegExp(`it pushes commits that ${what}, a knowledge index file this attempt may change only in git's index: from the clone's root, each word that holds \`<path>\` quoted as one shell word, \`git show :./<path>\` into a temporary file outside the clone, .*\`git update-index --cacheinfo 100644,<id>,<path> --skip-worktree -- <path>\``, 'u');
+  fx.commit([INDEX, '100644', NINE.join('')]);
+  assert.match(fx.push(), refused(`put the base branch's copy of ${name} over the branch's own version`));
+  for (const [file, spelled] of [[INDEX, name], [ADDED, ADDED.replaceAll('.', '\\.')]]) {
+    fx.reset();
+    fx.commit([file, null]);
+    assert.match(fx.push(), refused(`delete ${spelled}`), file);
+    for (const mode of file === INDEX ? ['120000', '100755', '160000'] : []) {
+      fx.reset();
+      fx.commit([file, mode, mode === '160000' ? fx.head : 'CLAUDE.md']);
+      assert.match(fx.push(), refused(`leave ${spelled} as something other than a plain file`), `${file} ${mode}`);
+    }
+  }
+  fx.reset();
   // The recipe, as the first message gives it.
   const temp = path.join(fx.root, 'scratch', 'index.json');
   const id = fx.git('rev-parse', `HEAD:${INDEX}`).trim();

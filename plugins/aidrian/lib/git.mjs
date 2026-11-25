@@ -80,13 +80,23 @@ export function hardenedEnv(env = process.env) {
 // holds a `commondir`, or whose own config sets a key that runs a program (attempt-clone.mjs cloneGitProblem), runs no
 // git: it answers `status` null with the reason on stderr and an `error` whose code is EREFUSED, as git not answering.
 // The -c settings override core.fsmonitor and core.hooksPath, but not a config a commondir leads git to.
+// The spawnSync every git call runs through: node's own, or a test's stand-in (stubGitSpawn).
+let spawnGit = spawnSync;
+
+// Makes `fake`, which takes spawnSync's arguments, run every git call of this process in its place; with none, node's own
+// spawnSync again. For a test that needs an answer git itself would rarely give, such as a cut read.
+export function stubGitSpawn(fake = null) {
+  spawnGit = fake ?? spawnSync;
+}
+
 export function runGit(args, cwd, options = {}) {
   const held = heldBack(cwd, options);
   if (held) return held;
-  const result = spawnSync('git', hardenedArgs(args), { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, ...(killSignal ? { killSignal } : {}), ...options, env: { ...(options.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } });
+  const result = spawnGit('git', hardenedArgs(args), { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, ...(killSignal ? { killSignal } : {}), ...options, env: { ...(options.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } });
   if (result.error?.code === 'ETIMEDOUT' && options.timeout === undefined) stalled = { status: null, stdout: '', stderr: '', error: result.error };
-  // Output past a maxBuffer the call gives is cut, and git may still exit 0: a cut answer is no answer to such a call.
-  if (result.error?.code === 'ENOBUFS' && options.maxBuffer !== undefined) return { ...result, status: null };
+  // A call that gives its own maxBuffer reads a whole list: an error on the result, as output cut at that buffer
+  // (ENOBUFS), whatever status git exited with, is no answer, never a list.
+  if (result.error && options.maxBuffer !== undefined) return { ...result, status: null };
   return result;
 }
 

@@ -856,6 +856,21 @@ test('a failed review bot run records no finding: the next step asks the bot aga
   assert.equal(state().rounds.at(-1).floor, undefined);
 });
 
+test('a failed review bot run of a newer head counts nothing on this head, and keeps the request recorded for the newer one', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const newer = 'e'.repeat(40);
+  const awaitBot = async ({ head, timeoutSec }) => (timeoutSec === 0
+    ? { status: 'timed_out', head_sha: head, requested: true, requested_head: head, signal: null }
+    : { status: 'timed_out', bot_failed: true, retry_recommended: true, head_sha: newer, requested: true, requested_head: newer, signal: { kind: 'failed', commit_id: newer } });
+  const moved = await r.step({ codex: off, awaitBot });
+  assert.deepEqual([moved.status, moved.retry_recommended], ['incomplete', true], moved.reason);
+  assert.match(moved.reason, /moved to eeeeeee/);
+  const state = readLocalState(r.project, 7);
+  assert.deepEqual(state.failures, {}, 'no failure is charged to the head the step reviewed');
+  assert.equal(state.botRequest?.head, newer, 'the request for the newer head stays on record');
+});
+
 test('the review bot`s clean receipt beside its status card of the head that still holds a finding is open work, never a pass', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
   const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });

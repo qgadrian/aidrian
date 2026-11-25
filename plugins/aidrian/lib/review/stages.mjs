@@ -284,14 +284,15 @@ export async function runStages(s) {
           undoRound();
           return finish('incomplete', { reason: bot.reason, retry_recommended: false });
         }
-        if (bot.bot_failed === true) return botFailed(remote, bot);
-        if (bot.status === 'timed_out' || bot.status === 'blocked_quota' || bot.status === 'round_limit') {
+        // A failed run is judged after the head check below, so a failure of a newer head counts nothing here.
+        if ((bot.status === 'timed_out' && bot.bot_failed !== true) || bot.status === 'blocked_quota' || bot.status === 'round_limit') {
           if (!bot.requested) undoRound();
           if (bot.status === 'blocked_quota') return quotaStop(remote, stage, bot.reason ?? 'the review bot posted a usage-limit notice', { bot });
           return bot.status === 'round_limit' ? capReached({ bot }) : finish(bot.status, { bot });
         }
         // A push during the wait: the bot's answer is for another commit, so it counts for nothing here.
         if (bot.head_sha && bot.head_sha !== head) return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} during the wait: run the step again`, retry_recommended: true });
+        if (bot.bot_failed === true) return botFailed(remote, bot);
         recordBot(remote, bot);
       }
       const agents = pending.filter((pass) => map[pass.reviewer]?.kind === 'agent' || pass.kind === 'agent');

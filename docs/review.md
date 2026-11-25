@@ -951,10 +951,13 @@ head hides an earlier answer for this one, so the wait asks again or times out, 
 receipt's footer quotes "@codex review", and like the status card it is never a request, nor is a 👀 on it an
 acknowledgement. A run the bot reports failed on its side is no answer and holds no finding: its notice, matched on
 its lead "Codex Review: Something went wrong" (it quotes "@codex review" in its help text and is never a request), or
-a status card last updated at or after the request whose code review is `failed`. With `--request`, a failure for the
-head is asked about once more, as a stale answer is; a failure after the wait's own request, or one found without
-`--request`, ends the wait as `timed_out` with `bot_failed: true` and `retry_recommended: true`, exit 2. The step
-counts it on the head's failures in the round it was asked in, so it uses no round and no round history reads it as
+a status card last updated after the request whose code review is `failed`. Either counts only when it is dated after
+the request's own second, so a retry posted in the second of the failure it answers never reads that failure again, and
+a usage-limit notice since the request outranks the card: that run stays `blocked_quota`. With `--request`, a failure
+for the head is asked about once more, as a stale answer is; a failure after the wait's own request, or one found without
+`--request`, ends the wait as `timed_out` with `bot_failed: true` and `retry_recommended: true`, exit 2. A failure
+the wait saw for a newer head counts nothing: the step ends `incomplete` for the move, and the newer head's request
+stays on record. The step counts a failure of its own head on the head's failures in the round it was asked in, so it uses no round and no round history reads it as
 open work: the first is `incomplete` with `retry_recommended: true`, and the next step asks the bot again; the second
 on that head is `stuck`, with the `aidrian pr await-review <n> --request` that asks again by hand.
 Any other answer holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request

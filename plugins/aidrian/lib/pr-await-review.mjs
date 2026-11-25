@@ -276,6 +276,10 @@ export const reviewedCommit = (body) => (typeof body === 'string' ? body.match(R
 // is `failed`: no answer, and never a finding.
 export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], reviewer, since }) => {
   const after = (iso) => Number.isFinite(ms(iso)) && (!since || ms(iso) >= ms(since));
+  // A failed run counts only when it is dated after the request's own second: GitHub dates to the second, and a retry
+  // posted in the second of the failure it answers would read that failure again as its own, so one failure would use
+  // both attempts. No run of a request fails within the second it was posted.
+  const failedAfter = (iso) => after(iso) && (!since || ms(iso) > ms(since));
   const review = reviews
     .filter((r) => r.user?.login === reviewer && after(r.submitted_at))
     .sort((a, b) => ms(b.submitted_at) - ms(a.submitted_at))[0] ?? null;
@@ -287,15 +291,18 @@ export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], r
         c.user?.login === reviewer &&
         !isReviewSummaryCard(c.body) &&
         after(c.created_at) &&
+        (!isFailureNotice(c.body) || failedAfter(c.created_at)) &&
         (since || reviewedCommit(c.body) || isQuotaNotice(c.body)),
     )
     .sort((a, b) => ms(b.created_at) - ms(a.created_at))[0] ?? null;
   // The status card is edited in place, so a `failed` code review on it dates from its last update. Its commit counts
-  // only as a full SHA, as for a card that vouches for a comment.
+  // only as a full SHA, as for a card that vouches for a comment. A usage-limit notice since the request outranks it:
+  // a run that failed for want of credits is `quota_exhausted`, whatever the card says.
   const statusCard = newestCard(issueComments, reviewer);
   const cardReview = cardState(statusCard?.body)?.code_review;
   const cardAt = statusCard?.updated_at ?? statusCard?.created_at;
-  const cardFailed = cardReview?.status === 'failed' && after(cardAt) ? { kind: 'card', at: cardAt } : null;
+  const quota = Boolean(comment) && isQuotaNotice(comment.body);
+  const cardFailed = cardReview?.status === 'failed' && failedAfter(cardAt) && !quota ? { kind: 'card', at: cardAt } : null;
   const newest = [
     review && { kind: 'review', at: review.submitted_at },
     comment && { kind: 'comment', at: comment.created_at },

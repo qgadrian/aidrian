@@ -435,9 +435,21 @@ export function wordingProblems(text, { decisions, problems: parsed = [] } = par
     }
     if (decision.status !== 'unconfirmed' || decision.newWording === null) return;
     const count = findWording(lines, blockAbove(lines, fenced, decision.line - 1), decision.newWording).length;
-    if (count !== 1) problems.push({ line: decision.line, problem: `"${decision.id}" wrote wording found ${count} times in the block above it, and undo needs it exactly once: put it back, or fix the decision-new line` });
+    if (count !== 1) problems.push({ line: decision.line, problem: `"${decision.id}" wrote wording found ${count} times in the block above it, and undo needs it exactly once: put the wording back as it was; a changed wording is the Human's to settle, with aidrian decisions set or undo` });
   });
   return problems;
+}
+
+// The words that say a rule is not built yet, so building it would make a wording that holds them wrong: a short fixed list.
+// A state worded another way passes, and "not built-in" is no state.
+const BUILD_STATE = /\bnot\s+(?:yet\s+)?(?:built|implemented)\b(?!-\w)/iu;
+
+// What is wrong with an unconfirmed decision's new wording when it holds its build state, or null. Only for a decision a
+// branch added: one already on record keeps its wording until the Human settles it.
+export function buildStateProblem({ id, status, newWording }) {
+  const said = status === 'unconfirmed' && newWording !== null ? BUILD_STATE.exec(newWording) : null;
+  if (!said) return null;
+  return `"${id}" wrote wording that says "${said[0].replace(/\s+/gu, ' ')}": a wording states the rule as it holds, and its build state goes in the tracker issue or in text outside its block`;
 }
 
 // The lines of the block above the marker of `decision`, for a person to compare with its wording.

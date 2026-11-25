@@ -626,6 +626,9 @@ Refunds take five days.
 <!-- aidrian:decision-new id=refund-copy text="Refunds take five days." -->
 ```
 
+A wording states the rule as it holds, and never its build state: "not built yet" goes in the tracker issue or in text outside the block,
+so building the rule changes no record.
+
 - `id` is lowercase letters, digits, and `-`, unique across the docs.
   It takes at most 32 characters, so the longest marker fits on one screen at the default `docs.wrapLimit`.
 - `status` is `unconfirmed`, `confirmed`, or `rejected`. An agent writes `unconfirmed`; only the Human moves it, and nothing settles a decision by time.
@@ -669,6 +672,8 @@ So is a marker with no `decision-new` line, and an old wording line below a new 
 `hasOldWording` true with `oldWording` null means the old wording cannot be read, and `hasNewWording` true with `newWording` null the same of the new.
 Two more problems compare the wording with the doc.
 An unconfirmed marker at the bottom of its stack has drifted when its new wording is not in its block exactly once.
+The remedy is to put the wording back as it was. A changed wording is the Human's to settle, with `aidrian decisions set` or `undo`:
+no command rewrites a `decision-new` line.
 A confirmed marker is exempt, since the Human may reword what they kept.
 A rejected marker is exempt too: `set rejected` changes no wording, so a later hand edit is expected.
 And in any stack that is not independent, each marker's old wording must be the new wording of the marker above it.
@@ -692,6 +697,9 @@ A problem the merge base already has, the same text on the same line, stays in t
 A change to a valid `status` or `pr` alone does not make a line new, and an invalid value does.
 So a branch that rewords an inherited rule sees the drift as its own.
 A new decision in a Markdown file no index lists is a `problem`: markers belong in an indexed doc.
+So is a new unconfirmed marker whose new wording says "not built", "not implemented", "not yet built", or "not yet implemented",
+in any letter case and with any white space between the words. A build state worded another way passes.
+Plain `list` and `aidrian check` do not report it, and a marker the merge base has is never reported for it.
 Its JSON adds `settled`, each inherited marker whose status the branch changed, with `was`, the status at the merge base.
 `removed` holds each id at the merge base that no indexed doc at `HEAD` holds, such as one undone, with its `status` and `doc` there.
 A marker the merge base held in an unindexed file, which `HEAD` still holds in that file, is not `removed`.

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { blockAbove, findWording, parseDecisions, recordAt, undoDecision, wordingProblems } from '../plugins/aidrian/lib/decisions.mjs';
+import { blockAbove, buildStateProblem, findWording, parseDecisions, recordAt, undoDecision, wordingProblems } from '../plugins/aidrian/lib/decisions.mjs';
 import { fencedIn } from '../plugins/aidrian/lib/markdown-sections.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -311,6 +311,8 @@ test('list and check report a new wording that drifted, and a stack whose wordin
   assert.equal(drifted.length, 1);
   assert.equal(drifted[0][0], 2);
   assert.match(drifted[0][1], /"refund-copy" wrote wording found 0 times in the block above it/u);
+  assert.match(drifted[0][1], /: put the wording back as it was; a changed wording is the Human's to settle, with aidrian decisions set or undo$/u);
+  assert.doesNotMatch(drifted[0][1], /decision-new|\bfix\b|\bedit\b/u, 'no words that send an agent to the record');
   assert.match(problems(`${rule}\n${rule}\n${record({ wrote: rule }).join('\n')}\n`)[0][1], /found 2 times/u);
   assert.deepEqual(problems(`Six days.\n${record({ wrote: rule, status: 'confirmed' }).join('\n')}\n`), [], 'confirmed: the Human may reword it');
   assert.deepEqual(problems(`Six days.\n${record({ wrote: 'Five', status: 'rejected' }).join('\n')}\n`), [], 'only an unconfirmed marker drifts');
@@ -328,6 +330,29 @@ test('list and check report a new wording that drifted, and a stack whose wordin
   const higher = problems(['Third.', ...record({ id: 'first', wrote: 'Gone.' }), ...record({ id: 'second', was: 'Gone.', wrote: 'Third.' })].join('\n'));
   assert.deepEqual(higher, [], 'only the bottom of a stack has to be in the doc');
   assert.deepEqual(problems(`${rule}\n${marker()}\n<!-- aidrian:decision-new id=refund-copy text=oops -->\n`), [], 'unreadable wording is a parse problem, not a drift');
+});
+
+test('a rule states its build state outside its block, so marking it built changes no record and no problem', () => {
+  const rule = 'A cancelled slot goes back at once.';
+  const problems = (text) => {
+    const found = parseDecisions(text);
+    return [...found.problems, ...wordingProblems(text, found), ...found.decisions.map(buildStateProblem).filter(Boolean)];
+  };
+  const lines = [rule, ...record({ wrote: rule })];
+  for (const state of [['The rule below is not built yet.', ''], ['The rule below is built.', ''], []]) {
+    assert.deepEqual(problems(['# Booking', '', ...state, ...lines, ''].join('\n')), [], state[0] ?? 'the sentence removed');
+  }
+  const inside = `${rule} Not built yet.`;
+  assert.equal(problems([inside, ...record({ wrote: inside }), ''].join('\n')).length, 1, 'the state inside the wording is what the rule is for');
+});
+
+test('buildStateProblem reads a short fixed list, in any letter case and across white space, on an unconfirmed wording alone', () => {
+  const problem = (newWording, status = 'unconfirmed') => buildStateProblem({ id: 'a', status, newWording });
+  for (const [words, said] of [['Decided, not built yet.', 'not built'], ['NOT Implemented.', 'NOT Implemented'], ['not yet\tbuilt', 'not yet built'], ['- Slots, not\n  yet\n  implemented.', 'not yet implemented'], ['not  built', 'not built']]) {
+    assert.equal(problem(words), `"a" wrote wording that says "${said}": a wording states the rule as it holds, and its build state goes in the tracker issue or in text outside its block`);
+  }
+  for (const words of ['A cancelled slot goes back at once.', 'Built, and not slow.', 'The parser is not built-in.', 'It cannot built.', 'Not rebuilt.', null]) assert.equal(problem(words), null, words);
+  for (const status of ['confirmed', 'rejected']) assert.equal(problem('Not built yet.', status), null, status);
 });
 
 // A project with the doc `docs/a.md`, indexed, and the doc's path.

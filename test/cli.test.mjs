@@ -894,6 +894,24 @@ test('decisions list --added-since flags a pr=none the branch added once its pul
   assert.match(after.problems[0].problem, /"refund-copy" still says pr=none, but pull request #7 exists/u);
 });
 
+test('decisions list --added-since flags a wording the branch added that holds its build state, and no marker of the base, plain list, or check', async (t) => {
+  const stated = (id, text, status = 'unconfirmed') => `${text}\n${DECISION.replace('refund-copy', id).replace('unconfirmed', status)}\n${NEW_WORDING.replace('refund-copy', id).replace('"Rule."', JSON.stringify(text))}`;
+  const base = [stated('old', 'Old, not built yet.'), stated('renumbered', 'Renumbered, not yet built.')];
+  const { dir, git } = decisionRepo(t, { 'a.md': `${base.join('\n\n')}\n` });
+  git('checkout', '-q', '-b', 'feature');
+  const added = [stated('fresh', '- New,\n  not\n  Yet Implemented.'), stated('clean', 'Built as it says.'), stated('kept', 'Kept, not built.', 'confirmed')];
+  writeFileSync(path.join(dir, 'docs/a.md'), `${[base[0], base[1].replace('pr=41', 'pr=42'), ...added].join('\n\n')}\n`);
+  git('add', '.');
+  git('commit', '-q', '-m', 'decide');
+
+  const env = { ...process.env, PATH: noGh(t) };
+  const { decisions, problems } = JSON.parse((await run(['decisions', 'list', '--added-since', 'main', '--json'], dir, env)).stdout);
+  assert.deepEqual(decisions.map(({ id }) => id), ['fresh', 'clean', 'kept']);
+  assert.deepEqual(problems, [{ doc: 'docs/a.md', line: 12, problem: '"fresh" wrote wording that says "not Yet Implemented": a wording states the rule as it holds, and its build state goes in the tracker issue or in text outside its block' }]);
+  assert.deepEqual((await listDecisions(dir)).problems, [], 'plain list');
+  assert.doesNotMatch((await run(['check'], dir, env)).stderr, /build state/u, 'check');
+});
+
 // A PATH with `gh` printing `json`, ahead of the real one.
 function fakeGh(t, json) {
   const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gh-')));

@@ -2379,14 +2379,17 @@ attended first turn, and `init` last, once nothing blocks.
 
 `init` and `init --check` both name, after the `resumed:` and `landed:` lines, each merge the run leaves to the Human that they can see already.
 A resumed issue whose open pull request changes a path auto-merge never merges gets `needs your merge: #<n> changes <path>, which auto-merge never merges`.
-The path rule is the [auto-merge gate's](#auto-merge) own, each changed file judged alone under the default branch's config on the forge.
+The path rule is the [auto-merge gate's](#auto-merge) own, each changed file judged alone.
+It reads the config of the default branch and of the pull request's own base on the forge, and a lift counts only when both set it.
 Without `github.autoMerge.includeGuardedPaths` a guarded path counts, and without `includePolicyFiles` too a policy file counts.
-With both, only the pointer file `.aidrian.json` counts, which no pull request may change by itself.
+With both, the pointer file `.aidrian.json` still counts, which no pull request may change by itself.
+So do the paths no lift covers, such as a renamed file or one outside a nested project's folder.
 An issue the run may still start whose tracker text names a policy file, such as `.aidrian/config.json`, gets a `needs your merge, maybe:` warning.
 Its diff does not exist yet, so the warning reads the text alone, and only for the fixed policy file names and the config the pointer file locates.
 A read the forge cannot answer gives a `needs your merge, unknown:` line that says what cannot be told.
 None of these lines blocks: they reach the Human in the run's first turn, before any issue starts, never when an issue's session reaches auto-merge.
-A run with none prints none, and reads nothing more from the forge.
+A run with none prints none.
+With no resumed pull request and no text of an issue it may start, it reads nothing more from the forge.
 
 `report RUN [--json]` prints, for the driver only, the report the run owes each issue that settled for good, done after
 a forge-confirmed merge or parked: a status (the adapter's done status type for a merge, `projectRun.blockedStatus` for a

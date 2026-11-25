@@ -186,7 +186,7 @@ test('init starts a started issue an earlier run parked on the same branch, and 
     },
     change: (ref) => views[ref],
   };
-  const humanMerges = ({ resumed, issues, texts }) => humanMergeLines({ forge, repository: { host: 'github.com', owner: 'Acme', name: 'widgets' }, prefix: () => '', resumed, issues, texts });
+  const humanMerges = ({ resumed, startable, texts }) => humanMergeLines({ forge, repository: { host: 'github.com', owner: 'Acme', name: 'widgets' }, prefix: () => '', resumed, startable, texts });
   const result = init('second', input(second, 'second.json'), { humanMerges });
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   assert.ok(result.out.includes('resumed: 1 started issue an earlier run parked on its branch, which this run starts again: ENG-1'), result.out.join('\n'));

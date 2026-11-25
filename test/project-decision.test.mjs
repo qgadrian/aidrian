@@ -305,9 +305,9 @@ test('init --check names no recorded decision of a canceled issue or one skipped
   assert.match(lines[0], /^blocker recorded-decision: ENG-2 has a recorded decision/u);
 
   // An issue to start whose text names a policy file is warned of, in the check and in init's first output alike; a
-  // canceled one is not, and the warning blocks nothing.
-  const texts = [['ENG-4', 'Raise the cap in `.aidrian/config.json`.'], ['ENG-5', 'Edit .aidrian.json']];
-  assert.equal(recordIssueReads(DRIVER, texts.map(([key, description]) => ({ key, text: { title: key, description, criteria: '', labels: [] } })), { env: fx.env }), 2);
+  // canceled one and one skipped below it are not, and the warning blocks nothing.
+  const texts = [['ENG-4', 'Raise the cap in `.aidrian/config.json`.'], ['ENG-5', 'Edit .aidrian.json'], ['ENG-6', 'Edit .aidrian/config.json']];
+  assert.equal(recordIssueReads(DRIVER, texts.map(([key, description]) => ({ key, text: { title: key, description, criteria: '', labels: [] } })), { env: fx.env }), 3);
   const warning = 'needs your merge, maybe: ENG-4\'s text names ".aidrian/config.json", a policy file auto-merge never merges, so a pull request that changes it waits for your merge';
   const checked = fx.cmd(['init', 'launch', '--file', file, '--check']).out.filter((line) => line.startsWith('needs your merge'));
   assert.deepEqual(checked, [warning]);

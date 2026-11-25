@@ -14,7 +14,8 @@ import test from 'node:test';
 
 import { configFromText, DEFAULTS, loadConfig, machineSwitch } from '../plugins/aidrian/lib/config.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
-import { backgroundGate } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { backgroundGate, projectStore } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { noteFrom } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { detectHost } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { pathsProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { runSettle } from '../plugins/aidrian/lib/review-gate.mjs';
@@ -250,6 +251,32 @@ test('the session-length hook words a handoff by the base branch\'s local ref, a
   assert.equal((await continuation({ continue: 'background' }, host, solo, loadConfig(solo).config)).route, 'background');
   const plain = repo(t, { committed: NOT_SOLO }).project();
   assert.equal((await continuation({ continue: 'background' }, host, plain, loadConfig(plain).config)).route, 'clear');
+});
+
+test('the session-length hook stays silent at the chain cap only when every route the gate could take is at its cap', async (t) => {
+  const host = detectHost({ env: { CLAUDECODE: '1' } });
+  const handoffOf = (maxChain) => ({ ...TEAM.session.handoff, maxChain });
+  // The base branch caps the background route at 2; the working copy caps the clear route at `working`.
+  const capped = async (working, local = null) => {
+    const r = repo(t, {
+      committed: { ...SOLO, session: { handoff: handoffOf(2) } },
+      working: { ...SOLO, session: { handoff: handoffOf(working) } },
+      local,
+    });
+    const project = r.project();
+    const { config } = loadConfig(project);
+    noteFrom(projectStore(project, config), 'session-1', { slug: 'widget', chain: 2, brief: path.join(r.state.state.dir, 'handoffs/2026-11-15-widget.md'), route: 'background', parent: 'session-0' });
+    const result = await continuation(config.session.handoff, host, project, config, 'session-1');
+    assert.equal(result.route, 'background');
+    return result.capped;
+  };
+  // The machine switch unset and the local ref's solo trusted: should the forge not confirm it, the gate goes on by the
+  // clear route, where Chain 2 is below the cap of 3, so the reminder stays.
+  assert.equal(await capped(3), false);
+  // Both routes at their cap: silent.
+  assert.equal(await capped(2), true);
+  // The machine turns the route on itself: no forge read decides it, and the background cap alone holds.
+  assert.equal(await capped(3, { handoff: { background: 'on' } }), true);
 });
 
 test('a pull request that adds solo changes a policy file, which auto-merge never lets through', () => {

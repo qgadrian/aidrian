@@ -2271,6 +2271,9 @@ Two hooks weigh what continuing the main session costs against a fresh session s
   nothing is typed, and still counts a Human who is not watching. A background route this machine or the base branch
   has not turned on is worded as the clear route the gate falls back to, read only on a stop that fires.
   With `none`, or a route the host does not list, the text is as above.
+- Neither asks for a handoff when the session's chain is at the `maxChain` of every route the gate could take, which
+  the gate would continue by no route: they read the gate's own check ([At the chain cap](handoff.md#the-reminder)), and the Stop hook records the
+  firing without sending the turn back.
 - Both price a fresh session with this project's resume tokens, and the Stop hook records a sample for each session
   that resumed from a brief, once, at its first stop after its first edit or dispatch, in any `mode`
   ([Resume tokens](handoff.md#resume-tokens)).

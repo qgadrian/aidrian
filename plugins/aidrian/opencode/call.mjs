@@ -113,7 +113,7 @@ async function sessionOf(runner, get, sessionID) {
     id = last.parent;
     last = links.length < PARENT_STEPS ? await readOf(get, id) : null;
   }
-  if (runner.roots.size + links.length > ROOTS_MAX) runner.roots.clear();
+  if (runner.roots.size + links.filter(([child]) => !runner.roots.has(child)).length > ROOTS_MAX) runner.roots.clear();
   for (const [child, parent] of links) {
     runner.roots.set(child, parent);
     runner.folders.delete(child);
@@ -169,9 +169,9 @@ export function endCall(runner, sessionID) {
   return { base: dir, cwd: dir, root: sessionID, agent: null };
 }
 
-// Forgets the parent link and the folder the bridge keeps of the session `sessionID`, once its end ran.
+// Forgets the folder the bridge keeps of the session `sessionID`, once its end ran. Its parent link stays, so a late call
+// of it, or of its own child, stays a subagent's under its root.
 export function forgetSession(runner, sessionID) {
-  runner.roots.delete(sessionID);
   runner.folders.delete(sessionID);
 }
 

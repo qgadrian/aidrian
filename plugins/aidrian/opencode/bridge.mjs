@@ -290,7 +290,7 @@ function idleSteps(runner, hook) {
 
 // On a session's `session.deleted` event, waits for its start when one still runs, bounded by the start scripts' own
 // timeouts, so what that start saves goes with the end, then runs its SessionEnd routes when it is a root (endSteps), then
-// drops its `stop_hook_active`, its start lines, and its kept walk and folder, for as long as OpenCode's event stream
+// drops its `stop_hook_active`, its start lines, and its kept folder, for as long as OpenCode's event stream
 // runs, listening once a setup. Events are read one at a time, so a root's end has run before the next event is read.
 // Only `session.deleted` runs anything: an archived session is not ended, and runs no hook. A stream that fails ends
 // the listening and nothing else.

@@ -283,7 +283,7 @@ that holds no parent link ([Session ids](#session-ids)), with the last folder su
 timeout. A child's delete runs nothing, since its payload would carry its root's id and delete the root's records while
 the root runs on. A session whose root-ness the bridge cannot tell runs none, traced as a `skip` with `read`: one it
 never read in this setup, and one whose folder the 256-entry map of root folders forgot. Nor does a root whose folder is
-gone, traced with `cwd`. The root's start lines and stop state are dropped after its end ran. The payload
+gone, traced with `cwd`. The root's start lines, stop state, and kept folder are dropped after its end ran. The payload
 carries no `reason` and no `transcript_path`, so the hook deletes the session's records and writes no session row.
 OpenCode publishes a root's delete event before it removes the root's children, so the root's records are deleted
 before its children stop, and a child's call that settles later can leave records under the root's id until the
@@ -363,7 +363,8 @@ else the plugin's own, else the service's, which exists whatever the call names.
 
 OpenCode 2.4.1's built-in tools that have no Claude Code tool of the same job, by the name a hook receives.
 A gate pattern written with a standard name, such as `Read` or `Bash`, meets none of them, and the bridge leaves them
-unrouted: a gate that names one by OpenCode's own name does not make the bridge route it. The leaf, `plugins/aidrian/lib/hosts/opencode-names.mjs`, maps every other built-in tool,
+unrouted: a gate that names one by OpenCode's own name does not make the bridge route it.
+The leaf, `plugins/aidrian/lib/hosts/opencode-names.mjs`, maps every other built-in tool,
 and `test/opencode-names.test.mjs` fails when a tool 2.4.1 registers is in neither, in both, or when an entry here
 names no such tool. An entry that ends in `*` is a family.
 
@@ -433,7 +434,8 @@ through the `events` seam. None means no OpenCode hook or session read gives the
   Claude Code. A read counts as the session only when it gives an object whose `id` is the id asked for, as 2.4.1's
   `Session.Info` always carries, so `{}` or an error object is no session.
   The bridge reads a session's parents on each call, with its folder, and keeps each parent link a read gave, at most 256
-  before it forgets them all. A session a read once named a parent for stays a subagent for that setup.
+  before it forgets them all. A session a read once named a parent for stays a subagent for that setup: its delete event
+  keeps its link, so a late call of it, or of its own child, stays under its root.
   A walk finishes at a session whose read names no parent and that holds no link, and that session is the root: the call
   is the root session's own only when the walk finished without a step. A read that fails, comes past the 2 s cap, or
   gives no session, a walk that runs out of its 8 steps, as on a cycle, and a walk that ends at a linked session are

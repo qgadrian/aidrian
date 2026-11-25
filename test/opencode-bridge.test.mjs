@@ -675,6 +675,30 @@ test('a walk that meets the 256-link bound loses none of its own links', async (
   }
 });
 
+test('a call of a child already linked, with 256 links kept, clears none: another child`s link still leads to its root', async () => {
+  const { call, context, last } = await middleBridge('full-of-links', () => 'ses_top');
+  for (let n = 0; n < 256; n += 1) await call(`ses_kid${n}`);
+  await call('ses_kid0');
+  misread(context, 'ses_kid1');
+  await call('ses_kid1');
+  assert.deepEqual(last(), ['ses_top', 'ses_kid1']);
+});
+
+test('a deleted middle child`s link stays: its late call and its child`s go to the top, and a replayed delete runs nothing', { timeout: 10_000 }, async () => {
+  const { call, calls, context, last, remove, skips } = await middleBridge('deleted-middle', () => 'ses_top');
+  await call('ses_low');
+  await call('ses_mid');
+  await remove('ses_mid');
+  misread(context, 'ses_mid');
+  for (const sessionID of ['ses_mid', 'ses_low']) {
+    await call(sessionID);
+    assert.deepEqual(last(), ['ses_top', sessionID]);
+  }
+  await remove('ses_mid');
+  assert.deepEqual(ends(calls), []);
+  assert.deepEqual(skips(), Array(2).fill(['hook-session-end.mjs', 'subagent']));
+});
+
 test('a session hook makes one walk, and reads the root once', async () => {
   const { context, last, prompt } = await middleBridge('one-walk', () => 'ses_top');
   await prompt('ses_low');

@@ -600,6 +600,8 @@ function ownClause(clause, { said, ends }) {
 }
 
 const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])\s/u;
+// A block quote line or a thematic break.
+const QUOTE_OR_BREAK = /^\s*(?:>|([-*_])(?:\s*\1){2,}\s*$)/u;
 // The cells of a Markdown table row, split at each `|` but an escaped one, which reads as a plain `|`, and one inside
 // backticks.
 const cellsOf = (line) => line.trim().replace(/^\|/u, '').replace(/(?<!\\)\|$/u, '')
@@ -619,9 +621,9 @@ function rowText(cells, labels) {
 
 // The list items, paragraphs, and table rows of `lines`, each one string: a list marker starts one, a blank line or a
 // heading ends it, and any other line continues it, as a wrapped line does. A line with a `|` and a delimiter row after
-// it opens a table: each line with a `|` from there to a blank line, a heading, or a list marker is a row, and one string
-// with what the table stands under, its header and the paragraph it continues, but not with the other rows. A line with
-// no `|` ends the table and continues the header's string, as a wrapped line does.
+// it opens a table, as GFM has it: each line from there, with a `|` or not, to a blank line, a heading, a list marker, a
+// block quote, or a thematic break is a row, and one string with what the table stands under, its header and the
+// paragraph it continues, but not with the other rows. A line that ends the table starts its own string.
 function units(lines) {
   const out = [];
   let open = null;
@@ -634,10 +636,11 @@ function units(lines) {
       continue;
     }
     const item = LIST_MARKER.test(line);
-    if (labels && !item && line.includes('|')) {
+    if (labels && !item && !QUOTE_OR_BREAK.test(line)) {
       out.push(`${out[open]}, ${rowText(cellsOf(line), labels)}`);
       continue;
     }
+    if (labels) open = null;
     labels = null;
     if (open === null || item) {
       out.push(line.trim());

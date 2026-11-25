@@ -1010,7 +1010,9 @@ test('includeGuardedPaths true on the default branch and the base lets a guarded
   assert.deepEqual([plain.code, plain.calls.filter((call) => call[0] === 'tree')], [0, [['tree', 'acme/notes', HEAD, 'github.com'], ['tree', 'acme/notes', 'tree:.aidrian', 'github.com']]], 'a regular config and no pointer: the head, then its folder by the sha its entry gave, each once');
   assert.deepEqual(plain.calls.filter((call) => call[0] === 'contents' && call[3] === HEAD).map((call) => call[2]), ['.aidrian.json', '.aidrian/config.json'], 'no folder is listed');
   assert.equal(at({ modes: { '.aidrian/config.json': '100755' } }).code, 0, 'an executable config is a regular file');
-  assert.equal(at({ modes: { '.aidrian.json': '100644' } }).code, 0, 'a regular pointer');
+  const throughPointer = run(t, r, ['7'], onStack({ ...pointing('main', 'tools/policy', policies), ...pointing('feat/stack', 'tools/policy', policies), ...pointing(HEAD, 'tools/policy', policies) }, 'tools/policy/config.json'));
+  assert.deepEqual([throughPointer.code, throughPointer.calls.filter((call) => call[0] === 'contents' && call[3] === HEAD).map((call) => call[2])], [0, ['.aidrian.json', 'tools/policy/config.json']], 'a regular pointer: the config is read from the folder it names, at the head');
+  assert.deepEqual(throughPointer.calls.filter((call) => call[0] === 'tree').map((call) => call[2]), [HEAD, 'tree:tools', 'tree:tools/policy'], 'a regular pointer: the tree is walked to the folder it names');
   // The tree as `edit` changes one folder's answer, and a folder grown past the contents route's 1,000 entries.
   const edited = (folder, edit) => ({ tree: (sha, folders) => {
     const body = { sha, tree: folders.get(sha), truncated: false };

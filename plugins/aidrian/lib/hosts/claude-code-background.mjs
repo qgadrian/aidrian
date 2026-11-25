@@ -266,8 +266,9 @@ export function attachLine({ id, name }) {
   return `\`claude attach ${id}\` opens it${byName}, and \`claude agents\` lists it`;
 }
 
-// How the Human stops the session `id` by hand, when stopBackground could not.
-export const stopLine = ({ id }) => `\`claude stop ${id}\` stops it`;
+// How the Human stops the session `id` by hand, when stopBackground could not, or null for a full id, the id of a
+// session listed with no short one: `claude stop` refuses it.
+export const stopLine = ({ id }) => (FULL_ID.test(id) ? null : `\`claude stop ${id}\` stops it`);
 
 // The folder of the session `session` in the listing `list`, where startBackground starts the session that resumes its
 // brief: an absolute path with no control character, or null.
@@ -597,12 +598,67 @@ function listedIn({ id, session, env, run, resolve, states }) {
   if (!claude) return null;
   const list = listed(run, claude, undefined, ['--all']);
   if (!list) return null;
-  const full = typeof session === 'string' && ID.test(session);
-  if (!full && (typeof id !== 'string' || !ID.test(id))) return false;
-  const names = (each) => typeof each.sessionId === 'string'
-    && (full ? each.sessionId === session : each.id === id || each.sessionId === id || each.sessionId.startsWith(id));
-  const rows = list.filter(names);
+  const rows = list.filter((each) => namesSession(each, { id, session }));
   return rows.length > 0 && rows.every((each) => each.kind === 'background' && states.has(each.state));
+}
+
+// Whether a listing row names the session a start record gives as { id, session }: by the full id `session` when it has
+// the id shape, else by `id`, the id the start printed, as the row's `id`, its `sessionId`, or the start of its
+// `sessionId`. False for a record that names neither.
+function namesSession(row, { id, session }) {
+  if (typeof row.sessionId !== 'string') return false;
+  if (typeof session === 'string' && ID.test(session)) return row.sessionId === session;
+  return typeof id === 'string' && ID.test(id) && (row.id === id || row.sessionId === id || row.sessionId.startsWith(id));
+}
+
+// The background rows of a listing whose `sessionId` has the id shape: what the host holds that the harness can name.
+const backgroundRows = (list) => list.filter((each) => each.kind === 'background' && typeof each.sessionId === 'string' && ID.test(each.sessionId));
+
+// The states in which a background row whose `status` is `idle` is idle: its turn ended (`done`), or it waits on a
+// response (`blocked`), which may be mid-task. A row in `working` with `status: "idle"` ended its turn while a task
+// it started still runs (read on 2.1.331), so it is not idle, and neither is a row in a state not named here.
+const RESTING = new Set(['done', 'blocked']);
+
+// The plain listing, `claude agents --json` with no `--all`, which holds the sessions the supervisor still keeps, a
+// finished one among them (`state: "done"`, `status: "idle"`, a `pid`, read on 2.1.331), while `--all` adds the
+// completed ones it holds no more: { list } or { problem }.
+function heldListing({ env, run, resolve }) {
+  const claude = resolve(env);
+  if (!claude) return { problem: NO_CLAUDE };
+  const list = listed(run, claude, undefined);
+  return list ? { list } : { problem: '`claude agents --json` did not answer, so the background sessions it holds are unknown' };
+}
+
+// The background sessions the host holds, from one read of the plain listing: { sessions: [{ id, session, name, cwd,
+// startedAt, idle, waiting }] } or { problem }. `id` is the short id `claude stop` takes, else the full one; `name`,
+// `cwd`, and `startedAt` are the listing's, which hosts/index.mjs backgroundList cleans; `idle` is true only for
+// `status: "idle"` in a RESTING state, so a row with no `status` or still working is never idle, and `waiting` only for
+// `state: "blocked"`. An interactive row is left out.
+export function listBackground({ env, run = runCommand, resolve = claudeOnPath }) {
+  const read = heldListing({ env, run, resolve });
+  if (read.problem) return read;
+  return {
+    sessions: backgroundRows(read.list).map((each) => ({
+      id: typeof each.id === 'string' && ID.test(each.id) ? each.id : each.sessionId,
+      session: each.sessionId,
+      name: each.name,
+      cwd: each.cwd,
+      startedAt: each.startedAt,
+      idle: each.status === 'idle' && RESTING.has(each.state),
+      waiting: each.state === 'blocked',
+    })),
+  };
+}
+
+// Which of `sessions`, each { id, session } as a start record names it, the host still holds, from one read of the
+// plain listing: { held: [true | false | null, ...] } in their order, null for a member that names no session, or
+// { problem }. A member is held when a background row names it (namesSession).
+export function heldSessions({ sessions, env, run = runCommand, resolve = claudeOnPath }) {
+  const read = heldListing({ env, run, resolve });
+  if (read.problem) return read;
+  const rows = backgroundRows(read.list);
+  const known = ({ id, session }) => [id, session].some((each) => typeof each === 'string' && ID.test(each));
+  return { held: sessions.map((member) => (known(member) ? rows.some((row) => namesSession(row, member)) : null)) };
 }
 
 // Stops the background session `session` this process runs in, listed under the id `id`, with `claude stop`: whether it

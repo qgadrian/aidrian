@@ -46,9 +46,14 @@ const wholePath = (entry) => (entry.startsWith('re:') ? new RegExp(`^(?:${entry.
 
 // The git modes of a regular file, plain or executable. A symbolic link (120000) at an allowed path is no prose: a static
 // server or site builder that follows it can publish what it points at. A submodule (160000) is another repository.
-const FILE_MODES = new Set(['100644', '100755']);
+export const FILE_MODES = new Set(['100644', '100755']);
 const LINK_MODE = '120000';
 const SUBMODULE_MODE = '160000';
+const FOLDER_MODE = '040000';
+
+// What a tree entry is, in a refusal.
+const KINDS = new Map([[LINK_MODE, 'a symlink'], [SUBMODULE_MODE, 'a submodule'], [FOLDER_MODE, 'a folder'], ...[...FILE_MODES].map((mode) => [mode, 'a file'])]);
+export const entryKind = ({ mode }) => KINDS.get(mode) ?? `an entry of mode ${mode}`;
 
 // Why `loaded` cannot say what the start hook loads into every session, or null. `loaded` is what pr-auto-merge.mjs
 // startDocs read from the default branch: { docs, folder }, each from the top of the repository, or a string saying why
@@ -67,11 +72,18 @@ export function startLoadProblem(file, loaded) {
   return null;
 }
 
-// Why a changed file still at `head` is no regular file there, or null. Each path is looked up in the head commit's
-// tree, one folder at a time through `tree(sha)`, which gives a folder of the forge's tree ({ tree: [{ path, mode, type,
-// sha }], truncated }) and throws on a failed read; each folder is read once. A deleted file is not at the head. A read
-// that fails, or a folder the forge gives in part, keeps the route off: a mode it cannot read is no regular file.
-function modeProblem(files, head, tree) {
+// Whether a tree entry is whole: a name, a sha, a mode, and the type git gives that mode.
+const MODE_TYPES = new Map([[FOLDER_MODE, 'tree'], [SUBMODULE_MODE, 'commit']]);
+const wholeEntry = (entry) => [entry?.path, entry?.mode, entry?.sha].every((each) => typeof each === 'string' && each !== '')
+  && entry.type === (MODE_TYPES.get(entry.mode) ?? 'blob');
+
+// A lookup of files in the tree of the commit `head`, as (file) => one of { entry }, its tree entry; { entry: null }, no
+// entry of that exact name; { above, entry }, the path on the way that is no folder, and its entry; or { unread }, why the
+// tree cannot tell. It walks one folder at a time from the root through `tree(sha)`, which gives a folder of the forge's
+// tree ({ tree: [{ path, mode, type, sha }], truncated }) and throws on a failed read; a subfolder is read by the sha its
+// parent's entry gave, each once. A folder the forge gives in part, or that holds a malformed entry (wholeEntry) or a name
+// twice, is unread.
+export function treeLookup(head, tree) {
   const short = String(head).slice(0, 7);
   const folders = new Map();
   const entriesOf = (sha, where) => {
@@ -82,31 +94,42 @@ function modeProblem(files, head, tree) {
     } catch (error) {
       return `the head's tree at ${short} cannot be read (${error.message})`;
     }
-    if (!Array.isArray(body?.tree) || body.truncated === true) return `the forge returned no whole tree of ${where} at head ${short}`;
-    const entries = new Map(body.tree.map((entry) => [entry?.path, entry]));
+    const whole = Array.isArray(body?.tree) && body.truncated === false && body.tree.every(wholeEntry);
+    const entries = new Map(whole ? body.tree.map((entry) => [entry.path, entry]) : []);
+    if (!whole || entries.size !== body.tree.length) return `the forge returned no whole tree of ${where} at head ${short}`;
     folders.set(sha, entries);
     return entries;
   };
-  for (const { path: file, changeType } of files) {
-    if (changeType === 'DELETED') continue;
-    const named = JSON.stringify(file);
+  return (file) => {
     const parts = file.split('/');
     let [sha, where] = [head, 'the repository root'];
     for (const [index, part] of parts.entries()) {
       const entries = entriesOf(sha, where);
-      if (typeof entries === 'string') return entries;
-      const entry = entries.get(part);
-      if (!entry) return `it changes ${named}, which the head's tree does not hold`;
+      if (typeof entries === 'string') return { unread: entries };
+      const entry = entries.get(part) ?? null;
+      if (!entry || index === parts.length - 1) return { entry };
       const above = parts.slice(0, index + 1).join('/');
-      if (index < parts.length - 1) {
-        if (entry.type !== 'tree' || typeof entry.sha !== 'string') return `it changes ${named}, below ${JSON.stringify(above)}, which is no folder at the head`;
-        [sha, where] = [entry.sha, JSON.stringify(above)];
-        continue;
-      }
-      if (entry.mode === LINK_MODE) return `it changes ${named}, a symbolic link at the head, which a server or site builder may follow`;
-      if (entry.mode === SUBMODULE_MODE) return `it changes ${named}, a submodule at the head, whose files no review read`;
-      if (!FILE_MODES.has(entry.mode)) return `it changes ${named}, whose mode at the head is ${entry.mode ?? 'none'}, not a regular file's`;
+      if (entry.type !== 'tree') return { above, entry };
+      [sha, where] = [entry.sha, JSON.stringify(above)];
     }
+    return { entry: null };
+  };
+}
+
+// Why a changed file still at `head` is no regular file there, or null, by its tree entry (treeLookup). A deleted file is
+// not at the head. A tree that cannot tell keeps the route off: a mode it cannot read is no regular file.
+function modeProblem(files, head, tree) {
+  const lookup = treeLookup(head, tree);
+  for (const { path: file, changeType } of files) {
+    if (changeType === 'DELETED') continue;
+    const named = JSON.stringify(file);
+    const { unread, above, entry } = lookup(file);
+    if (unread) return unread;
+    if (above) return `it changes ${named}, below ${JSON.stringify(above)}, which is no folder at the head`;
+    if (!entry) return `it changes ${named}, which the head's tree does not hold`;
+    if (entry.mode === LINK_MODE) return `it changes ${named}, a symbolic link at the head, which a server or site builder may follow`;
+    if (entry.mode === SUBMODULE_MODE) return `it changes ${named}, a submodule at the head, whose files no review read`;
+    if (!FILE_MODES.has(entry.mode)) return `it changes ${named}, whose mode at the head is ${entry.mode}, not a regular file's`;
   }
   return null;
 }

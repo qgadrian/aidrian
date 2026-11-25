@@ -826,7 +826,7 @@ test('the handoff brief template is its own file, the skill names it, and both s
   assert.ok(step(resume, 4).includes('read the Open risks and questions before the step each bears on'));
   // Search finds the handoff doc by the words a session asking about the cost model or the brief check would use.
   const { docs } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/knowledge/10-harness.json'), 'utf8'));
-  for (const words of ['break-even', 'aidrian handoff check', 'brief sections']) assert.ok(docs['handoff.md'].summary.includes(words), `handoff.md summary: ${words}`);
+  for (const words of ['break-even', 'aidrian handoff check', 'brief sections', 'sessions idle']) assert.ok(docs['handoff.md'].summary.includes(words), `handoff.md summary: ${words}`);
 });
 
 test('the handoff skills run the continue gate after the check, carry the chain, and skip it for a checkpoint', () => {
@@ -877,7 +877,7 @@ test('the handoff skills run the continue gate after the check, carry the chain,
   assert.match(flat('plugins/aidrian/skills/autopilot/references/phases.md'), /A checkpoint brief sets up no continuation/);
   // Search finds the handoff doc by the continuation's words too.
   const { docs } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/knowledge/10-harness.json'), 'utf8'));
-  for (const words of ['continuation', 'maxChain', 'aidrian handoff continue']) assert.ok(docs['handoff.md'].summary.includes(words), `handoff.md summary: ${words}`);
+  for (const words of ['continuation', 'maxChain', 'aidrian handoff continue', 'background']) assert.ok(docs['handoff.md'].summary.includes(words), `handoff.md summary: ${words}`);
 });
 
 test('a reused ledger reaches what a settled marker means, the handoff carries the run count, and search finds the route', () => {
@@ -893,7 +893,7 @@ test('a reused ledger reaches what a settled marker means, the handoff carries t
   assert.match(readFileSync(path.join(PLUGIN, 'lib/decisions-cli.mjs'), 'utf8'), /`quorum route` and `quorum provisional` add `resolve`'s/);
   const { docs } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/knowledge/10-harness.json'), 'utf8'));
   // Each summary keeps the words a search for its surface uses, within the 160 characters an index summary holds.
-  for (const words of ['config.json', 'autoStart', 'projectRun', 'next', 'maxPersonas', 'allWidths', 'items', 'diff', 'result', 'report']) assert.ok(docs['config.md'].summary.includes(words), `config.md summary: ${words}`);
+  for (const words of ['config.json', 'autoStart', 'projectRun', 'next', 'maxPersonas', 'allWidths', 'items', 'diff', 'result', 'report', 'released', 'preflight']) assert.ok(docs['config.md'].summary.includes(words), `config.md summary: ${words}`);
   for (const words of ['check, lint', 'quorum route', 'quorum provisional', 'decision markers', 'decisions list/set', 'local sources', 'migrating']) assert.ok(docs['project-folder.md'].summary.includes(words), `project-folder.md summary: ${words}`);
   for (const words of ['ingest', 'quiet', '--accept', 'lateRoundFrom', 'merge trust']) assert.ok(docs['review.md'].summary.includes(words), `review.md summary: ${words}`);
   // Worktrees are searched through the working agreement's summary, which every session reads anyway.

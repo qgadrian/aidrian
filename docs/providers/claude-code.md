@@ -987,7 +987,17 @@ folder and a trivial prompt:
   session's process shows as `claude bg-spare` under `claude bg-pty-host`, so it never passes the check.
 
 A background session the gate started ends itself with `replaceTerminal.endOwn` (`stopOwnBackground` in
-`lib/hosts/claude-code-background.mjs`) once its own handoff started the next one, whether or not a terminal follows it.
+`lib/hosts/claude-code-background.mjs`) once its own handoff started the next one, whether or not a terminal follows it,
+and whether or not the Human typed into it since: the Stop hook asks that `CLAUDE_CODE_SESSION_ATTENDED` is not `1`
+and that the session's unattended mark or its chain floor of the background route holds it. Its request holds 24
+hours, so a turn that waited on a question still ends it. Claude Code runs no Stop hook for a turn the Human
+interrupts, and runs StopFailure instead of Stop on an API error (the host's hooks reference, read on 2026-11-24). So
+the hook drops a request when the session's transcript, `~/.claude/projects/<folder>/<session>.jsonl` as `ownTranscript`
+vouches for it, holds a prompt `humanPrompt` counts whose `timestamp` (`entryTime`) is later than the request. With the
+transcript under `CLAUDE_CONFIG_DIR`, or a `HOME` that is not the account's, `ownTranscript` vouches for none. Then the
+agent gate hook never lifts the session's mark either, so the mark still holds it, and a request its handoff turn left,
+as by an interrupt, ends it at the end of a later turn the Human typed, within 24 hours. That residual is accepted: no
+gate is added for it.
 It reads `claude agents --json` and runs `claude stop <id>` only when exactly
 one background row has that `id`, or a `sessionId` that starts with it, and its `sessionId` is the session's own.
 It never signals a process: the supervisor owns the background session's process.
@@ -1018,7 +1028,41 @@ follows every hop. Checked by hand on Claude Code 2.1.328 on 2026-11-19:
 That return to the list was not probed further.
 
 Not verified live: a handoff that ends a session through the Stop hook end to end, or `claude attach` in the shell
-function; a handoff through a wrapped launcher, end to end.
+function; a handoff through a wrapped launcher, end to end; and `CLAUDE_CODE_SESSION_ATTENDED` in a background session
+after a Human attached and typed into it. The indirect evidence, from two background continuations of 2026-11-24 the
+Human typed into: each gate's say line ended `This session has ended its work; the new one is ...`, without the line
+on why the terminal stays that the gate prints when the host says `1`, so the host did not say `1` there. If a later
+host version says `1` there, the session keeps the plain line and stays, as a session a Human attends.
+
+## Background sessions
+
+The harness starts background sessions here through `claude --bg`, for the background handoff route and for each
+attempt of a project run, both under the host's background-session supervisor. The supervisor keeps such a session
+after its turn ends, until something stops it.
+The adapter's `capabilities.backgroundSessions` ([the adapter's fields](adding-a-host.md#the-adapters-fields)) says
+which sessions it holds (`listBackground` in `lib/hosts/claude-code-background.mjs`) and which of a run's start records
+it still holds (`heldSessions`). Each reads `claude agents --json` once, without `--all`: the plain listing holds the
+sessions the supervisor keeps, while `--all` adds the completed ones it no longer holds.
+
+- A row counts when `kind` is `background` and `sessionId` has the id shape; the interactive session's own row, which
+  carries no `id`, is left out. `id` is the row's short id, which `claude stop` takes, else its `sessionId`,
+  for display. `stopLine` gives no line for a full id, which `claude stop` refuses.
+- `idle` needs `status: "idle"` with `state` either `done` or `blocked`. A row with no `status`, or in any other
+  state, is never idle. On 2.1.331, a background session whose turn ended while a task it started still ran was listed
+  with `state: "working"` and `status: "idle"`. It is still at work, so it is not idle. `waiting` is `state: "blocked"`.
+- `name`, `cwd`, and `startedAt` pass on as listed, and `backgroundList` cleans them: a `name` or `cwd` that holds a
+  hidden character reads as null, and a `startedAt` that is not the listing's number of milliseconds, as every live
+  row gave it, reads as null.
+- A start record is held when a background row names it: by its full id when it has one, else by the printed id, as
+  the row's `id`, its `sessionId`, or the start of its `sessionId`, as `sessionEnded` matches.
+- With no `claude` on PATH, or a listing that gives no answer, both answer `{ problem }`.
+
+Verified live on Claude Code 2.1.331, while seven idle sessions were stopped by hand: the plain listing gave finished
+background rows with `state: "done"`, `status: "idle"`, and a `pid`; `claude stop <short id>` printed
+`stopped <id>` for each, and the next plain listing no longer held them. `--all` kept completed rows with no `pid` and
+no `status`. The row shapes of an interactive session at work, a background one at work, one waiting on a response,
+and one still working with `status: "idle"` come from 2.1.331 listings too, and `test/adapters.test.mjs` holds them. Not verified live: a `done` row in the plain
+listing of a session the harness itself started, read through the adapter.
 
 ## Push permission in auto mode
 

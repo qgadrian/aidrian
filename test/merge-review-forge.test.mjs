@@ -108,18 +108,18 @@ const forged = (flows = []) => (state) => {
   for (const flow of flows) state.signoffs[flow] = { head: HEAD, by: 'the Human', at: '2026-11-18T09:01:00.000Z' };
 };
 
-// The head's folder listings the policy-file lift reads (pr-auto-merge.mjs headPolicyProblem): the root holds the
-// `.aidrian` folder and no pointer, and `.aidrian` holds config.json as `headType`, "file" unless a test makes it a link.
-const headListing = (file, ref, headType) => {
-  if (ref !== HEAD) return null;
-  if (file === '') return [{ type: 'dir', name: '.aidrian', path: '.aidrian' }];
-  if (file === '.aidrian') return [{ type: headType, name: 'config.json', path: '.aidrian/config.json' }];
-  return null;
+// The head's git tree the policy-file lift reads (pr-auto-merge.mjs headPolicyProblem), one folder a SHA: the root holds
+// the `.aidrian` folder and no pointer, and `.aidrian` holds config.json at mode `headMode`, a regular file unless a test
+// makes it a link. `headTree` stands in for the whole read, given the SHA and that folder's answer.
+const treeOf = (sha, headMode = '100644', headTree = (id, body) => body) => {
+  const entries = { [HEAD]: [{ path: '.aidrian', mode: '040000', type: 'tree', sha: 'd'.repeat(40) }], ['d'.repeat(40)]: [{ path: 'config.json', mode: headMode, type: 'blob', sha: 'f'.repeat(40) }] }[sha];
+  if (!entries) throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)\n' });
+  return headTree(sha, { sha, tree: entries, truncated: false });
 };
 
 // The forge facade `aidrian pr auto-merge` reads through, holding `config` on the default branch and `trail` as the
 // review trail. `files` are the pull request's changed paths; `head` is the config the head commit holds, `config` by default.
-function cliForge(config, { trail = trailOf(config), files = ['src/app.js'], head = config, compare = { behind_by: 0 }, headType = 'file' } = {}) {
+function cliForge(config, { trail = trailOf(config), files = ['src/app.js'], head = config, compare = { behind_by: 0 }, headMode, headTree } = {}) {
   const calls = [];
   const changed = files.map((each) => ({ path: each, changeType: 'MODIFIED' }));
   const forge = {
@@ -127,12 +127,11 @@ function cliForge(config, { trail = trailOf(config), files = ['src/app.js'], hea
     repository: () => ({ default_branch: 'main' }),
     contents: (repoName, file, ref) => {
       calls.push(['contents', file]);
-      const listed = headListing(file, ref, headType);
-      if (listed) return listed;
       if (file !== '.aidrian/config.json') throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)\n' });
       return { type: 'file', encoding: 'base64', content: Buffer.from(ref === HEAD ? head : config).toString('base64') };
     },
     compare: () => compare,
+    tree: (repoName, sha) => treeOf(sha, headMode, headTree),
     viewer: () => 'adrian',
     conversationComments: () => [],
     reviews: () => [],
@@ -158,13 +157,12 @@ function autoMerge(t, r, { unattended = true, ...options } = {}) {
 // The forge the merge guard's trust reads go through, as budgetedForge's `make`: `trail` as the review trail, and
 // `config` for the REST reads a pointer to another folder needs, and `head` the config the head commit holds. Each
 // call is kept in `calls`.
-const guardForge = (config, trail, calls = [], head = config, compare = { behind_by: 0 }, headType = 'file') => () => ({
+const guardForge = (config, trail, calls = [], head = config, compare = { behind_by: 0 }, headMode = undefined, headTree = undefined) => () => ({
   repository: () => (calls.push(['repository']), { default_branch: 'main' }),
   compare: (repoName, base, sha) => (calls.push(['compare', base, sha]), compare),
+  tree: (repoName, sha) => (calls.push(['tree', sha]), treeOf(sha, headMode, headTree)),
   contents: (repoName, file, ref) => {
     calls.push(['contents', file]);
-    const listed = headListing(file, ref, headType);
-    if (listed) return listed;
     if (file !== '.aidrian/config.json') throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)\n' });
     return { type: 'file', encoding: 'base64', content: Buffer.from(ref === HEAD ? head : config).toString('base64') };
   },
@@ -174,8 +172,8 @@ const guardForge = (config, trail, calls = [], head = config, compare = { behind
   },
 });
 const viewer = () => ({ number: 7, headRefOid: HEAD });
-const merge = (r, command, { mark = { root: r.dir }, trail = trailOf(r.text), calls = [], input = { session_id: 'unattended-1' }, cwd = r.dir, head = r.text, compare, headType } = {}) =>
-  check(command, { cwd, env: {}, input, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(r.text, trail, calls, head, compare, headType) });
+const merge = (r, command, { mark = { root: r.dir }, trail = trailOf(r.text), calls = [], input = { session_id: 'unattended-1' }, cwd = r.dir, head = r.text, compare, headMode, headTree } = {}) =>
+  check(command, { cwd, env: {}, input, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(r.text, trail, calls, head, compare, headMode, headTree) });
 const mcp = (r, toolInput, { mark = { root: r.dir }, trail = trailOf(r.text), cwd = r.dir } = {}) =>
   checkMcp(toolInput, { cwd, input: { session_id: 'unattended-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(r.text, trail) });
 const MERGE = `gh pr merge 7 --squash --match-head-commit ${HEAD}`;
@@ -763,14 +761,33 @@ test('includePolicyFiles with includeGuardedPaths on both branches lets a .aidri
   assert.match(merge(r, MERGE, { trail, compare: { behind_by: 1 }, calls }) ?? '', /is behind its base main by 1 commit/u, 'the guard');
   assert.ok(calls.some((call) => call[0] === 'compare' && call[1] === 'b'.repeat(40) && call[2] === HEAD), 'the guard compares the base tip by its SHA with the head');
   assert.match(merge(r, MERGE, { trail: { ...trail, baseOid: null } }) ?? '', /cannot be compared with its base on the forge/u, 'the guard, a trail with no base tip');
-  // A head whose config is a symbolic link is off in both, as the head's listing names it; a regular one merges.
+  // A head whose config is a symbolic link is off in both, by its mode in the head's git tree; a regular one merges, also
+  // in a folder of more than 1,000 entries, the root or the config's, where a link is still off (issue #672).
   const link = /"\.aidrian\/config\.json" at head abcdef1 is a symlink, not a regular file, which includePolicyFiles never lets through/u;
-  const linked = autoMerge(t, r, { files: [file], trail, headType: 'symlink' });
-  assert.deepEqual([linked.code, linked.result.reason], [1, 'paths']);
-  assert.match(linked.result.why, link);
-  assert.match(merge(r, MERGE, { trail, headType: 'symlink' }) ?? '', link, 'the guard');
-  assert.equal(autoMerge(t, r, { files: [file], trail, headType: 'file' }).code, 0, 'the gate, a regular config');
-  assert.equal(merge(r, MERGE, { trail, headType: 'file' }), null, 'the guard, a regular config');
+  const many = Array.from({ length: 1200 }, (_, i) => ({ path: `f${i}.md`, mode: '100644', type: 'blob', sha: 'f'.repeat(40) }));
+  const grown = (sha, body) => ({ ...body, tree: [...many, ...body.tree] });
+  const pointerLink = (sha, body) => (sha === HEAD ? { ...body, tree: [...body.tree, { path: '.aidrian.json', mode: '120000', type: 'blob', sha: 'f'.repeat(40) }] } : body);
+  const linkedFolder = (sha, body) => ({ ...body, tree: body.tree.map((entry) => ({ ...entry, mode: '120000', type: 'blob' })) });
+  for (const [name, options, why] of [
+    ['a config link', { headMode: '120000' }, link],
+    ['a config link among 1,200 entries', { headMode: '120000', headTree: grown }, link],
+    ['a pointer link', { headTree: pointerLink }, /"\.aidrian\.json" at head abcdef1 is a symlink, not a regular file/u],
+    ['a pointer link among 1,200 entries', { headTree: (sha, body) => grown(sha, pointerLink(sha, body)) }, /"\.aidrian\.json" at head abcdef1 is a symlink, not a regular file/u],
+    ['a linked config folder', { headTree: linkedFolder }, /"\.aidrian" at head abcdef1, on the path to "\.aidrian\/config\.json", is a symlink, not a folder/u],
+    ['a failed read', { headTree: () => { throw Object.assign(new Error('gh'), { stderr: 'gh: Server Error (HTTP 500)\n' }); } }, /the head's tree at abcdef1 cannot be read \(gh: Server Error \(HTTP 500\)\)/u],
+    ['a truncated read', { headTree: (sha, body) => ({ ...body, truncated: true }) }, /the forge returned no whole tree of the repository root at head abcdef1/u],
+  ]) {
+    const off = autoMerge(t, r, { files: [file], trail, ...options });
+    assert.deepEqual([off.code, off.result.reason], [1, 'paths'], `the gate, ${name}`);
+    assert.match(off.result.why, why, `the gate, ${name}`);
+    assert.match(merge(r, MERGE, { trail, ...options }) ?? '', why, `the guard, ${name}`);
+  }
+  for (const [name, options] of [['a regular config', {}], ['an executable config', { headMode: '100755' }], ['a regular config among 1,200 entries', { headTree: grown }]]) {
+    const reads = [];
+    assert.equal(autoMerge(t, r, { files: [file], trail, ...options }).code, 0, `the gate, ${name}`);
+    assert.equal(merge(r, MERGE, { trail, ...options, calls: reads }), null, `the guard, ${name}`);
+    assert.deepEqual(reads.filter((call) => call[0] === 'tree'), [['tree', HEAD], ['tree', 'd'.repeat(40)]], `the guard's tree reads, ${name}`);
+  }
   // The key alone, with includeGuardedPaths off, lifts nothing.
   const alone = JSON.stringify(configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includePolicyFiles: true } }, projectRun: { allow: true } }));
   assert.match(merge({ ...r, text: alone }, MERGE, { trail: trailOf(alone, changing(file)) }) ?? '', /which instructs AI sessions/u, 'the guard, the key alone');

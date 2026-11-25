@@ -1008,13 +1008,36 @@ test('init --check counts a started issue an earlier run parked on the same bran
   assert.ok(moved.out.includes('blocker snapshot: ENG-1 is started in the tracker, which a run does not start from'), moved.out.join('\n'));
 });
 
-test('end refuses while an issue runs, naming it, and passes once none does', (t) => {
+// One run, ended three times, each on the ledger as it was once the issue settled. The host holds the session of the
+// settled attempt again after its `gone` row, as Claude Code 2.1.331's plain listing keeps one whose state is done: end
+// stops it, and ends the run whatever the host answers (project-linger.mjs releaseAttempts).
+test('end refuses while an issue runs, and once none does stops each attempt session the host still holds, and ends the run when one cannot be stopped or the host cannot say', (t) => {
   const fx = started(t);
   const early = fx.cmd(['end', 'launch']);
   assert.equal(early.exitCode, 1);
   assert.match(early.err[0], /the issues ENG-1 still run; run `aidrian project wait launch` until it prints idle/u);
   fx.settle({ status: 'parked', pr: null, decisions: [DECISION], stop: 'x' });
-  assert.deepEqual(fx.cmd(['end', 'launch']).exitCode, 0);
+  assert.ok(fx.rows().some((row) => row.event === 'gone' && row.key === 'ENG-1' && row.how === 'ended'), 'its gone row');
+
+  const END = 'end: run launch ended, and its driver\'s hold is released';
+  const ledger = path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl');
+  const settled = readFileSync(ledger);
+  const ends = () => fx.rows().filter((row) => row.event === 'end').length;
+  const endAgain = (spawn) => {
+    writeFileSync(ledger, settled);
+    fx.claude.states[CHILD] = 'done';
+    fx.claude.held.add(CHILD);
+    const answer = fx.cmd(['end', 'launch'], { spawn });
+    assert.deepEqual([answer.exitCode, answer.out.at(-1), answer.err, ends()], [0, END, [], 1], 'the run ends, whatever the host answers');
+    return answer.out[0];
+  };
+  assert.equal(endAgain(fx.claude.run), 'released ENG-1 attempt 1');
+  const plain = JSON.parse(fx.claude.run('claude', ['agents', '--json'], {}).stdout);
+  assert.deepEqual(plain.filter((row) => row.kind === 'background'), [], 'the host holds no session of the run');
+  const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : fx.claude.run(command, args, options));
+  assert.equal(endAgain(failing), `not released ENG-1 attempt 1: a session of it, ${STARTED[0].id}, stayed with the host after its work ended and could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`);
+  const unlisted = (command, args, options) => (args[0] === 'agents' && !args.includes('--all') ? { status: 1, stdout: '', stderr: 'down' } : fx.claude.run(command, args, options));
+  assert.equal(endAgain(unlisted), 'note sessions: Claude Code: `claude agents --json` did not answer, so the background sessions it holds are unknown');
 });
 
 test('an attended resume takes custody of a run whose driver the host lists as ended, and never otherwise', (t) => {
@@ -1573,7 +1596,7 @@ test('the driver\'s first turn writes every team key of the tracker workspace in
 test('the driver\'s halt wait ends once only sessions it could not stop are left, and the report names them for the Human', () => {
   const text = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/references/loop.md'), 'utf8').replace(/\s+/gu, ' ');
   const halt = text.slice(text.indexOf('## Halt'), text.indexOf('## Stop'));
-  assert.ok(halt.includes('Stop waiting sooner once every line left is a `running <key>` or `lingering <key> attempt <n>` line of a session that a `could not be stopped` line named twice: no wait ends it.'), 'the bound on the wait');
+  assert.ok(halt.includes('Stop waiting sooner once every line left, but `released`, `not released`, and `note sessions:` lines, is a `running <key>` or `lingering <key> attempt <n>` line of a session that a `could not be stopped` line named twice: no wait ends it.'), 'the bound on the wait');
   assert.ok(halt.includes('Name each session step 2 left running by its issue, its attempt, and the session id its `could not be stopped` line names, `a session of it, <id>, ...`, or, when that line names none, the id of its `started <key> attempt <n> session <id>` line: the Human stops it by hand with the host\'s command that `could not be stopped` line names. Only a driver ends the run: § Hand off\'s last list says how the Human takes the run up.'), 'the report names it');
   assert.match(text, /## Stop Any other refusal, such as a cap, a policy the forge no longer confirms, or custody: do § Halt's steps 1 to 3, then report the refusal as the cause, with what its line says fixes it, and each session step 2 left running by its issue, its attempt, and its session id from its `could not be stopped` line, or else its `started` line, with how the Human stops it and takes the run up, as § Halt step 4 says\./u, 'Stop takes the same bounded wait and names the same sessions');
   // Only the run's driver may end it: neither the halt report nor the stop sends the Human to `aidrian project end`.
@@ -1584,6 +1607,17 @@ test('the driver\'s halt wait ends once only sessions it could not stop are left
   const wait = text.slice(text.indexOf('3. `aidrian project wait <run> --max-wait 150`:'), text.indexOf('4. `aidrian project report'));
   assert.ok(wait.includes('- `note outage: <why>`: the forge cannot answer now; not a refusal. Go on by the other lines; `start`\'s exit 75 goes to § Retry.'), 'the outage line');
   assert.ok(wait.includes('- `note policy: <why>`: the forge withdrew the policy; the run may start nothing more. § Stop (wait still settles the run).'), 'the policy line');
+  // The release's lines (project-linger.mjs releaseAttempts): a `not released` line says `could not be stopped` and
+  // prints again each wait, so the second-line § Stop rule exempts it, and the final report names its session.
+  assert.ok(wait.includes('- `released <key> attempt <n>`: the host still held the session of a settled attempt, and wait stopped it. Go on by the other lines.'), 'the released line');
+  assert.ok(wait.includes('It ends no wait and prints again each wait while it holds. Go on by the other lines: the final report names only what the last `wait` or `end` printed, and, when that one printed a `note sessions:` line, each such session an earlier `wait` named that no later readable one cleared, as not verified now. One clears it that prints a `released` line of its attempt, or neither names it nor prints a `note sessions:` line. Never § Stop for it, whatever its words.'), 'the not released line');
+  assert.ok(wait.includes('- `note sessions: <host name>: <reason>`: the host cannot say now which sessions it still holds, or whether a session it holds ended. Note it, and go on by the other lines.'), 'the note sessions line');
+  assert.ok(wait.includes('a second such line for the same issue: § Stop, with that line as the cause. A `not released` line is never such a line.'), 'the § Stop rule exempts it');
+  const finish = text.slice(text.indexOf('## Finish'), text.indexOf('## Hand off'));
+  assert.ok(finish.includes('Its `released`, `not released`, and `note sessions:` lines are read as step 3 reads them: the run ends all the same.'), 'end\'s lines');
+  assert.ok(finish.includes('names, under **Stopped**, each session a `not released` line of the last `wait` or `end` named, by its issue, its attempt, and its session id, with the host\'s command on that line that stops it by hand; and, when that one printed a `note sessions:` line, that line, and each session an earlier `wait` named that no later readable one cleared, the same way, marked as not verified now.'), 'the report names it');
+  const skill = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/SKILL.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.ok(skill.includes('Each session a `not released` line of the last `wait` or `end` named, with the command that stops it. When that one printed a `note sessions:` line: that line, and each session an earlier `wait` named that no later readable one cleared, marked as not verified now.'), 'a session already stopped is never left for the Human');
 });
 
 test('autopilot under a project run reads its issue from the file and makes its tracker writes optional', () => {

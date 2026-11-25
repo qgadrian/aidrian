@@ -721,6 +721,10 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
   evidence check, does not run here.
 - No transcripts and no handoff route: no transcript reader exists for OpenCode, so no cost rows or reminders that read
   one, and `session.handoff.continue` falls back to `none`.
+- No background sessions: the harness starts none here, with no handoff route and no project start, so none can stay
+  after its work. The adapter's `capabilities.backgroundSessions` declares `{ unsupported }` with that reason and
+  nothing else ([the adapter's fields](adding-a-host.md#the-adapters-fields)), which `backgroundList` and
+  `backgroundHeld` pass on as `byDesign: true`. By the adapter's declaration, held by `test/adapters.test.mjs`.
 - No agents: no agent of this plugin is installed on OpenCode. A `subagent` call of OpenCode's own agents still writes
   a dispatch row.
   Its agent type is the agent the call named, or `general-purpose` when its input names none.

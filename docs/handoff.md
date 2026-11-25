@@ -475,7 +475,9 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    and a stronger mark the scan picks, such as a passed one, replaces it, even for a call in another attempt's clone.
    Once the Human types into the session, the agent gate hook files `attended.<id>.json` beside each plain mark that
    holds it, in each mark folder, on the session's next main tool call, and the session is attended from then on: its
-   mark reads as none, and its chain floor, kept for the count, no longer holds it. Once that record is in each of those
+   mark reads as none, and its chain floor, kept for the count, no longer holds it. The floor still says the background
+   route started it, so it still ends itself once it hands off ([Replacing the terminal](#replacing-the-terminal)).
+   Once that record is in each of those
    folders, the hook neither reads the transcript again nor rewrites the record. The session's own host adapter's
    `humanPrompt` says which entries of the session's own transcript are prompts the Human typed after the start; a peer
    session's message, a scheduled prompt, the start prompt, and a transcript the session could write itself never count
@@ -507,7 +509,9 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    [shell function](#replacing-the-terminal), that this terminal switches to the new session once the turn ends, with
    nothing to open by hand; without it, `This session has ended its work; the new one is <name>, open it with <the
    host's command>.` A session the background route started, which no terminal follows, says it stops once this turn
-   ends, before the same words ([Replacing the terminal](#replacing-the-terminal)).
+   ends, before the same words, also after the Human typed into it; a Human prompt after the handoff, in a later turn,
+   cancels that. One that stays open says `stays open, since <reason>` there instead, and ends by naming
+   `aidrian sessions idle` ([Replacing the terminal](#replacing-the-terminal)).
    In `auto` mode, a session a Human attends that the function did not start, as with a launcher, an editor command,
    or a terminal opened before `aidrian shell-init <shell> --install` wrote the function, adds one line on why its
    terminal stays: start the next session in a new terminal. For a launcher on PATH that ends in `exec` of the host's
@@ -857,7 +861,8 @@ It runs only where every switch of the background route is on, and `session.hand
    terminal settles the last; and names `aidrian shell-init <shell> --install --wrap <launcher>` for a launcher on PATH
    that ends in `exec claude`, after updating a copy of the plugin older than this one, which refuses `--wrap` as an
    unknown option, with the host's update command.
-2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
+2. When the turn ends, the Stop hook takes that request, once, within 30 minutes, the window of a request that names a
+   host process. It checks the request again against
    its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
    shell's record, valid for 60 seconds, notes in the store, `follow-<new session>.json`, that the shell's terminal now
    follows the new session, for 12 hours, and starts a detached helper. The helper waits 2 seconds, so the host runs its other Stop
@@ -868,10 +873,13 @@ It runs only where every switch of the background route is on, and `session.hand
 3. The host's program exits, and the shell function opens the new session in the same terminal.
 
 The next hops chain the same way, so the terminal follows each session of the chain, however long. The session the
-terminal opens is a background session: no Human attends it as far as the hooks know, and it carries no
-`AIDRIAN_SHELL_PID`. When it hands off in turn, with every switch above on and its launch confirmed, the gate notes a
-request that names the session's own id in place of a host process; a session the host says a Human attends, as a
-former background session a Human resumed, never gets one. The request names a shell when one follows the session: the
+terminal opens is a background session: the background route started it, it carries no `AIDRIAN_SHELL_PID`, and the
+host does not say a Human attends it, whether or not the Human typed into it since. When it hands off in turn, with
+every switch above on and its launch confirmed, the gate notes a request that names the session's own id in place of a
+host process. It does so also for a background session the Human typed into, whose unattended mark that prompt lifted:
+its chain floor of the background route still names it. A session the host says a Human attends, as a former
+background session a Human resumed in a terminal, never gets one: in a terminal the shell function started, it
+switches by its host process, as step 1 says. The request names a shell when one follows the session: the
 shell function's `follows-` record that opened it by the full id, a short one of at least 8 characters
 (`SHORT_ID_MIN`), or a name the host says opens it, or else the store's `follow-` record for it, under its full id or the short one the host printed,
 which can be stale; of each, the latest whose shell is alive and the parent of a `claude` process, as
@@ -879,23 +887,50 @@ a terminal attached to the session is. The host adapter tells that (`replaceTerm
 program name alone. The say line then says the terminal switches, with nothing to open by hand. With no such shell, the
 request names none, and the say line says the session stops once this turn ends, then how to open the new one.
 
-Its Stop hook takes the request once, and checks that the session's own id is that id or starts with it and that no
-Human attends it. When the request names a shell that still runs a `claude` client, it writes the shell's record and
-passes the `follow-` record on to the next session. Either way it starts the helper, which ends that session alone,
-through the host's own stop command, `replaceTerminal.endOwn`, so the host lists it as done rather than idle. It stops
+Its Stop hook takes the request once, within 24 hours, the life of the start record that names the session that took
+its work, so a turn that waited on a question or a permission prompt, or one a check sent back, still ends the
+session once it ends. It checks that the session's own id is that id or starts with it, that the host does not say a
+Human attends it, and that its unattended mark or its chain floor of the background route holds it. The request ends
+only the turn that noted it. The host runs no Stop hook for a turn the Human interrupted, nor for one an API error
+ended, so the request can outlive that turn. So the Stop hook drops it, and ends nothing, when the session's own
+transcript holds a prompt the Human typed after the request's time, read through the host adapter's `humanPrompt` and
+`ownTranscript` (`humanPrompts` in `lib/hosts/index.mjs`), in the last 256 KB of the transcript. A prompt with no time
+it can read counts as later. When the transcript cannot tell, as when the host keeps no such transcript, or that tail
+starts after the request, a session its unattended mark holds still ends, since no Human typed into it as the store
+knows. One that only its chain floor holds, which the Human did type into, stays open, and
+[`aidrian sessions idle`](#idle-sessions) lists it. A residual: where the host keeps no transcript its adapter vouches
+for, the agent gate hook cannot lift the mark either, so a session the Human typed into still reads as one its mark
+holds. A request its handoff turn left, as by an interrupt, then ends that session at the end of a later turn the Human
+typed, within the 24 hours. On Claude Code that is a transcript under `CLAUDE_CONFIG_DIR`, or a `HOME` that is not the
+account's ([provider page](providers/claude-code.md#replacing-the-terminal)). When the request names a shell that still
+runs a `claude` client, it writes the shell's record and passes the `follow-` record on to the next session. Either way
+it starts the helper, which ends that session alone, through the host's own stop command, `replaceTerminal.endOwn`, so
+the host lists it as done rather than idle. It stops
 nothing unless the host's listing names exactly one background session that is this very session under that id. On
 Claude Code that is `claude stop <id>`, and `claude attach` in the shell then exits 0, so the shell function opens the
 next session. The chain floor and its cap of 5 continuations in a row bound the hops: at the cap the gate goes on by
-none, and the session stays open. This is a provisional decision of the harness, which lets a session no Human attends
-end its own session and nothing else. Dropping the request that names a session's own id leaves the later hops open
-and idle, and puts them back on the plain line.
+none, and the session stays open. A background session ends its own session and nothing else.
+
+A background session that stays open after its successor started says why, at the end of the say line:
+`This session has ended its work and stays open, since <reason>; the new one is ...`, then
+`` `aidrian sessions idle` lists it, with the command that stops it.`` ([Idle sessions](#idle-sessions)). The reasons:
+
+- the base branch's `session.handoff.mode` is not `"auto"`;
+- this host cannot end a session from inside it;
+- the host named the new session by an id no request to end can hold;
+- the continuation store could not record its request to end.
+
+A session the host says a Human attends keeps the plain line.
 
 Limits:
 
 - A subagent cannot run the gate, and its stop is not the Stop hook's, so no subagent ends a process or a session. A
-  session no Human attends ends only itself, through the host, and only once the session that took its work started;
-  it never names a process. Every other refusal of such a session stays, such as starting a session from a shell. The
-  store, where the request and the `follow-` record live, is closed to both, as for a chain floor.
+  background session, whether or not the Human typed into it, ends only itself, through the host, and only once the
+  session that took its work started; it never names a process. It ends at the end of the turn in which it handed off,
+  also when the Human is still typing into it, as an attended session that switches does, and not at the end of a
+  later turn the Human typed, but for the residual above, where the host keeps no transcript its adapter vouches for.
+  Every other refusal of such a session stays, such as starting a session from a shell.
+  The store, where the request and the `follow-` record live, is closed to both, as for a chain floor.
 - When the Human leaves an attached session, the `follow-` record still says the terminal follows it. When that shell
   runs a `claude` again by the session's handoff, the shell's record waits a minute for it to exit.
 - A host's own attach client may move to the new session by itself, as Claude Code's sometimes does. The old session
@@ -918,6 +953,53 @@ Limits:
   The client then returned to the list the one time it was seen; that was not probed further.
   `claude attach <id>` typed in the shell is the way that follows every hop
   ([provider page](providers/claude-code.md#replacing-the-terminal)).
+
+### Idle sessions
+
+`aidrian sessions idle [--json]` lists the background sessions the harness started that a host still holds while
+they are idle, their turn ended or waiting on a response: handoff continuations, and the attempts of a
+[project run](#a-project-run). A session that waits on a response may be mid-task, and its line carries a stop line all
+the same. It is read-only. It stops nothing, writes no file, and sweeps no mark, so the Human, or a session the Human
+asks, runs the stop line it prints.
+
+A session is listed only when both hold:
+
+- An [unattended mark](#the-background-route) names it, under its full id, else the exact short id the host lists it by,
+  else a short id of at least 4 characters that the full id starts with. A mark holds 30 days, so an older session is not
+  listed. A mark whose tags name a run and an issue makes the session that run's attempt; any other is a handoff
+  continuation.
+- Its host's listing, through the adapter's `backgroundSessions.list`, says it is idle: its turn ended, or it waits
+  on a response, such as a question or a permission prompt. A session still working is never
+  listed, nor an interactive session. A background session the Human attached to is listed once it is idle, as any
+  other.
+
+Each session prints one line, oldest first:
+
+```text
+idle <id> <age> <what>: <stop line>
+```
+
+`<age>` is `<m>m`, `<h>h<mm>m`, or `<d>d<h>h`, from the host's start time, else the mark's. `<what>` is
+`handoff continuation` or `attempt of <issue> in run <run>`, then the session's name in quotes when it is plain words:
+up to 100 characters, each an ASCII letter or digit, a space, or one of `_ . @ : · -`. Then `in <folder>` when the folder holds no hidden character, no backtick, and no colon followed by
+whitespace, so the line shows one stop command alone, then `(waiting on a response)` when the host says it waits on one:
+such a session may be mid-task, and the stop ends that task undone. `<stop line>` is the host's, such as
+`` `claude stop 189eaf3d` stops it ``. An id with any character but a letter, a digit, `_`, or `-` gets none, and
+neither does a full Claude Code id, which `claude stop` refuses, or a host whose line is empty or
+holds a hidden character: the line then ends `<host name> gave no stop line it is safe to print`.
+
+A host whose listing failed, such as one whose program is not on PATH, prints `note <host name>: <reason>`. A host
+that by design holds no such session prints nothing. With no session listed and no host failed, the one line is
+`none`. `--json` prints `{ "idle": [...], "notes": [...] }`: each session as `{ host, id, session, name, cwd,
+startedAt, ageMs, waiting, kind, run, issue, root, stop }`, with `kind` `continuation` or `attempt`, and each host
+that gave no listing as `{ host, problem, byDesign }`, the by-design hosts included. It exits 0 whatever it finds, and 1
+with its usage for any other argument.
+
+| Host | What it lists |
+| --- | --- |
+| Claude Code | The background rows of `claude agents --json` with `status` `idle` and `state` `done` or `blocked` ([provider page](providers/claude-code.md#background-sessions)) |
+| Codex | None, by design: a `codex exec` session exits once its turn ends ([provider page](providers/codex.md#background-sessions)) |
+| OpenCode | None, by design: the harness starts no background session there |
 
 ## The snapshot
 

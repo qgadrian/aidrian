@@ -56,7 +56,7 @@
       "tags": []
     },
     "handoff.md": {
-      "summary": "Reminder, plan offer, break-even, background continuation, maxChain, aidrian handoff check, aidrian handoff continue, brief sections, terminal shell-init --wrap",
+      "summary": "Reminder/break-even, background continuation/maxChain, aidrian handoff check/aidrian handoff continue, sessions idle, brief sections, terminal shell-init --wrap",
       "tags": []
     },
     "claude-mod.md": {
@@ -68,7 +68,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: auto-merge, roles/autoStart, decisions, authority, productFeedback maxPersonas/allWidths/items/diff, projectRun next/start/preflight/result/report",
+      "summary": "config.json: auto-merge, roles/autoStart/decisions/authority, productFeedback maxPersonas/allWidths/items/diff, projectRun next/preflight/result/report/released",
       "tags": []
     },
     "dispatch-log.md": {

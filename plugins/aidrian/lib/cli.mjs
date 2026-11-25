@@ -18,6 +18,7 @@ const COMMANDS = {
   handoff: './handoff-brief.mjs',
   'push-preflight': './push-preflight.mjs',
   session: './session-snapshot.mjs',
+  sessions: './sessions-cli.mjs',
   worktree: './worktree.mjs',
   pr: './pr.mjs',
   review: './review/bench.mjs',

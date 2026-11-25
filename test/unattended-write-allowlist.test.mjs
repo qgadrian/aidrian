@@ -20,7 +20,7 @@ import { noteStarted, openStore, startedFolders } from '../plugins/aidrian/lib/h
 import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { committedConfig } from '../plugins/aidrian/lib/config-committed.mjs';
 import { foldCase, isWithin } from '../plugins/aidrian/lib/fs.mjs';
-import { protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { normalizeHookInput, protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { runGit } from '../plugins/aidrian/lib/git.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../plugins/aidrian/lib/unattended-write.mjs';
@@ -594,6 +594,70 @@ test('a review or attest record, and the dispatch records, are refused by the wr
   assert.match(fx.ask(bash(`rm -rf ${fx.state}/dispatch`))?.reason ?? '', /the dispatch records/u);
   assert.match(fx.ask(bash(`rm -f ${reviews}/pr-7-*.json`))?.reason ?? '', /the review and attest records/u);
   assert.equal(fx.ask(bash(`rm -f ${reviews}/pr-7/captures/abc/*.png`)), null, 'a capture glob');
+});
+
+test('a review manifest is judged by every line a patch writes to it, and by a file a patch moves there, on each host', (t) => {
+  const fx = fixture(t);
+  const ask = fx.steady();
+  const reviews = path.join(fx.state, 'reviews');
+  mkdirSync(reviews, { recursive: true });
+  const manifest = path.join(reviews, 'pr-7.json');
+  const [draft, copy, gone, link] = ['draft.json', 'copy.json', 'gone.json', 'link.json'].map((name) => path.join(fx.worktree, name));
+  const hosts = {
+    codex: (text) => ({ tool_name: 'apply_patch', tool_input: { command: text } }),
+    opencode: (text) => normalizeHookInput({ opencode: {}, hook_event_name: 'PreToolUse', cwd: fx.worktree, tool_name: 'patch', tool_input: { patchText: text } }, {}),
+  };
+  const move = (from, ...lines) => [`*** Update File: ${from}`, `*** Move to: ${manifest}`, ...lines];
+  const change = ['@@', '-  "pr": 7,', '+  "pr": 8,'];
+  const forged = JSON.stringify({ pr: 7, head: 'a'.repeat(40), reviewer: 'me' });
+  const nested = JSON.stringify({ pr: 7, findings: [{ reviewer: 'code-reviewer' }] }, null, 2);
+  const clean = JSON.stringify({ pr: 7, findings: [{ specialist: 'code-reviewer' }] }, null, 2);
+  symlinkSync(copy, link);
+  writeFileSync(copy, clean);
+  for (const [host, call] of Object.entries(hosts)) {
+    const said = (...lines) => ask(call(['*** Begin Patch', ...lines, '*** End Patch', ''].join('\n')))?.reason ?? '';
+    const refused = (text, ...lines) => {
+      if (text !== null) writeFileSync(draft, text);
+      assert.match(said(...lines), /attest record/u, `${host} ${JSON.stringify(lines)}`);
+    };
+    const runs = (text, ...lines) => {
+      writeFileSync(draft, text);
+      assert.equal(said(...lines), '', `${host} ${JSON.stringify(lines)}`);
+    };
+    // Every line it adds, up to the next header, and lines that make a key only together.
+    refused(null, `*** Update File: ${manifest}`, '@@', '+  "x": 1,', '*** End of File', '@@', '+  "reviewer": "me",');
+    refused(null, `*** Update File: ${manifest}`, '@@', '+  "reviewer"', '+  : "me",');
+    refused(null, `*** Add File: ${manifest}`, '+{ "pr": 7,', '+"reviewer": "me" }');
+    // A file it moves there: attest-shaped, not readable before the call, a link, or named more than once in the patch.
+    refused(forged, ...move(draft));
+    refused(forged, ...move(draft, ...change));
+    refused(null, ...move(gone, ...change));
+    refused(null, ...move(link, ...change));
+    refused(clean, `*** Add File: ${draft}`, '+{}', ...move(draft, ...change));
+    // A key at any depth, only in a file the patch changes on the way.
+    refused(nested, ...move(draft, ...change));
+    runs(nested, ...move(draft));
+    runs(clean, ...move(draft));
+    runs(clean, ...move(draft, ...change));
+    runs(clean, `*** Update File: ${manifest}`, '@@', '+  "x": 1,', '*** End of File', '@@', '+  "y": 2,');
+    runs(forged, `*** Update File: ${draft}`, `*** Move to: ${path.join(fx.worktree, 'elsewhere.json')}`, ...change);
+    // An attended session's call is never held.
+    writeFileSync(draft, forged);
+    assert.equal(fx.ask(call(['*** Begin Patch', ...move(draft), '*** End Patch', ''].join('\n')), { held: null }), null, `${host} attended`);
+  }
+});
+
+test('a text written to a review manifest is judged in work that grows with its size', (t) => {
+  const fx = fixture(t);
+  const manifest = path.join(fx.state, 'reviews', 'pr-7.json');
+  mkdirSync(path.dirname(manifest), { recursive: true });
+  const ask = (content) => fx.ask(write(manifest, { tool_input: { file_path: manifest, content } }))?.reason ?? '';
+  const began = process.cpuUsage();
+  assert.equal(ask(`{ "${'\\'.repeat(100_000)}`), '');
+  const { user } = process.cpuUsage(began);
+  assert.ok(user < 5_000_000, `${user} microseconds`);
+  for (const key of ['"a\\u0062"', '"\\\\x"', "'a\\\\\\\\b'", '"a\\tb\\tc"  ']) assert.match(ask(`{ "pr": 7, ${key}: 1`), /attest record/u, key);
+  for (const text of ['{ "ab": 1', '{ "a\\', '{ "a\nb\\c": 1', '{ a\\b: 1']) assert.equal(ask(text), '', text);
 });
 
 test('a review manifest, named as the review gate\'s old attest record, never takes a reviewer key', (t) => {

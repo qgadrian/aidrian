@@ -108,8 +108,12 @@ function selectsKeychain(text) {
   return set !== undefined;
 }
 
-// What a Bash write to the local file that names no key changes: every switch in it, a local "off" among them.
+// What a Bash write to the local file that names no key, or a patch that deletes or moves it, changes: every switch in
+// it, a local "off" among them.
 const EVERY_SWITCH = Object.freeze({ name: 'every machine switch', why: 'only the main session may change the machine\'s switches, a local "off" among them' });
+
+// What an edit of the local file the guard cannot replay may change (unreplayable).
+const UNREPLAYED = Object.freeze({ name: 'a machine switch' });
 
 // Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals, the forge token's keychain entry,
 // the background handoff, or the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
@@ -120,8 +124,8 @@ const EVERY_SWITCH = Object.freeze({ name: 'every machine switch', why: 'only th
 // a folder the lexer knows that passes a link to the file already on disk (globLinksTo), as `tee out/alias*` does
 // when `out/alias` links to it. A write that names no key is judged by its paths and names, and by a glob spelled in
 // a checkout's folder or an unknown one, with no walk of the links on disk: a write through a link named otherwise,
-// such as `: > alias` where `alias` links to the file, is a known limit. This holds with no gates set; a Write or Edit
-// that leaves every switch as it was stays allowed, and so does a read. Like the rest of this guard, it is for agents
+// such as `: > alias` where `alias` links to the file, is a known limit. This holds with no gates set; a Write, or an Edit
+// the guard can replay, that leaves every switch as it was stays allowed, and so does a read. Like the rest of this guard, it is for agents
 // that cooperate.
 // A command in a shell the lexer cannot read that names the local file, or has a glob that may reach it
 // (opaqueGlobReaches), is refused whether or not it names a key: it may set a switch by a key it builds, and the guard
@@ -133,13 +137,13 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const opaque = opaqueShellCommand(input) !== null;
   const isBash = bashCall(input);
   const command = String(input.tool_input?.command ?? '');
-  const named = SWITCHES.filter(({ key }) => !isBash || command.includes(key));
+  const switches = SWITCHES.filter(({ key }) => !isBash || command.includes(key));
   // A Bash call that names no key may still erase a switch: a remove, move, truncate, link, or copy over the file lifts a
   // local "off", which the team's `solo` then turns on (config-local.mjs machineSwitch). Only a call that may name the
   // file, by its name, however quoted, or a glob, or that may clean or stash it away, is read further.
   const plain = unquoted(command);
-  const erases = isBash && named.length === 0 && /aidrian|[*?[]|\bclean\b|\bstash\b/iu.test(plain);
-  if (named.length === 0 && !erases) return null;
+  const erases = isBash && switches.length === 0 && /aidrian|[*?[]|\bclean\b|\bstash\b/iu.test(plain);
+  if (switches.length === 0 && !erases) return null;
   const { files, names, globs, interpreted = [] } = writeTargets(input);
   const local = project.paths.local;
   const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
@@ -160,7 +164,9 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const aimed = targets.length > 0 || names.some((name) => name.toLowerCase().includes(local)) || globbed();
   const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, seen, project.checkouts) !== null;
   if (!aimed && !reached && !(erases && !opaque && erasesOtherwise(input, project, plain, globs))) return null;
-  const hit = opaque || isBash ? named[0] ?? EVERY_SWITCH : named.find((each) => changesSwitch(input, targets[0], each, local));
+  const whole = () => (patchErases(input, local) ? EVERY_SWITCH : null);
+  const unread = () => (unreplayable(input, targets[0]) ? UNREPLAYED : null);
+  const hit = opaque || isBash ? switches[0] ?? EVERY_SWITCH : switches.find((each) => changesSwitch(input, targets[0], each, local)) ?? whole() ?? unread();
   if (!hit || (!subagent && !unattended())) return null;
   // A session no Human attends is a main session, so the reason names the Human, not the main session.
   const only = (text) => (subagent ? text : `${text.replace(/^only the main session/u, 'only a main session a Human attends')}, and the background handoff route started this one, with no Human`);
@@ -174,6 +180,10 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const edit = isBash && interpreted.some((text) => text.toLowerCase().includes(local))
     ? `; to edit a doc or test file that mentions ${local}, use the Edit or Write tool, which the guard judges by the file it writes`
     : '';
+  if (hit === UNREPLAYED) {
+    const why = `it edits ${local}, and its old text is not in the file as written, or its result is too large to read, so it may change one of the machine's switches there, which ${only('only the main session may set')}`;
+    return { match: `may set a switch in ${local}`, reason: projectRuleReason(input, `${why}; read the file, and give the old text exactly`, human) };
+  }
   if (hit === EVERY_SWITCH) {
     return { match: `changes ${local}`, reason: projectRuleReason(input, `it writes, moves, links, or removes ${local}, or may, which holds the machine's switches, and ${only(hit.why)}; to read the file, use Read${edit}`, human) };
   }
@@ -235,54 +245,82 @@ export const bashCall = (input) => input.tool_name === 'Bash';
 
 // Whether a Write, Edit, or apply_patch of the local `file` changes the switch. A Write or Edit changes it when its text
 // names the key, or when the file it leaves parses to another value than the file on disk, which covers
-// `"off"` to `"on"`, a JSON escape, a removed key, and a file left unparsable. A patch changes it when a line it adds or
+// `"off"` to `"on"`, a JSON escape, a removed key, and a file left unparsable; an Edit it cannot replay, unreplayable
+// tells apart. A patch changes it when a line it adds or
 // removes names the key, or the switch's own `patched` shape: a patch is not applied here, so a value on a line of its own
 // that names neither, or a key spelled with a JSON escape, is not seen. Each operation of a patch whose file is the
 // local file named `local` is judged alone, against that file as it is on disk, from the call's folder `cwd`; one that
-// moves a file into it, by the moved file and its update lines, as the new local file.
-function changesSwitch({ tool_name: tool, tool_input: given, cwd }, file, { key, valueIn, patched }, local = path.basename(file ?? '')) {
-  const edit = fileEditOf({ tool_name: tool, tool_input: given });
+// adds the file, also as a Write of the lines it adds; one that moves a file into it, by the moved file and its update
+// lines, as the new local file.
+function changesSwitch(input, file, { key, valueIn, patched }, local = path.basename(file ?? '')) {
+  const { cwd } = input;
+  const edit = fileEditOf(input);
+  const writes = (content, before) => content.includes(key) || switchIn(before, valueIn) !== switchIn(content, valueIn);
   if (edit?.shape === 'patch') {
     const from = (each) => path.resolve(typeof cwd === 'string' ? cwd : process.cwd(), each);
-    const isLocal = (each) => typeof each === 'string' && path.basename(each).toLowerCase() === local.toLowerCase();
+    const isLocal = (each) => named(each, local);
     const judged = (text, before) => (typeof patched === 'function' ? patched(text, before) : patched.test(text));
-    return patchOperations(edit.text).some(({ file, move, text }) => {
+    const content = (text) => text.split('\n').filter((line) => line.startsWith('+')).map((line) => `${line.slice(1)}\n`).join('');
+    return edit.operations.some(({ kind, file, move, text }) => {
+      checkDeadline();
       if (isLocal(file) && judged(text, readText(from(file)))) return true;
+      if (isLocal(file) && kind === 'add' && writes(content(text), readText(from(file)))) return true;
       if (!isLocal(move)) return false;
       // A move into the local file leaves the moved file, with this operation's update lines, as the new local file.
       const moved = readText(from(file));
       return switchIn(moved, valueIn) !== switchIn(readText(from(move)), valueIn) || judged(text, moved);
     });
   }
-  const written = edit?.shape === 'write' ? edit.content : edit?.shape === 'edit' ? edit.newText : undefined;
-  if (typeof written !== 'string') return false;
-  if (written.includes(key)) return true;
+  if (edit?.shape !== 'write' && edit?.shape !== 'edit') return false;
   const before = readText(file);
-  return switchIn(before, valueIn) !== switchIn(edit.shape === 'write' ? written : editedText(before, given), valueIn);
+  const changed = (after) => switchIn(before, valueIn) !== switchIn(after, valueIn);
+  if (edit.shape === 'write') return typeof edit.content === 'string' && writes(edit.content, before);
+  const steps = editSteps(input, edit);
+  const texts = [edit.newText, ...steps.flat().map(({ new_string: to }) => to)].filter((each) => typeof each === 'string');
+  if (texts.length === 0) return false;
+  return texts.some((each) => each.includes(key)) || steps.some((list) => {
+    const after = replayed(before, list);
+    return after !== null && changed(after);
+  });
 }
 
-// The operations of an apply_patch text, each { file, move, text }: the file its `*** Add File:`, `*** Update File:`, or
-// `*** Delete File:` header names, the file a `*** Move to:` line moves it to, or null, and the operation's own lines,
-// headers included.
-function patchOperations(text) {
-  const operations = [];
-  for (const line of String(text ?? '').split(/\r?\n/u)) {
-    const header = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/u.exec(line);
-    const move = /^\*\*\* Move to: (.+)$/u.exec(line);
-    if (header) operations.push({ file: header[1].trim(), move: null, text: `${line}\n` });
-    else if (/^\*\*\* (?:Begin|End) Patch/u.test(line)) continue;
-    else if (operations.length) {
-      if (move) operations.at(-1).move = move[1].trim();
-      operations.at(-1).text += `${line}\n`;
-    }
+// Whether the path `file` has the base name `name`, in any case.
+const named = (file, name) => typeof file === 'string' && path.basename(file).toLowerCase() === name.toLowerCase();
+
+// Whether the call is a patch that deletes the local file named `local`, or moves it to another path: either takes every
+// switch in it away, so it counts as changing them all, as a Bash remove or move of it does.
+const patchErases = (input, local) => fileEditOf(input)?.operations?.some(({ kind, file, move }) => named(file, local) && (kind === 'delete' || move !== null)) === true;
+
+// The replacements of an Edit, as the two lists it may be read by: the call's own fields, and those its host's adapter
+// reads (fileEditOf `edits`), in order. A call may carry both, and which one its host applies is not known here, so the
+// guard judges each. An entry that replaces no text is left out.
+const editSteps = (input, edit) => [[input.tool_input], Array.isArray(edit.edits) ? edit.edits : []]
+  .map((list) => list.filter((each) => typeof each?.old_string === 'string'));
+
+// Whether the call is an Edit of the local `file` the guard cannot replay: an old text is not there as written, which a
+// host may still match by rules of its own, or the text grows past REPLAY_CAP. Such an edit may change any switch. A file that is not there holds no text to match, so it changes only by
+// an edit that replaces the empty text, which creates it.
+function unreplayable(input, file) {
+  const edit = fileEditOf(input);
+  if (edit?.shape !== 'edit') return false;
+  const steps = editSteps(input, edit);
+  if (!isEntry(file) && !steps.flat().some(({ old_string: from }) => from === '')) return false;
+  return steps.some((list) => replayed(readText(file), list) === null);
+}
+
+// `text` after the replacements `list` (editSteps), in order, or null when one's old text is not in the text it meets, or
+// the result may pass REPLAY_CAP characters, which is far above any settings file and keeps a replay from filling memory.
+const REPLAY_CAP = 1024 * 1024;
+function replayed(text, list) {
+  let after = text;
+  for (const { old_string: from, new_string: to, replace_all: all } of list) {
+    checkDeadline();
+    const most = all === true ? Math.floor((after.length + 1) / Math.max(from.length, 1)) : 1;
+    if (!after.includes(from) || after.length + most * String(to).length > REPLAY_CAP) return null;
+    // The new text is taken literally: a replacer function keeps `$&` from meaning what it replaces.
+    after = all === true ? after.replaceAll(from, () => to) : after.replace(from, () => to);
   }
-  return operations;
-}
-
-// `text` after an Edit, with its new text taken literally: a replacer function keeps `$&` from meaning what it replaces.
-function editedText(text, { old_string: from, new_string: to, replace_all: all }) {
-  if (typeof from !== 'string') return text;
-  return all === true ? text.replaceAll(from, () => to) : text.replace(from, () => to);
+  return after;
 }
 
 // The file's text, or an empty one when it cannot be read: a hook lets the action run when it cannot read its input.

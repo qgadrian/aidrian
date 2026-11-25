@@ -3,8 +3,8 @@
 The adapter covers the differences behind the hook contract: how a host names its tools, what its payload holds, and who it says is calling.
 It does not get the plugin into a host: how a host's hooks are delivered, installed, and put on its PATH is separate work, which depends on the host.
 So a host that reads `hooks.json` as it is, as Claude Code and Codex do, is close to one adapter file.
-A host that does not needs that delivery built first: OpenCode's bridge is the one built so far, running one hook and
-with no live shell call recorded ([OpenCode](opencode.md)).
+A host that does not needs that delivery built first: OpenCode's bridge is the one built so far, running the hooks that
+cannot block a call, with no live call recorded ([OpenCode](opencode.md)).
 
 Shared code calls `lib/hosts/index.mjs`, `lib/trackers/index.mjs`, and `lib/forges/index.mjs`, and never reads a host's variables or names a host's own tools.
 `test/adapters.test.mjs` iterates the host and tracker registries, so an adapter added to one is checked by that alone,
@@ -24,8 +24,8 @@ The adapter's required `delivery` field names which of these three the host is:
 | `installer` | Runs command hooks from a config of its own, as Kimi Code is reported to | An installer that writes that config from `hooks.json`, as `codex/install-agents.mjs` writes roles |
 | `bridge` | Runs hooks in process, as OpenCode does | A bridge plugin that maps each call it has a route for, runs the matching `scripts/hook-*.mjs`, and, for a blocking route, turns exit 2 into a throw |
 
-OpenCode 2.0 and later ships as a `bridge` host that runs one hook, the session ledger's, and no blocking route
-([OpenCode](opencode.md#hooks)). Kimi Code stays an example of the `installer` shape, as a review of this page reported
+OpenCode 2.0 and later ships as a `bridge` host that runs the hooks of the events no hook can block on, and no blocking
+route ([OpenCode](opencode.md#hooks)). Kimi Code stays an example of the `installer` shape, as a review of this page reported
 it: it was not run here, is not supported, and its case has no code yet. Check it against the host before relying on it.
 
 ### Files
@@ -34,7 +34,7 @@ it: it was not run here, is not supported, and its case has no code yet. Check i
 | --- | --- |
 | `plugins/aidrian/lib/hosts/<id>.mjs` | The adapter, with the fields below |
 | `plugins/aidrian/lib/hosts/index.mjs` | The adapter in `HOSTS`. `detectHost` runs in two passes: first every adapter's `payloadMark`, in `HOSTS` order, so a hook's payload names its host whatever variables the process inherited; then each `detect` in `HOSTS` order. So the host a shell can start inside another comes first, and a host whose only environment mark another host's process can inherit, as OpenCode's `OPENCODE_SESSION_ID`, comes last |
-| `plugins/aidrian/<id>/routes.mjs` | For a `bridge` host: `EVENTS`, each standard event the bridge runs to the host's own hook, as OpenCode's `{ PostToolUse: 'execute.after' }`. A hook runs on the host once its event is here and its matcher fires on a name the host's leaf returns. A blocking event waits for a live session to record its route refusing a call, so the conformance suite refuses a route of any event but `PostToolUse` |
+| `plugins/aidrian/<id>/routes.mjs` | For a `bridge` host: `EVENTS`, each standard event the bridge runs to the host's own hook, as OpenCode's `{ SessionStart: 'context', SubagentStart: 'context', PostToolUse: 'execute.after' }`. A hook runs on the host once its event is here and, for a tool event, its matcher fires on a name the host's leaf returns. A blocking event waits for a live session to record its route refusing a call, so the conformance suite refuses a route of any event `canBlock` (`lib/hook-result.mjs`) says a hook can block on |
 | `plugins/aidrian/<id>/routes.generated.json` | For a `bridge` host: the generated route list, every `hooks.json` hook in its order as `{ event, matcher, script, args, timeoutMs }`, which `npm run build` writes and `--check` fails when stale. Never edit it; change `hooks.json` |
 | `plugins/aidrian/lib/hosts/<id>-names.mjs` | For a `bridge` host: the leaf that maps the host's tool names to the standard ones, importing nothing, read by both the adapter and the bridge, so both pick by the same name. `STANDARD_NAMES` is every name it returns; the conformance suite reads the routes a bridge host runs from it |
 | `plugins/aidrian/<id>/route-select.mjs` | For a `bridge` host: the route list half of the bridge, importing `node:` built-ins alone. `readRoutes` reads the generated list and leaves out an entry the bridge cannot spawn as it is; `selectRoutes(routes, events, hook, name)` gives the routes of a host hook whose matcher fires on a standard name, in order |

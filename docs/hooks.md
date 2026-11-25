@@ -2,7 +2,7 @@
 
 The plugin's hooks are in [`plugins/aidrian/hooks/hooks.json`](../plugins/aidrian/hooks/hooks.json).
 How each host runs them: [Claude Code](providers/claude-code.md#hooks), [Codex](providers/codex.md#hooks),
-[OpenCode](providers/opencode.md#hooks), which runs the session ledger alone, through a bridge plugin.
+[OpenCode](providers/opencode.md#hooks), which runs each session's start and the hooks after a tool call, with no guard, through a bridge plugin.
 
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
 Two exceptions: the [merge guard](#merge-guard) refuses a merge whose pull request or head it cannot read,
@@ -23,7 +23,7 @@ the tracker write guard, and the question names check also record each block: se
 
 | When | What runs | Host | Blocks |
 | --- | --- | --- | --- |
-| A session or subagent starts | The [start lines](#start-lines); in a main session the clear command started, the [handoff continuation](handoff.md#the-clear-route) the cleared session armed, as a banner and start context | Claude Code, Codex; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
+| A session or subagent starts | The [start lines](#start-lines); in a main session the clear command started, the [handoff continuation](handoff.md#the-clear-route) the cleared session armed, as a banner and start context | Claude Code, Codex; OpenCode the start lines, not live ([provider page](providers/opencode.md#hooks)); the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
 | A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command, and one line naming the [background session](handoff.md#the-background-route) that owns the work when the session handed it off in the last 24 hours; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
@@ -35,12 +35,12 @@ the tracker write guard, and the question names check also record each block: se
 | Before a GitHub MCP merge | The [merge guard](#merge-guard) | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
 | Before a GitHub MCP call that marks a draft ready | The [ready hold](#ready-hold), in a project that runs product feedback, then the [ready checks hold](#ready-checks) | Claude Code, Codex ([not live](#where-the-ready-hold-is-verified)) | yes |
 | Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools`; and, whatever the working copy says, the [project run rule](config.md#project-run): a run session's tracker writes by its marks, and a tracker's merge or ready tool for every session | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | yes |
-| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged); and, whatever the working copy says, where the base branch allows project runs, the record of each issue's text a tracker's issue read answers, the only text a [project run](config.md#project-run) keeps, swept after a day | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | no |
+| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged); and, whatever the working copy says, where the base branch allows project runs, the record of each issue's text a tracker's issue read answers, the only text a [project run](config.md#project-run) keeps, swept after a day | Claude Code, Codex and OpenCode ([not live](#where-the-tracker-guard-is-verified)) | no |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent, and a subagent's background dispatch moved to the [foreground](#background-check) | Claude Code | no |
-| After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
+| After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code; OpenCode runs it and its feedback reaches no model ([provider page](providers/opencode.md#limits)) | feedback |
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
-| After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
+| After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code; OpenCode, not live ([provider page](providers/opencode.md#limits)) | no |
 | The main session ends a turn | The [result hold](config.md#project-run) of a project run's issue session that has not handed its result over, first, then the [announce check](#announced-work), the [review-loop check](#review-loop-check), the [merge hand-back check](#merge-hand-back-check), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the result hold, announce, and hand-back checks also Codex ([not live](providers/codex.md#hooks)), the review-loop and merge hand-back checks Claude Code only; the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop, and each check once per turn ([send-backs](#send-backs-per-turn)); the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check), the [background check](#background-check), and the [evidence check](#check-runs) | Claude Code | once |
 | A session ends | The main session's recorded issue reads for a [project run](config.md#project-run) removed. When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
@@ -134,7 +134,7 @@ Hook payloads pass through `lib/hosts/` first, so the guard reads every tool as 
 | On | Live | Not live |
 | --- | --- | --- |
 | Claude Code | The `PostToolUse` payload of a real `get_workspace` call on 2.1.318, kept as `test/fixtures/hosts/claude-code/tracker.json` | The payload of a write, which the same fixture builds from the documented shape |
-| OpenCode | Nothing: no tracker hook runs there, since the bridge forwards no MCP tool call | Every tracker write, which passes unchecked; while `tracker.enabled` is true, `aidrian check` says so where OpenCode is set up ([OpenCode](providers/opencode.md#limits)) |
+| OpenCode | Nothing: the record after a read runs there in tests alone, on no live payload, and no route runs before a tool call, so no write is judged | Every tracker write, which passes unchecked; while `tracker.enabled` is true, `aidrian check` says so where OpenCode is set up ([OpenCode](providers/opencode.md#limits)) |
 | Codex | On 0.166.0, `codex exec --json` called `linear.get_workspace` through the Linear app, with server `codex_apps`, and returned the `url` the guard reads | Any hook on Codex: no session has run the guard with a person's trust. The names and payload come from the source and `test/fixtures/hosts/codex/tracker.json` |
 
 What the Codex source says, at `rust-v0.166.0`:
@@ -1213,7 +1213,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`, whether it names the file, a glob
   that matches it, such as `.aidrian.local.js*`, or a glob that passes a link to it already on disk, such as `tee out/alias*`:
   the [auto-merge](config.md#auto-merge), [unattended waiver](config.md#unattended-waiver), and review-approvals switches
-  are the main session's. Any other Bash write, move, remove, truncate, or copy over that file counts as changing every
+  are the main session's. An Edit of that file whose old text is not in it as written, or whose result is too large to
+  replay, is refused too. A patch that deletes that file, or moves it elsewhere, counts as changing every switch.
+  A patch that adds that file is judged as a Write of it. Any other Bash write, move, remove, truncate, or copy over that file counts as changing every
   switch, since erasing a local `off` lets [`solo`](config.md#solo) turn it on: `rm`, `mv`, `: >`, or `cp` over it is
   refused too, however its name is quoted. So is a link made from it (`ln`, `ln -s`, `cp -l`, `cp -s`); `git clean -x`
   or `-X`, and `git stash -a` or `--all`, run in the main checkout or a folder the guard cannot know; and a command that

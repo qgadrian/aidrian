@@ -4,17 +4,26 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { nestedProtected as anyHostNested, credentialStores, fileEditOf, HOSTS, nestedGlobs, otherPlaceholders, packagePrograms, protectedFile, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { nestedProtected as anyHostNested, credentialStores, fileEditOf, fileReadOf, HOSTS, nestedGlobs, otherPlaceholders, packagePrograms, protectedFile, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import opencode, { NO_SESSION } from '../plugins/aidrian/lib/hosts/opencode.mjs';
 import { readings, unwrapped } from '../plugins/aidrian/lib/package-runner.mjs';
+import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { machineSwitchWriteDenial } from '../plugins/aidrian/lib/config-guard.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
+import { findProject } from '../plugins/aidrian/lib/project.mjs';
+import { trackerOfTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
+import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
+
+import { hookCall } from './hook-call.mjs';
 
 const MARK = { version: '2.4.0' };
 const SHELL = { hook_event_name: 'PostToolUse', opencode: MARK, session_id: 'ses_a', cwd: '/x', tool_name: 'shell', tool_input: { command: 'gh pr view 3' }, tool_use_id: 'call_1' };
@@ -55,12 +64,15 @@ test('the session comes from OPENCODE_SESSION_ID, and nothing else of a session 
   for (const read of [opencode.agentName, opencode.effort, opencode.runEnv]) assert.equal(read({ OPENCODE: '1', OPENCODE_SESSION_ID: 'ses_a' }), null);
 });
 
-test('a marked shell call reads as the standard Bash, with its own name kept', () => {
+test('a marked shell call reads as the standard Bash, and its file tools as Edit and Write, each with its own name kept', () => {
   assert.deepEqual(opencode.hookInput(SHELL), { ...SHELL, tool_name: 'Bash', raw_tool_name: 'shell' });
   assert.deepEqual(UNKNOWN_HOST.hookInput(SHELL), { ...SHELL, tool_name: 'Bash', raw_tool_name: 'shell' }, 'a payload no host claims is read the same way');
-  for (const tool of ['edit', 'write', 'patch', 'read', 'mcp__linear__save_issue']) {
+  for (const [tool, standard] of [['edit', 'Edit'], ['write', 'Write'], ['patch', 'Edit'], ['read', 'Read']]) {
+    assert.deepEqual(opencode.hookInput({ ...SHELL, tool_name: tool }), { ...SHELL, tool_name: standard, raw_tool_name: tool }, tool);
+  }
+  for (const tool of ['linear_save_issue', 'mcp__linear__save_issue']) {
     const call = { ...SHELL, tool_name: tool };
-    assert.equal(opencode.hookInput(call), call, `${tool} is not mapped`);
+    assert.equal(opencode.hookInput(call), call, `${tool} with no info is not mapped`);
   }
 });
 
@@ -72,9 +84,10 @@ test('a shell call without the mark keeps its name on every host and on none', (
 
 test('its tool names: the shell tool and the file tools as OpenCode sends them, and every other name as it is', () => {
   assert.deepEqual(['Bash', 'Edit', 'Write', 'NotebookEdit', 'mcp__linear__save_issue'].map(opencode.rawToolName), ['shell', 'edit', 'write', 'NotebookEdit', 'mcp__linear__save_issue']);
-  assert.deepEqual(['Bash', 'Edit', 'AskUserQuestion'].map(opencode.nativeToolName), ['shell', 'Edit', 'AskUserQuestion']);
+  assert.deepEqual(['Bash', 'Edit', 'AskUserQuestion', 'EnterWorktree'].map(opencode.nativeToolName), ['shell', 'edit', 'question', 'EnterWorktree']);
   assert.equal(opencode.toolName('mcp__linear__save_issue'), 'mcp__linear__save_issue');
   assert.equal(opencode.serverSpelling('linear-server'), 'linear-server');
+  assert.equal(opencode.serverSpelling('my linear.app'), 'my_linear_app', 'as its registry names a server`s namespace');
   assert.deepEqual(opencode.agentAliases('aidrian-explorer'), ['explorer']);
   assert.equal(opencode.pluginAgentPrefix, 'aidrian-');
 });
@@ -109,9 +122,14 @@ test('its file tools say the shape of each edit, as the schemas in the 2.4.0 bin
     shape: 'patch',
     text: PATCH,
     files: [{ file: 'docs/new.md', added: ['one'] }, { file: 'b.md', added: ['two'] }],
+    operations: [
+      { kind: 'add', file: 'docs/new.md', move: null, text: '*** Add File: docs/new.md\n+one\n' },
+      { kind: 'update', file: 'a.md', move: 'b.md', text: '*** Update File: a.md\n*** Move to: b.md\n+two\n' },
+      { kind: 'delete', file: 'c.md', move: null, text: '*** Delete File: c.md\n\n' },
+    ],
     targets: ['docs/new.md', 'a.md', 'b.md', 'c.md'],
   });
-  assert.deepEqual(opencode.fileEdit('patch', {}), { shape: 'patch', text: '', files: [], targets: [] });
+  assert.deepEqual(opencode.fileEdit('patch', {}), { shape: 'patch', text: '', files: [], operations: [], targets: [] });
 });
 
 test('the registry finds its file edits by its tool names', () => {
@@ -125,8 +143,8 @@ test('its capabilities: no transcripts, no handoff route, a push it cannot judge
   assert.deepEqual(capabilities.handoffContinue, { routes: [] });
   assert.deepEqual(capabilities.pushPermission(), { answer: 'unknown' });
   assert.equal(capabilities.trackerGuard.verified, 'none');
-  assert.match(capabilities.trackerGuard.evidence, /forwards no MCP tool call/u);
-  assert.deepEqual(capabilities.trackerGuard.unguardedRoutes, [{ name: 'any MCP tool', reason: 'the bridge forwards no MCP tool call to a hook in this version' }]);
+  assert.match(capabilities.trackerGuard.evidence, /runs no route before an MCP tool call/u);
+  assert.deepEqual(capabilities.trackerGuard.unguardedRoutes, [{ name: 'any MCP tool', reason: 'the bridge runs no route before a tool call in this version' }]);
 });
 
 test('it declares none of what a later change brings: no check-run reader, instructions, GitHub tools, or opaque shell', () => {
@@ -379,4 +397,248 @@ test('a config over 1 MiB is not read, so it counts as no setup, and one of exac
   assert.equal(setUp({ env, root: project }), true, 'exactly 1 MiB');
   writeFileSync(file, padded(1024 * 1024 + 1));
   assert.equal(setUp({ env, root: project }), false, 'one byte over');
+});
+
+// A payload as the bridge sends it for the OpenCode tool `tool`, before the adapter reads it.
+const sentCall = (tool, input, more = {}) => ({ hook_event_name: 'PreToolUse', opencode: { version: '2.4.1', info: {} }, session_id: 'ses_a', cwd: '/x', tool_name: tool, tool_input: input, ...more });
+
+test('after hookInput, fileEditOf reads each OpenCode file edit by the tool OpenCode sent, so a guard sees its target paths', () => {
+  const calls = [
+    ['edit', { path: 'docs/a.md', oldString: 'a', newString: 'b' }, 'Edit', ['docs/a.md']],
+    ['write', { path: '/abs/b.md', content: 'x' }, 'Write', ['/abs/b.md']],
+    ['patch', { patchText: PATCH }, 'Edit', ['docs/new.md', 'a.md', 'b.md', 'c.md']],
+  ];
+  for (const [tool, input, standard, targets] of calls) {
+    const read = opencode.hookInput(sentCall(tool, input));
+    assert.equal(read.tool_name, standard, tool);
+    assert.deepEqual(fileEditOf(read).targets, targets, tool);
+  }
+  const edit = fileEditOf(opencode.hookInput(sentCall('edit', { path: 'a.md', oldString: 'a', newString: 'b' })));
+  assert.deepEqual([edit.shape, edit.newText, edit.edits], ['edit', 'b', [{ old_string: 'a', new_string: 'b', replace_all: false }]]);
+  // Claude Code's own calls still read by their own names, as no adapter gave them another.
+  assert.deepEqual(fileEditOf({ tool_name: 'Edit', tool_input: { file_path: 'c.md', old_string: 'a', new_string: 'b' } }).targets, ['c.md']);
+  assert.equal(fileEditOf({ tool_name: 'Bash', raw_tool_name: 'shell', tool_input: { command: 'ls' } }), null, 'a renamed shell call edits no file');
+});
+
+test('after hookInput, fileReadOf reads each OpenCode file read by the tool OpenCode sent: read`s path, and the folder grep and glob search', () => {
+  const read = (tool, input) => fileReadOf(opencode.hookInput(sentCall(tool, input)));
+  assert.deepEqual(read('read', { path: '/s/key' }), ['/s/key']);
+  assert.deepEqual(read('read', { file_path: '/s/key' }), [null], 'OpenCode has no such field, so the call`s folder');
+  for (const tool of ['grep', 'glob']) {
+    assert.deepEqual(read(tool, { pattern: '/s/*', path: '/d' }), ['/d'], `${tool}: ripgrep never leaves the folder it searches`);
+    assert.deepEqual(read(tool, { pattern: '../x' }), [null], tool);
+  }
+  for (const given of ['undefined', 'null']) assert.deepEqual(read('glob', { pattern: '*', path: given }), [null], 'OpenCode reads this word as no path');
+  assert.deepEqual(read('grep', { pattern: 'x', path: 'undefined' }), ['undefined'], 'only glob does');
+  for (const tool of ['read', 'grep', 'glob']) assert.equal(fileReadOf({ tool_name: tool === 'read' ? 'Read' : 'Grep', raw_tool_name: tool, tool_input: { file_path: '/f', path: '/f' } })?.[0], '/f', 'no mark, no OpenCode reading');
+  assert.equal(read('webfetch', { url: 'https://x.example' }), null);
+});
+
+test('a path that starts with ~ is the home folder in every OpenCode file tool, as OpenCode resolves it', () => {
+  const at = (file) => path.join(homedir(), file);
+  const edited = (tool, input) => fileEditOf(opencode.hookInput(sentCall(tool, input)));
+  assert.deepEqual(edited('edit', { path: '~/.zshrc', oldString: 'a', newString: 'b' }).targets, [at('.zshrc')]);
+  assert.equal(edited('write', { path: '~/a/../b', content: 'x' }).file, at('b'), 'folded, as OpenCode joins it');
+  assert.deepEqual(edited('patch', { patchText: '*** Begin Patch\n*** Delete File: ~/c\n*** End Patch\n' }).targets, [at('c')]);
+  assert.deepEqual(fileReadOf(opencode.hookInput(sentCall('read', { path: '~' }))), [homedir()]);
+  for (const file of ['~x/a', 'a/~/b', '/~/a', './~']) assert.deepEqual(edited('write', { path: file, content: 'x' }).targets, [file], file);
+});
+
+test('an OpenCode edit that turns a machine switch on is refused a subagent, as Claude Code`s Edit is', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-opencode-switch-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(path.join(root, '.aidrian'));
+  writeFileSync(path.join(root, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const project = findProject(root);
+  const local = path.join(root, project.paths.local);
+  writeFileSync(local, `${JSON.stringify({ github: { autoMerge: 'off' } })}\n`);
+  const { config } = loadConfig(project);
+  const ask = (input) => machineSwitchWriteDenial(opencode.hookInput(sentCall('edit', input, { cwd: root, agent_id: 'ses_child' })), project, config);
+  assert.match(ask({ path: local, oldString: '"off"', newString: '"on"' })?.match ?? '', /autoMerge/u, 'the edit turns the switch on');
+  assert.equal(ask({ path: local, oldString: '"off"', newString: '"off" ' }), null, 'an edit that leaves it as it was runs');
+});
+
+test('the idle hook`s background work reads as background_tasks, with an id only for the idle session`s own shell, subagent, and job', () => {
+  const background = [
+    { kind: 'shell', sessionID: 'ses_root', shellID: 'sh_1', command: 'npm test' },
+    { kind: 'subagent', sessionID: 'ses_root', childSessionID: 'ses_child', agent: 'general', description: 'review the diff' },
+    { kind: 'codemode', sessionID: 'ses_root', jobID: 'job_1' },
+    { kind: 'shell', sessionID: 'ses_child', shellID: 'sh_2', command: 'sleep 9' },
+    { kind: 'image', sessionID: 'ses_root', path: '/x.png', model: 'm' },
+    { kind: 'video', sessionID: 'ses_root', path: '/x.mp4' },
+    { kind: 'shell', sessionID: 'ses_root', shellID: 7 },
+    { kind: 'toString', sessionID: 'ses_root', toString: 'x' },
+    null, 'text', { sessionID: 'ses_root', shellID: 'sh_3' },
+  ];
+  const stop = { hook_event_name: 'Stop', opencode: { version: '2.4.1', background }, session_id: 'ses_root', cwd: '/x', stop_hook_active: false };
+  assert.deepEqual(opencode.hookInput(stop).background_tasks, [
+    { id: 'sh_1', type: 'shell', status: 'running', description: 'npm test' },
+    { id: 'ses_child', type: 'subagent', status: 'running', description: 'review the diff' },
+    { id: 'job_1', type: 'codemode', status: 'running' },
+    { type: 'shell', status: 'running', description: 'sleep 9' },
+    { type: 'image', status: 'running' },
+    { type: 'video', status: 'running' },
+    { type: 'shell', status: 'running' },
+    { type: 'toString', status: 'running' },
+  ]);
+  const child = opencode.hookInput({ ...stop, hook_event_name: 'SubagentStop', agent_id: 'ses_child' }).background_tasks;
+  assert.deepEqual(child.filter((task) => task.id).map((task) => task.id), ['sh_2'], 'a child session owns its own work');
+  assert.equal(opencode.hookInput({ ...stop, opencode: { version: '2.4.1' } }).background_tasks, undefined, 'no background, no list');
+  assert.deepEqual(opencode.hookInput({ ...stop, opencode: { background: [] } }).background_tasks, []);
+  assert.equal(opencode.hookInput({ ...stop, opencode: undefined, background_tasks: 'kept' }).background_tasks, 'kept', 'an unmarked payload is not read');
+});
+
+test('a Linear MCP call reads as mcp__linear__<tool>, so the tracker hooks match it and find the Linear adapter', () => {
+  const generated = JSON.parse(readFileSync(path.join(import.meta.dirname, '../plugins/aidrian/opencode/routes.generated.json'), 'utf8'));
+  const trackerRoutes = generated.filter((route) => /^hook-tracker-(?:pre|post)\.mjs$/u.test(route.script));
+  assert.deepEqual(trackerRoutes.map((route) => route.event).sort(), ['PostToolUse', 'PreToolUse']);
+  for (const [tool, info, standard] of [
+    ['linear_save_issue', { name: 'save_issue', namespace: 'linear' }, 'mcp__linear__save_issue'],
+    ['linear-server_get_workspace', { name: 'get_workspace', namespace: 'linear-server' }, 'mcp__linear-server__get_workspace'],
+  ]) {
+    const read = opencode.hookInput(sentCall(tool, { id: 'ENG-1' }, { opencode: { info } }));
+    assert.deepEqual([read.tool_name, read.raw_tool_name], [standard, tool]);
+    for (const route of trackerRoutes) assert.ok(new RegExp(route.matcher, 'u').test(read.tool_name), `${route.script} fires on ${standard}`);
+    assert.equal(trackerOfTool(read.tool_name, {})?.id, 'linear', standard);
+  }
+});
+
+// The two after-hooks the leaf's names now route on OpenCode, run as a host runs them on an OpenCode payload.
+function project(t, config) {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-opencode-after-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(path.join(root, '.aidrian'));
+  writeFileSync(path.join(root, '.aidrian/config.json'), JSON.stringify({ version: 1, ...config }));
+  return { root, env: { ...process.env, XDG_STATE_HOME: path.join(root, 'state') } };
+}
+const SCRIPT = (name) => path.join(import.meta.dirname, '../plugins/aidrian/scripts', name);
+
+test('the Markdown wrap hook reports the long lines of an OpenCode write, which reaches it as Write', async (t) => {
+  const { root, env } = project(t, { docs: { wrapLimit: 20 } });
+  const file = path.join(root, 'notes.md');
+  const content = '# Notes\n\nThis line is far longer than twenty characters.\n';
+  writeFileSync(file, content);
+  const payload = sentCall('write', { path: file, content }, { hook_event_name: 'PostToolUse', cwd: root });
+  const reported = await hookCall(SCRIPT('hook-markdown-wrap.mjs'), { input: JSON.stringify(payload), cwd: root, env });
+  assert.equal(reported.status, 2, reported.stderr);
+  assert.match(reported.stderr, /notes\.md:3: \d+ characters/u);
+});
+
+test('the tracker record hook records the workspace an OpenCode Linear read reports, under the tool`s standard name', async (t) => {
+  const tracker = { enabled: true, workspace: { expect: 'https://linear.app/acme', field: 'url' }, readTools: ['mcp__linear__get_workspace'], writeTools: ['mcp__linear__save_*'] };
+  const { root, env } = project(t, { tracker });
+  const session = 'ses_tracker1';
+  const result = { output: { url: 'https://linear.app/acme' }, content: [{ type: 'text', text: '{"url":"https://linear.app/acme"}' }] };
+  const payload = sentCall('linear_get_workspace', {}, { hook_event_name: 'PostToolUse', session_id: session, cwd: root, opencode: { info: { name: 'get_workspace', namespace: 'linear' } }, tool_response: result });
+  const ran = await hookCall(SCRIPT('hook-tracker-post.mjs'), { input: JSON.stringify(payload), cwd: root, env });
+  assert.equal(ran.status, 0, ran.stderr);
+  const record = JSON.parse(readFileSync(snapshotPath(session, { env }).replace(/\.json$/u, '.tracker.json'), 'utf8'));
+  assert.deepEqual([record.value, record.unreadable, record.tool], ['https://linear.app/acme', false, 'mcp__linear__get_workspace']);
+});
+
+test('an OpenCode subagent call`s agent reads as subagent_type, whatever the call gives under that name, and every other field stays', () => {
+  const read = (tool, input) => opencode.hookInput(sentCall(tool, input)).tool_input;
+  const given = { agent: 'explore', description: 'd', prompt: 'p', sessionID: 'ses_x' };
+  assert.deepEqual(read('subagent', given), { ...given, subagent_type: 'explore' });
+  assert.equal(read('subagent', { ...given, subagent_type: 'reviewer' }).subagent_type, 'explore');
+  for (const input of [{ description: 'd' }, { agent: 7 }, { agent: '' }, null, 'text', []]) assert.deepEqual(read('subagent', input), input, JSON.stringify(input));
+  assert.deepEqual(read('shell', { command: 'ls', agent: 'explore' }), { command: 'ls', agent: 'explore' }, 'another tool`s agent field is its own');
+});
+
+test('the dispatch hook records an OpenCode subagent call as the agent it names, with its description and no prompt', async (t) => {
+  const { root, env } = project(t, { state: { dir: 'state-dir' }, telemetry: { enabled: true } });
+  const payload = sentCall('subagent', { agent: 'explore', description: 'find the tests', prompt: 'SECRET' }, { hook_event_name: 'PostToolUse', session_id: 'ses_root', cwd: root, tool_response: { output: { sessionID: 'ses_child', status: 'running', output: 'SECRET' } } });
+  const ran = await hookCall(SCRIPT('hook-agent-post.mjs'), { input: JSON.stringify(payload), cwd: root, env });
+  assert.equal(ran.status, 0, ran.stderr);
+  const found = findProject(root);
+  const lines = readFileSync(logPath(found, loadConfig(found).config), 'utf8').trim().split('\n');
+  assert.equal(lines.length, 1);
+  assert.doesNotMatch(lines[0], /SECRET/u);
+  const { event, session_id: session, dispatcher, agent_type: type, description } = JSON.parse(lines[0]);
+  assert.deepEqual([event, session, dispatcher, type, description], ['dispatch', 'ses_root', 'main', 'explore', 'find the tests']);
+});
+
+// The real start script, plain and --subagent, on the payloads the bridge sends (opencode/session-hooks.mjs), in a
+// project whose commits name their effort, which no OpenCode payload gives.
+test('the session start hook gives its lines on the payload the bridge sends, for a root and for a child whose commits name an effort', async (t) => {
+  const { root, env } = project(t, { attribution: { commit: ['agent', 'effort'] } });
+  mkdirSync(path.join(root, '.aidrian/knowledge'));
+  const start = async (args, payload) => {
+    const saved = process.argv;
+    process.argv = [...saved.slice(0, 2), ...args];
+    try {
+      return await hookCall(SCRIPT('hook-session-start.mjs'), { input: JSON.stringify({ opencode: { version: '2.4.1' }, session_id: 'ses_root', cwd: root, ...payload }), cwd: root, env });
+    } finally {
+      process.argv = saved;
+    }
+  };
+  const main = await start([], { hook_event_name: 'SessionStart' });
+  assert.equal(main.status, 0, main.stderr);
+  assert.match(main.stdout, /^Project knowledge: [\s\S]*Names: call the human "the Human" and yourself "OpenCode"/u);
+  const child = await start(['--subagent'], { hook_event_name: 'SubagentStart', agent_id: 'ses_child' });
+  assert.equal(child.status, 0, child.stderr);
+  const { hookEventName, additionalContext } = JSON.parse(child.stdout).hookSpecificOutput;
+  assert.equal(hookEventName, 'SubagentStart');
+  assert.match(additionalContext, /^Project knowledge: [\s\S]*yourself "OpenCode"/u);
+  assert.doesNotMatch(additionalContext, /^Attribution:/mu, 'OpenCode says no effort, so no line names one');
+});
+
+// I2, end to end in this process: the write hook and the agent gate hook, run as a host runs them through the adapter's
+// hookInput, refuse an OpenCode edit of a main-checkout path and of a protected host path, and let the same edit run in
+// the session's own worktree.
+const MARKED = 'feed00aa-0000-4000-8000-00000000oc01';
+function guarded(t) {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-opencode-guard-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const [main, worktree, state, home, temp] = ['main', 'wt', 'state', 'home', 'tmp'].map((name) => path.join(root, name));
+  for (const dir of [path.join(main, '.aidrian'), state, home, temp]) mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(main, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: state }, git: { mainCheckout: { guard: true } } }));
+  writeFileSync(path.join(main, 'README.md'), '# widgets\n');
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', main, ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('add', '.');
+  git('commit', '-q', '-m', 'config');
+  git('worktree', 'add', '-q', '-b', 'feat/x', worktree);
+  const env = { ...process.env, XDG_STATE_HOME: path.join(root, 'marks'), HOME: home, TMPDIR: temp };
+  delete env.AIDRIAN_ALLOW_MAIN_WRITE;
+  const run = (script, session, tool, input) => hookCall(path.join(import.meta.dirname, '../plugins/aidrian/scripts', script), {
+    input: JSON.stringify(sentCall(tool, input, { session_id: session, cwd: worktree })), cwd: worktree, env,
+  });
+  return { main, worktree, env, run };
+}
+const editOf = (file) => ['edit', { path: file, oldString: '# widgets', newString: '# gadgets' }];
+const writeOf = (file) => ['write', { path: file, content: 'x\n' }];
+const patchOf = (file) => ['patch', { patchText: `*** Begin Patch\n*** Update File: ${file}\n@@\n-# widgets\n+# gadgets\n*** End Patch\n` }];
+
+// Each hook run costs its git calls, so each file tool is met once a hook, and one control edit shows the hook lets an
+// OpenCode edit of the session's own worktree run.
+test('the write hook refuses an OpenCode edit, write, or patch of a main-checkout path from a worktree session, and runs one in the worktree', async (t) => {
+  const { main, worktree, run } = guarded(t);
+  for (const call of [editOf, writeOf, patchOf]) {
+    const [tool, input] = call(path.join(main, 'README.md'));
+    const refused = await run('hook-write.mjs', 'ses_attended', tool, input);
+    assert.equal(refused.status, 2, `${tool}: ${refused.stderr}`);
+    assert.match(refused.stderr, /main checkout/u, tool);
+  }
+  const ran = await run('hook-write.mjs', 'ses_attended', ...editOf(path.join(worktree, 'README.md')));
+  assert.equal(ran.status, 0, ran.stderr);
+});
+
+test('the agent gate hook refuses an unattended session`s OpenCode edit of a protected host path or the main checkout, and runs one in its worktree', async (t) => {
+  const { main, worktree, env, run } = guarded(t);
+  assert.ok(markUnattended(MARKED, { root: main, cwd: worktree, env }));
+  const hostFiles = [
+    writeOf(path.join(worktree, '.opencode', 'plugins', 'x.js')), patchOf(path.join(worktree, 'opencode.json')),
+    editOf(path.join(worktree, '.agents', 'skills', 'x', 'SKILL.md')),
+  ];
+  for (const [tool, input] of hostFiles) {
+    const refused = await run('hook-agent-gates.mjs', MARKED, tool, input);
+    assert.equal(refused.status, 2, `${tool}: ${refused.stderr}`);
+    assert.match(refused.stderr, /a host file a later session/u, tool);
+  }
+  const outside = await run('hook-agent-gates.mjs', MARKED, ...editOf(path.join(main, 'README.md')));
+  assert.equal(outside.status, 2, outside.stderr);
+  assert.match(outside.stderr, /outside the places/u);
+  const ran = await run('hook-agent-gates.mjs', MARKED, ...editOf(path.join(worktree, 'README.md')));
+  assert.equal(ran.status, 0, ran.stderr);
 });

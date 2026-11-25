@@ -66,7 +66,7 @@ const DEVICE = /^\/dev\/(?:null|stdout|stderr|tty|fd\/\d+)$/u;
 // (lib/review-gate.mjs readRecordFile), whose old name, pr-<n>.json, is the manifest's; and, in a text that does not
 // parse, a quoted key with an escape in it, which may spell that key.
 const ATTEST_KEY = /["']reviewer["']\s*:/u;
-const ESCAPED_KEY = /["'][^"'\n]*\\[^"'\n]*["']\s*:/u;
+const ESCAPED_KEY = /["'][^"'\n\\]*\\[^"'\n]*["']\s*:/u;
 // A text that names a git folder through git itself, as `$(git rev-parse --git-common-dir)` does.
 const GIT_FOLDER_WORD = /--(?:git-common-dir|git-dir|absolute-git-dir|git-path)\b|\$\{?GIT_(?:DIR|COMMON_DIR)\b/u;
 // A text that names a git folder or pointer by its own name, `.git`, as a word or a path's part.
@@ -679,12 +679,13 @@ function placed(spelled, places, options) {
   return placeOf(real(spelled), spelled, places, options);
 }
 
-// The text a file edit tool writes to each file it names, { file, texts }, for the manifest check.
+// The text a file edit tool writes to each file it names, { file, texts }, for the manifest check: the lines a patch adds
+// as its lines, and joined, since a fragment is judged by both.
 function editedTexts(input) {
   const edit = fileEditOf(input);
   if (!edit) return [];
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  if (edit.shape === 'patch') return (edit.files ?? []).map(({ file, added }) => ({ file: path.resolve(cwd, file), texts: [String(added ?? '')] }));
+  if (edit.shape === 'patch') return (edit.files ?? []).map(({ file, added }) => ({ file: path.resolve(cwd, file), texts: [(added ?? []).join('\n'), String(added ?? '')] }));
   const texts = [edit.content, edit.newText, ...(Array.isArray(edit.edits) ? edit.edits.flatMap((each) => Object.values(each ?? {})) : [])];
   return [{ file: path.resolve(cwd, edit.file ?? ''), texts: texts.filter((each) => typeof each === 'string') }];
 }
@@ -705,20 +706,42 @@ function fileText(file) {
   }
 }
 
+// Whether a patch in `input` moves a file that `isManifest` takes for a review manifest into place unjudged: a file whose
+// text is attest-shaped, or cannot be read before the call, or that the patch names more than once; or one the patch
+// changes on the way that holds a `reviewer` key at any depth, since which depth it ends at is not known here.
+function movedManifest(input, isManifest) {
+  const edit = fileEditOf(input);
+  if (!edit?.operations) return null;
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const operations = edit.operations.map(({ file, move, text }) => ({ file: path.resolve(cwd, file), move: move === null ? null : path.resolve(cwd, move), text }));
+  const times = new Map();
+  for (const each of operations.flatMap(({ file, move }) => [file, move])) times.set(each, (times.get(each) ?? 0) + 1);
+  for (const { file, move, text } of operations) {
+    checkDeadline();
+    if (move === null || !isManifest(move)) continue;
+    const moved = fileText(file);
+    if (moved === null || times.get(file) > 1 || attestShaped(moved)) return move;
+    if (/^[+-]/mu.test(text) && holdsKey(moved)) return move;
+  }
+  return null;
+}
+
+// Whether a text holds a `reviewer` key (ATTEST_KEY), or a quoted key with an escape in it (ESCAPED_KEY).
+const holdsKey = (text) => ATTEST_KEY.test(text) || ESCAPED_KEY.test(text);
+
 // Whether a manifest's text may make it an attest record: parsed as JSON, an object with a top-level `reviewer` key,
-// as the review gate reads it; a text that does not parse, such as an edit's fragment, holds such a key (ATTEST_KEY) or
-// a quoted key with an escape in it (ESCAPED_KEY).
+// as the review gate reads it; a text that does not parse, such as an edit's fragment, by the keys in it (holdsKey).
 function attestShaped(text) {
   try {
     const value = JSON.parse(text);
     return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.hasOwn(value, 'reviewer');
   } catch {
-    return ATTEST_KEY.test(text) || ESCAPED_KEY.test(text);
+    return holdsKey(text);
   }
 }
 
 // Why a write to a review manifest name may make it an attest record, or null. A file edit tool's text must not be
-// attest-shaped (attestShaped). A shell write to a temporary copy must not name a `reviewer` either; one to the manifest
+// attest-shaped (attestShaped), and neither is a file a patch moves there (movedManifest). A shell write to a temporary copy must not name a `reviewer` either; one to the manifest
 // itself, pr-<n>.json, is only a delete, or a rename or copy of a file whose text is not attest-shaped and that the same
 // call does not write, read before the call runs.
 function manifestProblem(input, shell, places) {
@@ -726,6 +749,8 @@ function manifestProblem(input, shell, places) {
   for (const { file, texts } of editedTexts(input)) {
     if (isManifest(file) && texts.some(attestShaped)) return file;
   }
+  const moved = movedManifest(input, isManifest);
+  if (moved) return moved;
   if (!shell) return null;
   const files = writeTargets(input).files.map((each) => path.resolve(each));
   for (const write of shell.manifests) {

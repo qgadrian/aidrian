@@ -24,13 +24,14 @@ import { HELD_BUDGET_MS } from '../plugins/aidrian/lib/deadline.mjs';
 import { sectionLines } from '../plugins/aidrian/lib/markdown-sections.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { OVERFLOW_REASON, REWRITE_CONFLICT } from '../plugins/aidrian/lib/hook-result.mjs';
+import { canBlock, OVERFLOW_REASON, REWRITE_CONFLICT } from '../plugins/aidrian/lib/hook-result.mjs';
 import { ANNOUNCE_LEAD } from '../plugins/aidrian/lib/stop-announce.mjs';
-import { BLOCKING_KILL_MS, nodeOf, setup } from '../plugins/aidrian/opencode/bridge.mjs';
+import { BLOCKING_KILL_MS, setup } from '../plugins/aidrian/opencode/bridge.mjs';
 import { folderOf, lastAssistantText, READ_MS } from '../plugins/aidrian/opencode/call.mjs';
+import { nodeOf } from '../plugins/aidrian/opencode/environment.mjs';
 import { CAPTURE_BYTES, capture, CODEMODE_REFUSAL, settle as resolving, SPAWN_REFUSAL, transform } from '../plugins/aidrian/opencode/output.mjs';
 import { selectRoutes } from '../plugins/aidrian/opencode/route-select.mjs';
-import { EVENTS } from '../plugins/aidrian/opencode/routes.mjs';
+import { EVENTS, HOOKS as OPENCODE_HOOKS } from '../plugins/aidrian/opencode/routes.mjs';
 import server from '../plugins/aidrian/opencode/server.mjs';
 
 import { hookCall } from './hook-call.mjs';
@@ -92,7 +93,7 @@ const asGiven = (value) => ({ [AS_GIVEN]: value });
 // with no `id` of its own is given with the id asked for, as OpenCode 2.4.1's Session.Info always carries one;
 // `asGiven(value)` gives value as it is. `app` is 2.4.0's { name, version, channel }; `reads` lists the ids it was
 // asked for, and `hooks` each registration by its name.
-function fakeContext({ sessions = {}, app, location = { directory: OWN_DIR }, toolHook, shellHook, messages = {}, synthetic, subscribe } = {}) {
+function fakeContext({ sessions = {}, app, location = { directory: OWN_DIR }, toolHook, shellHook, sessionHook, messages = {}, synthetic, subscribe } = {}) {
   const hooks = {};
   const reads = [];
   const synthetics = [];
@@ -104,7 +105,8 @@ function fakeContext({ sessions = {}, app, location = { directory: OWN_DIR }, to
     shell: { hook: shellHook ?? keep },
     event: { subscribe: subscribe ?? (() => ({ async *[Symbol.asyncIterator]() {} })) },
     session: {
-      hook: keep,
+      // `sessionHook` is asked first for each session hook, and what it throws or rejects with refuses that one.
+      hook: async (name, callback) => { await sessionHook?.(name); keep(name, callback); },
       // `messages` maps an id to what session.context gives, an Error it throws, or a function whose result it gives.
       context: async ({ sessionID }) => {
         const entry = messages[sessionID];
@@ -166,9 +168,14 @@ const MERGE = `gh pr merge 7 --squash --match-head-commit ${SHA}`;
 // The execute.before event of a shell call: no status and no result, since the call has not run.
 const beforeEvent = (fields = {}) => ({ tool: 'shell', sessionID: 'ses_main', id: 'call_b', input: { command: MERGE }, ...fields });
 
-// The bridge set up on a fake context and spawn: `fire(event)` runs its execute.after callback.
-async function bridge({ context = fakeContext(), spawn = fakeSpawn(), env = ENV, ...seams } = {}) {
-  assert.equal(await setup(context, { spawn: spawn.spawn, env, node: '/opt/node22/bin/node', ...seams }), undefined);
+// The tool events of EVENTS alone, which the tests of the tool routes set the bridge up with, so no session start runs
+// before their calls; the start's own tests use EVENTS.
+const AFTER_ONLY = Object.freeze(Object.fromEntries(Object.entries(EVENTS).filter(([, hook]) => hook.startsWith('execute.'))));
+
+// The bridge set up on a fake context and spawn, with the tool events alone unless `events` says otherwise: `fire(event)`
+// runs its execute.after callback.
+async function bridge({ context = fakeContext(), spawn = fakeSpawn(), env = ENV, events = AFTER_ONLY, ...seams } = {}) {
+  assert.equal(await setup(context, { spawn: spawn.spawn, env, node: '/opt/node22/bin/node', events, ...seams }), undefined);
   const fire = (event) => context.hooks['execute.after'](event);
   return { context, calls: spawn.calls, fire };
 }
@@ -178,9 +185,14 @@ const APP = Object.freeze({ name: 'opencode', version: '2.4.0', channel: 'latest
 const ENOENT = () => Object.assign(new Error('spawn node ENOENT'), { code: 'ENOENT' });
 const traceLines = (file) => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 
-test('EVENTS is PostToolUse on execute.after alone, frozen: no guard runs on OpenCode yet', () => {
-  assert.deepEqual(EVENTS, { PostToolUse: 'execute.after' });
-  assert.ok(Object.isFrozen(EVENTS));
+test('EVENTS is every event of HOOKS no hook can block on, by hook-result`s reading, frozen: no guard runs on OpenCode yet', () => {
+  assert.deepEqual(EVENTS, { SessionStart: 'context', SubagentStart: 'context', PostToolUse: 'execute.after' });
+  assert.deepEqual(EVENTS, Object.fromEntries(Object.entries(OPENCODE_HOOKS).filter(([event]) => !canBlock(event))), 'hook-result is the one source');
+  for (const event of ['PreToolUse', 'UserPromptSubmit', 'PreCompact', 'Stop']) {
+    assert.ok(Object.hasOwn(OPENCODE_HOOKS, event) && !Object.hasOwn(EVENTS, event), `${event} has a hook and stays unrouted`);
+  }
+  assert.ok(Object.isFrozen(EVENTS) && Object.isFrozen(OPENCODE_HOOKS));
+  assert.deepEqual(Object.keys(OPENCODE_HOOKS).filter((event) => !Object.hasOwn(HOOKS, event)), [], 'each event of HOOKS is a hooks.json event');
 });
 
 test('a completed shell call runs hook-bash-post.mjs alone of the generated routes', async () => {
@@ -215,12 +227,12 @@ test('a call whose tool name the leaf cannot read spawns nothing, and the trace 
   const trace = path.join(ROOT, 'trace-unguarded.jsonl');
   const { calls, fire } = await bridge({ env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
   await fire(shellEvent({ tool: 'linear_save_issue', input: { title: 'x' } }));
-  await fire(shellEvent({ tool: 'read', input: { filePath: '/x' } }));
-  await fire(shellEvent({ tool: 'edit', input: { path: 'a.md' } }));
+  await fire(shellEvent({ tool: 'execute', input: {} }));
+  await fire(shellEvent({ tool: 'opencode_models', input: {} }));
   assert.equal(calls.length, 0);
   assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [
-    { step: 'setup', status: 1 }, { step: 'skip', status: 'unguarded', count: 1 }, { step: 'skip', status: 'unguarded', count: 2 },
-  ], 'edit has a name, and no PostToolUse route fires on it');
+    { step: 'setup', status: 1 }, ...[1, 2, 3].map((count) => ({ step: 'skip', status: 'unguarded', count })),
+  ]);
 });
 
 test('two matching routes start together, each under its own timeout from its spawn: the one that outlives it is killed', { timeout: 10_000 }, async (t) => {
@@ -275,14 +287,14 @@ test('the session reads that outlast a route`s timeout still spawn it, and each 
   assert.deepEqual(spawn.calls.map((call) => call.killed), [['SIGKILL'], ['SIGKILL']]);
 });
 
-test('a route list that is missing, no JSON, or no list registers no tool hook, keeps the PATH hook, and is traced', async () => {
+test('a route list that is missing, no JSON, or no list registers no tool hook, keeps the PATH hook and the notices` hooks, and is traced', async () => {
   const cases = { missing: path.join(ROOT, 'no-routes.json'), garbage: routesFile('garbage.json', '{ not json'), object: routesFile('object.json', { PostToolUse: [] }) };
   for (const [name, routes] of Object.entries(cases)) {
     const trace = path.join(ROOT, `trace-routes-${name}.jsonl`);
     const context = fakeContext();
     assert.equal(await setup(context, { spawn: fakeSpawn().spawn, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace }, routes }), undefined, name);
-    assert.deepEqual(Object.keys(context.hooks), ['create.before'], name);
-    assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['skip', 'routes'], ['setup', 0]], name);
+    assert.deepEqual(Object.keys(context.hooks), ['create.before', 'context', 'compaction'], name);
+    assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['skip', 'routes'], ['setup', 2]], name);
   }
   const notices = [];
   await setup(fakeContext(), { spawn: fakeSpawn().spawn, env: ENV, routes: cases.garbage, notices });
@@ -317,7 +329,8 @@ test('a completed shell call spawns node once with the hook`s absolute path and 
 
 test('a call of another tool, an errored or stopped call, and a call with no string command spawn nothing', async () => {
   const { calls, fire } = await bridge();
-  await fire(shellEvent({ tool: 'edit' }));
+  await fire(shellEvent({ tool: 'execute' }));
+  await fire(shellEvent({ tool: 'read' }));
   await fire(shellEvent({ status: 'error' }));
   await fire(shellEvent({ status: 'running' }));
   await fire(shellEvent({ input: { command: ['gh', 'pr', 'create'], workdir: PROJECT_DIR } }));
@@ -376,20 +389,26 @@ test('the node program is resolved at setup to an absolute file: AIDRIAN_NODE, t
   for (const [env, execPath, program] of cases) assert.equal(nodeOf(env, execPath), program, JSON.stringify(env));
   const spawn = fakeSpawn();
   const context = fakeContext();
-  await setup(context, { spawn: spawn.spawn, env: { ...ENV, AIDRIAN_NODE: own } });
+  await setup(context, { spawn: spawn.spawn, env: { ...ENV, AIDRIAN_NODE: own }, events: AFTER_ONLY });
   await context.hooks['execute.after'](shellEvent());
   assert.equal(spawn.calls[0].program, own, 'the seam left out, setup resolves it');
 });
 
-test('with no Node found, setup registers no tool hook, traces off once, and keeps one notice for the session`s context', async () => {
+test('with no Node found, setup registers no route hook, traces off once, and gives the session its one notice on every request', async () => {
   const trace = path.join(ROOT, 'trace-no-node.jsonl');
   const notices = [];
   const context = fakeContext();
   await setup(context, { spawn: fakeSpawn().spawn, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace }, node: null, notices });
-  assert.deepEqual(Object.keys(context.hooks), ['create.before'], 'the PATH hook still registers');
-  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [{ step: 'off', status: 'node' }, { step: 'setup', status: 0 }]);
+  assert.deepEqual(Object.keys(context.hooks), ['create.before', 'context', 'compaction'], 'the PATH hook and the notices` hooks still register');
+  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [{ step: 'off', status: 'node' }, { step: 'setup', status: 2 }]);
   assert.equal(notices.length, 1);
   assert.match(notices[0], /no Node program .* so no aidrian hook runs in this session/u);
+  for (const hook of ['context', 'compaction']) {
+    const request = { sessionID: 'ses_main', system: [{ type: 'text', text: 'OpenCode' }], messages: [] };
+    assert.equal(await context.hooks[hook](request), undefined);
+    assert.deepEqual(request.system, [{ type: 'text', text: 'OpenCode' }, { type: 'text', text: notices[0], metadata: { aidrian: 'notice' } }], hook);
+  }
+  assert.deepEqual(context.reads, [], 'no start, so no session read');
 });
 
 test('the payload holds no turn_id, and its opencode mark is an object: app.version when a string, and the info the leaf read', async () => {
@@ -445,6 +464,24 @@ test('cwd on execute.before: a workdir that names no folder sends the call with 
   const workdirs = ['gpu:/srv/work', 42, { dir: PROJECT_DIR }, path.join(ROOT, 'never-made'), 'never-made', '~/never-made'];
   for (const workdir of workdirs) await context.hooks['execute.before'](beforeEvent({ input: { command: MERGE, workdir } }));
   assert.deepEqual(calls.map((call) => [call.options.cwd, sent(call).cwd]), Array(workdirs.length).fill([SESSION_DIR, SESSION_DIR]));
+});
+
+test('a workdir is read from a Bash call alone: an edit`s or an MCP call`s input chooses no folder, before the call or after it', async () => {
+  const scripts = scriptsFolder('workdir-scripts', ['hook-any.mjs']);
+  const any = (event) => ({ event, matcher: '*', script: 'hook-any.mjs', args: [], timeoutMs: 5000 });
+  const routes = routesFile('workdir.json', [any('PreToolUse'), any('PostToolUse')]);
+  const { context, calls } = await bridge({ scripts, routes, events: { ...BLOCKING, ...AFTER_ONLY } });
+  const tools = [
+    { tool: 'edit', input: { path: 'a.md', oldString: 'a', newString: 'b', workdir: PROJECT_DIR } },
+    { tool: 'linear_save_issue', input: { title: 'x', workdir: PROJECT_DIR }, info: { name: 'save_issue', options: { namespace: 'linear' } } },
+    { tool: 'linear_save_issue', input: { title: 'x', workdir: 'never-made' }, info: { name: 'save_issue', options: { namespace: 'linear' } } },
+  ];
+  for (const fields of tools) {
+    for (const hook of ['execute.before', 'execute.after']) await context.hooks[hook](shellEvent(fields));
+  }
+  assert.deepEqual(calls.map((call) => [call.options.cwd, sent(call).cwd]), Array(tools.length * 2).fill([SESSION_DIR, SESSION_DIR]));
+  await context.hooks['execute.before'](shellEvent());
+  assert.equal(sent(calls.at(-1)).cwd, PROJECT_DIR, 'a shell call`s still does');
 });
 
 test('folderOf resolves a workdir by path as OpenCode`s shell does, and gives null for one that is no text or names no folder', () => {
@@ -787,10 +824,10 @@ test('setup resolves when one registration rejects, still makes the other, and t
   const notices = [];
   const toolFails = fakeContext({ toolHook: rejects });
   await bridge({ context: toolFails, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace }, notices });
-  assert.deepEqual(Object.keys(toolFails.hooks), ['create.before']);
+  assert.deepEqual(Object.keys(toolFails.hooks), ['create.before', 'context', 'compaction'], 'the notice`s hooks register');
   const lostScripts = [...new Set(GENERATED.filter((route) => route.event === 'PostToolUse').map((route) => route.script))];
   assert.ok(lostScripts.includes('hook-bash-post.mjs'));
-  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [...lostScripts.map((script) => ({ step: 'unregistered', script, status: 'execute.after' })), { step: 'setup', status: 0 }]);
+  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [...lostScripts.map((script) => ({ step: 'unregistered', script, status: 'execute.after' })), { step: 'setup', status: 2 }]);
   assert.deepEqual(notices, [`OpenCode did not register aidrian's execute.after hook, so ${lostScripts.join(', ')} do not run in this session.`]);
   const one = [];
   await bridge({ context: fakeContext({ toolHook: rejects }), scripts: scriptsFolder('lost-scripts', ['hook-one.mjs']), routes: routesFile('lost.json', [bashRoute('hook-one.mjs'), bashRoute('hook-one.mjs', { args: ['--x'] })]), notices: one });
@@ -799,9 +836,27 @@ test('setup resolves when one registration rejects, still makes the other, and t
   const shellNotices = [];
   const shellFails = fakeContext({ shellHook: rejects });
   await bridge({ context: shellFails, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: shellTrace }, notices: shellNotices });
-  assert.deepEqual(Object.keys(shellFails.hooks), ['execute.after']);
-  assert.deepEqual(traceLines(shellTrace).map(({ at, ...rest }) => rest), [{ step: 'unregistered', status: 'create.before' }, { step: 'setup', status: 1 }]);
+  assert.deepEqual(Object.keys(shellFails.hooks), ['execute.after', 'context', 'compaction']);
+  assert.deepEqual(traceLines(shellTrace).map(({ at, ...rest }) => rest), [{ step: 'unregistered', status: 'create.before' }, { step: 'setup', status: 3 }]);
   assert.match(shellNotices.join('\n'), /create\.before hook, so aidrian's bin folder is not put on the shell's PATH/u);
+  // The context hook lost: the trace says so, the start still runs from the other callbacks, and the notice of it goes
+  // to the compaction request, the one place left.
+  const contextTrace = path.join(ROOT, 'trace-unregistered-context.jsonl');
+  const lostStream = eventStream();
+  const contextFails = fakeContext({ subscribe: () => lostStream.iterable, sessionHook: (name) => (name === 'context' ? rejects() : undefined) });
+  const contextNotices = [];
+  const lostContext = await startBridge('lost-context', { context: contextFails, notices: contextNotices, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: contextTrace } });
+  assert.deepEqual(Object.keys(contextFails.hooks), ['execute.after', 'create.before', 'compaction']);
+  assert.deepEqual(traceLines(contextTrace).map(({ at, ...rest }) => rest), [{ step: 'unregistered', status: 'context' }, { step: 'setup', status: 2 }]);
+  assert.match(contextNotices.join('\n'), /context hook, so aidrian's start lines and these notices do not reach the model/u);
+  const compacted = request('ses_main');
+  await contextFails.hooks.compaction(compacted);
+  assert.deepEqual(compacted.system.slice(1), [startPart(contextNotices[0], 'notice'), startPart(ROOT_LINES)]);
+  assert.deepEqual(ran(lostContext.calls), [['hook-session-start.mjs']]);
+  lostStream.push({ type: 'session.deleted', data: { sessionID: 'ses_main' } });
+  await settle();
+  await contextFails.hooks.compaction(request('ses_main'));
+  assert.equal(lostContext.calls.length, 2, 'a deleted session drops its start with no context hook too');
   assert.equal(await setup(null, { spawn: fakeSpawn().spawn, env: ENV }), undefined, 'not even a context');
   assert.equal(await setup(fakeContext(), null), undefined, 'no seams');
   const throwing = { get scripts() { throw new Error('no scripts here'); } };
@@ -815,9 +870,9 @@ test('a route whose script is not a file in the scripts folder is traced missing
   const trace = path.join(ROOT, 'trace-missing.jsonl');
   const notices = [];
   const { calls, fire } = await bridge({ context, scripts: path.join(ROOT, 'no-scripts'), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace }, notices });
-  assert.deepEqual(Object.keys(context.hooks), ['execute.after', 'create.before'], 'its route stays registered');
+  assert.deepEqual(Object.keys(context.hooks), ['execute.after', 'create.before', 'context', 'compaction'], 'its route stays registered');
   const lost = [...new Set(GENERATED.filter((route) => route.event === 'PostToolUse').map((route) => route.script))];
-  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [...lost.map((script) => ({ step: 'unregistered', script, status: 'missing' })), { step: 'setup', status: 1 }]);
+  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [...lost.map((script) => ({ step: 'unregistered', script, status: 'missing' })), { step: 'setup', status: 3 }]);
   assert.deepEqual(notices, [`aidrian's hook scripts not on disk at setup run nothing until restored, as each call checks again, and a script missing when its call checks it, or gone when it exits 1, refuses a subagent's call on a blocking route: ${lost.join(', ')}.`]);
   const event = shellEvent();
   const before = structuredClone(event);
@@ -838,7 +893,8 @@ for (const when of ['at', 'since']) {
     const trace = path.join(ROOT, `trace-gone-${when}-setup.jsonl`);
     const context = fakeContext({ sessions: { ses_child: { parentID: 'ses_main', location: { directory: SESSION_DIR } } } });
     const { calls } = await bridge({ context, scripts, routes: routesFile(`gone-${when}-setup.json`, [preRoute({ script: 'hook-pre.mjs' })]), events: BLOCKING, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
-    assert.deepEqual(Object.keys(context.hooks), ['execute.before', 'create.before'], 'its route stays registered');
+    const noticed = when === 'at' ? ['context', 'compaction'] : [];
+    assert.deepEqual(Object.keys(context.hooks), ['execute.before', 'create.before', ...noticed], 'its route stays registered, and a missing script`s notice is given');
     if (when === 'since') rmSync(path.join(scripts, 'hook-pre.mjs'));
     await assert.rejects(context.hooks['execute.before'](beforeEvent({ sessionID: 'ses_child' })), { message: SPAWN_REFUSAL });
     assert.equal(await context.hooks['execute.before'](beforeEvent()), undefined, 'the root session`s call runs');
@@ -953,7 +1009,7 @@ const LIB_LEAVES = ['lib/hosts/opencode-names.mjs', 'lib/hook-result.mjs', 'lib/
 test('the bridge files import only node: built-ins, each other, the generated routes, and the lib leaves', () => {
   const dir = path.join(PLUGIN, 'opencode');
   const files = readdirSync(dir).sort();
-  assert.deepEqual(files, ['bridge.mjs', 'call.mjs', 'output.mjs', 'route-select.mjs', 'routes.generated.json', 'routes.mjs', 'server.mjs']);
+  assert.deepEqual(files, ['bridge.mjs', 'call.mjs', 'environment.mjs', 'output.mjs', 'route-select.mjs', 'routes.generated.json', 'routes.mjs', 'server.mjs', 'session-hooks.mjs']);
   const allowed = new Set([...files.map((name) => `./${name}`), ...LIB_LEAVES.map((leaf) => `../${leaf}`)]);
   for (const name of files.filter((each) => each.endsWith('.mjs'))) {
     const text = readFileSync(path.join(dir, name), 'utf8');
@@ -961,7 +1017,7 @@ test('the bridge files import only node: built-ins, each other, the generated ro
     assert.doesNotMatch(text, /\brequire\(/u, name);
   }
   assert.deepEqual(specifiersOf(readFileSync(path.join(dir, 'bridge.mjs'), 'utf8')).filter((each) => !each.startsWith('node:')),
-    ['../lib/deadline.mjs', '../lib/hosts/opencode-names.mjs', './call.mjs', './output.mjs', './route-select.mjs', './routes.mjs']);
+    ['../lib/deadline.mjs', '../lib/hosts/opencode-names.mjs', './call.mjs', './environment.mjs', './output.mjs', './route-select.mjs', './routes.mjs', './session-hooks.mjs']);
   assert.deepEqual(specifiersOf(readFileSync(path.join(dir, 'output.mjs'), 'utf8')).filter((each) => !each.startsWith('node:')), ['../lib/hook-result.mjs']);
   for (const half of ['route-select.mjs', 'call.mjs']) {
     assert.deepEqual(specifiersOf(readFileSync(path.join(dir, half), 'utf8')).filter((each) => !each.startsWith('node:')), [], `${half} imports node: built-ins alone`);
@@ -984,7 +1040,7 @@ test('server.mjs`s default export is { id: aidrian, setup }, whose setup hands t
   const spawn = fakeSpawn();
   const notices = [];
   assert.equal(await server.setup(context, { spawn: spawn.spawn, node: null, routes: path.join(ROOT, 'no-routes.json'), events: BLOCKING, notices }), undefined);
-  assert.deepEqual(Object.keys(context.hooks).sort(), ['create.before', 'execute.after'], 'a second argument is no seam: the plugin`s own routes and events register');
+  assert.deepEqual(Object.keys(context.hooks).sort(), ['compaction', 'context', 'create.before', 'execute.after'], 'a second argument is no seam: the plugin`s own routes and events register');
   assert.deepEqual(notices, []);
 });
 
@@ -1056,9 +1112,12 @@ test('the ignore-file walk never lists a node_modules or evals results folder, o
   assert.ok(listed.includes(path.join(root, 'lib')), listed.join('\n'));
 });
 
-// The scripts the bridge can run: the generated routes it selects on each of its hooks for a name the leaf can return.
-const DELIVERED = [...new Set(Object.values(EVENTS).flatMap((hook) => STANDARD_NAMES.flatMap((name) => selectRoutes(GENERATED, EVENTS, hook, name)))
-  .map((route) => route.script))].sort();
+// The scripts the bridge can run: the generated routes it selects on each of its hooks for a name the leaf can return,
+// an MCP tool's among them, and each route of an event of EVENTS that names no tool, as the session start's.
+const DELIVERED = [...new Set([
+  ...Object.values(EVENTS).flatMap((hook) => [...STANDARD_NAMES, 'mcp__server__tool'].flatMap((name) => selectRoutes(GENERATED, EVENTS, hook, name))),
+  ...GENERATED.filter((route) => route.matcher === null && Object.hasOwn(EVENTS, route.event)),
+].map((route) => route.script))].sort();
 
 // Whether a hooks.json matcher fires on the tool `name` as Claude Code reads it (code.claude.com/docs/en/hooks): "*", empty,
 // or none on every tool; only letters, digits, _, -, spaces, commas, and | a list of exact names split on | or ,; any
@@ -1071,7 +1130,8 @@ const hooksJsonFires = (matcher, name) => {
 
 // Conformance: each OpenCode call the tests hold a payload of runs the scripts hooks.json fires on the name the adapter
 // reads from the payload the bridge sends, and a call whose name the leaf cannot read, as an MCP tool's with no info,
-// runs none and is counted unguarded. The fixture's shell call, the adapter tests' shell call, each tool of the leaf's
+// runs none and is counted unguarded. The tool events of EVENTS alone (AFTER_ONLY): the session start, which runs once
+// before a session's first call, has its own tests. The fixture's shell call, the adapter tests' shell call, each tool of the leaf's
 // table, OpenCode's read tool, and an MCP tool, with no info and with info that carries fields the leaf drops.
 test('the bridge runs on each OpenCode call the scripts hooks.json fires on the name the adapter reads from its payload', async () => {
   const fixture = JSON.parse(readFileSync(path.join(REPO, 'test/fixtures/hosts/opencode/bash-post.json'), 'utf8')).post;
@@ -1085,6 +1145,8 @@ test('the bridge runs on each OpenCode call the scripts hooks.json fires on the 
     shellEvent({ tool: 'read', input: { filePath: '/x' } }),
     shellEvent({ tool: 'linear_save_issue', input: { title: 'x' } }),
     shellEvent({ tool: 'linear_save_issue', input: { title: 'x' }, info: { namespace: 'linear', title: 'Save issue', secret: 'hush' } }),
+    shellEvent({ tool: 'linear_save_issue', input: { title: 'x' }, info: { name: 'save_issue', options: { namespace: 'linear' }, secret: 'hush' } }),
+    shellEvent({ tool: 'subagent', input: { agent: 'build', description: 'x', prompt: 'y' } }),
     shellEvent({ info: { namespace: 'builtin', secret: 'hush' } }),
   ];
   for (const event of events) {
@@ -1094,7 +1156,7 @@ test('the bridge runs on each OpenCode call the scripts hooks.json fires on the 
     const ran = calls.map((call) => path.basename(call.args[0])).sort();
     const payload = { hook_event_name: 'PostToolUse', opencode: { version: APP.version, info: infoRead(event.info) }, session_id: event.sessionID, cwd: PROJECT_DIR, tool_name: event.tool, tool_input: event.input };
     const name = opencode.hookInput(payload).tool_name;
-    const expected = [...new Set(Object.keys(EVENTS).flatMap((standard) => HOOKS[standard].filter((group) => hooksJsonFires(group.matcher, name))
+    const expected = [...new Set(Object.keys(AFTER_ONLY).flatMap((standard) => HOOKS[standard].filter((group) => hooksJsonFires(group.matcher, name))
       .flatMap((group) => group.hooks.map((hook) => /scripts\/(hook-[\w-]+\.mjs)/u.exec(hook.command)[1]))))].sort();
     assert.deepEqual(ran, expected, `${event.tool} as ${name}`);
     for (const call of calls) {
@@ -1129,8 +1191,8 @@ function hookRows(page) {
   return lines.slice(2).map(cells).map(([script, runs, verified, why]) => ({ script: script.replaceAll('`', ''), runs, verified, why }));
 }
 
-test('the bridge can run hook-bash-post.mjs alone on OpenCode', () => {
-  assert.deepEqual(DELIVERED, ['hook-bash-post.mjs']);
+test('the bridge can run the session start and the after-hooks of the tools the leaf names alone on OpenCode', () => {
+  assert.deepEqual(DELIVERED, ['hook-agent-post.mjs', 'hook-bash-post.mjs', 'hook-markdown-wrap.mjs', 'hook-session-start.mjs', 'hook-tracker-post.mjs']);
 });
 
 test('the OpenCode page`s Hooks table has a row for each hooks.json script, and its yes rows are the scripts the bridge can run', () => {
@@ -1138,9 +1200,13 @@ test('the OpenCode page`s Hooks table has a row for each hooks.json script, and 
   assert.deepEqual(rows.map((row) => row.script).sort(), [...hooksJsonScripts()].sort());
   assert.equal(new Set(rows.map((row) => row.script)).size, rows.length, 'one row a script');
   assert.deepEqual(rows.filter((row) => row.runs === 'yes').map((row) => row.script).sort(), DELIVERED);
+  // The scripts a test runs for real on a payload in the bridge's shape: hook-bash-post.mjs's fixture, and the four of
+  // test/opencode-adapter.test.mjs. Every other route is run with a fake spawn alone.
+  assert.deepEqual(rows.filter((row) => row.verified === 'fixture only').map((row) => row.script).sort(),
+    ['hook-agent-post.mjs', 'hook-bash-post.mjs', 'hook-markdown-wrap.mjs', 'hook-session-start.mjs', 'hook-tracker-post.mjs']);
   for (const row of rows) {
     assert.ok(['yes', 'no'].includes(row.runs), row.script);
-    assert.ok(row.verified === '-' || row.verified === 'fixture only' || /^live on OpenCode \d+\.\d+\.\d+/u.test(row.verified), `${row.script}: ${row.verified}`);
+    assert.ok(row.verified === '-' || row.verified === 'fixture only' || row.verified === 'script not run' || /^live on OpenCode \d+\.\d+\.\d+/u.test(row.verified), `${row.script}: ${row.verified}`);
     if (row.runs === 'no') assert.notEqual(row.why, '', `${row.script} says why it does not run`);
     else assert.notEqual(row.verified, '-', `${row.script} says how it was verified`);
   }
@@ -1170,7 +1236,7 @@ const matcherAlternatives = new Set(Object.values(HOOKS).flat().flatMap((group) 
 
 test('the OpenCode page lists the standard tools with no OpenCode equivalent, each a hooks.json matcher name the leaf never returns', () => {
   const names = noEquivalentNames(PAGE);
-  assert.deepEqual(names, ['EnterWorktree', 'ExitPlanMode', 'NotebookEdit', 'Agent', 'Task', 'AskUserQuestion']);
+  assert.deepEqual(names, ['EnterWorktree', 'ExitPlanMode', 'NotebookEdit', 'Task']);
   for (const name of names) {
     assert.ok(matcherAlternatives.has(name), `${name} is no hooks.json matcher name`);
     assert.ok(!STANDARD_NAMES.includes(name), `${name} is a name the leaf returns`);
@@ -1267,7 +1333,11 @@ test('end to end: a removed folder skips its call, and a completed gh pr create 
   const result = { output: { output, exitCode: 0 }, content: [], metadata: { status: 'completed' } };
   await fire(shellEvent({ sessionID: 'ses_child', input: { command, workdir: gone }, result }));
   await fire(shellEvent({ sessionID: 'ses_child', input: { command, workdir: project }, result }));
-  assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['setup', 1], ['skip', 'cwd'], ['run', 0]]);
+  // The root's session read names no folder, so no start runs, and each callback asks again.
+  assert.deepEqual(traceLines(trace).map(({ step, script, status }) => [step, script, status]), [
+    ['setup', undefined, 3], ['skip', 'hook-session-start.mjs', 'cwd'], ['skip', 'hook-bash-post.mjs', 'cwd'],
+    ['skip', 'hook-session-start.mjs', 'cwd'], ['run', 'hook-bash-post.mjs', 0],
+  ]);
 
   const rows = ledgerFiles('ses_rootE2E').flatMap((file) => readFileSync(file, 'utf8').trim().split('\n')).map((line) => JSON.parse(line));
   assert.deepEqual(rows.map(({ at, ...row }) => row), [
@@ -1700,4 +1770,243 @@ test('an idle whose last message announces work sends the session back with the 
   assert.deepEqual(context.synthetics[0], { sessionID: 'ses_main', text: results[0].stderr.trim() });
   await idle('ses_main');
   assert.deepEqual([sent(calls[1]).stop_hook_active, results[1].status, context.synthetics.length], [true, 0, 1]);
+});
+
+// The session start and the plugin's text: the bridge set up with the start routes of the generated list, on a fake
+// spawn whose root start prints ROOT_LINES and whose `--subagent` start prints CHILD_LINES as SubagentStart JSON.
+const CHILD_DIR = path.join(ROOT, 'child-folder');
+mkdirSync(CHILD_DIR, { recursive: true });
+const ROOT_LINES = 'Project knowledge: read docs/working-agreement.md now.';
+const CHILD_LINES = 'Names: call the human "Adrian".';
+const START_ROUTES = Object.freeze(GENERATED.filter((route) => route.event === 'SessionStart' || route.event === 'SubagentStart'));
+const PROMPT_ROUTE = Object.freeze({ event: 'UserPromptSubmit', matcher: null, script: 'hook-prompt.mjs', args: [], timeoutMs: 5000 });
+const COMPACT_ROUTE = Object.freeze({ event: 'PreCompact', matcher: null, script: 'hook-compact.mjs', args: [], timeoutMs: 5000 });
+const startAnswer = (call) => (call.args.includes('--subagent')
+  ? { status: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: CHILD_LINES } }) }
+  : { status: 0, stdout: `${ROOT_LINES}\n` });
+const startSpawn = (other = () => ({ status: 0 })) => fakeSpawn((child, call) => answers(child, path.basename(call.args[0]) === 'hook-session-start.mjs' ? startAnswer(call) : other(call)));
+const startPart = (text, kind = 'start') => ({ type: 'text', text, metadata: { aidrian: kind } });
+const request = (sessionID) => ({ sessionID, system: [{ type: 'text', text: 'OpenCode' }], messages: [] });
+const ran = (calls) => calls.map((call) => [path.basename(call.args[0]), ...call.args.slice(1)]);
+
+async function startBridge(name, { context = fakeContext(), spawn = startSpawn(), routes = [], events = EVENTS, env = ENV, notices = [], ...seams } = {}) {
+  const all = [...START_ROUTES, ...routes, bashRoute('hook-bash-post.mjs')];
+  const scripts = scriptsFolder(`${name}-scripts`, [...new Set(all.map((route) => route.script))]);
+  return bridge({ context, spawn, env, scripts, routes: routesFile(`${name}.json`, all), events, notices, ...seams });
+}
+
+test('the start runs once a root session, awaited before the first callback`s routes, and its lines reach every request as a system part', async () => {
+  const stream = eventStream();
+  const context = fakeContext({ sessions: { ses_child: { parentID: 'ses_main', location: { directory: CHILD_DIR } } }, subscribe: () => stream.iterable });
+  const { calls } = await startBridge('start-once', { context });
+  assert.deepEqual(Object.keys(context.hooks), ['execute.after', 'create.before', 'context', 'compaction']);
+  const first = request('ses_main');
+  await context.hooks.context(first);
+  assert.deepEqual(first.system, [{ type: 'text', text: 'OpenCode' }, startPart(ROOT_LINES)], 'after OpenCode`s own parts');
+  assert.deepEqual(ran(calls), [['hook-session-start.mjs']]);
+  assert.deepEqual(sent(calls[0]), { hook_event_name: 'SessionStart', opencode: {}, session_id: 'ses_main', cwd: SESSION_DIR });
+  assert.equal(calls[0].options.cwd, SESSION_DIR, 'run in the root session`s own folder');
+  const reads = context.reads.length;
+  for (const hook of ['context', 'compaction']) {
+    const again = request('ses_main');
+    await context.hooks[hook](again);
+    assert.deepEqual(again.system.at(-1), startPart(ROOT_LINES), hook);
+  }
+  await context.hooks['execute.after'](shellEvent({ sessionID: 'ses_main' }));
+  assert.deepEqual(ran(calls), [['hook-session-start.mjs'], ['hook-bash-post.mjs']], 'no script per request, nor per call');
+  assert.equal(context.reads.length, reads + 1, 'a started session is read again only by a tool call');
+
+  // A child's first callback runs its own --subagent start in its own folder, before the call's route, and its
+  // requests carry its own lines, not the root's.
+  await context.hooks['execute.after'](shellEvent({ sessionID: 'ses_child' }));
+  assert.deepEqual(ran(calls).slice(2), [['hook-session-start.mjs', '--subagent'], ['hook-bash-post.mjs']]);
+  assert.deepEqual(sent(calls[2]), { hook_event_name: 'SubagentStart', opencode: {}, session_id: 'ses_main', agent_id: 'ses_child', cwd: CHILD_DIR });
+  assert.equal(calls[2].options.cwd, CHILD_DIR);
+  const child = request('ses_child');
+  await context.hooks.context(child);
+  assert.deepEqual(child.system.slice(1), [startPart(CHILD_LINES)]);
+  assert.equal(calls.length, 4);
+
+  // A deleted session drops its start: a session of that id would start again.
+  stream.push({ type: 'session.deleted', data: { sessionID: 'ses_main' } });
+  await settle();
+  await context.hooks.context(request('ses_main'));
+  assert.deepEqual(ran(calls).at(-1), ['hook-session-start.mjs']);
+});
+
+test('a child`s first callback runs its root`s start, then its own --subagent start, and two callbacks at once run each once', async () => {
+  const context = fakeContext({ sessions: { ses_child: { parentID: 'ses_main', location: { directory: CHILD_DIR } } } });
+  const { calls } = await startBridge('start-child-first', { context });
+  const requests = [request('ses_child'), request('ses_child'), request('ses_main')];
+  await Promise.all(requests.map((each) => context.hooks.context(each)));
+  assert.deepEqual(ran(calls), [['hook-session-start.mjs'], ['hook-session-start.mjs', '--subagent']], 'the root`s first, once each');
+  assert.deepEqual(calls.map((call) => call.options.cwd), [SESSION_DIR, CHILD_DIR], 'the root`s in the root`s own folder');
+  assert.deepEqual(requests.map((each) => each.system.slice(1)), [[startPart(CHILD_LINES)], [startPart(CHILD_LINES)], [startPart(ROOT_LINES)]]);
+});
+
+test('a start that fails is traced and never repeated; a read that fails runs nothing and is read again; a folder not on disk runs nothing', async () => {
+  const trace = path.join(ROOT, 'trace-start-fails.jsonl');
+  let readFails = true;
+  const later = path.join(ROOT, 'start-later-folder');
+  const sessions = {
+    ses_flaky: () => (readFails ? new Error('read') : { location: { directory: SESSION_DIR } }), ses_gone: { location: { directory: later } },
+    ses_kid: { parentID: 'ses_flaky', location: { directory: CHILD_DIR } },
+  };
+  const context = fakeContext({ sessions });
+  const spawn = fakeSpawn(writes({ status: 1, stderr: 'boom' }));
+  const { calls } = await startBridge('start-fails', { context, spawn, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  for (let at = 0; at < 2; at += 1) {
+    const each = request('ses_main');
+    await context.hooks.context(each);
+    assert.equal(each.system.length, 1, 'no lines from a failed start');
+  }
+  assert.equal(calls.length, 1, 'a failed start is not repeated');
+  await context.hooks.context(request('ses_flaky'));
+  assert.equal(calls.length, 1, 'a failed read runs nothing');
+  readFails = false;
+  await context.hooks.context(request('ses_flaky'));
+  assert.deepEqual(calls.map((call) => sent(call).session_id), ['ses_main', 'ses_flaky'], 'and the next callback reads again');
+  await context.hooks.context(request('ses_gone'));
+  assert.equal(calls.length, 2, 'never in another folder');
+  mkdirSync(later);
+  await context.hooks.context(request('ses_gone'));
+  await context.hooks.context(request('ses_gone'));
+  assert.deepEqual(calls.slice(2).map((call) => call.options.cwd), [later], 'a folder not on disk was no run, so the start runs once it is there');
+  assert.deepEqual(traceLines(trace).map(({ step, script, status }) => [step, script, status]), [
+    ['setup', undefined, 3], ['run', 'hook-session-start.mjs', 1], ['skip', 'hook-session-start.mjs', 'read'],
+    ['run', 'hook-session-start.mjs', 1], ['skip', 'hook-session-start.mjs', 'cwd'], ['run', 'hook-session-start.mjs', 1],
+  ]);
+
+  // A child whose own walk was kept, and whose root's read then fails: the root's start is not given up for good.
+  readFails = false;
+  const kept = fakeContext({ sessions });
+  const kid = await startBridge('start-kept-child', { context: kept });
+  const rootReads = kept.session.get;
+  let reads = 0;
+  kept.session.get = async (input) => {
+    if (input.sessionID === 'ses_flaky') reads += 1;
+    if (input.sessionID === 'ses_flaky' && reads === 2) throw new Error('read');
+    return rootReads(input);
+  };
+  await kept.hooks.context(request('ses_kid'));
+  assert.equal(kid.calls.length, 0, 'the root`s folder was not read');
+  await kept.hooks.context(request('ses_kid'));
+  assert.deepEqual(ran(kid.calls), [['hook-session-start.mjs'], ['hook-session-start.mjs', '--subagent']]);
+});
+
+test('a walk that stops short of the root starts nothing, under no session of it, and the next callback reads again', async () => {
+  const chain = Object.fromEntries(Array.from({ length: 12 }, (_, n) => [`ses_${n}`, { parentID: `ses_${n + 1}`, location: { directory: SESSION_DIR } }]));
+  let given = asGiven({});
+  const cases = [
+    ['out-of-steps', chain, 'ses_0', null],
+    ['mid-walk', { ses_kid: { parentID: 'ses_mid', location: { directory: CHILD_DIR } }, ses_mid: () => given }, 'ses_kid', () => { given = { parentID: 'ses_main', location: { directory: SESSION_DIR } }; }],
+  ];
+  for (const [name, sessions, sessionID, heal] of cases) {
+    const trace = path.join(ROOT, `trace-start-${name}.jsonl`);
+    const { context, calls } = await startBridge(`start-${name}`, { context: fakeContext({ sessions }), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+    for (let at = 0; at < 2; at += 1) {
+      const each = request(sessionID);
+      await context.hooks.context(each);
+      assert.equal(each.system.length, 1, name);
+    }
+    assert.equal(calls.length, 0, `${name}: no start under a session that is not known to be the root`);
+    assert.deepEqual(traceLines(trace).slice(1).map(({ script, status }) => [script, status]), Array(2).fill(['hook-session-start.mjs', 'read']), name);
+    if (!heal) continue;
+    heal();
+    await context.hooks.context(request(sessionID));
+    assert.deepEqual(calls.map((call) => sent(call).session_id), ['ses_main', 'ses_main'], 'the root`s start, then the child`s, once the walk ends');
+  }
+});
+
+test('the idle hook and the hook before a tool call each run the session`s start before their routes', async () => {
+  const blocking = await startBridge('start-before', { routes: [preRoute()], events: { ...EVENTS, ...BLOCKING } });
+  await blocking.context.hooks['execute.before'](beforeEvent());
+  assert.deepEqual(ran(blocking.calls), [['hook-session-start.mjs'], ['hook-bash.mjs']]);
+  const stopping = await startBridge('start-idle', { routes: [STOP_ROUTE], events: { ...EVENTS, Stop: 'experimental.idle' } });
+  await stopping.context.hooks['experimental.idle']({ sessionID: 'ses_main', background: [] });
+  assert.deepEqual(ran(stopping.calls), [['hook-session-start.mjs'], ['hook-stop.mjs']]);
+});
+
+test('a start script gets the PATH a shell gets, bin first, and no other script or variable changes', async () => {
+  const spawn = startSpawn();
+  const { context, calls } = await startBridge('start-path', { spawn, bin: BIN });
+  await context.hooks['execute.after'](shellEvent());
+  const shell = { env: { ...ENV } };
+  context.hooks['create.before'](shell);
+  assert.deepEqual(calls.map((call) => call.options.env), [shell.env, ENV], 'the start`s is the shell hook`s, the after-hook`s the service`s own');
+  assert.equal(shell.env.PATH, `${BIN}${path.delimiter}${ENV.PATH}`);
+  const { PATH, ...bare } = ENV;
+  const none = await startBridge('start-no-path', { env: bare, bin: BIN });
+  await none.context.hooks.context(request('ses_main'));
+  assert.deepEqual(none.calls[0].options.env, bare, 'a service with no PATH gives none');
+});
+
+test('the prompt hook`s context goes into the prompt as its own file part marked as aidrian`s, never the Human`s text nor a system part', async () => {
+  const names = 'Names: the last reply said "I".';
+  const context = fakeContext({ sessions: { ses_child: { parentID: 'ses_main', location: { directory: CHILD_DIR } } } });
+  const spawn = startSpawn((call) => (path.basename(call.args[0]) === 'hook-prompt.mjs' ? { status: 0, stdout: `${names}\n` } : { status: 0 }));
+  const { calls } = await startBridge('prompt-part', { context, spawn, routes: [PROMPT_ROUTE], events: { ...EVENTS, UserPromptSubmit: 'prompt' } });
+  const attached = { uri: 'file:///notes.md', name: 'notes.md' };
+  const event = { sessionID: 'ses_main', messageID: 'msg_1', prompt: { text: 'go on', files: [attached] }, delivery: 'steer' };
+  await context.hooks.prompt(event);
+  assert.deepEqual(ran(calls), [['hook-session-start.mjs'], ['hook-prompt.mjs']], 'the start first');
+  assert.deepEqual(sent(calls[1]), { hook_event_name: 'UserPromptSubmit', opencode: {}, session_id: 'ses_main', cwd: SESSION_DIR, prompt: 'go on' });
+  assert.equal(event.prompt.text, 'go on', 'the Human`s text part stays as it was');
+  const part = { uri: `data:text/plain;base64,${Buffer.from(names).toString('base64')}`, source: { type: 'inline' }, name: 'aidrian', description: 'aidrian hook context' };
+  assert.deepEqual(event.prompt.files, [attached, part]);
+  const next = request('ses_main');
+  await context.hooks.context(next);
+  assert.ok(next.system.every((each) => !each.text.includes(names)), 'no text that quotes a reply in system');
+
+  const child = { sessionID: 'ses_child', messageID: 'msg_2', prompt: { text: 'task' }, delivery: 'steer' };
+  await context.hooks.prompt(child);
+  assert.deepEqual(sent(calls.at(-1)), { hook_event_name: 'UserPromptSubmit', opencode: {}, session_id: 'ses_main', agent_id: 'ses_child', cwd: SESSION_DIR, prompt: 'task' }, 'a child`s prompt runs in its root`s folder');
+  assert.deepEqual(child.prompt.files, [part], 'a prompt with no files gets a list of one');
+
+  const blocked = await startBridge('prompt-block', { spawn: startSpawn(() => ({ status: 2, stderr: 'no' })), routes: [PROMPT_ROUTE], events: { ...EVENTS, UserPromptSubmit: 'prompt' } });
+  const refused = { sessionID: 'ses_main', messageID: 'msg_3', prompt: { text: 'x' }, delivery: 'steer' };
+  assert.equal(await blocked.context.hooks.prompt(refused), undefined);
+  assert.deepEqual(refused.prompt, { text: 'x' }, 'a block OpenCode cannot apply adds nothing');
+});
+
+test('the compaction request gets the start lines, then the checklist, as system parts, from a route run in the root`s folder', async () => {
+  const checklist = 'Preserve everything needed to continue the current task.';
+  const context = fakeContext({ sessions: { ses_child: { parentID: 'ses_main', location: { directory: CHILD_DIR } } } });
+  const spawn = startSpawn((call) => (path.basename(call.args[0]) === 'hook-compact.mjs' ? { status: 0, stdout: `${checklist}\n` } : { status: 0 }));
+  const { calls } = await startBridge('compaction', { context, spawn, routes: [COMPACT_ROUTE], events: { ...EVENTS, PreCompact: 'compaction' } });
+  const event = request('ses_child');
+  await context.hooks.compaction(event);
+  assert.deepEqual(ran(calls), [['hook-session-start.mjs'], ['hook-session-start.mjs', '--subagent'], ['hook-compact.mjs']]);
+  assert.deepEqual(sent(calls[2]), { hook_event_name: 'PreCompact', opencode: {}, session_id: 'ses_main', agent_id: 'ses_child', cwd: SESSION_DIR });
+  assert.deepEqual(event.system.slice(1), [startPart(CHILD_LINES), startPart(checklist, 'compaction')]);
+  assert.deepEqual(event.messages, [], 'the conversation stays as it was');
+});
+
+test('the context, prompt, and compaction callbacks resolve whatever fails: a read, a spawn, an event that cannot be read', async (t) => {
+  const unhandled = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  process.on('unhandledRejection', onUnhandled);
+  t.after(() => process.off('unhandledRejection', onUnhandled));
+  const throwing = () => { throw new Error('spawn'); };
+  const cases = [{ context: fakeContext({ sessions: { ses_main: new Error('read') } }) }, { spawn: { spawn: throwing, calls: [] } }, {}];
+  for (const [at, seams] of cases.entries()) {
+    const { context } = await startBridge(`start-throws-${at}`, { ...seams, routes: [COMPACT_ROUTE, PROMPT_ROUTE], events: { ...EVENTS, PreCompact: 'compaction', UserPromptSubmit: 'prompt' } });
+    for (const hook of ['context', 'prompt', 'compaction']) {
+      assert.equal(await context.hooks[hook]({ ...request('ses_main'), prompt: { text: 'x' } }), undefined, hook);
+      assert.equal(await context.hooks[hook]({ sessionID: 'ses_main', get system() { throw new Error('system'); }, get prompt() { throw new Error('prompt'); } }), undefined, hook);
+      assert.equal(await context.hooks[hook]({ get sessionID() { throw new Error('id'); } }), undefined, hook);
+      assert.equal(await context.hooks[hook](null), undefined, hook);
+    }
+  }
+  await settle();
+  assert.deepEqual(unhandled, []);
+});
+
+test('a root session whose own folder is not on disk runs no Stop route, never one in the plugin`s folder', async () => {
+  const trace = path.join(ROOT, 'trace-stop-gone.jsonl');
+  const context = fakeContext({ sessions: { ses_main: { location: { directory: path.join(ROOT, 'no-such-folder') } } } });
+  const { calls, idle } = await stopBridge('stop-gone', { context, spawn: fakeSpawn(), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  await idle('ses_main');
+  assert.equal(calls.length, 0);
+  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest).at(-1), { step: 'skip', script: 'hook-stop.mjs', status: 'cwd' });
 });

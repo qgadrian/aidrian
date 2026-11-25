@@ -7,7 +7,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { NATIVE_NAMES, RAW_NAMES, standardToolName } from './opencode-names.mjs';
+import { mcpToolName, NATIVE_NAMES, RAW_NAMES, standardToolName } from './opencode-names.mjs';
 import { setUp } from './opencode-setup.mjs';
 import { patchEdit } from './patch.mjs';
 import { responseObjects } from './response.mjs';
@@ -64,6 +64,39 @@ function credentialStores({ env = {}, home }) {
   ].map((each) => path.join(each, 'opencode'));
   return [...new Set([...folders, ...named('OPENCODE_CONFIG_DIR')])];
 }
+// The idle hook's `background` entries, as the bridge sends them under the mark, read as Claude Code's
+// `background_tasks`: { id, type, status, description }. `type` is the entry's `kind` and `status` is `running`, since
+// OpenCode lists only work that still runs. The id is the one its kind names: a shell's `shellID`, a subagent's
+// `childSessionID`, a Code Mode job's `jobID`. Only an entry of the session going idle (`owner`) gets one, since its end
+// wakes that session; work a descendant owns wakes the descendant, and an `image` or `video` entry names no id. The stop
+// checks count only an entry with a string id (lib/stop-announce.mjs backgroundRunning).
+const BACKGROUND_IDS = Object.freeze({ shell: 'shellID', subagent: 'childSessionID', codemode: 'jobID' });
+const text = (value) => (typeof value === 'string' && value !== '' ? value : null);
+function backgroundTasks(entries, owner) {
+  return entries.filter((entry) => isObject(entry) && typeof entry.kind === 'string').map((entry) => {
+    const field = Object.hasOwn(BACKGROUND_IDS, entry.kind) ? BACKGROUND_IDS[entry.kind] : null;
+    const id = field !== null && owner !== null && entry.sessionID === owner ? text(entry[field]) : null;
+    const description = text(entry.description) ?? text(entry.command);
+    return { ...(id === null ? {} : { id }), type: entry.kind, status: 'running', ...(description === null ? {} : { description }) };
+  });
+}
+
+// The `subagent` tool's input with its `agent` as the Agent tool's `subagent_type`, which wins over a key of that name
+// the call gives; an input that names no agent stays as it is.
+const agentInput = (given) => (isObject(given) && text(given.agent) !== null ? { ...given, subagent_type: given.agent } : given);
+
+// A marked payload in the standard names: the tool's, by the leaf from the name and the info the bridge read, with
+// `raw_tool_name` keeping what OpenCode sent (lib/hosts/index.mjs toolNames), a subagent call's agent (agentInput), and
+// the idle hook's background work as `background_tasks`. A name the leaf cannot read stays as it came.
+function standardPayload(input) {
+  const standard = standardToolName(input.tool_name, input.opencode.info);
+  let named = standard === null || standard === input.tool_name ? input : { ...input, tool_name: standard, raw_tool_name: input.tool_name };
+  if (input.tool_name === 'subagent') named = { ...named, tool_input: agentInput(input.tool_input) };
+  const { background } = input.opencode;
+  if (!Array.isArray(background)) return named;
+  return { ...named, background_tasks: backgroundTasks(background, text(input.agent_id) ?? text(input.session_id)) };
+}
+
 const starts = (args) => {
   const words = args.map((token) => (token.dynamic ? null : token.text));
   if (words.length === 0 || words[0] === null) return true;
@@ -78,7 +111,7 @@ export default {
   id: 'opencode',
   name: 'OpenCode',
   ai: 'OpenCode',
-  // How the plugin's hooks reach it: a bridge plugin runs the hook scripts its routes name, on OpenCode's tool events
+  // How the plugin's hooks reach it: a bridge plugin runs the hook scripts its routes name, on OpenCode's events
   // (docs/providers/adding-a-host.md). A hook no route names does not run here.
   delivery: 'bridge',
   modelsKey: 'opencode',
@@ -98,31 +131,29 @@ export default {
   sessionId: (env) => env.OPENCODE_SESSION_ID || null,
   agentName: () => null,
   effort: () => null,
+  subagentEffort: () => null,
   runEnv: () => null,
   pluginAgentPrefix: 'aidrian-',
   agentAliases: (type) => (type.startsWith('aidrian-') ? [type.slice('aidrian-'.length)] : []),
-  // Its tool names come from one table, opencode-names.mjs. The bridge forwards no MCP tool call, so no MCP name is
-  // mapped yet.
+  // Its tool names come from one table, opencode-names.mjs. A name alone reads only a built-in tool's: an MCP tool's
+  // standard name needs the info the bridge reads (hookInput).
   toolName: (name) => standardToolName(name) ?? name,
-  serverSpelling: (server) => server,
-  nativeToolName: (standard) => NATIVE_NAMES[standard] ?? standard,
+  // An MCP server's namespace, as its registry spells the server's name (core/src/tool/mcp.ts).
+  serverSpelling: (server) => server.replace(/[^a-zA-Z0-9_-]/gu, '_'),
+  // The name the model calls: an MCP tool's as OpenCode's registry gives it. A hook receives an MCP tool's standard name
+  // with that one as `raw_tool_name`, but rawToolName keeps the standard one, since a name alone cannot be read back.
+  nativeToolName: (standard) => NATIVE_NAMES[standard] ?? mcpToolName(standard) ?? standard,
   rawToolName: (standard) => RAW_NAMES[standard] ?? standard,
   toolResponse: responseObjects,
   // A shell call's result, `{ output: { output, exitCode }, content, metadata }`: the command's output is the text under
   // `output.output`. The bridge sends only a call that completed, so none is interrupted.
   shellOutput: (response) => ({ output: typeof response?.output?.output === 'string' ? response.output.output : null, interrupted: false }),
-  // A marked call reads under its standard name, as the shell tool reads as Bash; `raw_tool_name` keeps what OpenCode sent
-  // (lib/hosts/index.mjs toolNames). A name the leaf cannot read stays as it came.
-  hookInput(input) {
-    if (!payloadMark(input)) return input;
-    const standard = standardToolName(input.tool_name, input.opencode.info);
-    if (standard === null || standard === input.tool_name) return input;
-    return { ...input, tool_name: standard, raw_tool_name: input.tool_name };
-  },
-  // Its file tools and their inputs, read as text from the tool schemas embedded in the installed OpenCode 2.4.0 binary
-  // (the `edit` tool's is { path, oldString, newString, replaceAll }), not from a recorded live payload: `write` { path,
-  // content }, `edit` as given, and `patch` { patchText } in the `*** Begin Patch` format. No hook receives a file edit on
-  // OpenCode in this version; the conformance suite asks every host to say these.
+  // A marked call reads under its standard name, as the shell tool reads as Bash and the file tools as Edit and Write.
+  hookInput: (input) => (payloadMark(input) ? standardPayload(input) : input),
+  // Its file tools and their inputs, from the tool schemas of OpenCode 2.4.1's source (core/src/tool/plugin/), not from a
+  // recorded live payload: `write` { path, content }, `edit` { path, oldString, newString, replaceAll }, and `patch`
+  // { patchText } in the `*** Begin Patch` format. A call reaches a hook as Edit or Write with its input as OpenCode
+  // gave it, and lib/hosts/index.mjs fileEditOf reads it by `raw_tool_name`, the name this list holds.
   fileEditTools: ['edit', 'write', 'patch'],
   fileEdit(tool, given) {
     if (tool === 'write') return { shape: 'write', file: given.path, content: given.content, targets: [given.path] };
@@ -130,6 +161,20 @@ export default {
       return { shape: 'edit', file: given.path, edits: [{ old_string: given.oldString, new_string: given.newString, replace_all: given.replaceAll === true }], newText: given.newString, replaceAll: given.replaceAll === true, targets: [given.path] };
     }
     return patchEdit(String(given.patchText ?? ''));
+  },
+  // A path its file tools name, as they resolve it (core/src/file-access.ts resolvePath): a leading `~` or `~/` is the
+  // home folder, folded as text. A path that names another machine, behind the `machines` flag, is read as a local one.
+  filePath(file) {
+    if (file === '~') return homedir();
+    return file.startsWith('~/') ? path.join(homedir(), file.slice(2)) : file;
+  },
+  // Its file tools that read, and the path each names, from the same schemas: `read` { path }, and `grep` and `glob`
+  // { path }, the call's folder when unset, which `glob` also reads the words `undefined` and `null` as. A glob's pattern
+  // and a grep's `include` name no folder: ripgrep matches them inside the one it searches, and follows no link there.
+  fileReadTools: ['read', 'grep', 'glob'],
+  fileRead(tool, given) {
+    if (typeof given.path !== 'string') return [null];
+    return [tool === 'glob' && (given.path === 'undefined' || given.path === 'null') ? null : given.path];
   },
   sessionStart: { programs: ['opencode'], starts },
   // The npm packages that install its program, which a package runner runs as `opencode` (lib/package-runner.mjs).
@@ -175,8 +220,8 @@ export default {
     transcripts: false,
     trackerGuard: {
       verified: 'none',
-      evidence: 'the bridge forwards no MCP tool call to a hook, so no tracker write is judged on OpenCode',
-      unguardedRoutes: [{ name: 'any MCP tool', reason: 'the bridge forwards no MCP tool call to a hook in this version' }],
+      evidence: 'the bridge runs no route before an MCP tool call, so no tracker write is judged on OpenCode; the record after a read runs',
+      unguardedRoutes: [{ name: 'any MCP tool', reason: 'the bridge runs no route before a tool call in this version' }],
     },
     // Whether OpenCode is set up to run this plugin here, `setUp({ env, root })`, from its config files alone
     // (opencode-setup.mjs): `aidrian check` names OpenCode's unguarded routes, and the gap below, only then

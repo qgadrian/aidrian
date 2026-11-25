@@ -27,7 +27,7 @@ import claudeCode, { READ_TOOLS } from '../plugins/aidrian/lib/hosts/claude-code
 import { accessProblem, BROWSER_PROFILES, confineDomains, confineReads, CREDENTIAL_PATHS, managedPlists, managedSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { fileReadOf } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { fileReadOf, normalizeHookInput } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { childSendBacks, storeChildSendBacks } from '../plugins/aidrian/lib/child-send-backs.mjs';
 import { alive, CONFINE_PLAN, CONFINE_VERDICT, confineCheck, confineDenial, HOOK_PENDING, hostVarsProblem, isConfineCall, LISTENER_START, prepareConfine, runConfine, sentinelHits, SHELL_VARS, shellVarsProblem, startListener, unlistedHost, watchProblem } from '../plugins/aidrian/lib/project-confine.mjs';
 import { ACTIONS, projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
@@ -499,6 +499,24 @@ test('a session a proof plan holds never reads a hidden store with the file tool
   assert.deepEqual(fileReadOf({ tool_name: 'Glob', tool_input: { pattern: '../x/*.pem', path: '/c/l/' } }), ['/c/l/', '/c/l/../x/'], 'joined as text, not folded');
   assert.deepEqual(fileReadOf({ tool_name: 'Glob', tool_input: { pattern: '../x/*.pem', path: '' } }), ['', '../x/'], 'an empty path, the call\'s folder');
   assert.equal(fileReadOf({ tool_name: 'Bash', tool_input: { command: 'cat x' } }), null);
+});
+
+test('a session a proof plan holds never reads a hidden store with OpenCode`s read, grep, or glob, and reads its clone', (t) => {
+  const at = attempt(t);
+  plan(at);
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input, cwd = at.work) => confineDenial(normalizeHookInput({ hook_event_name: 'PreToolUse', opencode: { version: '2.4.1', info: {} }, session_id: SESSION, tool_name: tool, tool_input: input, cwd }, {}), { mark, env: {} });
+  const key = path.join(at.keys, 'id_test');
+  for (const [tool, input] of [['read', { path: at.secret }], ['read', { path: key }], ['read', { path: path.relative(at.work, key) }], ['read', { path: at.home }],
+    ['grep', { pattern: 'x', path: at.keys }], ['grep', { pattern: 'x', path: key }], ['glob', { pattern: '**/*', path: at.keys }], ['glob', { pattern: '*', path: at.home }]]) {
+    assert.match(call(tool, input)?.reason ?? '', /which the sandbox of a session no Human attends hides/u, `${tool} ${JSON.stringify(input)}`);
+  }
+  for (const [tool, input] of [['read', { path: path.join(at.work, 'README.md') }], ['read', { path: 'README.md' }], ['grep', { pattern: 'x' }], ['grep', { pattern: 'x', path: '.' }],
+    ['glob', { pattern: '**/*.md' }], ['glob', { pattern: '*', path: 'undefined' }], ['glob', { pattern: '*', path: at.work }]]) {
+    assert.equal(call(tool, input), null, `${tool} ${JSON.stringify(input)}`);
+  }
+  // The path is judged, never the call's folder: a folder that is a store's parent does not refuse a read of the clone.
+  assert.equal(call('read', { path: path.join(at.work, 'README.md') }, at.home), null, 'an absolute path in the clone');
 });
 
 test('a session no Human attends never asks the host to run a command outside its sandbox', async (t) => {

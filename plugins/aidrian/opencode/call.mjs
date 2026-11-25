@@ -1,13 +1,15 @@
-// What one OpenCode tool event sends a hook script: the folder the script is spawned in, the folder the call runs in, and
-// who made the call, from the event and the session reads. bridge.mjs builds the payload and spawns from this. It imports
-// node: built-ins alone, so it loads in OpenCode's Bun and under `node --test` alike.
+// Who one OpenCode event's hooks run for, and where: for a tool event, the folder the script is spawned in, the folder the
+// call runs in, and who made the call (callOf), and for a session event, the session's root and the two folders its hooks
+// run in (sessionCall), from the event and the session reads. bridge.mjs and session-hooks.mjs build the payload and spawn
+// from this. It imports node: built-ins alone, so it loads in OpenCode's Bun and under `node --test` alike.
 //
 // A blocking route (execute.before) never skips a call for a reason the call's input controls: a `workdir` that names no
 // folder, or an input of another shape, still sends the call, with the session's folder as its `cwd`. Only a call with no
 // session id, which OpenCode sets and the input cannot, sends nothing. A record-only route (execute.after) runs, as a
 // hook of a host that reads hooks.json does, only after a call that completed, on a Bash call only with a string
 // command, and only when it knows the folder the call ran in: the session's folder, read and on disk, or one an
-// absolute or `~` workdir names. A session folder that is gone or could not be read is never replaced there by the
+// absolute or `~` workdir names. Only a Bash call has a workdir: OpenCode's shell tool alone runs where that field says,
+// and another tool's input, such as an MCP call's, may hold a field of that name. A session folder that is gone or could not be read is never replaced there by the
 // plugin's folder or the service's, which may be another checkout.
 
 import { statSync } from 'node:fs';
@@ -54,7 +56,7 @@ export async function callOf(runner, { blocking, name, event, info }) {
   const own = runner.context.location?.directory;
   const base = sessionFolder ?? (isFolder(own) ? own : process.cwd());
   const home = absolute(runner.env?.HOME) ? runner.env.HOME : homedir();
-  const workdir = isObject(event.input) ? event.input.workdir : undefined;
+  const workdir = name === 'Bash' && isObject(event.input) ? event.input.workdir : undefined;
   const given = workdir !== undefined && workdir !== null && workdir !== '';
   const cwd = given ? folderOf(workdir, absolute(session.dir) ? session.dir : base, home) : base;
   // The call's folder is known when the session's folder is one, or when the workdir names a folder by itself: a
@@ -62,6 +64,19 @@ export async function callOf(runner, { blocking, name, event, info }) {
   const known = sessionFolder !== null || (typeof workdir === 'string' && path.isAbsolute(expandedOf(workdir, home)));
   if (!blocking && (cwd === null || !known)) return { skip: 'cwd' };
   return { base, cwd: cwd ?? base, event, root: session.root, agent: session.agent, info };
+}
+
+// Traces a `skip` for each route of a call sent nothing, and gives that call.
+export function skipped(runner, routes, call) {
+  for (const route of routes) runner.trace('skip', { script: route.script, status: call.skip });
+  return call;
+}
+
+// The `opencode` mark of a payload: the plugin context's `app.version` when it is text, as OpenCode 2.4.0's plugin
+// context names it, and `fields`.
+export function markOf(context, fields) {
+  const version = context?.app?.version;
+  return typeof version === 'string' ? { version, ...fields } : { ...fields };
 }
 
 // A workdir with `~` and `~/` taken from `home`, as OpenCode 2.4.1's shell tool expands them.
@@ -77,11 +92,11 @@ export function folderOf(workdir, dir, home) {
   return isFolder(folder) ? folder : null;
 }
 
-// The calling session `sessionID`'s { root, agent, dir }: its own folder from a read on every call, as a session can
-// move, and its root by its parents, PARENT_STEPS reads at most. A read that fails, comes too late, or gives no
-// session of the id asked for, and a walk that runs out of steps, stop where they are, and the call is sent as a
-// subagent's, with `agent` the calling id, never as the root session's own; only a walk that reached its end is kept,
-// so the next call reads again.
+// The calling session `sessionID`'s { root, agent, dir, failed? }: its own folder from a read on every call, as a
+// session can move, and its root by its parents, PARENT_STEPS reads at most. A read that fails, comes too late, or gives
+// no session of the id asked for, and a walk that runs out of steps, stop where they are, set `failed`, and the call is
+// sent as a subagent's, with `agent` the calling id, never as the root session's own; only a walk that reached its end
+// is kept, so the next call reads again.
 // A kept root answers only a call whose own read gave the session: one whose read failed is a subagent's, kept or not,
 // with its kept root still as `root`, so a kept child's call keeps its root's session-keyed holds. A kept answer comes
 // only from a walk that reached its end for that same id, and a session's parent never changes, so it still holds.
@@ -93,7 +108,7 @@ async function sessionOf(runner, get, sessionID) {
     current = null;
   }
   const known = runner.roots.get(sessionID);
-  if (!isSession(current, sessionID)) return { root: known?.root ?? sessionID, agent: sessionID, dir: null };
+  if (!isSession(current, sessionID)) return { root: known?.root ?? sessionID, agent: sessionID, dir: null, failed: true };
   const dir = current.location?.directory ?? null;
   if (known) return { ...known, dir };
   let id = sessionID;
@@ -118,7 +133,34 @@ async function sessionOf(runner, get, sessionID) {
     if (runner.roots.size >= ROOTS_MAX) runner.roots.clear();
     runner.roots.set(sessionID, answer);
   }
-  return { ...answer, dir };
+  return { ...answer, dir, ...(ended ? {} : { failed: true }) };
+}
+
+// Who a hook that is not a tool hook (start, stop, compaction, prompt) runs for, and in which folder, for the session
+// `sessionID`: { root, agent, dir, rootDir }, each folder one on disk or null, or { skip } to run nothing. `dir` is the
+// session's own folder, which a child's `--subagent` start runs in, and `rootDir` its root's, which every other such
+// hook runs in, read again for a child. `skip` is `session` for no id, `read` for a read that failed, came late, gave no
+// session of the id asked for, or stopped short of the root, a child's read of its root included. A missing folder is
+// never replaced by the plugin's or the service's, which may be another checkout.
+export async function sessionCall(runner, sessionID) {
+  if (typeof sessionID !== 'string' || sessionID === '') return { skip: 'session' };
+  const reads = readsOf(runner.context, READ_MS);
+  try {
+    const session = await sessionOf(runner, reads.get, sessionID);
+    if (session.failed) return { skip: 'read' };
+    let rootDir = session.dir;
+    if (session.agent !== null) {
+      const root = await reads.get(session.root);
+      if (!isSession(root, session.root)) return { skip: 'read' };
+      rootDir = root.location?.directory;
+    }
+    const folder = (dir) => (isFolder(dir) ? dir : null);
+    return { root: session.root, agent: session.agent, dir: folder(session.dir), rootDir: folder(rootDir) };
+  } catch {
+    return { skip: 'read' };
+  } finally {
+    reads.end();
+  }
 }
 
 // The text of the session `sessionID`'s last assistant message, its text parts joined, or null when there is none or the

@@ -4,7 +4,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { combineHookResults, NO_REASON, OVERFLOW_REASON, readHookResult, REWRITE_CONFLICT } from '../plugins/aidrian/lib/hook-result.mjs';
+import { canBlock, combineHookResults, NO_REASON, OVERFLOW_REASON, readHookResult, REWRITE_CONFLICT } from '../plugins/aidrian/lib/hook-result.mjs';
 
 const EMPTY = { block: false, reason: null, context: null, systemMessage: null, updatedInput: null };
 const result = (fields) => ({ ...EMPTY, ...fields });
@@ -49,6 +49,11 @@ for (const [event, want] of Object.entries(EVENTS)) {
     assert.ok(Object.isFrozen(rewrite));
   });
 }
+
+test('canBlock is true for each event whose exit 2 blocks, and false for every other', () => {
+  for (const [event, want] of Object.entries(EVENTS)) assert.equal(canBlock(event), want.exit2.block, event);
+  for (const event of [undefined, null, '', 'toString', 'constructor']) assert.equal(canBlock(event), false, String(event));
+});
 
 test('exit 2 with an empty stderr still blocks, with the fixed reason; on PostToolUse it adds nothing', () => {
   assert.deepEqual(readHookResult({ event: 'Stop', exit: 2, stdout: '', stderr: ' \n' }), result({ block: true, reason: NO_REASON }));

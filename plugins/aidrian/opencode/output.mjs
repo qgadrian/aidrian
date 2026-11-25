@@ -12,8 +12,8 @@
 //
 // It also runs each script (run). The payload holds text a model wrote, so the spawn is pinned: the program is Node,
 // resolved to an absolute file at setup, the arguments the script's absolute path and the route's literal flags, the
-// options `cwd`, the session's folder, `env` as the process has it, and `stdio`, with no shell, and the payload reaches
-// the child on stdin alone. It reads at most CAPTURE_BYTES of each script's stdout and stderr, and waits for its exit
+// options `cwd`, the session's folder, `env` as the process has it, with the plugin's bin/ first on a start script's
+// PATH, and `stdio`, with no shell, and the payload reaches the child on stdin alone. It reads at most CAPTURE_BYTES of each script's stdout and stderr, and waits for its exit
 // whatever it writes.
 //
 // It imports node: built-ins and the hook-result leaf, which imports node: built-ins alone, so it loads in OpenCode's

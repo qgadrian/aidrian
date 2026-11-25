@@ -17,8 +17,8 @@ import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-// How many sessions the root walk reads at most, how many answers it keeps before it forgets them all, and how long all
-// the session reads of one call may take together: past that the call is sent with what was read.
+// How many sessions the root walk reads at most, how many parent links and root folders the bridge keeps before it forgets
+// them all, and how long all the session reads of one call may take together: past that the call is sent with what was read.
 const PARENT_STEPS = 8;
 const ROOTS_MAX = 256;
 export const READ_MS = 2000;
@@ -93,68 +93,61 @@ export function folderOf(workdir, dir, home) {
   return isFolder(folder) ? folder : null;
 }
 
-// The calling session `sessionID`'s { root, agent, dir, failed? }: its own folder from a read on every call, as a
-// session can move, and its root by its parents, PARENT_STEPS reads at most. A read that fails, comes too late, or gives
-// no session of the id asked for, and a walk that runs out of steps, stop where they are, set `failed`, and the call is
-// sent as a subagent's, with `agent` the calling id, never as the root session's own; only a walk that reached its end
-// is kept, so the next call reads again.
-// A kept root answers only a call whose own read gave the session: one whose read failed is a subagent's, kept or not,
-// with its kept root still as `root`, so a kept child's call keeps its root's session-keyed holds. A kept answer comes
-// only from a walk that reached its end for that same id, and a session's parent never changes, so it still holds. A walk
-// that ends at a session kept as a child, and a kept answer whose root was since kept as one, go on to that child's root
-// (rootOf). A root's folder, from its latest read, its own or a child's walk, is kept for its end (endCall), and dropped
-// once the session is kept as a child.
+// The calling session `sessionID`'s { root, agent, dir, rootDir, failed? }: its own folder and its root's, and its root by
+// its parents, all read on every call, as a session can move, PARENT_STEPS reads at most. Each parent a read named is kept
+// as a link in `runner.roots`, the child's id to its parent's, so a session a read once named a parent for is a child for
+// that setup, whatever a later read gives. The walk finishes at a session whose read names no parent and that holds no
+// link, and that is the root: the call is the root session's own only when the walk finished with no step taken. Any other
+// walk, one whose read fails, comes too late, or gives no session of the id asked for, one that runs out of steps, and one
+// that ends at a linked session, sets `failed`: the call is sent as a subagent's, with `agent` the calling id and `root`
+// where the links lead, never as the root session's own. A link drops any folder kept for the child as a root, and a
+// finished walk keeps its root's for its end (endCall). Nothing is awaited between the last read and the last store, so two
+// calls in flight cannot undo each other's.
 async function sessionOf(runner, get, sessionID) {
-  let current;
-  try {
-    current = await get(sessionID);
-  } catch {
-    current = null;
-  }
-  const known = runner.roots.get(sessionID);
-  if (!isSession(current, sessionID)) return { root: rootOf(runner, sessionID), agent: sessionID, dir: null, failed: true };
-  const dir = current.location?.directory ?? null;
-  if (known) {
-    if (known.agent === null) remember(runner, sessionID, dir);
-    return { ...known, root: rootOf(runner, sessionID), dir };
-  }
+  const own = await readOf(get, sessionID);
+  const links = [];
   let id = sessionID;
-  let ended = false;
+  let last = own;
+  while (last !== null && last.parent !== null) {
+    links.push([id, last.parent]);
+    id = last.parent;
+    last = links.length < PARENT_STEPS ? await readOf(get, id) : null;
+  }
+  if (runner.roots.size + links.length > ROOTS_MAX) runner.roots.clear();
+  for (const [child, parent] of links) {
+    runner.roots.set(child, parent);
+    runner.folders.delete(child);
+  }
+  const dir = own?.dir ?? null;
+  if (last === null || runner.roots.has(id)) return { root: linkedRoot(runner, sessionID), agent: sessionID, dir, rootDir: null, failed: true };
+  remember(runner, id, last.dir);
+  return { root: id, agent: links.length === 0 ? null : sessionID, dir, rootDir: last.dir };
+}
+
+// What one read gave of the session `id`, { parent, dir }, `parent` null when it names none or itself, or null when the
+// read failed, came late, or gave no such session.
+async function readOf(get, id) {
   try {
-    for (let read = 1; ; read += 1) {
-      const parent = current.parentID;
-      if (typeof parent !== 'string' || parent === '' || parent === id) {
-        ended = true;
-        break;
-      }
-      id = parent;
-      if (read >= PARENT_STEPS) break;
-      current = await get(id);
-      if (!isSession(current, id)) break;
-    }
+    const session = await get(id);
+    if (!isSession(session, id)) return null;
+    const { parentID } = session;
+    const names = typeof parentID === 'string' && parentID !== '' && parentID !== id;
+    return { parent: names ? parentID : null, dir: session.location?.directory ?? null };
   } catch {
-    ended = false;
+    return null;
   }
-  const root = ended ? rootOf(runner, id) : id;
-  const answer = { root, agent: ended && root === sessionID ? null : sessionID };
-  if (ended) {
-    if (runner.roots.size >= ROOTS_MAX) runner.roots.clear();
-    runner.roots.set(sessionID, answer);
-    if (answer.agent !== null) runner.folders.delete(sessionID);
-    if (root === id) remember(runner, id, current.location?.directory);
-  }
-  return { ...answer, dir, ...(ended ? {} : { failed: true }) };
 }
 
-// The root kept for the session `id`, or, once that root was kept as a child, the child's root; else `id`.
-function rootOf(runner, id) {
-  const root = runner.roots.get(id)?.root ?? id;
-  return runner.roots.get(root)?.root ?? root;
+// Where the kept links lead from the session `id`, PARENT_STEPS of them at most: `id` itself when it holds none.
+function linkedRoot(runner, id) {
+  let root = id;
+  for (let step = 0; step < PARENT_STEPS && runner.roots.has(root); step += 1) root = runner.roots.get(root);
+  return root;
 }
 
-// Keeps `dir`, the folder a read just gave the root session `root`, for its SessionEnd (endCall), which runs once the
-// session can no longer be read. Only an absolute path is kept, and the map is cleared whole at ROOTS_MAX, as the roots
-// map is.
+// Keeps `dir`, the folder a finished walk gave the root session `root`, for its SessionEnd (endCall), which runs once the
+// session can no longer be read. Only an absolute path is kept, and the map is cleared whole at ROOTS_MAX, as the links'
+// is.
 function remember(runner, root, dir) {
   if (!absolute(dir)) return;
   if (runner.folders.size >= ROOTS_MAX && !runner.folders.has(root)) runner.folders.clear();
@@ -163,22 +156,20 @@ function remember(runner, root, dir) {
 
 // What a session's `session.deleted` event sends its SessionEnd routes: { base, cwd, root, agent: null }, or { skip }.
 // The event carries the session's id alone, and the session may no longer be readable, so the bridge reads nothing:
-// the session runs SessionEnd only when it is kept as a root, or kept as no session at all and a walk that ended at it,
-// its own or a child's, kept its folder, and that folder, the last one a read gave, is on disk. `skip` is `session` for
-// no id, `read` for a session kept in neither, as one the bridge never read or one it forgot, `subagent` for a session
-// kept as a child, which a kept folder never ends, and `cwd` for a root whose folder is not known or not on disk. A
+// the session runs SessionEnd only when it holds no parent link and a finished walk, its own or a child's, kept its folder,
+// and that folder, the last one, is on disk. `skip` is `session` for no id, `subagent` for a session that holds a link,
+// `read` for one with no folder kept, as one the bridge never read or one it forgot, and `cwd` for a folder not on disk. A
 // child's end never runs its root's SessionEnd, which would delete the root's records while the root runs on.
 export function endCall(runner, sessionID) {
   if (typeof sessionID !== 'string' || sessionID === '') return { skip: 'session' };
-  const known = runner.roots.get(sessionID);
-  if (known && (known.agent !== null || known.root !== sessionID)) return { skip: 'subagent' };
-  if (!known && !runner.folders.has(sessionID)) return { skip: 'read' };
+  if (runner.roots.has(sessionID)) return { skip: 'subagent' };
+  if (!runner.folders.has(sessionID)) return { skip: 'read' };
   const dir = runner.folders.get(sessionID);
   if (!isFolder(dir)) return { skip: 'cwd' };
   return { base: dir, cwd: dir, root: sessionID, agent: null };
 }
 
-// Forgets what the bridge keeps of the session `sessionID`'s walk and folder, once its end ran.
+// Forgets the parent link and the folder the bridge keeps of the session `sessionID`, once its end ran.
 export function forgetSession(runner, sessionID) {
   runner.roots.delete(sessionID);
   runner.folders.delete(sessionID);
@@ -187,24 +178,16 @@ export function forgetSession(runner, sessionID) {
 // Who a hook that is not a tool hook (start, stop, compaction, prompt) runs for, and in which folder, for the session
 // `sessionID`: { root, agent, dir, rootDir }, each folder one on disk or null, or { skip } to run nothing. `dir` is the
 // session's own folder, which a child's `--subagent` start runs in, and `rootDir` its root's, which every other such
-// hook runs in, read again for a child. `skip` is `session` for no id, `read` for a read that failed, came late, gave no
-// session of the id asked for, or stopped short of the root, a child's read of its root included. A missing folder is
-// never replaced by the plugin's or the service's, which may be another checkout.
+// hook runs in, from the one walk. `skip` is `session` for no id, and `read` for a walk that did not finish
+// (sessionOf). A missing folder is never replaced by the plugin's or the service's, which may be another checkout.
 export async function sessionCall(runner, sessionID) {
   if (typeof sessionID !== 'string' || sessionID === '') return { skip: 'session' };
   const reads = readsOf(runner.context, READ_MS);
   try {
     const session = await sessionOf(runner, reads.get, sessionID);
     if (session.failed) return { skip: 'read' };
-    let rootDir = session.dir;
-    if (session.agent !== null) {
-      const root = await reads.get(session.root);
-      if (!isSession(root, session.root)) return { skip: 'read' };
-      rootDir = root.location?.directory;
-      remember(runner, session.root, rootDir);
-    }
     const folder = (dir) => (isFolder(dir) ? dir : null);
-    return { root: session.root, agent: session.agent, dir: folder(session.dir), rootDir: folder(rootDir) };
+    return { root: session.root, agent: session.agent, dir: folder(session.dir), rootDir: folder(session.rootDir) };
   } catch {
     return { skip: 'read' };
   } finally {

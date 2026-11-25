@@ -277,13 +277,13 @@ or into `system`. Fixture only: no live OpenCode session has shown a model read 
 `SessionEnd` runs `hook-session-end.mjs` for a session with no parent, on its `session.deleted` event, and on nothing
 else: `session.archived` runs no hook, and what an archived session leaves, such as its gate snapshot, goes with the
 snapshot's 30-day sweep. The event carries the session's id alone, and the session may no longer be readable, so the
-bridge reads no session there: it runs the hook only for a session its own reads showed to be a root, the end of a
-walk, the root's own or a child's ([Session ids](#session-ids)), with that root's last read folder as its folder and
+bridge reads no session there: it runs the hook only for a session a finished walk ended at, its own or a child's, and
+that holds no parent link ([Session ids](#session-ids)), with the last folder such a walk gave as its folder and
 `cwd`, and the root's id as `session_id`. A start of that session that still runs ends first, within its own
 timeout. A child's delete runs nothing, since its payload would carry its root's id and delete the root's records while
 the root runs on. A session whose root-ness the bridge cannot tell runs none, traced as a `skip` with `read`: one it
-never read in this setup, and one the 256-entry maps of kept answers and of root folders both forgot. Nor does a root
-whose folder is gone, traced with `cwd`. The root's start lines and stop state are dropped after its end ran. The payload
+never read in this setup, and one whose folder the 256-entry map of root folders forgot. Nor does a root whose folder is
+gone, traced with `cwd`. The root's start lines and stop state are dropped after its end ran. The payload
 carries no `reason` and no `transcript_path`, so the hook deletes the session's records and writes no session row.
 OpenCode publishes a root's delete event before it removes the root's children, so the root's records are deleted
 before its children stop, and a child's call that settles later can leave records under the root's id until the
@@ -362,8 +362,8 @@ else the plugin's own, else the service's, which exists whatever the call names.
 ### Built-in tools no gate names by a standard name
 
 OpenCode 2.4.1's built-in tools that have no Claude Code tool of the same job, by the name a hook receives.
-A gate pattern written with a standard name, such as `Read` or `Bash`, meets none of them: a gate that means one names
-it by OpenCode's own name. The leaf, `plugins/aidrian/lib/hosts/opencode-names.mjs`, maps every other built-in tool,
+A gate pattern written with a standard name, such as `Read` or `Bash`, meets none of them, and the bridge leaves them
+unrouted: a gate that names one by OpenCode's own name does not make the bridge route it. The leaf, `plugins/aidrian/lib/hosts/opencode-names.mjs`, maps every other built-in tool,
 and `test/opencode-names.test.mjs` fails when a tool 2.4.1 registers is in neither, in both, or when an entry here
 names no such tool. An entry that ends in `*` is a family.
 
@@ -402,7 +402,7 @@ through the `events` seam. None means no OpenCode hook or session read gives the
 | `session_id` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-bash-post.mjs`, `hook-write.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-post.mjs`, `hook-session-start.mjs`, `hook-prompt.mjs`, `hook-stop.mjs`, `hook-subagent-stop.mjs`, `hook-session-end.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `sessionID`, followed up its parents to the root session ([Session ids](#session-ids)) |
 | `agent_id` | `hook-agent-gates.mjs` and the guards it calls, `hook-bash.mjs` and its rules, `hook-bash-post.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-pre.mjs`, `hook-agent-post.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, `hook-session-start.mjs`, `hook-prompt.mjs`, `hook-subagent-stop.mjs`, `hook-session-end.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `sessionID`, when it is a child session's |
 | `agent_type` | `hook-agent-gates.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-subagent-stop.mjs` (its delivery check and stop row), `hook-agent-post.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | None: a tool event's `agent` names the agent a session runs, OpenCode's own `build` or `plan` among them, and no agent of this plugin is installed there. A child session's call carries `agent_id` alone, so the agent gates hold it to every `agents` entry, as the strictest subagent ([Agents](../config.md#agents)), once a route runs before a tool call; none does yet |
-| `cwd` | Every script but `hook-compact.mjs` | A tool event: a shell call's `workdir`, which no other tool's input is read for, `~` from the home folder, resolved by path from the session's folder, else the session's folder from a session read; on `execute.after`, a call whose folder neither names is skipped, as [Hooks](#hooks) says. Any other hook: the root session's folder, from its session read, and a child's `--subagent` start the child's own. `SessionEnd`: the root's last folder a read gave, since a deleted session is not read |
+| `cwd` | Every script but `hook-compact.mjs` | A tool event: a shell call's `workdir`, which no other tool's input is read for, `~` from the home folder, resolved by path from the session's folder, else the session's folder from a session read; on `execute.after`, a call whose folder neither names is skipped, as [Hooks](#hooks) says. Any other hook: the root session's folder, from its session read, and a child's `--subagent` start the child's own. `SessionEnd`: the root's last folder a finished walk gave, since a deleted session is not read |
 | `tool_name`, `raw_tool_name` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-pre.mjs`, `hook-agent-post.mjs`, `hook-ask.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `tool`, mapped by the adapter's `hookInput` through the name table the bridge picks its routes by: a built-in tool as the standard tool of its job, and an MCP tool as `mcp__<server>__<tool>` from `info` |
 | `permission_tool_name` | `hook-agent-gates.mjs` | None: the adapter sets none, as no OpenCode tool is known to run under another tool's permission rules |
 | `sandbox_escape` | `hook-agent-gates.mjs`, through its sandbox escape guard (`lib/confine-guard.mjs`) | None: OpenCode's shell tool input asks for no sandbox escape, and the adapter maps none |
@@ -431,18 +431,17 @@ through the `events` seam. None means no OpenCode hook or session read gives the
 - The bridge files a subagent's rows under the root session: it follows each session's `parentID` up to the root, at
   most 8 steps, and sends the root as `session_id` and the calling session as `agent_id`, as a subagent's rows land on
   Claude Code. A read counts as the session only when it gives an object whose `id` is the id asked for, as 2.4.1's
-  `Session.Info` always carries, so `{}` or an error object is no session. A read that fails, comes past the 2 s cap,
-  or gives no session, and a walk that runs out of its 8 steps, as on a cycle, stop where they are: the call is sent
-  with the last id reached as `session_id` and the calling session as `agent_id`, never as the root session's own
-  call, and that answer is not kept, so the next call reads again.
-  A kept root saves the walk alone: the calling session's folder is read on every call, and a kept root answers only a
-  call whose own read gave the session, so a call whose read fails is sent with `agent_id` even when its session's
-  root is kept, and the agent gates would judge it as the strictest subagent once a route runs before a tool call
-  ([Agents](../config.md#agents)); none does yet.
-  That call still carries the kept root as `session_id`, so a kept child's call keeps its root session's holds:
-  a root is kept only from a walk that reached its end for that same session, and a session's parent never changes.
-  A walk that ends at a session kept as a child, and a kept answer whose root was since kept as one, take that child's
-  root.
+  `Session.Info` always carries, so `{}` or an error object is no session.
+  The bridge reads a session's parents on each call, with its folder, and keeps each parent link a read gave, at most 256
+  before it forgets them all. A session a read once named a parent for stays a subagent for that setup.
+  A walk finishes at a session whose read names no parent and that holds no link, and that session is the root: the call
+  is the root session's own only when the walk finished without a step. A read that fails, comes past the 2 s cap, or
+  gives no session, a walk that runs out of its 8 steps, as on a cycle, and a walk that ends at a linked session are
+  unfinished. Such a call is sent with the id the kept links lead to as `session_id`, 8 of them at most, the calling
+  session's own id when it holds none, and the calling session as `agent_id`, never as the root session's own call, so a
+  child's call keeps its root session's holds, and the agent gates would judge it as the strictest subagent once a route
+  runs before a tool call ([Agents](../config.md#agents)); none does yet. A start, stop, prompt, or compaction runs
+  nothing for an unfinished walk.
 - A subagent's own shell names the child session in `OPENCODE_SESSION_ID`, so that command run there shows none of
   the root session's pull requests.
 - A command in an OpenCode that was itself started from a Claude Code or Codex shell reads the outer host's session:
@@ -472,7 +471,7 @@ Set it as `AIDRIAN_NODE` is set: `opencode service set env AIDRIAN_OPENCODE_TRAC
 | `off` | Once, at setup, when it found no Node, before `setup` | `node` |
 | `unregistered` | At setup, for each OpenCode hook that failed to register, and each route whose script is not on disk, before `setup` | The OpenCode hook, such as `execute.after`, with `script`, one line for each script it would have run (`create.before`, `context`, and `compaction` have no `script`), or `missing`, with the script not on disk at setup, whose route stays registered: each call checks again, as a `run` with `missing` until the script is restored |
 | `run` | Each time it ran a script, or found it gone | The exit code or signal, `timeout` when it killed the script at its time, a start error's code, such as `ENOENT`, or `missing`, a script not on disk when the call came, which it does not spawn, or gone when it exited 1, and it runs again on the first call after it is restored; each of the last two ends that call alone, and on a blocking route refuses a subagent's call |
-| `skip` | A call, or a session's start, stop, prompt, compaction, or end, it sent nothing for, and once at setup for a route list it could not read | `status` (after a call that did not complete), `command` (after a shell call whose `command` is no text), `session` (no session id, a session's end included), `cwd` (after a shell call whose `workdir` names no folder here, such as one on another machine, or whose session's folder is gone or could not be read while its `workdir` is neither absolute nor `~`, before a start, stop, prompt, or compaction route whose session's folder is not on disk, and at the end of a root whose last folder is not known or not on disk), `unguarded` (a tool whose name the leaf does not read, such as an MCP tool with no `info`, with `count`, how many such calls this setup has met), `read` (a session read that failed, before a start or a prompt or compaction route, and the end of a session the bridge cannot tell is a root ([Session end](#session-end))), `subagent` (a child session's idle, or one whose caller could not be read ([Session ids](#session-ids)), which runs no stop route, and a child session's end, which runs no `SessionEnd`), or `routes` (at setup: `routes.generated.json` is missing or no JSON list, so no tool hook is registered) |
+| `skip` | A call, or a session's start, stop, prompt, compaction, or end, it sent nothing for, and once at setup for a route list it could not read | `status` (after a call that did not complete), `command` (after a shell call whose `command` is no text), `session` (no session id, a session's end included), `cwd` (after a shell call whose `workdir` names no folder here, such as one on another machine, or whose session's folder is gone or could not be read while its `workdir` is neither absolute nor `~`, before a start, stop, prompt, or compaction route whose session's folder is not on disk, and at the end of a root whose last folder is not on disk), `unguarded` (a tool whose name the leaf does not read, such as an MCP tool with no `info`, with `count`, how many such calls this setup has met), `read` (a walk that did not finish ([Session ids](#session-ids)), before a start or a prompt or compaction route, and the end of a session the bridge cannot tell is a root ([Session end](#session-end))), `subagent` (a child session's idle, or one whose caller could not be read ([Session ids](#session-ids)), which runs no stop route, and a child session's end, which runs no `SessionEnd`), or `routes` (at setup: `routes.generated.json` is missing or no JSON list, so no tool hook is registered) |
 | `refuse` | A call a blocking route refused, after its `run` lines | `hook` (a script's exit 2), `rewrite` (two rewrites of the input that differ), `spawn` (a subagent's call whose script did not start), or `codemode` (a subagent's call in code mode) |
 | `send-back` | A session a stop route sent back, once the session admitted the message | `stop` |
 

@@ -516,7 +516,7 @@ test('a child session`s call carries the root as session_id and itself as agent_
   assert.deepEqual([sent(calls[0]).session_id, sent(calls[0]).agent_id], ['ses_root', 'ses_grandchild']);
   const reads = context.reads.length;
   await fire(shellEvent({ sessionID: 'ses_grandchild' }));
-  assert.deepEqual(context.reads.slice(reads), ['ses_grandchild'], 'the root is kept; only the calling session`s folder is read again');
+  assert.deepEqual(context.reads.slice(reads), ['ses_grandchild', 'ses_child', 'ses_root'], 'its parents are read again on every call');
   await fire(shellEvent({ sessionID: 'ses_root' }));
   assert.equal(Object.hasOwn(sent(calls[2]), 'agent_id'), false);
 
@@ -533,41 +533,60 @@ test('a child session`s call carries the root as session_id and itself as agent_
   assert.equal(sent(failing.calls.at(-1)).agent_id, 'ses_null');
 });
 
-test('the root cache forgets every answer once it holds 256, so the 257th session`s call makes the first read again', async () => {
+// Has every read of the sessions `ids` fail.
+function misread(context, ...ids) {
+  const { get } = context.session;
+  context.session.get = async (input) => { if (ids.includes(input.sessionID)) throw new Error('read'); return get(input); };
+}
+
+test('the kept links are cleared whole once the next would pass 256: an earlier child`s root is lost, the walker`s own kept', async () => {
   const sessions = { ses_top: {} };
   for (let n = 0; n <= 256; n += 1) sessions[`ses_kid${n}`] = { parentID: 'ses_top' };
   const context = fakeContext({ sessions });
   const { calls, fire } = await bridge({ context });
   for (let n = 0; n < 256; n += 1) await fire(shellEvent({ sessionID: `ses_kid${n}` }));
-  const reads = context.reads.length;
+  misread(context, 'ses_kid0');
   await fire(shellEvent({ sessionID: 'ses_kid0' }));
-  assert.deepEqual(context.reads.slice(reads), ['ses_kid0'], 'with 256 answers kept, the first`s root is still known');
+  assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_top', 'ses_kid0'], 'with 256 links kept, the first`s is still known');
   await fire(shellEvent({ sessionID: 'ses_kid256' }));
-  const cleared = context.reads.length;
   await fire(shellEvent({ sessionID: 'ses_kid0' }));
-  assert.deepEqual(context.reads.slice(cleared), ['ses_kid0', 'ses_top'], 'its chain is read again');
-  assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_top', 'ses_kid0']);
+  assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_kid0', 'ses_kid0'], 'its link is gone');
+  misread(context, 'ses_kid256');
+  await fire(shellEvent({ sessionID: 'ses_kid256' }));
+  assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_top', 'ses_kid256']);
 });
 
 // The bridge with the record-only shell route and the SessionEnd route, on ses_top, ses_mid with the parent `parent()` gives
-// on each read, and ses_low, a child of ses_mid; `topParent()` gives ses_top's parent. `prompt` fires the prompt hook, and
-// `last()` is the last call's [session_id, agent_id].
+// on each read, and ses_low, a child of ses_mid; `topParent()` gives ses_top's parent. `prompt` fires the prompt hook,
+// `last()` is the last call's [session_id, agent_id], and `skips()` each skip traced, [script, status].
 async function middleBridge(name, parent, topParent = () => undefined) {
   const stream = eventStream();
   const at = { location: { directory: PROJECT_DIR } };
   const kids = Object.fromEntries(Array.from({ length: 257 }, (_, n) => [`ses_kid${n}`, { parentID: 'ses_top', ...at }]));
   const sessions = { ses_top: () => ({ parentID: topParent(), ...at }), ses_mid: () => ({ parentID: parent(), ...at }), ses_low: { parentID: 'ses_mid', ...at }, ...kids };
   const context = fakeContext({ sessions, subscribe: () => stream.iterable });
+  const trace = path.join(ROOT, `trace-${name}.jsonl`);
   const events = { PostToolUse: EVENTS.PostToolUse, SessionEnd: EVENTS.SessionEnd, UserPromptSubmit: 'prompt' };
-  const { calls, fire } = await startBridge(name, { context, routes: [END_ROUTE, PROMPT_ROUTE], events });
+  const { calls, fire } = await startBridge(name, { context, routes: [END_ROUTE, PROMPT_ROUTE], events, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  const skips = () => traceLines(trace).filter((line) => line.step === 'skip').map(({ script, status }) => [script, status]);
   const call = (sessionID) => fire(shellEvent({ sessionID }));
   const remove = (sessionID) => stream.send([{ type: 'session.deleted', data: { sessionID } }]);
   const last = () => [sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id ?? null];
   const prompt = (sessionID) => context.hooks.prompt({ sessionID, messageID: 'msg_1', prompt: { text: 'x' }, delivery: 'steer' });
-  return { call, calls, context, last, prompt, remove };
+  return { call, calls, context, last, prompt, remove, skips };
 }
 
-test('a kept child stays a child when a later walk reads no parent for it, its walker goes on to its root, and its delete runs nothing', { timeout: 10_000 }, async () => {
+test('a session answered as a root is a subagent once its own read names a parent', async () => {
+  let parentID;
+  const { call, last } = await middleBridge('root-then-child', () => parentID);
+  await call('ses_mid');
+  assert.deepEqual(last(), ['ses_mid', null]);
+  parentID = 'ses_top';
+  await call('ses_mid');
+  assert.deepEqual(last(), ['ses_top', 'ses_mid']);
+});
+
+test('a linked child stays a child when a later read names no parent for it, its walker goes on to its root, and its delete runs nothing', { timeout: 10_000 }, async () => {
   for (const others of [0, 257]) {
     let parentID = 'ses_top';
     const { call, calls, last, remove } = await middleBridge(`kept-child-${others}`, () => parentID);
@@ -577,7 +596,7 @@ test('a kept child stays a child when a later walk reads no parent for it, its w
     assert.deepEqual(last(), ['ses_top', 'ses_low'], 'the grandchild is the top`s');
     await call('ses_mid');
     assert.deepEqual(last(), ['ses_top', 'ses_mid']);
-    // Past the 256 answers the child is forgotten, and its read of no parent left no folder for its end to run in.
+    // Past the 256 links the child is forgotten, and its read of no parent left no folder for its end to run in.
     for (let n = 0; n < others; n += 1) await call(`ses_kid${n}`);
     await remove('ses_mid');
     assert.deepEqual(ends(calls), [], `${others} others`);
@@ -593,30 +612,74 @@ test('a session a grandchild`s walk reached with no parent read, whose own call 
     parentID = 'ses_top';
     await call('ses_mid');
     assert.deepEqual(last(), ['ses_top', 'ses_mid']);
-    // The grandchild's kept answer goes on to the top, on a tool call and on a session hook.
+    // The grandchild goes on to the top, on a tool call and on a session hook.
     await call('ses_low');
     assert.deepEqual(last(), ['ses_top', 'ses_low'], 'a tool call');
     await prompt('ses_low');
     assert.deepEqual(last(), ['ses_top', 'ses_low'], 'a session hook');
     const { get } = context.session;
-    context.session.get = async (input) => { if (input.sessionID === 'ses_low') throw new Error('read'); return get(input); };
+    misread(context, 'ses_low');
     await call('ses_low');
     assert.deepEqual(last(), ['ses_top', 'ses_low'], 'a call whose read fails');
     context.session.get = get;
-    // Past the 256 answers the middle session is forgotten, and so is the folder kept while it read as a root.
+    // Past the 256 links the middle session is forgotten, and so is the folder kept while it read as a root.
     for (let n = 0; n < others; n += 1) await call(`ses_kid${n}`);
     await remove('ses_mid');
     assert.deepEqual(ends(calls), [], `${others} others`);
   }
 });
 
-test('a walk that ends at a session kept under the calling one sends the calling session as the root', async () => {
+test('a walk that fails above a learned link is sent under where the link leads, and the session hooks skip it', async () => {
+  const { call, calls, context, last, prompt, skips } = await middleBridge('link-above', () => 'ses_top');
+  await call('ses_low');
+  misread(context, 'ses_mid');
+  await call('ses_low');
+  assert.deepEqual(last(), ['ses_top', 'ses_low']);
+  const before = calls.length;
+  await prompt('ses_low');
+  assert.equal(calls.length, before);
+  assert.deepEqual(skips(), [['hook-prompt.mjs', 'read']]);
+  const unlearned = await middleBridge('no-link-above', () => 'ses_top');
+  misread(unlearned.context, 'ses_mid');
+  await unlearned.call('ses_low');
+  assert.deepEqual(unlearned.last(), ['ses_mid', 'ses_low'], 'with no link above, the last id a read named');
+});
+
+test('a walk that ends at a linked session is unfinished: a subagent`s call, no session hook, and no end', { timeout: 10_000 }, async () => {
   let [parentID, topParent] = ['ses_top', undefined];
-  const { call, last } = await middleBridge('own-root', () => parentID, () => topParent);
+  const { call, calls, last, prompt, remove, skips } = await middleBridge('ends-at-link', () => parentID, () => topParent);
   await call('ses_mid');
   [parentID, topParent] = [undefined, 'ses_mid'];
   await call('ses_top');
-  assert.deepEqual(last(), ['ses_top', null]);
+  assert.deepEqual(last(), ['ses_top', 'ses_top']);
+  const before = calls.length;
+  await prompt('ses_top');
+  assert.equal(calls.length, before);
+  await remove('ses_top');
+  assert.deepEqual(ends(calls), []);
+  assert.deepEqual(skips(), [['hook-prompt.mjs', 'read'], ['hook-session-end.mjs', 'subagent']]);
+});
+
+test('a walk that meets the 256-link bound loses none of its own links', async () => {
+  for (const links of [254, 255, 256]) {
+    const { call, context, last } = await middleBridge(`links-${links}`, () => 'ses_top');
+    for (let n = 0; n < links; n += 1) await call(`ses_kid${n}`);
+    await call('ses_low');
+    misread(context, 'ses_low', 'ses_mid', 'ses_kid0');
+    for (const sessionID of ['ses_low', 'ses_mid']) {
+      await call(sessionID);
+      assert.deepEqual(last(), ['ses_top', sessionID], `${links} links`);
+    }
+    await call('ses_kid0');
+    assert.deepEqual(last(), [links === 254 ? 'ses_top' : 'ses_kid0', 'ses_kid0'], `${links} links`);
+  }
+});
+
+test('a session hook makes one walk, and reads the root once', async () => {
+  const { context, last, prompt } = await middleBridge('one-walk', () => 'ses_top');
+  await prompt('ses_low');
+  assert.deepEqual(last(), ['ses_top', 'ses_low']);
+  assert.deepEqual(context.reads, ['ses_low', 'ses_mid', 'ses_top']);
 });
 
 test('a failed parent read is not kept: the next call of that session reads again and finds its root', async () => {
@@ -633,7 +696,7 @@ test('a failed parent read is not kept: the next call of that session reads agai
 });
 
 // The ways a session read fails, each the value the fake's read gives: a throw, no object, and a read that never settles.
-const MISREADS = Object.freeze({ rejects: () => new Error('read failed'), 'gives none': () => null, 'comes late': () => new Promise(() => {}) });
+const MISREADS = Object.freeze({ rejects: () => new Error('read failed'), 'gives none': () => null, 'gives another session': () => ({ id: 'ses_other' }), 'comes late': () => new Promise(() => {}) });
 // Runs `fire` and ends its session reads at their cap, once the first read of it started.
 async function capped(t, context, fire) {
   const before = context.reads.length;
@@ -670,7 +733,7 @@ test('a kept root answers only a call whose own read gave the session: one that 
     await capped(t, stopContext, () => stop.idle('ses_main'));
     assert.equal(stop.calls.length, 1, `${name}: no Stop route`);
   }
-  assert.deepEqual(traceLines(trace).filter((line) => line.step === 'skip').map(({ script, status }) => [script, status]), Array(3).fill(['hook-stop.mjs', 'subagent']));
+  assert.deepEqual(traceLines(trace).filter((line) => line.step === 'skip').map(({ script, status }) => [script, status]), Array(4).fill(['hook-stop.mjs', 'subagent']));
 });
 
 test('a kept child`s call whose own read fails, comes late, or gives none keeps its kept root as session_id and itself as agent_id', { timeout: 10_000 }, async (t) => {
@@ -685,10 +748,10 @@ test('a kept child`s call whose own read fails, comes late, or gives none keeps 
     await capped(t, context, () => fire(shellEvent({ sessionID: 'ses_kid' })));
     assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_top', 'ses_kid'], name);
   }
-  assert.deepEqual(context.reads, ['ses_kid', 'ses_top', 'ses_kid', 'ses_kid', 'ses_kid'], 'a failed read walks no parent: the kept root answers');
+  assert.deepEqual(context.reads, ['ses_kid', 'ses_top', 'ses_kid', 'ses_kid', 'ses_kid', 'ses_kid'], 'a failed read walks no parent: the kept link answers');
 });
 
-test('a read that gives no session of the id asked for, {} or another id`s, on a child`s first call or mid-walk, sends agent_id and is not kept', async () => {
+test('a read that gives no session of the id asked for, {} or another id`s, on a child`s first call or mid-walk, sends agent_id, and the next call reads again', async () => {
   const NOT_SESSIONS = Object.freeze({ 'an empty object': () => asGiven({}), 'another id`s session': () => ({ id: 'ses_other' }), 'an error object': () => asGiven({ error: 'not found' }) });
   for (const [name, misread] of Object.entries(NOT_SESSIONS)) {
     let first = misread;
@@ -706,7 +769,7 @@ test('a read that gives no session of the id asked for, {} or another id`s, on a
     middle = () => ({ parentID: 'ses_top' });
     await walked.fire(shellEvent({ sessionID: 'ses_kid' }));
     assert.deepEqual(walked.calls.map((call) => [sent(call).session_id, sent(call).agent_id ?? null]), [['ses_mid', 'ses_kid'], ['ses_top', 'ses_kid']], `mid-walk, ${name}`);
-    assert.deepEqual(walk.reads, ['ses_kid', 'ses_mid', 'ses_kid', 'ses_mid', 'ses_top'], `mid-walk, ${name}: the stopped walk is not kept`);
+    assert.deepEqual(walk.reads, ['ses_kid', 'ses_mid', 'ses_kid', 'ses_mid', 'ses_top'], `mid-walk, ${name}: the next call walks again`);
   }
 });
 
@@ -753,7 +816,7 @@ test(`the reads have their own ${READ_MS} ms cap, whatever the routes' timeouts,
   assert.deepEqual(spawn.calls[0].killed, ['SIGKILL'], 'killed at 5000 ms after its spawn');
 });
 
-test('the parent walk stops at 8 reads, on a chain longer than that and on a cycle, and sends the call as a subagent`s, not kept', async () => {
+test('the parent walk stops at 8 reads, on a chain longer than that and on a cycle, and sends the call as a subagent`s, on every call', async () => {
   const chain = Object.fromEntries(Array.from({ length: 20 }, (_, n) => [`ses_${n}`, { parentID: `ses_${n + 1}` }]));
   const cycle = { ses_a: { parentID: 'ses_b' }, ses_b: { parentID: 'ses_a' } };
   for (const [sessions, start, root] of [[chain, 'ses_0', 'ses_8'], [cycle, 'ses_a', 'ses_a']]) {
@@ -763,7 +826,7 @@ test('the parent walk stops at 8 reads, on a chain longer than that and on a cyc
     assert.equal(context.reads.length, 8);
     assert.deepEqual([sent(calls[0]).session_id, sent(calls[0]).agent_id], [root, start], start);
     await fire(shellEvent({ sessionID: start }));
-    assert.equal(context.reads.length, 16, `${start}: a walk out of steps is not kept`);
+    assert.equal(context.reads.length, 16, `${start}: the next call walks again`);
   }
 });
 
@@ -2107,7 +2170,7 @@ test('a start that fails is traced and never repeated; a read that fails runs no
     ['run', 'hook-session-start.mjs', 1], ['skip', 'hook-session-start.mjs', 'cwd'], ['run', 'hook-session-start.mjs', 1],
   ]);
 
-  // A child whose own walk was kept, and whose root's read then fails: the root's start is not given up for good.
+  // A child whose walk fails at its root's read: the root's start is not given up for good.
   readFails = false;
   const kept = fakeContext({ sessions });
   const kid = await startBridge('start-kept-child', { context: kept });
@@ -2115,11 +2178,11 @@ test('a start that fails is traced and never repeated; a read that fails runs no
   let reads = 0;
   kept.session.get = async (input) => {
     if (input.sessionID === 'ses_flaky') reads += 1;
-    if (input.sessionID === 'ses_flaky' && reads === 2) throw new Error('read');
+    if (input.sessionID === 'ses_flaky' && reads === 1) throw new Error('read');
     return rootReads(input);
   };
   await kept.hooks.context(request('ses_kid'));
-  assert.equal(kid.calls.length, 0, 'the root`s folder was not read');
+  assert.equal(kid.calls.length, 0, 'the root was not read');
   await kept.hooks.context(request('ses_kid'));
   assert.deepEqual(ran(kid.calls), [['hook-session-start.mjs'], ['hook-session-start.mjs', '--subagent']]);
 });

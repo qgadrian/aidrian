@@ -29,10 +29,10 @@
 // The stop path keeps `stop_hook_active` for each session: true once a Stop route sent that session back with a
 // `session.synthetic` message the session admitted, and dropped at the session's next idle, which reads it, and on its
 // `session.deleted` event, which also drops its start lines, and which the bridge listens for once it routes a start
-// or SessionEnd, or registered the idle hook. That event runs SessionEnd for a root session alone, known as one by the
-// roots or the root folders the bridge kept, in its last known folder, before the root's state is dropped; a child's end, a session whose
-// root-ness the bridge cannot tell, and an archived session run none (call.mjs endCall). This state is one setup's:
-// OpenCode 2.4.1 runs setup once for each Location, and again when it loads the plugin anew.
+// or SessionEnd, or registered the idle hook. That event runs SessionEnd for a root session alone, one with a folder the
+// bridge kept from a finished walk and no parent link, in that folder, before the root's state is dropped; a child's end,
+// a session whose root-ness the bridge cannot tell, and an archived session run none (call.mjs endCall). This state is one
+// setup's: OpenCode 2.4.1 runs setup once for each Location, and again when it loads the plugin anew.
 //
 // With AIDRIAN_OPENCODE_TRACE naming an absolute file, it appends one JSON line a step, { at, step, script?, status?,
 // count? }: `setup` once, `off` once at setup when it found no Node, `unregistered` for a hook OpenCode refused and for a
@@ -66,7 +66,7 @@ const IDLE_HOOK = 'experimental.idle';
 const AFTER_HOOK = 'execute.after';
 // The OpenCode hooks a call of a tool runs; every other hook of EVENTS is a session hook.
 const TOOL_HOOKS = new Set([BLOCKING_HOOK, AFTER_HOOK]);
-// How many calls' PreToolUse contexts the bridge keeps at most before it forgets them all, as the roots map does.
+// How many calls' PreToolUse contexts the bridge keeps at most before it forgets them all, as the map of parent links does.
 export const CONTEXTS_MAX = 256;
 // The session hooks the plugin's text reaches the model on, registered after the others (registerAll).
 export const SESSION_HOOKS = Object.freeze(['context', 'compaction']);

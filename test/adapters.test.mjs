@@ -12,7 +12,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
+import { gateDenial, nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
 import { CONTINUE_ROUTES } from '../plugins/aidrian/lib/config-schema.mjs';
@@ -389,7 +389,8 @@ test('a raw_tool_name in a Claude Code or Codex payload never changes how its fi
 test('a bridge host`s routes are its generated routes of its events that fire on a name its leaf returns', () => {
   assert.deepEqual(ROUTES.get('opencode').map((route) => [route.event, route.script]),
     [['SessionStart', 'hook-session-start.mjs'], ['SubagentStart', 'hook-session-start.mjs'],
-      ['PostToolUse', 'hook-markdown-wrap.mjs'], ['PostToolUse', 'hook-agent-post.mjs'], ['PostToolUse', 'hook-tracker-post.mjs'], ['PostToolUse', 'hook-bash-post.mjs']]);
+      ['PostToolUse', 'hook-markdown-wrap.mjs'], ['PostToolUse', 'hook-agent-post.mjs'], ['PostToolUse', 'hook-tracker-post.mjs'], ['PostToolUse', 'hook-bash-post.mjs'],
+      ['SessionEnd', 'hook-session-end.mjs']]);
   assert.equal(routeFires('^(?:Edit|Write)$', 'edit'), false, 'a matcher fires on the standard name alone, never on OpenCode`s own');
   assert.equal(routeFires(null, 'Bash'), false, 'a route of an event with no matcher fires on no tool');
   assert.equal(routeFires('*', 'Bash'), true);
@@ -488,6 +489,52 @@ test('an unknown host still normalises what a known one sends, so a detection ca
   for (const host of HOSTS.filter((each) => delivers(each, 'hook-tracker-pre.mjs'))) {
     const { pre, standard } = recorded(host);
     assert.equal(UNKNOWN_HOST.hookInput(pre).tool_name, standard.write);
+  }
+});
+
+// Every tool call payload a host's fixtures record, as a PreToolUse call with no agent fields: { host, file, raw, env },
+// where `raw` is what the host sends and `env` its hook environment. A fixture's payloads are its `pre` and `post`, and
+// each entry that names a tool on top of its `pre`, as a forge fixture's calls do.
+function recordedCalls() {
+  const dir = path.join(ROOT, 'test/fixtures/hosts');
+  return readdirSync(dir).flatMap((id) => readdirSync(path.join(dir, id)).filter((file) => file.endsWith('.json')).flatMap((file) => {
+    const data = JSON.parse(readFileSync(path.join(dir, id, file), 'utf8'));
+    const calls = Object.values(data).filter((value) => typeof value?.tool_name === 'string').map((value) => ({ ...data.pre, ...value }));
+    return calls.map(({ tool_response: _response, agent_id: _id, agent_type: _type, ...call }) => {
+      const raw = { ...call, hook_event_name: 'PreToolUse' };
+      return { host: detectHost({ env: data.env, input: raw }), file: `${id}/${file}`, raw, env: data.env };
+    });
+  }));
+}
+
+test('every host\'s recorded tool calls meet the strictest-subagent rule with an agent_id and no agent_type, and their own entries otherwise', () => {
+  const settings = (agents) => ({ agents, names: { human: 'the Human' } });
+  const paths = { config: '.aidrian/config.json', local: '.aidrian.local.json' };
+  const verdict = (agents, input) => gateDenial(input, settings(agents), paths)?.match ?? null;
+  const calls = recordedCalls();
+  assert.deepEqual([...new Set(calls.map(({ host }) => host.id))].sort(), HOSTS.map((host) => host.id).sort(), 'every shipped host has a recorded call');
+  for (const { host, file, raw, env } of calls) {
+    // The identity fields go in as the host sends them, so each adapter's reading of them is what the gate judges.
+    const main = normalizeHookInput(raw, env);
+    const unnamed = normalizeHookInput({ ...raw, agent_id: 'child-1' }, env);
+    const named = normalizeHookInput({ ...raw, agent_id: 'child-1', agent_type: `${host.pluginAgentPrefix}reviewer` }, env);
+    const tool = main.tool_name;
+    const label = `${file}: ${tool}`;
+    // The caller's own entry, and `*`, which names every caller.
+    assert.equal(verdict({ reviewer: { deny: [tool] } }, named), `agents.reviewer.deny has "${tool}"`, label);
+    assert.equal(verdict({ '*': { deny: [tool] } }, unnamed), `agents.*.deny has "${tool}"`, label);
+    // Another entry's deny: main's, which a named subagent never meets.
+    const mainDeny = { main: { deny: [tool] } };
+    assert.equal(verdict(mainDeny, unnamed), `agents.main.deny has "${tool}"`, label);
+    assert.equal(verdict(mainDeny, named), null, label);
+    assert.equal(verdict(mainDeny, main), `agents.main.deny has "${tool}"`, label);
+    // Another entry's allow list that lacks the tool, beside the caller's own that has it.
+    const lists = { explorer: { allow: ['Read'] }, reviewer: { allow: [tool] } };
+    assert.equal(verdict(lists, unnamed), 'agents.explorer.allow does not list it', label);
+    assert.equal(verdict(lists, named), null, label);
+    assert.equal(verdict(lists, main), null, label);
+    // Every list allows it, and no entry denies it.
+    assert.equal(verdict({ explorer: { allow: [tool] }, reviewer: { allow: [tool] } }, unnamed), null, label);
   }
 });
 

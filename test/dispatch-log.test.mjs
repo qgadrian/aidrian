@@ -8,7 +8,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { coverage, coverageLines } from '../plugins/aidrian/lib/dispatch-log.mjs';
-import { claimedPaths, dispatchRow, sessionRow } from '../plugins/aidrian/lib/dispatch-rows.mjs';
+import { claimedPaths, denyRow, dispatchRow, sessionRow, stopAgent } from '../plugins/aidrian/lib/dispatch-rows.mjs';
 import { formatReport, summarize } from '../plugins/aidrian/lib/report-agents.mjs';
 import { formatDocs, summarizeDocs } from '../plugins/aidrian/lib/report-docs.mjs';
 import { parseSince } from '../plugins/aidrian/lib/report.mjs';
@@ -76,6 +76,22 @@ test('a dispatch row keeps names, counts, and a short description, and never the
   assert.doesNotMatch(JSON.stringify(row), /SECRET/);
   const background = dispatchRow({ tool_input: { run_in_background: true }, tool_response: { status: 'async_launched' }, agent_type: 'planner' }, { env: {}, now: NOW });
   assert.deepEqual([background.background, background.dispatcher, background.agent_type, background.duration_ms], [true, 'planner', 'general-purpose', null]);
+});
+
+test('a subagent whose call names no agent is general-purpose on a dispatch, block, and stop row, never main or the session`s --agent', () => {
+  const env = { CLAUDE_CODE_AGENT: 'orchestrator' };
+  const call = { session_id: 's1', agent_id: 'child-1', tool_name: 'Agent', tool_input: { subagent_type: 'Explore' }, tool_response: {} };
+  for (const type of [undefined, null, '']) {
+    const input = { ...call, agent_type: type };
+    assert.equal(dispatchRow(input, { env, now: NOW }).dispatcher, 'general-purpose', String(type));
+    assert.equal(denyRow(input, 'agent-gates', 'x', { env, now: NOW }).agent_type, 'general-purpose', String(type));
+    assert.equal(stopAgent(input).agent_type, 'general-purpose', String(type));
+  }
+  // A named subagent keeps its name; the main thread, with no agent_id, is the session's --agent, else main.
+  assert.equal(denyRow({ ...call, agent_type: 'aidrian:explorer' }, 'agent-gates', 'x', { env, now: NOW }).agent_type, 'aidrian:explorer');
+  const { agent_id: _id, ...mainCall } = call;
+  assert.equal(dispatchRow(mainCall, { env, now: NOW }).dispatcher, 'orchestrator');
+  assert.equal(denyRow(mainCall, 'agent-gates', 'x', { env: {}, now: NOW }).agent_type, 'main');
 });
 
 test('claimedPaths finds .md and .json paths with a slash, and skips URLs, templates, and bare names', () => {

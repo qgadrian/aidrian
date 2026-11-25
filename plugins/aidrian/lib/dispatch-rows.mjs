@@ -22,8 +22,15 @@ const REASON_CHARS = 120;
 
 const text = (value, limit = Infinity) => (typeof value === 'string' && value !== '' ? value.slice(0, limit) : null);
 
-// PostToolUse on the Agent tool. `dispatcher` is the agent that dispatched: the hook's own agent_type inside a subagent,
-// else the session's --agent, else the main session.
+// What a row calls a subagent whose call names no agent.
+const GENERAL = 'general-purpose';
+
+// The agent a hook payload's call comes from, as a row names it: its `agent_type`; for a subagent's call with none,
+// one with an `agent_id`, `general-purpose`, as a `stop` row names it (stopAgent); for the main thread's, the session's
+// --agent, else `main`. A subagent's call never takes the session's --agent, which names the main thread alone.
+const callerAgent = (input, env) => text(input.agent_type) ?? (text(input.agent_id) ? GENERAL : text(sessionIdentity(env).agent) ?? 'main');
+
+// PostToolUse on the Agent tool. `dispatcher` is the agent that dispatched (callerAgent).
 export function dispatchRow(input, { env = process.env, now = Date.now() } = {}) {
   const toolInput = input.tool_input ?? {};
   const response = typeof input.tool_response === 'object' && input.tool_response !== null ? input.tool_response : {};
@@ -31,7 +38,7 @@ export function dispatchRow(input, { env = process.env, now = Date.now() } = {})
     event: 'dispatch',
     ts: stamp(now),
     session_id: text(input.session_id),
-    dispatcher: text(input.agent_type) ?? text(sessionIdentity(env).agent) ?? 'main',
+    dispatcher: callerAgent(input, env),
     agent_id: text(response.agentId),
     agent_type: text(toolInput.subagent_type) ?? 'general-purpose',
     name: text(toolInput.name),
@@ -99,7 +106,7 @@ export function wakingChildren(input, children, { env = process.env } = {}) {
 
 // Which subagent stopped, as its `stop` row names it: { session_id, agent_id, agent_type }.
 export function stopAgent(input) {
-  return { session_id: text(input.session_id), agent_id: text(input.agent_id), agent_type: text(input.agent_type) ?? 'general-purpose' };
+  return { session_id: text(input.session_id), agent_id: text(input.agent_id), agent_type: text(input.agent_type) ?? GENERAL };
 }
 
 // A block by one of the plugin's own hooks (lib/hook-deny.mjs): which rule, on which tool, for which agent, and `match`,
@@ -112,7 +119,7 @@ export function denyRow(input, rule, match, { env = process.env, now = Date.now(
     session_id: text(input.session_id),
     rule,
     tool: text(input.tool_name),
-    agent_type: text(input.agent_type) ?? text(sessionIdentity(env).agent) ?? 'main',
+    agent_type: callerAgent(input, env),
     agent_id: text(input.agent_id),
     reason: text(match, REASON_CHARS),
   };

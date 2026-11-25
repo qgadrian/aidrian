@@ -174,6 +174,93 @@ test('* applies to every caller; main to the main session, also one started with
   assert.match(verdict(agents, sessionAgent('Grep')), /agents\.explorer\.deny/);
 });
 
+// A subagent whose call names no agent: `agent_id` and no `agent_type`. No gate can tell which entry is its own, so it
+// is the strictest subagent: every entry's deny and every entry's allow list hold it (strictestSubagent).
+const unnamedCall = (tool, toolInput = {}) => ({ tool_name: tool, tool_input: toolInput, agent_id: 'a5f0c1' });
+const STRICTEST = /; the call names no agent, so it is held to the gates of every agents entry/u;
+
+test('a subagent call that names no agent meets the deny of every agents entry, main and each agent\'s included', () => {
+  const agents = { '*': { deny: ['WebSearch'] }, main: { deny: ['Write'] }, explorer: { deny: ['Grep'] }, 'aidrian:architect': { deny: ['WebFetch'] } };
+  assert.match(verdict(agents, unnamedCall('WebSearch')), /^aidrian: WebSearch is blocked for a subagent in this project: agents\.\*\.deny has "WebSearch"/u);
+  assert.doesNotMatch(verdict(agents, unnamedCall('WebSearch')), STRICTEST, 'the * entry names every caller');
+  for (const [tool, entry] of [['Write', 'main'], ['Grep', 'explorer'], ['WebFetch', 'aidrian:architect']]) {
+    const reason = verdict(agents, unnamedCall(tool));
+    assert.match(reason, new RegExp(`for a subagent in this project: agents\\.${entry.replaceAll('.', '\\.')}\\.deny has "${tool}"`, 'u'), tool);
+    assert.match(reason, STRICTEST, tool);
+  }
+  assert.equal(verdict(agents, unnamedCall('Read')), null, 'a tool no entry denies runs');
+  assert.match(verdict({ reviewer: { allow: ['Bash'] }, tester: { deny: ['Bash(git push)'] } }, unnamedCall('Bash', bash('git push'))), /agents\.tester\.deny has "Bash\(git push\)"/u, 'a deny wins over another entry`s allow');
+});
+
+test('a subagent call that names no agent runs only what every allow list allows', () => {
+  const agents = { explorer: { allow: ['Read', 'Grep'] }, reviewer: { allow: ['Read', 'Edit'] } };
+  assert.equal(verdict(agents, unnamedCall('Read')), null);
+  assert.match(verdict(agents, unnamedCall('Edit')), /agents\.explorer\.allow does not list it \([^)]*\); the call names no agent/u, 'another entry`s list has it');
+  assert.match(verdict(agents, unnamedCall('Grep')), /agents\.reviewer\.allow does not list it/u);
+  assert.match(verdict({ ...agents, main: { allow: ['Read', 'Grep', 'Edit', 'Bash'] } }, unnamedCall('Bash', bash('ls'))), /agents\.explorer\.allow does not list it/u);
+  // Bash(prefix) lists: every command must start with a prefix that every list allows.
+  const shells = { tester: { allow: ['Bash(git status)', 'Bash(git log)'] }, reader: { allow: ['Bash(git status)'] } };
+  assert.equal(verdict(shells, unnamedCall('Bash', bash('git status'))), null);
+  assert.match(verdict(shells, unnamedCall('Bash', bash('git log'))), /agents\.reader\.allow does not list it/u);
+  assert.match(verdict({ quiet: { allow: [] } }, unnamedCall('Read')), /agents\.quiet\.allow does not list it/u, 'an empty list allows nothing');
+});
+
+test('with no allow list in any entry, a subagent call that names no agent runs unless a deny matches', () => {
+  assert.equal(verdict({}, unnamedCall('Bash', bash('git push'))), null, 'no gates');
+  const agents = { main: { deny: ['Bash(git push)'] }, explorer: { deny: ['WebFetch'] } };
+  for (const tool of ['Edit', 'Write', 'mcp__linear__save_issue']) assert.equal(verdict(agents, unnamedCall(tool)), null, tool);
+  assert.equal(verdict(agents, unnamedCall('Bash', bash('git status'))), null);
+  assert.match(verdict(agents, unnamedCall('Bash', bash('git status && git push'))), /agents\.main\.deny has "Bash\(git push\)"/u);
+});
+
+test('a subagent call that names no agent meets every entry\'s MCP patterns, by name and by a name ending in *', () => {
+  const agents = { explorer: { allow: ['Read', 'mcp__linear__*'] }, reviewer: { allow: ['Read', 'mcp__linear__get_issue'] }, scribe: { deny: ['mcp__github__*'] } };
+  assert.equal(verdict(agents, unnamedCall('mcp__linear__get_issue')), null, 'every list allows it');
+  assert.match(verdict(agents, unnamedCall('mcp__linear__save_issue')), /agents\.reviewer\.allow does not list it/u, 'the * of one list does not lift another');
+  assert.match(verdict({ scribe: { deny: ['mcp__github__*'] } }, unnamedCall('mcp__github__merge_pull_request')), /agents\.scribe\.deny has "mcp__github__\*"/u);
+  assert.equal(verdict({ scribe: { deny: ['mcp__github__*'] } }, unnamedCall('mcp__linear__get_issue')), null);
+  assert.match(verdict({ sealed: { deny: ['*'] } }, unnamedCall('mcp__linear__get_issue')), /agents\.sealed\.deny has "\*"/u);
+});
+
+test('an agent_type no agents key can name, such as a missing, empty, padded, or non-string one, names no agent; an agent_id that is no non-empty string is no subagent', () => {
+  const agents = { main: { deny: ['Write'] }, explorer: { deny: ['Grep'] } };
+  // A key is a name of letters, digits, `_`, `.`, `:`, and `-` (agentNameProblem), so a type with any other character names none.
+  for (const type of [undefined, null, '', '  ', ' explorer ', 'aidrian:explorer\n', 'aidrian:explorer​', 'aidrian/explorer', 7, {}, ['explorer']]) {
+    const call = { ...unnamedCall('Grep'), agent_type: type };
+    assert.match(verdict(agents, call), /agents\.explorer\.deny has "Grep"/u, JSON.stringify(type));
+    assert.match(verdict(agents, { ...call, tool_name: 'Write' }), /for a subagent in this project: agents\.main\.deny has "Write"/u, JSON.stringify(type));
+  }
+  // Every guard reads an agent_id that is no non-empty string as the main session's; so does the gate.
+  for (const id of [undefined, null, '', 7]) {
+    const call = { tool_name: 'Grep', tool_input: {}, agent_id: id };
+    assert.equal(verdict(agents, call), null, `${id}: the main session meets no agent's entry`);
+    assert.match(verdict(agents, { ...call, tool_name: 'Write' }), /for the main session in this project: agents\.main\.deny has "Write"/u, String(id));
+  }
+});
+
+test('a named subagent and the main session keep their own entries alone; a session started as an agent keeps both', () => {
+  const agents = { '*': { deny: ['WebSearch'] }, main: { deny: ['Write'] }, explorer: { allow: ['Read', 'Grep'] }, reviewer: { deny: ['Grep'] } };
+  const named = (tool) => agentCall('aidrian:reviewer', tool);
+  assert.equal(verdict(agents, named('Write')), null, 'not main');
+  assert.equal(verdict(agents, named('Edit')), null, 'not explorer');
+  assert.match(verdict(agents, named('Grep')), /agents\.reviewer\.deny/u);
+  assert.doesNotMatch(verdict(agents, named('Grep')), STRICTEST);
+  assert.equal(verdict(agents, mainCall('Grep')), null, 'the main session is not reviewer');
+  assert.equal(verdict(agents, mainCall('Edit')), null, 'nor explorer');
+  assert.match(verdict(agents, mainCall('Write')), /agents\.main\.deny/u);
+  const sessionAgent = { tool_name: 'Edit', tool_input: {}, agent_type: 'aidrian:explorer' };
+  assert.match(verdict(agents, sessionAgent), /agents\.explorer\.allow does not list it/u);
+  assert.doesNotMatch(verdict(agents, sessionAgent), STRICTEST);
+  assert.equal(verdict(agents, { ...sessionAgent, tool_name: 'Grep' }), null, 'not reviewer');
+});
+
+test('the gates a session started with hold a subagent call that names no agent by every entry too', () => {
+  const started = { explorer: { deny: ['Bash(git push)'] } };
+  const reason = gateDenial(unnamedCall('Bash', bash('git push origin task')), { agents: started, names }, paths, { started: true })?.reason ?? '';
+  assert.match(reason, /agents\.explorer\.deny has "Bash\(git push\)", as the project set it when this session started/u);
+  assert.match(reason, STRICTEST);
+});
+
 test('an agent answers to its full name, its short name, and Codex`s aidrian- role name; a full key names one plugin', () => {
   const agents = { explorer: { deny: ['Read'] }, 'aidrian:architect': { deny: ['Read'] }, 'local-probe': { deny: ['Read'] } };
   for (const type of ['aidrian:explorer', 'other:explorer', 'explorer', 'aidrian-explorer', 'aidrian:architect', 'local-probe']) {

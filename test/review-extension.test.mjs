@@ -777,7 +777,7 @@ test('aidrian report reviews counts each check at the cap once, by its last deci
   const summary = extensionSummary(rows, { sinceMs: Date.parse(at(1)) });
   assert.deepEqual(summary, {
     checks: 6, over_flags: 3, granted_over_flags: 1, signals: { looping: 3, bloating: 1, unreadable: 1, drifting: 1 },
-    stopped_by_signals: 2, stopped_by_judge: 1, stopped_by_ceiling: 1,
+    stopped_by_signals: 2, stopped_by_judge: 1, stopped_by_ceiling: 1, stopped_by_unattended: 0,
     granted: 1, granted_by_human: 1, denied: 0, waiting: 1,
   });
   assert.equal(formatExtensions(summary, { since: '7d' }),
@@ -785,6 +785,10 @@ test('aidrian report reviews counts each check at the cap once, by its last deci
   const fresh = extensionSummary([row(8, 3, 'granted', 'judge', 1, ['bloating'])]);
   assert.equal(formatExtensions(fresh),
     'Extra rounds: 1 check at the round cap; 1 with red flags (bloating 1), 1 granted over them; 0 stopped by the judge, 0 at the ceiling; 1 granted (0 by the Human), 0 denied, 0 waiting', 'no old mechanical stop, no signals stop count');
+  const unattended = extensionSummary([row(9, 3, 'judging', null, 1, ['looping']), row(9, 3, 'stopped', 'unattended', 2, ['looping'])]);
+  assert.equal(unattended.stopped_by_unattended, 1);
+  assert.equal(formatExtensions(unattended),
+    'Extra rounds: 1 check at the round cap; 1 with red flags (looping 1), 0 granted over them; 1 stopped by the unattended rule, 0 stopped by the judge, 0 at the ceiling; 0 granted (0 by the Human), 0 denied, 0 waiting', 'a red flag the unattended rule stopped');
   assert.equal(formatExtensions(extensionSummary([])), null, 'no check, no line');
 });
 

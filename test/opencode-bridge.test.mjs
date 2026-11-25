@@ -818,7 +818,7 @@ test('a route whose script is not a file in the scripts folder is traced missing
   assert.deepEqual(Object.keys(context.hooks), ['execute.after', 'create.before'], 'its route stays registered');
   const lost = [...new Set(GENERATED.filter((route) => route.event === 'PostToolUse').map((route) => route.script))];
   assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [...lost.map((script) => ({ step: 'unregistered', script, status: 'missing' })), { step: 'setup', status: 1 }]);
-  assert.deepEqual(notices, [`aidrian's hook scripts not on disk at setup run nothing until restored, as each call checks again, and a subagent's call one of them guards is refused until then: ${lost.join(', ')}.`]);
+  assert.deepEqual(notices, [`aidrian's hook scripts not on disk at setup run nothing until restored, as each call checks again, and a subagent's call one of them guards is refused when the call finds it missing: ${lost.join(', ')}.`]);
   const event = shellEvent();
   const before = structuredClone(event);
   assert.equal(await fire(event), undefined);

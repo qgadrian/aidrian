@@ -159,7 +159,7 @@ function routesOf(file, scripts, events, trace, notices) {
   const routes = (read ?? []).filter((route) => Object.hasOwn(events, route.event)).map((route) => ({ ...route, file: path.join(scripts, route.script) }));
   const missing = [...new Set(routes.filter((route) => !isFile(route.file)).map((route) => route.script))];
   for (const script of missing) trace('unregistered', { script, status: 'missing' });
-  if (missing.length > 0) notices.push(`aidrian's hook scripts not on disk at setup run nothing until restored, as each call checks again, and a subagent's call one of them guards is refused until then: ${missing.join(', ')}.`);
+  if (missing.length > 0) notices.push(`aidrian's hook scripts not on disk at setup run nothing until restored, as each call checks again, and a subagent's call one of them guards is refused when the call finds it missing: ${missing.join(', ')}.`);
   return routes;
 }
 

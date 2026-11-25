@@ -96,7 +96,8 @@ To turn it off for one project while the global configuration names it, add `"-a
 - Restart the service after changing either, so it runs with the new value: a bridge that found no Node at setup runs
   no hook for the life of its process; it keeps a notice saying so, which no hook of this version shows the session,
   so the trace's `off` line is the sign ([Troubleshooting](#troubleshooting)). A script that fails to start later,
-  or is gone from disk, fails that call alone, and on a blocking route refuses a subagent's call ([Hooks](#hooks)).
+  or is not on disk when its call checks it, fails that call alone, and on a blocking route refuses a subagent's call
+  ([Hooks](#hooks)).
 - `AIDRIAN_NODE` reaches only the bridge's hook scripts. The `aidrian` and `aidrian-knowledge` commands run `node`
   from the shell's `PATH`, so a shell where only `AIDRIAN_NODE` names Node records the ledger through its hooks while
   `aidrian session snapshot` in that shell fails: put Node 22 on the shell's `PATH` as well.
@@ -165,11 +166,12 @@ the bound carries no text: an exit 2 on a blocking route still refuses, with
 A `PostToolUse` answer gives no block, and the call's result stays as it was. Only an `execute.before` callback ever
 rejects, and only for a refusal; every other callback resolves whatever fails inside it. A hook that cannot run, by a
 bridge timeout or crash, lets the call run, as a hook error does on Claude Code, with one exception: on a blocking
-route, a script that does not start refuses a subagent's call. A script not on disk does not start: the bridge checks
-each script is a file right before it spawns it, since Node would exit 1 on a missing one, which reads as a hook
-error. A route whose script was missing at setup stays registered for that reason: each call checks again, so the
-script runs once restored, with no restart. Until then a subagent's call it guards is refused, a root session's call
-runs, and a record-only route records nothing.
+route, a script that does not start refuses a subagent's call. A script not on disk when the call checks it does not
+start: the bridge checks each script is a file right before it spawns it, since Node would exit 1 on a missing one,
+which reads as a hook error. A script removed after that check, while Node starts, does exit 1, and the call runs
+([Limits](#limits)). A route whose script was missing at setup stays registered for that reason: each call checks
+again, so the script runs once restored, with no restart. Until then a subagent's call that finds it missing is
+refused, a root session's call runs, and a record-only route records nothing.
 
 A blocking route, on `execute.before`, which `EVENTS` does not name in this version, is built to these rules, and the
 tests reach it through the bridge's `events` seam. It never skips a call for a reason the call's input controls: a
@@ -181,8 +183,9 @@ the call: the callback rejects with an `Error` whose message is the script's std
 adapter turns into a `Tool.Error` with that message, failing that call alone, so the bridge imports nothing of
 OpenCode's. An `updatedInput` replaces the event's `input` before the tool runs, and two hooks that rewrite the input
 differently refuse it. A subagent's call, or one whose caller could not be read ([Session ids](#session-ids)), is
-refused when a script does not start, one gone from disk at setup or since included, and when it is made in code mode (`codemode` true): no recorded OpenCode session
-shows this plugin's hooks reading a code-mode call as they read a direct one.
+refused when a script does not start, one not on disk when the call checks it included, and when it is made in code
+mode (`codemode` true): no recorded OpenCode session shows this plugin's hooks reading a code-mode call as they read a
+direct one.
 
 The stop route, `Stop` on OpenCode's `experimental.idle` session hook, which `EVENTS` does not name either, is built
 the same way and reached through the same seam. On a root session's idle it sends `hook-stop.mjs` the root session's
@@ -349,8 +352,8 @@ Set it as `AIDRIAN_NODE` is set: `opencode service set env AIDRIAN_OPENCODE_TRAC
   ([Running aidrian](#running-aidrian)).
 - An `unregistered` line: OpenCode refused that hook, so the scripts it names do not run in that process, or the
   script is `missing` from the installed package at setup. A missing script is checked again on each call, so it runs
-  once restored, with no restart; until then it runs nothing, and a blocking route whose script is missing refuses a
-  subagent's call. The bridge keeps a notice for it, as for `off`, which no hook of this
+  once restored, with no restart; until then it runs nothing, and a blocking route whose script a subagent's call
+  finds missing refuses that call. The bridge keeps a notice for it, as for `off`, which no hook of this
   version shows; the trace is the only sign. A `routes` line keeps one too.
 - `skip` with `cwd`: the call's `workdir` names no folder on this machine, or the session's folder is gone, as a
   removed worktree's is, or could not be read, and no absolute `workdir` names the folder instead.
@@ -573,6 +576,11 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
 - A shell call whose `workdir` names no folder here, such as one on another machine, records nothing, since its folder
   is not known here; so does one whose session's folder is gone or could not be read, unless an absolute or `~`
   `workdir` names its folder.
+- A script removed after its call checks it is a file, during Node's startup, exits 1 (`MODULE_NOT_FOUND`), which
+  reads as a hook error, so the call runs, a subagent's on a blocking route included. It stays: reading every exit
+  other than 0 or 2 as a refusal would break the rule that a hook error lets the call run, and a session able to
+  delete the plugin's scripts could rewrite them as well, which the protected-path guards that switch on with the
+  blocking routes cover.
 - No MCP tool call reaches a hook, so while `tracker.enabled` is true, `aidrian check` warns on a machine where
   OpenCode is set up: "on OpenCode, a write through any MCP tool passes unchecked".
 - The command guards do not read a package runner's command-string option, such as `npx -c` or `npm exec -c`, nor the

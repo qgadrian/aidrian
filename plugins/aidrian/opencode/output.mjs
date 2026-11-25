@@ -77,9 +77,10 @@ export function capture(stream, bound = CAPTURE_BYTES) {
 
 // Runs `route`'s script on `call` with `runner`'s spawn, Node, environment, and trace, in the session's folder, and
 // resolves its answer once it closes: { exit, signal, stdout, stderr, overflow }, or { failed: true } when it does not
-// start, Node gone since setup included, which ends this call alone. A script that is no file when its call comes, gone
-// at setup or since, is one that does not start, traced `missing`: Node would exit 1 on it, which reads as a hook error
-// and would let a subagent's call run. Once `ms`, counted from its spawn, ends, a script that has not exited is killed, and
+// start, Node gone since setup included, which ends this call alone. A script that is no file when its call checks it,
+// gone at setup or since, is one that does not start, traced `missing`: Node would exit 1 on it, which reads as a hook
+// error and would let a subagent's call run. One removed after this check, as Node starts, still exits 1 and lets the
+// call run (opencode.md Limits). Once `ms`, counted from its spawn, ends, a script that has not exited is killed, and
 // its answer is a signal's; one that exited is read with what it wrote.
 export function run(runner, route, call, ms) {
   return new Promise((resolve) => {

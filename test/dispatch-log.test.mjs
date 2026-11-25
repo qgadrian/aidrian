@@ -7,13 +7,14 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { coverage, coverageLines } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { coverage, coverageLines, SEND_BACK_CAUSES } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { claimedPaths, dispatchRow, sessionRow } from '../plugins/aidrian/lib/dispatch-rows.mjs';
 import { formatReport, summarize } from '../plugins/aidrian/lib/report-agents.mjs';
 import { formatDocs, summarizeDocs } from '../plugins/aidrian/lib/report-docs.mjs';
 import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { endedSessions } from '../plugins/aidrian/lib/jsonl.mjs';
+import { rowCostUsd } from '../plugins/aidrian/lib/model-prices.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { hookCall } from './hook-call.mjs';
 
@@ -124,6 +125,9 @@ test('the hooks write dispatch, stop, and session rows inside a project, and not
   const rows = await logged(3);
   assert.deepEqual(rows.map((row) => row.event), ['dispatch', 'stop', 'session']);
   assert.deepEqual(rows[1].tokens, { input: 10 + 10, output: 10, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 });
+  assert.deepEqual(rows[1].tokens_by_model, {
+    'claude-sonnet-5-5': { ...rows[1].tokens, over: { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 }, over_prompt: null },
+  }, 'per model, with the part over a price tier and its cutoff, none here');
   const testing = 'docs/knowledge/engineering/testing.md';
   assert.deepEqual([rows[1].docs_read, rows[1].delivered, rows[1].models], [[{ path: testing, bytes: bytes(testing) }], 'chat', ['claude-sonnet-5-5']]);
   assert.deepEqual([rows[1].requests, rows[1].tool_requests, rows[1].tool_calls], [2, 2, 2], 'two requests, each with one Read');
@@ -588,6 +592,93 @@ test('a stop row counts the background tasks the subagent started that still run
   ], 'the stop the cap let end is the one with running above 0 and sent_back false');
 });
 
+test('a stop row names each cause the stop hook sent the subagent back for, and none when the stop ends', async (t) => {
+  const { base, dir, state, log, hook } = project(t);
+  const dispatch = path.join(state(), 'dispatch');
+  // A transcript that starts now, with `brief` as its first prompt and `lines` after it.
+  const transcript = (id, brief, lines = []) => {
+    const file = path.join(base, `agent-${id}.jsonl`);
+    writeFileSync(file, [JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: brief } }), ...lines].join('\n'));
+    return file;
+  };
+  const stop = (id, { agentType = 'aidrian:backend-developer', brief = 'Implement slice S1.', lines, message = 'Done.', active = false, tasks } = {}) =>
+    hook('hook-subagent-stop.mjs', {
+      session_id: 'cause-1', cwd: dir, agent_id: id, agent_type: agentType, agent_transcript_path: transcript(id, brief, lines),
+      last_assistant_message: message, stop_hook_active: active, ...(tasks ? { background_tasks: tasks } : {}),
+    });
+  const launch = [
+    JSON.stringify({ type: 'assistant', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'sleep 600', run_in_background: true } }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'started' }] }, toolUseResult: { backgroundTaskId: 'bsleep001' } }),
+  ];
+  const claim = 'Done. `npm test`: 12/12 pass.';
+  const cases = [
+    ['missing', { message: 'Wrote out/none.json.' }, ['missing_file']],
+    ['handoff', { agentType: 'aidrian:code-reviewer', brief: `Review S1.\nHandoff file: ${path.join(dispatch, 'feat-1-S1-code-reviewer.json')}`, message: '' }, ['handoff']],
+    ['marker', { brief: 'Implement S3.\nHandoff file: <state>/dispatch/feat-1-S3-backend-developer.json', message: JSON.stringify({ status: 'done' }) }, ['marker']],
+    ['background', { lines: launch, tasks: [{ id: 'bsleep001', type: 'shell', status: 'running' }] }, ['background']],
+    ['evidence', { message: claim }, ['evidence']],
+    ['two', { message: `Wrote out/none.json.\n\n${claim}` }, ['missing_file', 'evidence']],
+    // Haiku 5.5 bills a request whose prompt is over 100k tokens at its `over` rates: the row splits that part out.
+    ['ended', { message: 'Done.', lines: [usageLine('h1', 'claude-haiku-5-5', { input_tokens: 150_000, output_tokens: 10 }), usageLine('h2', 'claude-haiku-5-5', { input_tokens: 20_000, output_tokens: 10 })] }, []],
+  ];
+  for (const [id, options] of cases) assert.equal((await stop(id, options)).status, id === 'ended' ? 0 : 2, id);
+  const stops = log().filter((row) => row.event === 'stop');
+  assert.deepEqual(stops.map((row) => [row.agent_id, row.sent_back, row.sent_back_for]), cases.map(([id, , causes]) => [id, causes.length > 0, causes]));
+  const ended = stops.at(-1);
+  const zero = { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };
+  assert.deepEqual(ended.tokens_by_model, { 'claude-haiku-5-5': { ...zero, input: 170_000, output: 20, over: { ...zero, input: 150_000, output: 10 }, over_prompt: 100_000 } });
+  assert.deepEqual([rowCostUsd(ended).usd, rowCostUsd(ended).exact], [ended.cost_usd, true], 'priced again to what it logged, the tier included');
+});
+
+test('the default view prices each run at today`s list prices, beside what it logged, and names what sent each run back', () => {
+  const ts = '2026-10-29T11:00:00Z';
+  const million = { input: 1_000_000, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };
+  const stop = (id, fields) => ({ event: 'stop', ts, session_id: 's', agent_id: id, agent_type: 'aidrian:fixer', delivered: 'chat', models: [], cost_usd: 0, ...fields });
+  const rows = [
+    // f1, sent back for a background task, then ended: one run, under background task. Its last row logged $10 for a
+    // million Opus 5.5 input tokens, a price since lowered to $4.
+    stop('f1', { sent_back: true, sent_back_for: ['background'] }),
+    stop('f1', { sent_back: false, sent_back_for: [], models: ['claude-opus-5-5'], tokens: million, tokens_by_model: { 'claude-opus-5-5': million }, cost_usd: 10 }),
+    // f2, sent back for a missing file and a test claim at once, then ended.
+    stop('f2', { sent_back: true, sent_back_for: ['missing_file', 'evidence'] }),
+    stop('f2', { sent_back: false, sent_back_for: [] }),
+    // f3, sent back before rows named causes; f4 never sent back, and logged two models with no tokens per model.
+    stop('f3', { sent_back: true }),
+    stop('f3', { sent_back: false }),
+    stop('f4', { sent_back: false, sent_back_for: [], models: ['claude-opus-5-5', 'claude-sonnet-5-5'], tokens: million, cost_usd: 3 }),
+  ];
+  const summary = summarize(rows);
+  assert.deepEqual([summary.agents[0].sent_back, summary.agents[0].sent_back_rate, summary.agents[0].sent_back_causes],
+    [3, 0.75, [['background', 1], ['missing_file', 1], ['evidence', 1], ['unrecorded', 1]]]);
+  assert.deepEqual([summary.agents[0].cost_usd, summary.agents[0].cost_logged_usd, summary.kept_logged], [7, 13, { rows: 1, cost_usd: 3 }]);
+  const text = formatReport(summary, { file: 'f', since: '7d', skipped: 0 });
+  assert.match(text, /^Dispatch log f, since 7d; costs at today's list prices\n/u);
+  assert.match(text, /\nPartial: 1 agent and session rows were logged without the tokens to price them again, and keep their logged cost, \$3\.00\.\n/u);
+  assert.match(text, /\naidrian:fixer: 0 dispatches, - re-dispatched, median - and 1000k tokens, \$7\.00 \(logged \$13\.00\), delivered 0 file \/ 4 chat \/ 0 missing\n/u);
+  assert.match(text, /\n {2}4 runs, \$1\.75 a run, - tool calls per request that made one; 75% sent back: 1 background task, 1 missing file, 1 test claim with no run, 1 cause not recorded\n/u);
+  // Only the delivery check's causes name it, and each cause's words and check are the ones docs/hooks.md lists for it.
+  const hooksDoc = readFileSync(path.join(ROOT, 'docs/hooks.md'), 'utf8');
+  for (const [cause, { words, check }] of Object.entries(SEND_BACK_CAUSES)) {
+    assert.equal(check === 'the delivery check', ['missing_file', 'handoff'].includes(cause), cause);
+    if (check) assert.match(hooksDoc, new RegExp(`^\\| \`${cause}\` \\| ${words} \\| .*\\b${check.replace('the ', '')}\\b`, 'mu'), cause);
+  }
+});
+
+test('a log from before rows named causes and tokens per model gives the same shares, each send-back a cause not recorded', () => {
+  const ts = '2026-10-29T11:00:00Z';
+  const tokens = { input: 1_000_000, output: 0, cache_read: 0, cache_write: 0 };
+  const stop = (id, fields) => ({ event: 'stop', ts, agent_id: id, agent_type: 'planner', models: ['claude-opus-5-5'], tokens, cost_usd: 4, ...fields });
+  const rows = [
+    stop('p1', { delivered: 'missing', sent_back: true }), stop('p1', { delivered: 'file', sent_back: false }),
+    stop('p2', { delivered: 'chat', sent_back: true }), stop('p2', { delivered: 'chat', sent_back: false }),
+    stop('p3', { delivered: 'chat', sent_back: false }), stop('p4', { delivered: 'missing' }),
+  ];
+  const [agent] = summarize(rows).agents;
+  assert.deepEqual([agent.sent_back, agent.sent_back_rate, agent.runs_without_send_back, agent.sent_back_causes], [2, 0.67, 1, [['unrecorded', 2]]]);
+  assert.deepEqual([agent.cost_usd, agent.cost_logged_usd], [16, 16], 'one model: priced again from its summed tokens');
+  assert.match(formatReport(summarize(rows), { file: 'f', since: '7d', skipped: 0 }), /; 67% sent back: 2 cause not recorded\n/u);
+});
+
 // Sets config.json `telemetry` in a project from project().
 const setTelemetry = (dir, telemetry) => writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, telemetry }));
 
@@ -787,12 +878,14 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
   const summary = summarize(rows, { sinceMs: parseSince('7d', NOW) });
   assert.deepEqual(summary.agents[0], {
     agent_type: 'Explore', dispatches: 3, redispatched: 1, redispatch_rate: 0.33, median_duration_ms: 2000, median_tokens: 2000, cost_usd: 0.75,
-    delivered: { file: 1, chat: 1, missing: 0, pending: 0 }, top_docs: [['a.md', 2], ['b.md', 1]],
-    runs: 2, cost_per_run_usd: 0.38, sent_back: 1, sent_back_rate: 1, runs_without_send_back: 1, avg_docs_read: 1.5, avg_doc_bytes: 3072,
-    requests: 10, tool_requests: 4, tool_calls: 6, tool_calls_per_request: 1.5, runs_without_tool_counts: 1,
+    cost_logged_usd: 0.75, delivered: { file: 1, chat: 1, missing: 0, pending: 0 }, top_docs: [['a.md', 2], ['b.md', 1]],
+    runs: 2, cost_per_run_usd: 0.38, sent_back: 1, sent_back_rate: 1, sent_back_causes: [['unrecorded', 1]], runs_without_send_back: 1,
+    avg_docs_read: 1.5, avg_doc_bytes: 3072, requests: 10, tool_requests: 4, tool_calls: 6, tool_calls_per_request: 1.5, runs_without_tool_counts: 1,
   });
   assert.deepEqual([summary.agents[1].dispatches, summary.agents[1].runs, summary.agents[1].avg_docs_read, summary.agents[1].tool_calls_per_request], [0, 1, null, null]);
-  assert.deepEqual([summary.sessions, summary.unjoined_stops, summary.runs_without_tool_counts], [{ count: 1, cost_usd: 4.5 }, 1, 1]);
+  assert.deepEqual([summary.sessions, summary.kept_logged, summary.unjoined_stops, summary.runs_without_tool_counts],
+    [{ count: 1, cost_usd: 4.5, cost_logged_usd: 4.5 }, { rows: 3, cost_usd: 5.25 }, 1, 1],
+    'rows that name no model keep the cost they logged, counted as kept: a1 $0.50, a2 $0.25, the session $4.50; zz logged $0');
   assert.deepEqual(summary.hook_denies, {
     count: 6,
     sessions: 2,
@@ -806,13 +899,14 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
   }, 'the old row is out of the window');
   const text = formatReport(summary, { file: '/s/dispatch-log.jsonl', since: '7d', skipped: 2 });
   assert.equal(text, [
-    'Dispatch log /s/dispatch-log.jsonl, since 7d (2 unreadable rows skipped)',
+    'Dispatch log /s/dispatch-log.jsonl, since 7d (2 unreadable rows skipped); costs at today\'s list prices',
     'Partial: 1 agent runs were logged before tool counts; tool calls per request leave them out.',
+    'Partial: 3 agent and session rows were logged without the tokens to price them again, and keep their logged cost, $5.25.',
     'Explore: 3 dispatches, 33% re-dispatched, median 2s and 2k tokens, $0.75, delivered 1 file / 1 chat / 0 missing',
-    '  2 runs, $0.38 a run, 100% sent back by the delivery check, 1.50 tool calls per request that made one',
+    '  2 runs, $0.38 a run, 1.50 tool calls per request that made one; 100% sent back: 1 cause not recorded',
     '  docs read: 1.5 docs and 3.0 KB a run; a.md (2), b.md (1)',
     'planner: 0 dispatches, - re-dispatched, median - and 0k tokens, $0.00, delivered 0 file / 1 chat / 0 missing',
-    '  1 runs, $0.00 a run, 0% sent back by the delivery check, - tool calls per request that made one',
+    '  1 runs, $0.00 a run, - tool calls per request that made one; 0% sent back',
     'Sessions: 1, $4.50 estimated, main conversation and subagents together',
     '1 stop rows have no dispatch row (a background dispatch, or a host change)',
     'Hook denies: 6 in 2 sessions',
@@ -838,9 +932,9 @@ test('parseSince takes a span or a date; aidrian report prints the log, --json t
   for (const date of ['2026-02-31', '2026-13-01', '2026-00-10']) assert.throws(() => parseSince(date), /--since takes/, date);
   const { dir, env } = project(t);
   const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
-  assert.match(report([]).stdout, /^Dispatch log .*dispatch-log\.jsonl, since 7d\nNo rows yet\.\n$/);
+  assert.match(report([]).stdout, /^Dispatch log .*dispatch-log\.jsonl, since 7d; costs at today's list prices\nNo rows yet\.\n$/);
   assert.deepEqual(Object.keys(JSON.parse(report(['--json']).stdout)), [
-    'file', 'rotated', 'since', 'skipped', 'coverage', 'agents', 'sessions', 'unjoined_stops', 'runs_without_tool_counts', 'hook_denies',
+    'file', 'rotated', 'since', 'skipped', 'coverage', 'agents', 'sessions', 'kept_logged', 'unjoined_stops', 'runs_without_tool_counts', 'hook_denies',
   ]);
   assert.equal(report(['--since', 'soon']).status, 1);
   assert.deepEqual([report(['--prs', '0']).status, report(['reviews', '--prs', 'x']).stderr], [1, '--prs takes a whole number above 0\n']);
@@ -968,7 +1062,7 @@ test('aidrian report and report docs say when telemetry is off, and --json carri
   const { dir, env } = project(t);
   setTelemetry(dir, { enabled: false });
   const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
-  assert.match(report([]).stdout, /^Dispatch log .*, since 7d\nTelemetry is off \(telemetry\.enabled is false\): .*\nNo rows yet\.\n$/);
+  assert.match(report([]).stdout, /^Dispatch log .*, since 7d; costs at today's list prices\nTelemetry is off \(telemetry\.enabled is false\): .*\nNo rows yet\.\n$/);
   assert.match(report(['docs']).stdout, /^Knowledge docs read, .*\nTelemetry is off .*\nAlways docs: .*\nNo knowledge doc reads yet\.\n$/);
   assert.deepEqual(JSON.parse(report(['--json']).stdout).coverage, {
     enabled: false, doc_reads: true, hook_denies: true, rows_without_doc_reads: 0, runs_without_send_back: 0, rotated_out_before: null,
@@ -995,15 +1089,25 @@ test('sessionRow splits main and subagents, with effort, cost per model, cache w
   assert.deepEqual([row.effort, row.effort_varied], ['medium', true], 'the main conversation`s levels only');
   // Opus: 4 input + 8 for 1-hour writes + 0.02 output. Sonnet: 2 input + 2.5 for 5-minute writes.
   assert.deepEqual(row.cost_by_model, { 'claude-opus-5-5': 12.02, 'claude-sonnet-5-5': 4.5 });
+  const none = { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };
+  const mainTokens = { input: 1_000_000, output: 1000, cache_read: 0, cache_write: 1_000_000, cache_write_5m: 0, cache_write_1h: 1_000_000 };
+  const subagentTokens = { input: 1_000_000, output: 0, cache_read: 0, cache_write: 1_000_000, cache_write_5m: 1_000_000, cache_write_1h: 0 };
   assert.deepEqual(row.main, {
-    tokens: { input: 1_000_000, output: 1000, cache_read: 0, cache_write: 1_000_000, cache_write_5m: 0, cache_write_1h: 1_000_000 },
+    tokens: mainTokens, tokens_by_model: { 'claude-opus-5-5': { ...mainTokens, over: none, over_prompt: null } },
     cost_usd: 12.02, requests: 2, tool_requests: 1, tool_calls: 3,
   }, 'm2, repeated in the subagent transcript, stays the main conversation`s');
   assert.deepEqual(row.subagents, {
-    tokens: { input: 1_000_000, output: 0, cache_read: 0, cache_write: 1_000_000, cache_write_5m: 1_000_000, cache_write_1h: 0 },
+    tokens: subagentTokens, tokens_by_model: { 'claude-sonnet-5-5': { ...subagentTokens, over: none, over_prompt: null } },
     cost_usd: 4.5, requests: 1, tool_requests: 1, tool_calls: 1,
   });
+  assert.deepEqual(row.tokens_by_model, {
+    'claude-opus-5-5': { ...mainTokens, over: none, over_prompt: null }, 'claude-sonnet-5-5': { ...subagentTokens, over: none, over_prompt: null },
+  });
   assert.equal(row.cost_usd, 16.52);
+  // At the tables the row was written with, the report prices each side and the whole to the dollars it logged.
+  for (const part of [row, { models: row.models, ...row.main }, { models: row.models, ...row.subagents }]) {
+    assert.deepEqual([rowCostUsd(part).usd, rowCostUsd(part).exact], [part.cost_usd, true]);
+  }
   assert.deepEqual([row.skills, row.drafts_opened, row.review_runs], [[], 0, 0], 'no skill, draft, or review call');
 });
 

@@ -10,9 +10,10 @@ import { summarizeDocs } from './report-docs.mjs';
 import { NO_BOT } from './report-reviews.mjs';
 import { endedSessions, latestRows } from './jsonl.mjs';
 import { priceTables } from './hosts/index.mjs';
+import { SEND_BACK_CAUSES } from './dispatch-log.mjs';
 import { lessonStats } from './lesson-inbox.mjs';
 import { deliverySignal, denialSignal, roundLimitSignal } from './lesson-signals.mjs';
-import { priceFor, STALE_DAYS, staleTables } from './model-prices.mjs';
+import { priceFor, rowCostUsd, STALE_DAYS, staleTables } from './model-prices.mjs';
 import { summarizeSessions } from './report-sessions.mjs';
 
 // Each kind of problem, worst first, and its fix: the row of the harness-health skill's fix table that answers it.
@@ -126,6 +127,8 @@ function judgedAfter({ kind, subject, sample }, resolvedMs, input, later) {
   // Strictly after, as an occurrence must be to count against a fix.
   if (!later.has(resolvedMs)) later.set(resolvedMs, judge({ ...input, sinceMs: resolvedMs + 1, reviews: null, lessons: [] }));
   const { problems, signals } = later.get(resolvedMs);
+  // Accepted residual: a sent-back lesson is judged again by any send-back of its agent, whatever the cause, since
+  // its key names no cause.
   const again = problems.find((item) => item.kind === kind && item.subject === subject);
   if (again) return { n: again.sample.n, status: PROBLEM };
   // Not found again: not enough data or unavailable as the signal says, else judged and within its threshold.
@@ -195,10 +198,11 @@ function docsSignal(rows, sinceMs, { indexed, tags }, { minSample, topDocPercent
   return { status: heavy || unread.length ? PROBLEM : OK, ...base };
 }
 
-// Per agent type: the share of dispatches that repeat a task, over its dispatches, and the share of runs the delivery
-// check sent back, over its runs whose stop rows say so. A run that named a missing file before stop rows recorded
-// `sent_back` is unknown: it leaves the sample as it leaves the rate, and counts in `unknown`. The shares come from the
-// counts, since summarize() rounds its rates.
+// Per agent type: the share of dispatches that repeat a task, over its dispatches, and the share of runs the stop hook
+// sent back, over its runs whose stop rows say so, with `leading`, the cause that sent the most runs back, as
+// { cause, runs }, or null. The problem's summary names that cause; its lesson is the agent's one sent-back lesson,
+// whatever the cause. A run that named a missing file before stop rows recorded `sent_back` is unknown: it leaves
+// the sample as it leaves the rate, and counts in `unknown`. The shares come from the counts, since summarize() rounds its rates.
 function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPercent }, add) {
   const rate = (n, count, threshold) => {
     const percent = percentOf(count, n);
@@ -208,7 +212,11 @@ function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPer
   const agents = summarize(rows, { sinceMs }).agents.map((agent) => {
     const redispatch = rate(agent.dispatches, agent.redispatched, redispatchPercent);
     const unknown = agent.runs_without_send_back;
-    const sentBack = { ...rate(agent.runs - unknown, agent.sent_back, sentBackPercent), unknown };
+    const [cause, runs] = agent.sent_back_causes[0] ?? [];
+    const leading = cause ? { cause, runs } : null;
+    const sentBack = { ...rate(agent.runs - unknown, agent.sent_back, sentBackPercent), unknown, leading };
+    // Accepted residual: every cause shares the delivery check's lesson key, as before rows named causes, so a
+    // background-led problem does not match the stop hook's own background lesson.
     const sentBackLesson = labels(deliverySignal({ agentType: agent.agent_type, missing: [] }));
     if (redispatch.status === PROBLEM) {
       add('redispatch', {
@@ -219,10 +227,11 @@ function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPer
       });
     }
     if (sentBack.status === PROBLEM) {
+      const { words, check } = SEND_BACK_CAUSES[leading.cause];
       add('sent-back', {
         subject: agent.agent_type, value: sentBack.percent, threshold: sentBackPercent, sample: { n: sentBack.n, of: 'runs with a known send-back' },
-        summary: `${agent.agent_type}: the delivery check sent back ${agent.sent_back} of ${sentBack.n} runs (${sentBack.percent}%), over ${sentBackPercent}%; ` +
-          'each named a file it had not written.',
+        summary: `${agent.agent_type}: the stop hook sent back ${agent.sent_back} of ${sentBack.n} runs (${sentBack.percent}%), over ${sentBackPercent}%; ` +
+          `the leading cause, in ${plural(leading.runs, 'run')}: ${words}${check ? `, from ${check}` : ''}.`,
         lesson: sentBackLesson,
       });
     }
@@ -345,21 +354,28 @@ function decisionsSignal(rows, sinceMs, { decisionMinSample, decisionOverridePer
   return { status: PROBLEM, ...base };
 }
 
-// The cost a session of the newer half of the window's sessions against the older half, in the order they ended. The
+// The cost a session of the newer half of the window's sessions against the older half, in the order they ended, each
+// at today's prices (model-prices.mjs rowCostUsd), so a price change moves no half against the other. Only the
+// sessions priced at today's tables compare: one that keeps the price it logged (`exact: false`) would read a price
+// change as a change in use, so it is left out of the halves, the sample, and the most costly session, and
+// `kept_logged` counts it; `sessions` and `cost_usd` are every session's, at the price each figure could take. The
 // averages are compared unrounded: rounded to the cent, $0.014 against $0.016 reads as a 100% rise, and $0.004 as nothing.
 function costSignal(rows, sinceMs, { minSample, costRisePercent }, add) {
   const summary = summarizeSessions(rows, { sinceMs });
   const ended = endedSessions(rows.filter((row) => row.event === 'session' && Date.parse(row.ts) >= sinceMs))
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
-  const half = Math.floor(ended.length / 2);
-  const average = (list) => (list.length ? sumOf(list, (row) => row.cost_usd) / list.length : null);
-  const older = average(ended.slice(0, half));
-  const newer = average(ended.slice(half));
-  const top = summary.top[0] ?? null;
+  const comparable = ended.map((row) => ({ row, cost: rowCostUsd(row) })).filter(({ cost }) => cost.exact);
+  const half = Math.floor(comparable.length / 2);
+  const average = (list) => (list.length ? sumOf(list, ({ cost }) => cost.usd) / list.length : null);
+  const older = average(comparable.slice(0, half));
+  const newer = average(comparable.slice(half));
+  const top = comparable.reduce((best, item) => (!best || item.cost.usd > best.cost.usd ? item : best), null);
+  const kept = ended.length - comparable.length;
   const base = {
-    sample: { n: ended.length, of: 'sessions' }, cost_usd: summary.cost_usd, main_cost_usd: summary.main.cost_usd,
-    subagents_cost_usd: summary.subagents.cost_usd, older: { n: half, avg_usd: older }, newer: { n: ended.length - half, avg_usd: newer },
-    change_percent: null, top: top && { session_id: top.session_id, ts: top.ts, cost_usd: top.cost_usd },
+    sample: { n: comparable.length, of: 'sessions priced at today\'s list prices' }, sessions: ended.length, kept_logged: kept,
+    cost_usd: summary.cost_usd, main_cost_usd: summary.main.cost_usd,
+    subagents_cost_usd: summary.subagents.cost_usd, older: { n: half, avg_usd: older }, newer: { n: comparable.length - half, avg_usd: newer },
+    change_percent: null, top: top && { session_id: top.row.session_id, ts: top.row.ts, cost_usd: top.cost.usd },
   };
   if (half < minSample || !older) return { status: NOT_ENOUGH, ...base };
   const change = percentOf(newer - older, older);
@@ -368,7 +384,8 @@ function costSignal(rows, sinceMs, { minSample, costRisePercent }, add) {
   add('cost-rise', {
     value: base.change_percent, threshold: costRisePercent, sample: base.sample,
     summary: `The newer ${plural(base.newer.n, 'session')} cost ${money(newer)} a session against ${money(older)} for the older ${half}, ` +
-      `up ${base.change_percent}%, over ${costRisePercent}%; the most costly was ${top.session_id} at ${money(top.cost_usd)}.`,
+      `up ${base.change_percent}%, over ${costRisePercent}%; the most costly was ${top.row.session_id} at ${money(top.cost.usd)}` +
+      `${kept ? `; ${plural(kept, 'session')} kept the price ${kept === 1 ? 'it' : 'they'} logged, left out` : ''}.`,
     lesson: { tier: 'P2', kind: 'improvement', target: null, key: 'health:cost-rise' },
   });
   return { status: PROBLEM, ...base };
@@ -465,7 +482,8 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
   const agentLines = agents.agents.map((agent) => {
     const part = (label, judged) => {
       const sample = `${n(judged.n, minSample)}${judged.unknown ? `, ${judged.unknown} unknown` : ''}`;
-      return judged.status === NOT_ENOUGH ? `${label} not enough data (${sample})` : `${judged.percent}% ${label} (${sample})`;
+      const lead = judged.leading ? `; most often ${SEND_BACK_CAUSES[judged.leading.cause].words}` : '';
+      return judged.status === NOT_ENOUGH ? `${label} not enough data (${sample})` : `${judged.percent}% ${label} (${sample}${lead})`;
     };
     return `    ${agent.agent_type}: ${part('re-dispatched', agent.redispatch)}, ${part('sent back', agent.sent_back)}`;
   });
@@ -493,7 +511,9 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
     `${decisions.escalated} escalated (${thresholds.health.decisionOverridePercent}% overridden or more is a problem)`);
   const trend = cost.change_percent === null ? '' : `; ${money(cost.newer.avg_usd)} a session in the newer half against ${money(cost.older.avg_usd)}, ` +
     `${cost.change_percent >= 0 ? 'up' : 'down'} ${Math.abs(cost.change_percent)}% (threshold ${thresholds.health.costRisePercent}%)`;
-  lines.push(`${head('Session cost', cost)} (${n(cost.older.n, minSample)} sessions a half); ${plural(cost.sample.n, 'session')}, ${money(cost.cost_usd)}${trend}`);
+  const keptLogged = cost.kept_logged ? `, ${cost.kept_logged} of them at the price they logged and left out of the halves` : '';
+  lines.push(`${head('Session cost', cost)} (${n(cost.older.n, minSample)} sessions a half); ` +
+    `${plural(cost.sessions, 'session')}, ${money(cost.cost_usd)}${keptLogged}${trend}`);
   const without = [...prices.fallback, ...prices.unpriced];
   const listed = without.length ? `: ${without.join(', ')}` : '';
   const dates = prices.stale.map((table) => `${table.host} on ${table.read_on}`).join(', ');

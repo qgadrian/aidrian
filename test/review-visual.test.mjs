@@ -290,15 +290,27 @@ test('refused routes are no images: they never use up the limit, and are listed 
   assert.equal(alone.status, 'failed');
   assert.match(alone.reason, /^201 of 201 captures failed: routeFrom on `/u);
   assert.equal(alone.entries.length, 21);
-  assert.equal(alone.entries.at(-1).error, 'routeFrom yields no path on the target\'s base for 181 more changed files');
-  assert.match(capturesBody(alone, {}, { mode: 'local', visibility: 'PRIVATE', error: null }), /#### `routeFrom`\n[^]*for 181 more changed files/u);
+  assert.equal(alone.entries.at(-1).error, '181 more route refusals: routeFrom yields no path on the target\'s base');
+  assert.equal(new Set(alone.entries.map((entry) => entry.key)).size, 21, 'refusals are numbered, so no two share a key');
+  assert.match(capturesBody(alone, {}, { mode: 'local', visibility: 'PRIVATE', error: null }), /#### `routeFrom`\n[^]*\| error: 181 more route refusals: /u);
   const seen = [];
   const full = await capture('b', matrix(...good(200), ...bad(1)), fakeAdapter(undefined, seen));
   assert.equal(seen[0].entries.length, 200, 'a refused route takes no image from the limit');
   assert.deepEqual([full.status, captureKeys(full).size, full.entries.length], ['partial', 200, 201]);
   assert.match(full.reason, /^1 of 201 captures failed: routeFrom on `/u);
   assert.equal(matrix(...bad(20)).some((entry) => entry.more), false);
-  assert.match(matrix(...bad(21)).at(-1).error, /for 1 more changed file$/u);
+  assert.match(matrix(...bad(21)).at(-1).error, /^1 more route refusal: /u);
+  // One file refused under 21 targets is 21 refusals, and no 21 files.
+  const targets = fromConfig({}, { targets: Array.from({ length: 21 }, (_, i) => ({ files: ['src/**'], routeFrom: { pattern: FROM.pattern, route: `/t${i}/$1` } })) });
+  const one = visualMatrix(targets, visualRoutes(targets, touched(...bad(1))));
+  assert.deepEqual([one.length, one.at(-1).more, one.at(-1).error], [21, 1, '1 more route refusal: routeFrom yields no path on the target\'s base']);
+  // Refusals that came with equal keys, the image's own included, are all kept, and the image is captured.
+  const [image] = matrix(...good(1));
+  const twins = ['first', 'second', 'third'].map((error, i) => ({ key: i === 2 ? image.key : 'same', route: '/$1', error }));
+  const kept = await capture('c', [image, ...twins], fakeAdapter());
+  assert.deepEqual([kept.status, captureKeys(kept).size], ['partial', 1]);
+  assert.deepEqual(kept.entries.map((entry) => entry.error ?? 'captured'), ['captured', 'first', 'second', 'third']);
+  assert.match(kept.reason, /^3 of 4 captures failed: first$/u);
   assert.throws(() => matrix(...good(201), ...bad(1)), /201 images, past 200: [^$]*\/s0, \/s1, [^$]*$/u, 'the stop names the routes it would capture');
 });
 

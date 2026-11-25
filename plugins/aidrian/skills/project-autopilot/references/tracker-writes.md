@@ -42,10 +42,12 @@ tracker run tools, skip it, and skip it for an issue already started in the trac
 1. `aidrian project report <run> --json` lists each owed report: `key`, `outcome`, `status`, `label`, `body`, `sha256`,
    and `calls`, the exact tool calls for the base branch's tracker, such as Linear's `save_issue` and `save_comment`.
 2. Make the calls in `calls`, in order, as given, on the tracker's connected server: the tool, and its input byte for
-   byte. The issue call comes before the comment. Stop at the first call that fails: leave the report owed, and name the
-   failure in the final report, such as a label the team lacks.
+   byte. The issue call comes before the comment. Stop at the first call that fails: leave the report owed, write it
+   no more in this session, and name the failure in the final report, such as a label the team lacks.
    With no `calls`, the tracker has no run tools: report each owed write to the Human instead.
 3. After every call succeeds, run `aidrian project recorded <run> <key>`. The guard then refuses any further write on it.
+   It takes no ledger lock, so another process never makes it wait. When it refuses, never make that report's calls
+   again: its comment is posted. Name it in the final report as written and not recorded.
 
 A refusal from the guard names what differs: fix the call to match the report, never the report.
 

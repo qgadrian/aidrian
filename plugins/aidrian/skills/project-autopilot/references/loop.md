@@ -14,21 +14,23 @@ named and go on from that output as step 2 says.
 ## Each pass
 
 1. `aidrian project next <run>`:
+   - one `owed <key>` line or more, which come last: a settle report is still owed, such as one an earlier driver
+     left. Step 4 first, then the other lines of this answer, `halted` and `paused` included.
    - `halted <cause>`: § Halt.
    - `paused until <time>`: § Pause.
-   - one `next <key> <branch>` line or more: step 2 for each, in order.
+   - one `next <key> <branch>` line or more: step 2 for the first. Step 1 then lists what is left to start.
    - `wait <n> running`: step 3. It counts a session that runs on after its issue settled (`lingering <key> ...`).
    - `done`: § Finish.
    - exit 1: § Stop, with its stderr line as the cause.
 2. `aidrian project start <run> <key>`:
    - exit 0, `started <key> attempt <n> session <id>`: the issue runs in its own session. Set its started status once,
-     as [tracker-writes.md](tracker-writes.md) § The started status says. Next `next` line, else step 3.
-   - exit 0, `parked <key> unreconciled: ...`: nothing started; follow [existing-work.md](existing-work.md). Next `next` line, else step 3.
+     as [tracker-writes.md](tracker-writes.md) § The started status says. Then step 1.
+   - exit 0, `parked <key> unreconciled: ...`: nothing started; follow [existing-work.md](existing-work.md), then step 1.
    - an `unverified:` line is a note, not a refusal.
-   - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: § Pause.
+   - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: step 1, whose `next` says so.
    - a line `halt <cause>`, exit 1: § Halt. A `recheck kept the halt:` line after it names what kept it.
    - exit 0, `recheck lifted the halt: <cause>; ok <checks>`: the start lifted the halt of this issue and launched
-     nothing. Run this step again for the same `<key>` at once.
+     nothing. Then step 1.
    - exit 75, `retry: <why>`: § Retry. A session that runs on after its issue settled gives this too: a wait.
    - any other exit 1: § Stop, with its stderr line as the cause.
 3. `aidrian project wait <run> --max-wait 150`:
@@ -50,7 +52,8 @@ named and go on from that output as step 2 says.
    - `idle`: step 1.
    - exit 75, `retry: <why>`, as when another process holds the ledger: § Retry. Exit 1: § Stop.
 4. `aidrian project report <run> --json`, and write each report it owes as [tracker-writes.md](tracker-writes.md) says.
-   Exit 75: § Retry. Exit 1: § Stop. Then step 1.
+   Exit 75: § Retry. Exit 1: § Stop. Then step 1, or,
+   when `owed` lines sent you here, go on from where they came.
 
 ## Pause
 
@@ -65,8 +68,8 @@ lifts, at most 6 hours ahead. Start nothing until then.
 
 ## Retry
 
-Exit 75 with a `retry:` line is a refusal that may pass, such as a ledger another process holds. Run step 3 once,
-then the same command again. After two retries of the same command that still exit 75: § Stop, with the line as the cause.
+Exit 75 with a `retry:` line is a refusal that may pass, such as a ledger another process holds. Run
+`aidrian project next <run>` and write the reports it lists as `owed`, then step 3 once, then the same command again. After two retries of the same command that still exit 75: § Stop, with the line as the cause.
 
 ## Halt
 
@@ -83,7 +86,9 @@ place for the next driver start of that issue, which re-checks it again: one who
 forge that could not answer, may pass then with no change.
 
 1. Start nothing more.
-2. Run `aidrian project wait <run> --max-wait 150` until it prints `idle`, writing each owed report after each settle.
+2. Run `aidrian project report <run> --json` and write what it owes, since a report may be owed from before any settle
+   line here; when it refuses, go on. Then run `aidrian project wait <run> --max-wait 150` until it prints `idle`,
+   writing each owed report after each settle.
    Stop waiting sooner once every line left is a `running <key>` or `lingering <key> attempt <n>` line of a session
    that a `could not be stopped` line named twice: no wait ends it.
 3. `aidrian project summary <run>`.
@@ -133,7 +138,9 @@ At the session-length reminder, a usage-limit warning, or the plan offer, hand o
 2. Write the brief with the `session-handoff` skill, slug `project-<run>`. Objective: drive run `<run>`.
    Current state: the run id, and `aidrian project summary <run>`'s counts. Next steps: read this skill's `SKILL.md`
    at its absolute path, then `references/loop.md`, then `aidrian project wait <run> --max-wait 0` first, which moves
-   the run to the new session. The ledger holds the rest: name no issue's detail.
+   the run to the new session. A line of it that step 3 of § Each pass sends to § Stop, such as `note policy:`, or
+   to § Retry goes there first, and § Retry writes no report until this wait exits 0. Otherwise step 1, whatever else it
+   printed, before any further wait: but first note each `could not be stopped` line it printed, which counts as step 3 says. The ledger holds the rest: name no issue's detail.
 3. Run `aidrian project handoff <run> <brief>` before `aidrian handoff continue <brief>`: custody moves only to a session
    started from a brief the driver recorded this way. Then follow the `session-handoff` skill's continue step.
 4. When `aidrian handoff continue` answers `continue: none` or `continue: clear`, or refuses twice, keep driving in this

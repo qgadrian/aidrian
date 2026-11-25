@@ -47,7 +47,7 @@ import { lingeringStarts } from './project-linger.mjs';
 import { LOCKED } from './jsonl.mjs';
 import { preflightCommand, recheckLines, snapshotCheck } from './project-preflight.mjs';
 import { landedPull, openPullHead } from './project-result.mjs';
-import { recordedCommand, reportCommand } from './project-report.mjs';
+import { owedKeys, recordedCommand, reportCommand } from './project-report.mjs';
 import { runConfine } from './project-confine.mjs';
 import { haltOf, initRun, nextLines, pinnedRepository, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
 import { resumeWords, runStore } from './project-run-guard.mjs';
@@ -192,7 +192,9 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     const halt = haltOf(found);
     const pause = pauseOf(found, now ?? Date.now());
     const held = lingering.map((row) => ({ key: row.key, attempt: row.attempt }));
-    return { exitCode: 0, out: values.json ? [JSON.stringify({ ...plan, lingering: held, maxParallel, halt, pause }, null, 2)] : nextLines(plan, { halt, pause, lingering: held }), err: [] };
+    // The settle reports the run owes, on every pass, so one owed before this driver's first `wait` is written too.
+    const owed = owedKeys(found);
+    return { exitCode: 0, out: values.json ? [JSON.stringify({ ...plan, lingering: held, maxParallel, halt, pause, owed }, null, 2)] : nextLines(plan, { halt, pause, lingering: held, owed }), err: [] };
   }
   const written = writeSummary(place.state, run);
   if (written.problem) return refused('summary', written.problem);

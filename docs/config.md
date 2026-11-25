@@ -2016,7 +2016,7 @@ which on a moved origin keeps the halt before any probe runs, then the state fol
 need. When every line is `ok` or a `note`, it writes a `resume` row with `via: "recheck"`, the halt's `kind`, issue,
 and attempt, and the `checks` that passed, under the ledger's lock only while the halt stands, the run has not ended,
 and custody rests where the caller read it, prints `recheck lifted the halt: <cause>; ok <checks>` and
-`lifted the <kind> halt of <issue>; start it again`, and exits 0 having launched nothing: the driver's next start of the
+`` lifted the <kind> halt of <issue>; run `next` again ``, and exits 0 having launched nothing: the driver's next start of the
 issue reads the run, its policy, and its access afresh, and launches it. A run that changed meanwhile prints `the checks
 passed, but the run changed meanwhile`; a row that could not be written prints `the checks passed, but the resume row
 could not be written: <why>`; and a ledger another process holds exits 75, to be tried again. Any other line, a blocker
@@ -2314,7 +2314,8 @@ One run per project is active at a time.
 may start and nothing runs.
 Lines for the issues that run, are blocked, or are skipped follow. An issue in a cycle of blockers is blocked.
 An issue the ledger records parked, or a canceled one, is never started, and every issue that waits on it through issues not done
-is skipped and names it. `--json` prints the whole plan, with the `maxParallel` it read.
+is skipped and names it. Last comes an `owed KEY` line for each issue whose settle report no `recorded` row closed,
+so a report owed before a driver's first `wait`, such as one an earlier driver left, is written on its first pass. `--json` prints the whole plan, with the `maxParallel` it read and `owed`.
 
 `preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
 state folder and any other active run but `RUN`, a host instruction file, such as a `CLAUDE.md`, in a folder above the
@@ -2413,6 +2414,9 @@ exact tool `calls` for the base branch's tracker. Both values come from the base
 from the ledger and from `results/ISSUE.json`, read again with no symlink followed, under its size cap, matched to the
 ledger's run, issue, attempt, status, and pull request, and checked again; a file that fails gives a body from the
 ledger alone that says so. `recorded RUN ISSUE` closes one, with a `recorded` row holding its attempt and sha256.
+It appends that row with no ledger lock, so a ledger another process holds never refuses it: by then the driver made
+the report's tracker calls, and a refusal to try again would send it back through `wait`, whose next settle lists the
+report again and posts its comment twice.
 `end RUN` refuses while any issue still runs, naming them, or while a session runs on after its issue settled.
 
 Every session a start held counts toward the run's caps until the host lists it ended, not only the session of an issue
@@ -2434,8 +2438,8 @@ a bidirectional mark, or a zero-width character, becomes `the host's own command
 The write-ahead row of a start asks the ledger again under its lock, so no start passes beside such a session.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
-A command whose ledger another process holds locked, and a `start` whose read of the team's policy the forge cannot
-answer now, exit 75 with a `retry:` line, a refusal that may pass. A policy the forge answers and refuses, such as
+A command whose ledger another process holds locked, but `recorded`, and a `start` whose read of the team's policy the
+forge cannot answer now, exit 75 with a `retry:` line, a refusal that may pass. A policy the forge answers and refuses, such as
 `projectRun.allow` turned off on the default branch while the run's sessions run, makes `start` exit 1. Neither stops
 `wait`, which starts nothing: it prints a first line and settles the run as before, exit 0, stopping each session past
 its `projectRun.issueHours`. Each start row records the hours the team confirmed for it, as `issueHours`.

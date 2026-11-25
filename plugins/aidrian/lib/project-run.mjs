@@ -9,7 +9,8 @@
 //                  No title, body, or other tracker text, ever: validateSnapshot copies only these fields, each checked,
 //                  and drops every other one. The branch is the one tracker-derived text kept. Init adds `resumed`, the
 //                  started issues an earlier run parked (resumedIssues), which no driver's input can give.
-//   ledger.jsonl   append-only, each row written under the file's lock (lib/jsonl.mjs withLocks). Its first row, `init`,
+//   ledger.jsonl   append-only, each row written under the file's lock (lib/jsonl.mjs withLocks) but a `recorded` row
+//                  (lib/project-report.mjs recordedCommand), which appends with none. Its first row, `init`,
 //                  pins the repository, records the driver's session id, and ties the run to snapshot.json by its
 //                  sha256 and issue count; later rows record what happened to an issue, and the rows of the start gate
 //                  (lib/project-run-gate.mjs): each start, result, end, and move of the driver's custody. It holds no
@@ -770,12 +771,13 @@ export function latestHalt(found) {
 // Appends to the ledger of run `run`, under its lock, the rows `build(found)` returns for the run as readRun reads it under
 // that lock: { rows } appended in order, in one write, or { problem } appending none, which is what it returns. The run's folder must
 // hold snapshot.json before the lock is taken, so a missing run gets no folder or lock file. Throws jsonl.mjs's LOCKED when another holds the lock
-// past `waitMs`, jsonl.mjs's wait by default.
-export function appendToRun(state, run, build, { waitMs } = {}) {
+// past `waitMs`, jsonl.mjs's wait by default. With `lock: false` it reads and appends with no lock, for a row no other
+// writer's rows depend on, so it never meets a ledger another process holds.
+export function appendToRun(state, run, build, { waitMs, lock = true } = {}) {
   if (typeof run !== 'string' || !RUN_ID.test(run)) return { problem: `${quote(run)} is not a run id` };
   if (!entryAt(runFolder(state, run))?.isDirectory() || !entryAt(snapshotFile(state, run))?.isFile()) return { problem: `no run ${run} in ${runsFolder(state)}` };
   const file = ledgerFile(state, run);
-  return withLocks([file], () => {
+  const append = () => {
     const found = readRun(state, run);
     if (found.problem) return { problem: found.problem };
     const built = build(found);
@@ -783,7 +785,8 @@ export function appendToRun(state, run, build, { waitMs } = {}) {
     // One write for every row, so a transition's rows land together (an issue's result and its state).
     appendRowsAtOnce(file, built.rows);
     return built;
-  }, waitMs === undefined ? {} : { waitMs });
+  };
+  return lock ? withLocks([file], append, waitMs === undefined ? {} : { waitMs }) : append();
 }
 
 // The runs in `state` other than `except` that are still active, as [{ run }]: a run whose files cannot be read counts,
@@ -988,8 +991,9 @@ function topological(issues, byId, cycles, isDone) {
 // running`, or `done`; then a line for each issue that runs, each session that runs on after its issue settled
 // (`lingering`, [{ key, attempt }], lib/project-linger.mjs), which `wait N` counts too, and each issue that waits or is
 // skipped. A halted run's cause comes first, and then the end of a pause on a usage or rate limit (lib/project-limit.mjs
-// pauseOf), until which no start runs.
-export function nextLines(plan, { halt = null, pause = null, lingering = [] } = {}) {
+// pauseOf), until which no start runs. An `owed KEY` line for each issue whose settle report the driver has not
+// recorded (`owed`, its keys, lib/project-report.mjs owedKeys) comes last.
+export function nextLines(plan, { halt = null, pause = null, lingering = [], owed = [] } = {}) {
   return [
     ...(halt ? [`halted ${halt}`] : []),
     ...(pause ? [`paused until ${pause.until}`] : []),
@@ -998,6 +1002,7 @@ export function nextLines(plan, { halt = null, pause = null, lingering = [] } = 
     ...lingering.map(({ key, attempt }) => `lingering ${key} attempt ${attempt}`),
     ...plan.blocked.map(({ key, reason, on }) => `blocked ${key} ${reason} ${on.join(',')}`),
     ...plan.skipped.map(({ key, skipped_blocked_by: by }) => `skipped ${key} blocked_by ${by.join(',')}`),
+    ...owed.map((key) => `owed ${key}`),
   ];
 }
 

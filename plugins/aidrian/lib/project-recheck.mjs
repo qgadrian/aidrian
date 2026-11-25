@@ -64,5 +64,5 @@ export function recheckHalt({ state, run, found, session, key, custodian = sessi
   }
   if (written?.problem) return unwritten(written.problem);
   if (!written?.rows?.length) return { lifted: false, lines: ['the checks passed, but the run changed meanwhile: its halt was lifted, it ended, or custody moved'] };
-  return { lifted: true, lines: [`recheck lifted the halt: ${halt.cause}; ok ${passed.join(', ')}`, `lifted the ${halt.kind} halt of ${halt.key}; start it again`] };
+  return { lifted: true, lines: [`recheck lifted the halt: ${halt.cause}; ok ${passed.join(', ')}`, `lifted the ${halt.kind} halt of ${halt.key}; run \`next\` again`] };
 }

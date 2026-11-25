@@ -82,6 +82,15 @@ export function rereadResult(state, run, key, row) {
 // The reports run `run`, as `found` (readRun) holds it, owes and has not recorded, in ledger order: each
 // { key, attempt, outcome, pr, status, label, body, sha256 }. `policy` is reportPolicy's.
 export function owedReports({ state, run, found, policy }) {
+  return owedSettles(found).map(({ key, cause, after }) => buildReport({ state, run, key, cause, after, policy }));
+}
+
+// The keys of the issues run `found` owes a report on, in ledger order, for `aidrian project next`, which reads no policy:
+// a report owed before a driver's first `wait`, such as one an earlier driver left, is listed on its first pass.
+export const owedKeys = (found) => owedSettles(found).map(({ key }) => key);
+
+// Each settle of run `found` that owes a report, as { key, cause, after }: the settle's row and the issue row after it.
+function owedSettles(found) {
   const keys = new Set(found.snapshot.issues.map((issue) => issue.key));
   // A `recorded` row of kind `started`, as a build that acknowledged the started status wrote, closes no settle report.
   const recorded = new Set(found.rows.filter((row) => row.event === 'recorded' && row.kind !== 'started').map((row) => row.key));
@@ -92,12 +101,8 @@ export function owedReports({ state, run, found, policy }) {
     if (!Number.isInteger(cause.attempt) || cause.attempt < 1) return;
     settled.set(cause.key, { cause, after });
   });
-  const owed = [];
-  for (const [key, { cause, after }] of settled) {
-    if (recorded.has(key) || found.states.get(key)?.state !== after.state) continue;
-    owed.push(buildReport({ state, run, key, cause, after, policy }));
-  }
-  return owed;
+  return [...settled].filter(([key, { after }]) => !recorded.has(key) && found.states.get(key)?.state === after.state)
+    .map(([key, { cause, after }]) => ({ key, cause, after }));
 }
 
 function buildReport({ state, run, key, cause, after, policy }) {
@@ -235,6 +240,10 @@ export function reportCommand({ project, config, run, json = false, env = proces
 
 // `aidrian project recorded RUN ISSUE`: closes the report the run owes on ISSUE once the driver wrote it, with a
 // `recorded` row naming its attempt and body's sha256. Refuses an issue that owes none.
+// It takes no ledger lock, so a ledger another process holds never refuses it: the driver has made the report's tracker
+// calls by then, and a refusal that may pass would send it back through `wait`, whose next settle lists the report
+// again and posts its comment twice. No other writer's rows depend on a `recorded` row, the settle it closes is in the
+// ledger before it, and a second row on the key closes nothing more.
 export function recordedCommand({ project, config, run, key, env = process.env, home, base, now = Date.now() }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project recorded: ${why}`] });
   const opened = openForDriver({ project, config, run, env, home, base });
@@ -243,7 +252,7 @@ export function recordedCommand({ project, config, run, key, env = process.env, 
     const report = owedReports({ state: opened.state, run, found: fresh, policy: opened.policy }).find((each) => each.key === key);
     if (!report) return { problem: `the run ${run} owes no report on ${typeof key === 'string' ? key.slice(0, 40) : 'that issue'}; \`aidrian project report ${run}\` lists what it owes` };
     return { rows: [{ event: 'recorded', key, attempt: report.attempt, sha256: report.sha256, ...(report.label ? { label: report.label } : {}), session: opened.session, at: iso(now) }] };
-  });
+  }, { lock: false });
   if (written.problem) return refuse(written.problem);
   return { exitCode: 0, out: [`recorded ${key}`], err: [] };
 }

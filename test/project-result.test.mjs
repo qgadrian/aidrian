@@ -502,7 +502,7 @@ test('an environment result halts the run with its stop; wait never re-checks it
   // The start that lifts the halt launches nothing; the next one starts the issue afresh.
   const starts = fx.claude.starts().length;
   const lifting = fx.cmd(['start', 'launch', 'ENG-1']);
-  assert.deepEqual([lifting.exitCode, lifting.out], [0, [`recheck lifted the halt: ${cause}; ok ${ENV_CHECKS.join(', ')}`, 'lifted the environment halt of ENG-1; start it again']]);
+  assert.deepEqual([lifting.exitCode, lifting.out], [0, [`recheck lifted the halt: ${cause}; ok ${ENV_CHECKS.join(', ')}`, 'lifted the environment halt of ENG-1; run `next` again']]);
   assert.equal(fx.claude.starts().length, starts, 'no session started');
   assert.deepEqual(rechecks(fx), [{ event: 'resume', session: DRIVER, kind: 'environment', key: 'ENG-1', attempt: 1, via: 'recheck', checks: ENV_CHECKS }]);
   const next = fx.cmd(['start', 'launch', 'ENG-1']);

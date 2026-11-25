@@ -246,7 +246,7 @@ test('a one-file slice or the cross pass that times out has nothing to split and
   assert.ok(last.results.every((result) => !/two halves/u.test(result.reason ?? '')));
 });
 
-test('a plan command`s own slice pass cannot be cut, so a timeout still ends stuck on its third attempt', async (t) => {
+test('a plan command`s own slice pass cannot be cut: a timeout promises no halves and ends stuck on its third attempt', async (t) => {
   const r = repo(t, { planCommand: 'node plan.mjs' });
   const own = { id: 'slice:own:partition', reviewer: 'codex-local', kind: 'exec', role: 'slice', slice: 'own', files: ['src/a/x.js', 'src/b/x.js'], context: 'full' };
   const planner = `let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'single',stages:[{name:'local',passes:[${JSON.stringify(own)}]}]})))`;
@@ -256,6 +256,9 @@ test('a plan command`s own slice pass cannot be cut, so a timeout still ends stu
   r.git('switch', '-q', 'feat');
   r.git('rebase', '-q', 'main');
   const { last, results } = await runReview(r, async (_reviewer, input) => (input.slice === 'own' ? { status: 'timed_out', reason: 'no answer in 1 s' } : answered), 6);
+  const failed = results.filter((result) => result.reason?.includes('slice:own:partition'));
+  assert.match(failed[0]?.reason ?? '', /^slice:own:partition: no answer in 1 s after \d+ s$/u, 'the first timeout promises no halves');
+  assert.ok(failed.every((result) => !/two halves/u.test(result.reason)), JSON.stringify(failed));
   assert.deepEqual(results.at(-1).reason?.includes('slice:own:partition'), true, JSON.stringify(last));
   assert.deepEqual([last.status, last.attempts], ['stuck', 3]);
 });

@@ -26,19 +26,23 @@
 //   in `ask` mode, or climbs one step in `auto` (lib/session-length.mjs nextRatio), and the ceiling once the context
 //   doubles. It reads Claude Code transcripts only. Its text follows the continue route the session's host can do
 //   (lib/session-length.mjs continuation): with `clear` or `background` the agent ends the turn after the brief, and on
-//   the background route in `auto` mode a Human who is not watching is no reason to skip the handoff. The cost model's
+//   the background route in `auto` mode a Human who is not watching is no reason to skip the handoff. At the chain cap,
+//   where the gate would continue no brief, the firing is recorded and the turn is not sent back. The cost model's
 //   B is the project's (lib/resume-tokens.mjs resolvedHandoff), and a stop of a session that resumed from a brief records
 //   that session's sample once, whatever the mode (recordResume). The marker's path
 //   is stopMarkerPath's, which `aidrian session snapshot` reads too; it is read no-follow, capped, and only when this user
 //   owns it (fs.mjs readOwnText), and written, only in a counts folder this user owns (ownFolderSync), as a new temporary
 //   file, mode 0600, renamed over it, so no write follows a symlink there.
-// Each check sends a turn back at most once (checkReason). `stop_hook_active` is true on every stop after a turn's first
-// send-back, so on such a stop the checks run only when the turn's last send-back is one of theirs, as the transcript
-// shows it (lib/transcript.mjs SENT_BACK), and only those that have not sent the turn back yet: the stop that ends a
-// direct run's review loop, after the review-loop check sent it back, still checks its report. The result hold runs
+// Each check sends a turn back at most once (checkReason), and the merge hand-back check once per refusal.
+// `stop_hook_active` is true on every stop after a turn's first send-back, so on such a stop the checks run only when the
+// turn's last send-back is one of theirs, as the transcript shows it (lib/transcript.mjs SENT_BACK), and only those that
+// have not sent the turn back yet, with the merge hand-back check, which reads its own send-backs, always: the stop that
+// ends a direct run's review loop, after the review-loop check sent it back, still checks its report, and a refusal the
+// continuation gets after the merge hand-back send-back is asked for. The result hold runs
 // only on a stop no hook sent back, and its send-back is none of the checks', so the stop it causes runs none of them.
 // A payload without `stop_hook_active` (a host that does not send it) is never sent back, so nothing can loop: each stop
-// sends back at most once, for one of the six, and a chain of stops this hook caused at most once per check.
+// sends back at most once, for one of the six, and a chain of stops this hook caused at most once per check, and per
+// refusal for the merge hand-back check, each of which needs a new gate run.
 // - The terminal hand-over (lib/terminal-replace.mjs endAfterTurn): on a stop no check sends back, sent back before or
 //   not, a session whose handoff gate asked to end itself once its turn ends does, so the terminal that ran it, or
 //   follows it, opens the background session that took the work; a background session no terminal follows only stops
@@ -60,7 +64,7 @@ import { continuation, stopMarkerPath, stopReminder } from '../lib/session-lengt
 import { ANNOUNCE_LEAD, announcedWork, QUESTION_TOOL } from '../lib/stop-announce.mjs';
 import { HAND_BACK_LEAD, handBack, MERGE_HAND_BACK_LEAD, mergeHandBack } from '../lib/stop-handback.mjs';
 import { REVIEW_LOOP_LEAD, reviewLoopOwed } from '../lib/stop-review-loop.mjs';
-import { readText, SENT_BACK, turnActions } from '../lib/transcript.mjs';
+import { readText, SENT_BACK, sentBackLines, turnActions } from '../lib/transcript.mjs';
 
 // A refusal as the transcript holds the gate's output: its plain line, or its --json object's reason, whose quotes the
 // transcript's own JSON escapes (lib/transcript.mjs gateVerdicts reads both).
@@ -68,8 +72,6 @@ const GATE_REFUSAL = ['auto-merge off for #', '\\"reason\\":\\"paths\\"'];
 
 // The start of each check's reason, by which its send-back is known (sentBack).
 const MARKS = [ANNOUNCE_LEAD, REVIEW_LOOP_LEAD, MERGE_HAND_BACK_LEAD, HAND_BACK_LEAD];
-// What the host writes before a hook's reason in a send-back: the hook's command in brackets (marked).
-const HOOK_PREFIX = /^\[.*?\]: /u;
 
 // The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
 export async function handle(input) {
@@ -103,9 +105,10 @@ export async function handle(input) {
   const earlier = readOwnText(marker, MARKER_CAP);
   // The route is read only on a stop that fires: on the background route it asks git for the base branch's config.
   if (!stopReminder(text, handoff, earlier)) return;
-  const reminder = stopReminder(text, handoff, earlier, await continuation(handoff, host, project, config));
+  const reminder = stopReminder(text, handoff, earlier, await continuation(handoff, host, project, config, input.session_id));
   writeMarker(marker, `${JSON.stringify(reminder.marker)}\n`);
-  deny(reminder.reason);
+  // At the chain cap the firing is recorded and nothing is asked: the gate would continue no brief.
+  if (reminder.reason) deny(reminder.reason);
 }
 
 if (isMain(import.meta.url)) await runHook(handle);
@@ -137,7 +140,9 @@ function checkReason(input, transcript, config, host) {
     [HAND_BACK_LEAD, () => handBack(input, transcript, { human: names.human })],
   ];
   for (const [mark, check] of checks) {
-    const reason = spent.has(mark) ? null : check();
+    // The merge hand-back check reads its own send-backs, one per refusal (mergeHandBack), so a refusal after its
+    // send-back is still asked for.
+    const reason = spent.has(mark) && mark !== MERGE_HAND_BACK_LEAD ? null : check();
     if (reason) return reason;
   }
   return null;
@@ -146,7 +151,8 @@ function checkReason(input, transcript, config, host) {
 // The marks of the checks that already sent this turn back, read from the send-backs turnActions found, on a stop a hook
 // caused; null, so no check runs, when the turn's last send-back holds none of them: one by another hook, by the
 // session-length reminder, or none the transcript shows, as on a host that writes none. Each send-back a check makes is
-// then in the transcript at the next stop, so it runs at most once a turn: nothing can loop.
+// then in the transcript at the next stop, so it runs at most once a turn, and the merge hand-back check once a
+// refusal: nothing can loop.
 function sentBack(actions) {
   const texts = (actions ?? []).filter((action) => action?.kind === 'sent-back').map((action) => action.text);
   if (!texts.length || !marked(texts.at(-1)).length) return null;
@@ -161,10 +167,7 @@ function sentBack(actions) {
 // not name each reason's hook reliably. It can only skip a send-back, and another hook writing this plugin's words is
 // contrived.
 function marked(text) {
-  return text.split('\n').flatMap((line) => {
-    const reason = (line.startsWith(SENT_BACK) ? line.slice(SENT_BACK.length).trimStart() : line).replace(HOOK_PREFIX, '');
-    return MARKS.filter((mark) => reason.startsWith(mark));
-  });
+  return sentBackLines(text).flatMap((reason) => MARKS.filter((mark) => reason.startsWith(mark)));
 }
 
 // Whether this stop ends the session `id` so its terminal opens the background session it handed off to. The modules

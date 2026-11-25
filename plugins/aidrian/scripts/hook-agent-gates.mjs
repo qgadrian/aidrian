@@ -63,6 +63,7 @@ import { findProject, openProject } from '../lib/project.mjs';
 import { confineDenial, sandboxEscapeDenial } from '../lib/confine-guard.mjs';
 import { drivesRun, ownAttemptFolder, projectCommandDenial, projectRunActive } from '../lib/project-run-guard.mjs';
 import { transcriptWriteDenial } from '../lib/transcript-guard.mjs';
+import { overrideSettingsDenial } from '../lib/override-guard.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
 import { issueHeld, liftAttended, noteBeacon, readDriverMark, readUnattendedMark } from '../lib/unattended-mark.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../lib/unattended-write.mjs';
@@ -175,6 +176,7 @@ async function gate(input) {
         ?? handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended }) ?? prEnvDenial(input, DEFAULTS, { unattended })
         ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? hostServiceDenial(input, DEFAULTS, { unattended }) ?? remoteChangeDenial(input, DEFAULTS, { unattended, mark })
         ?? projectCommandDenial(input, DEFAULTS, { unattended, mark })
+        ?? overrideSettingsDenial(input, null, DEFAULTS)
         ?? stateFoldersWriteDenial(input, DEFAULTS, { unattended, marksHeld: droveHeld, signoffsHeld: droveHeld })
         ?? sessionFoldersWriteDenial(input, null, DEFAULTS, null, { unattended })
         // A driver whose run's main checkout no longer resolves to a project, as when its config was removed.
@@ -278,6 +280,7 @@ function guards(input, project, config, gated, snapshot, others, holds, base, ow
     ?? mainCheckoutWriteDenial(input, project, config, { links: false, unattended, runSession })
     ?? transcriptWriteDenial(input, config, { runSession: custodyRun })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })
+    ?? overrideSettingsDenial(input, project, config)
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
     ?? continueStoreWriteDenial(input, project, config, state, { unattended, drives, base })
     ?? sessionFoldersWriteDenial(input, project, config, state, { unattended })

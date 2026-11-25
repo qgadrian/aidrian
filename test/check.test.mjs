@@ -181,6 +181,14 @@ test('check passes on a config without tracker, and names the key of each tracke
   const guarded = await check({ github: { autoMerge: { includeGuardedPaths: 'yes' } } });
   assert.equal(guarded.status, 1);
   assert.match(guarded.stderr, /"github\.autoMerge\.includeGuardedPaths" must be true or false/u);
+  // github.autoMerge.includePolicyFiles on is valid, and warns while it is on, naming whether includeGuardedPaths is too.
+  const risk = /^warning: github\.autoMerge\.includePolicyFiles is on, once both the default branch and the base commit it: a session may change and auto-merge a policy file such as config\.json, the policy that reviews and merges its pull requests, and the next pull request runs under that change$/mu;
+  const policy = await check({ github: { autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } } });
+  assert.equal(policy.status, 0);
+  assert.match(policy.stderr, risk);
+  const alone = await check({ github: { autoMerge: { includePolicyFiles: true } } });
+  assert.match(alone.stderr, /includePolicyFiles is on, but it counts for nothing while github\.autoMerge\.includeGuardedPaths is off:/u);
+  assert.doesNotMatch((await check({ github: { autoMerge: { includeGuardedPaths: true } } })).stderr, /includePolicyFiles/u, 'off, no warning');
 });
 
 test('check flags each write tool no read can clear, and only while the read rule applies', async (t) => {

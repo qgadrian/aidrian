@@ -16,8 +16,8 @@ import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { localForgeTokenKeychain } from './config-local.mjs';
-import { checkDeadline } from './deadline.mjs';
-import { foldCase, globParts, isEntry, isWithin } from './fs.mjs';
+import { checkDeadline, GUARDS_PAST_BUDGET } from './deadline.mjs';
+import { foldCase, globParts, isEntry, isWithin, joinSpelled } from './fs.mjs';
 import { folderOf, GLOB_WORD, globLinksTo, globStarts, linkBelow, linkReaches, linkWalk, partMatches, reachesFile, realOf, sameFile } from './glob-links.mjs';
 import { fileEditOf, isFileEditTool, opaqueShellCommand } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
@@ -140,7 +140,7 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const plain = unquoted(command);
   const erases = isBash && named.length === 0 && /aidrian|[*?[]|\bclean\b|\bstash\b/iu.test(plain);
   if (named.length === 0 && !erases) return null;
-  const { files, names, globs } = writeTargets(input);
+  const { files, names, globs, interpreted = [] } = writeTargets(input);
   const local = project.paths.local;
   const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
   const locals = configFiles(project).filter((file) => path.basename(file) === local).map((file) => [file]);
@@ -169,10 +169,15 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
     const why = `it ${how} ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which ${only('only the main session may set')}`;
     return { match: `may set a switch in ${local}`, reason: projectRuleReason(input, `${why}; to read the file, use Read`, human) };
   }
+  // Code an interpreter runs that names the file counts as a write to it, even where it only mentions it, as a docs or
+  // test edit written from Python does, so its refusal names the tools that make that edit: they write one file, by name.
+  const edit = isBash && interpreted.some((text) => text.toLowerCase().includes(local))
+    ? `; to edit a doc or test file that mentions ${local}, use the Edit or Write tool, which the guard judges by the file it writes`
+    : '';
   if (hit === EVERY_SWITCH) {
-    return { match: `changes ${local}`, reason: projectRuleReason(input, `it writes, moves, links, or removes ${local}, or may, which holds the machine's switches, and ${only(hit.why)}; to read the file, use Read`, human) };
+    return { match: `changes ${local}`, reason: projectRuleReason(input, `it writes, moves, links, or removes ${local}, or may, which holds the machine's switches, and ${only(hit.why)}; to read the file, use Read${edit}`, human) };
   }
-  return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${only(hit.why)}`, human) };
+  return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${only(hit.why)}${edit}`, human) };
 }
 
 // `text` with its quotes, backslashes, and backticks taken out, so a word split by them, as `rm .aid""rian.local.json`
@@ -318,14 +323,14 @@ const written = new WeakMap();
 
 function readTargets(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [], globs: [] };
+  if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => joinSpelled(cwd, target)), names: [], globs: [] };
   const opaque = opaqueShellCommand(input);
   if (opaque !== null) {
     if (READ_ONLY.test(opaque)) return { files: [], names: [], globs: [] };
     const words = opaqueWords(opaque);
     const read = words.slice(0, OPAQUE_WORDS).map(fromHome);
     return {
-      files: read.filter((word) => !GLOB_WORD.test(word)).map((word) => path.resolve(cwd, word)),
+      files: read.filter((word) => !GLOB_WORD.test(word)).map((word) => joinSpelled(cwd, word)),
       names: words,
       globs: read.filter((word) => GLOB_WORD.test(word)).map((text) => ({ text, dirs: path.isAbsolute(text) ? [] : [cwd], unsure: false, opaque: true })),
     };
@@ -342,6 +347,8 @@ function readTargets(input) {
     // Whether each of `names`, by its place, is an interpreter's code, input, or words, for a refusal that says it read
     // the path there: not a target, or a whole line read for want of its code.
     code: [...targets.map(() => false), ...interpreted.map((each) => each.code)],
+    // The texts an interpreter runs or reads, the tail of `names`, kept apart so a refusal reads them with no second scan.
+    interpreted: interpreted.map(({ text }) => text),
     // The lexer reads a bracket class, as in `[.]continue`, as a plain word; the shell expands it as a glob.
     globs: [...writes.filter((write) => write.glob), ...files.filter((file) => BRACKET.test(file)).map((text) => ({ text, dirs: [], unsure: false }))],
   };
@@ -369,7 +376,7 @@ export const OPAQUE_WORDS = 512;
 export const WRITE_TARGETS = 1024;
 
 // A word as such a shell reads a leading `~`: `~` and `~/x` (`~\x`, its backslash read as a `/`) are in the home folder.
-const fromHome = (word) => (word === '~' || word.startsWith('~/') ? path.join(homedir(), word.slice(1)) : word);
+const fromHome = (word) => (word === '~' || word.startsWith('~/') ? `${homedir()}${word.slice(1)}` : word);
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
 
@@ -441,7 +448,7 @@ export function deadlineDenial(input, { names: { human } }, { unattended = () =>
   const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `the guards could not finish reading this command in time, so it may change a file ${who}`;
-  return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, RETRY, { mark }) };
+  return { match: GUARDS_PAST_BUDGET, reason: projectRuleReason(input, why, human, RETRY, { mark }) };
 }
 
 // The texts a command in a shell the lexer cannot read is judged by: the command as given, and, when it differs, a copy

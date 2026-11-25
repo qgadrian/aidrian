@@ -25,7 +25,10 @@ import {
   sweep,
   takeReady,
 } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { HOSTS, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { continuation, planApprovedContext, sessionUsage, stopReminder } from '../plugins/aidrian/lib/session-length.mjs';
 import { TEST_HOME } from './fixtures/test-home.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -108,6 +111,42 @@ test('of two ready markers of one host process, the newest is taken', (t) => {
   assert.ok(promote(store, 'newer', { hostPid: 4242, now: now + 1000 }));
   assert.equal(takeReady(store, { hostPid: 4242, now: now + 2000 }).session, 'newer');
   assert.equal(takeReady(store, { hostPid: 4242, now: now + 2000 }).session, 'older');
+});
+
+// A main-session transcript whose last call costs 2.1 times a fresh session's: the session-length reminder fires at a
+// costRatio of 2, and the plan offer at its halfway mark.
+const usageLine = (id, context) => JSON.stringify({ message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_read_input_tokens: context - 501, cache_creation_input_tokens: 500, cache_creation: { ephemeral_1h_input_tokens: 500 }, output_tokens: 50 } } });
+const LONG_TRANSCRIPT = `${usageLine('req-1', 58_676)}\n${usageLine('req-2', 215_620)}\n`;
+
+test('at the chain cap neither session-length hook asks for a handoff, since the gate continues no brief there', async (t) => {
+  const setting = setup(t, { mode: 'auto', costRatio: 2, continue: 'clear', maxChain: 2 });
+  const project = projectAt(setting.dir);
+  const { config } = loadConfig(project);
+  const { handoff } = config.session;
+  const claude = HOSTS.find((host) => host.capabilities.handoffContinue?.routes.includes('clear'));
+  // A clear continuation started session-1 at Chain 2, the cap: the gate continues its next brief by no route.
+  noteFrom(setting.store, 'session-1', { slug: 'widget', chain: 2, brief: setting.file, route: 'clear', parent: 'session-0' });
+  writeFileSync(setting.file, brief(2));
+  passCheck(setting);
+  assert.match(gate(setting).out.join('\n'), /^continue: none\nfallback: this brief has Chain 2, and session\.handoff\.maxChain allows 2/u);
+
+  const capped = await continuation(handoff, claude, project, config, 'session-1');
+  assert.deepEqual([capped.route, capped.capped], ['clear', true]);
+  const silent = stopReminder(LONG_TRANSCRIPT, handoff, null, capped);
+  assert.equal(silent.reason, null, 'the Stop hook sends no turn back to ask for the handoff');
+  assert.ok(silent.marker.lastRatio > 2, 'and records the firing, so the reminder backs off');
+  assert.equal(planApprovedContext(handoff, sessionUsage(LONG_TRANSCRIPT), capped), null, 'nor does the plan offer');
+
+  // Below the cap, and with no session id, the reminder is as before.
+  for (const session of ['session-2', undefined]) {
+    const open = await continuation(handoff, claude, project, config, session);
+    assert.equal(open.capped, false, String(session));
+    assert.match(stopReminder(LONG_TRANSCRIPT, handoff, null, open).reason, /run the session-handoff skill now/u);
+    assert.match(planApprovedContext(handoff, sessionUsage(LONG_TRANSCRIPT), open), /session-handoff skill/u);
+  }
+  // With "unlimited" no chain is at the cap.
+  const unlimited = { ...config, session: { ...config.session, handoff: { ...handoff, maxChain: 'unlimited' } } };
+  assert.equal((await continuation(unlimited.session.handoff, claude, project, unlimited, 'session-1')).capped, false);
 });
 
 test('every read refuses a symlink, a wrong shape, and a time outside its window either way', (t) => {

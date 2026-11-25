@@ -59,6 +59,9 @@ Load them with the `knowledge` skill before you plan, edit, or review.
 ## 4. Set the review bot
 
 The agents wait for `chatgpt-codex-connector[bot]`, the Codex GitHub connector, to review each pull request.
+They ask it with an `@codex review` comment, so turn off Automatic reviews in Codex's code review settings, for the
+repository and in the personal preferences of the account that connected it. With them on, marking a draft ready gets
+a second review of a head the bot already reviewed, and it counts as one more round ([`github.reviewer`](config.md#keys)).
 No Codex review bot? Set `"github": { "reviewer": null }` in `.aidrian/config.json`: [No review bot](config.md#no-review-bot).
 
 ## 5. Check before the first task

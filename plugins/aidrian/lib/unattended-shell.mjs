@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { PROGRAM_KEYS } from './attempt-clone.mjs';
 import { checkDeadline } from './deadline.mjs';
+import { expandKnown } from './fs.mjs';
 import { forgeConfigCommands } from './forges/index.mjs';
 import { configForm } from './handoff-guard.mjs';
 import { configCommands } from './hosts/index.mjs';
@@ -14,8 +15,6 @@ import { isFolderIn } from './rules/main-checkout/bash-writes.mjs';
 import { WRITERS, written } from './rules/main-checkout/writers.mjs';
 import { readGit, walkCommands } from './shell-lex.mjs';
 
-// The variables a target may use, expanded from the hook's environment.
-const EXPANDED = Object.freeze(['HOME', 'XDG_CONFIG_HOME', 'ZDOTDIR', 'TMPDIR']);
 // Programs, besides each host's own (hosts/index.mjs configCommands) and the forge CLI's (forges/index.mjs
 // forgeConfigCommands), whose subcommands write the user's config, login, or jobs. `valueOptions` are the global options
 // that take the next word, skipped before the subcommand.
@@ -54,7 +53,6 @@ const INIT_VALUES = ['--template', '--separate-git-dir', '-b', '--initial-branch
 const WORKTREE_VALUES = ['-b', '-B', '--reason'];
 const LINK_VALUES = ['-t', '--target-directory', '-S', '--suffix'];
 
-const absolute = (each) => typeof each === 'string' && path.isAbsolute(each);
 // The non-option words of a command's plain arguments.
 const plainWords = (args) => args.filter((token) => !token.dynamic).map((token) => token.text);
 const operands = (words) => words.filter((text) => !text.startsWith('-'));
@@ -70,14 +68,8 @@ function namedWords(words, valueOptions = []) {
   return named;
 }
 
-// `text` with each of EXPANDED expanded from `env`, unless the command `command` sets that variable itself; a leading
-// `~` is the home folder `env` names.
-export function expand(text, env, command) {
-  const sets = (name) => new RegExp(String.raw`(?<![\w$])${name}\+?=|\b(?:export|unset|declare|typeset|local|readonly|read)\b[^;&|\n]*\b${name}\b`, 'u').test(command);
-  const value = (name) => (EXPANDED.includes(name) && absolute(env[name]) && !sets(name) ? env[name] : null);
-  const out = text.replace(/\$\{(\w+)\}|\$(\w+)/gu, (whole, braced, bare) => value(braced ?? bare) ?? whole);
-  return /^~(?=\/|$)/u.test(out) && value('HOME') ? path.join(value('HOME'), out.slice(1)) : out;
-}
+// `text` with each variable a target may use expanded from the hook's environment (fs.mjs expandKnown).
+export const expand = expandKnown;
 
 // What the Bash call `command`, run in `cwd`, writes that writeTargets leaves out, read once:
 // { dynamic, links, programs, manifests, removed, text }.

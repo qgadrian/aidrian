@@ -10,7 +10,7 @@ import { lateRoundResidual } from '../finding-disposition.mjs';
 import { isClean, resolve } from './diff.mjs';
 import { blocks, recordFindings, rereadAt } from './findings.mjs';
 import { withEndedWaivers } from './settled.mjs';
-import { dedupe } from './split.mjs';
+import { CUTTABLE, dedupe } from './split.mjs';
 import { approveLine } from './approvals.mjs';
 import { HARNESS_FLOW } from './plan.mjs';
 import * as quota from './quota.mjs';
@@ -24,9 +24,10 @@ export const MAX_ATTEMPTS = 3;
 // The check runs of one commit as `gh pr checks` rows: the evidence must be for the head under review.
 const checkRows = (runs) => runs.map((run) => ({ name: run.name, state: run.status === 'completed' ? String(run.conclusion ?? 'unknown').toUpperCase() : 'PENDING' }));
 
-// A pass that can still run as two halves. A plan command's own slice pass is cut once on the record and never runs as
-// halves, so the record's mark ends its cutting and the attempt limit still stops it.
-const canHalve = (state, pass) => pass.role === 'slice' && (pass.files?.length ?? 0) > 1 && !state.halved?.[pass.id];
+// A pass that can still run as two halves: a slice pass splitPasses made, since only those are rebuilt from the record's
+// `halved`. A plan command's own slice pass is never cut, so its timeout is never promised halves and the attempt
+// limit stops it.
+const canHalve = (state, pass) => pass[CUTTABLE] === true && (pass.files?.length ?? 0) > 1 && !state.halved?.[pass.id];
 
 // Counts a step's failed passes on the record and cuts the ones that should run as two halves: the step's first failure
 // of any kind, and every other timeout that can be cut, or that slice would run whole once more for nothing.
@@ -197,7 +198,7 @@ export async function runStages(s) {
           undoRound();
           const refused = refusedAtHead(s.project, baseTip, head, s.codex);
           if (refused) return finish('incomplete', { reason: refused, retry_recommended: false });
-          return finish('incomplete', { reason: `a local reviewer reads the checkout: check out ${head.slice(0, 7)} with a clean working tree first`, retry_recommended: true });
+          return finish('incomplete', { reason: `a local reviewer reads the checkout: check out ${head.slice(0, 7)} with a clean working tree first`, checkout_head: head, retry_recommended: true });
         }
         // Codex reads the checkout at the head; a project's own reviewer runs as the base has it, and reads the head
         // through git (its input names both commits).

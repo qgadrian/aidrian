@@ -5,11 +5,16 @@ Read this when the body has a `## Accepted residuals` section, or the section co
 An accepted residual that contradicts a decision on record never ships.
 
 1. Run `aidrian decisions residuals --body <file> --json`, with `--adr <folder>` only when the project's `docs` knowledge
-   names an ADR folder other than `docs/adr/`. It pairs each residual with every decision on record and every
-   `## Consequences` line of the ADRs; an ADR whose Status starts `Superseded` is skipped, and a note names it.
+   names an ADR folder other than `docs/adr/`. It lists each decision on record and each `## Consequences` line of the
+   ADRs once, in `decisions` and `adrs`, then each residual by its number `n`: every residual is set against the whole
+   record. An ADR whose Status starts `Superseded` is skipped, and a note names it.
    When it says `nothing` is true (`nothing to check`, or `nothing on record: no judgment owed`), it exited 0 and no
    dispatch is owed: the body ships.
-2. Dispatch `product-manager` with that output as its brief and the knowledge tag `product_sensitive`. It returns the rows
+2. Dispatch `product-manager` with that output as its brief and the knowledge tag `product_sensitive`.
+   When the output is still too long for one brief, split the record with `--path <doc or folder>`, which lists every
+   decision and ADR line there, and dispatch once per part; `--residual <n>` lists one residual. A single document too
+   long for one brief is not split further: `product-manager` reads it in parts, and no residual's row is `null` until
+   every part was read. A residual's row is `null` only when no part found a contradiction. It returns the rows
    in its handoff's `residual_rows` field, one row per residual, `{ residual, contradicts, evidence }`: `residual` the text
    exactly as printed, `contradicts` a decision id or ADR `path:line` from the pairing, or `null`, and `evidence` the quoted
    wording it contradicts. The pairing lists only `confirmed` and `unconfirmed` decisions: a `rejected` one is no rule,

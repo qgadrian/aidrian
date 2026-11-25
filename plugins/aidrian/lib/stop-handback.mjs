@@ -18,12 +18,50 @@
 import { fencedIn } from './markdown-sections.mjs';
 import { lastReply } from './names.mjs';
 import { backgroundRunning } from './stop-announce.mjs';
+import { sentBackLines } from './transcript.mjs';
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 const alternatives = (names) => [...new Set(names.filter((name) => typeof name === 'string' && name.trim()).map((name) => escape(name.trim())))].join('|');
 
 // The words that rate an item: the scale the orchestrator and issue-implement reports use, with `critical` and `blocker`.
 export const RATINGS = /\b(?:blocking|blocker|critical|high|medium|low)\b/iu;
+
+// One character of an emoji, or a space between emoji: a pictograph, a skin tone, a regional indicator of a flag, a tag
+// character of a subdivision flag, a variation selector, or a joiner. A keycap, a digit, `#`, or `*` followed by U+20E3,
+// optionally after U+FE0F, is read in emojiCuts.
+const EMOJI_PART = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u{E0020}-\u{E007F}\uFE0F\u200D ]$/u;
+const KEYCAP_BASE = /^[0-9#*]$/u;
+// A code point that continues the emoji before it: a joiner, a variation selector, a skin tone, a tag character, or a
+// keycap mark.
+const CONTINUES = /^[\p{Emoji_Modifier}\u{E0020}-\u{E007F}\uFE0F\u200D\u20E3]$/u;
+const REGIONAL = /^\p{Regional_Indicator}$/u;
+// How many of the emoji a text opens with are tried one at a time; past them only the whole run is dropped.
+const EMOJI_TRIES = 8;
+
+// `text` as written, then without each complete emoji of the run it opens with, one more at a time, then without the
+// whole run, trimmed and each once: "🙋 ⭐ Adrian's to-do" gives itself, "⭐ Adrian's to-do", and "Adrian's to-do". An
+// emoji ends where no joiner, selector, skin tone, tag, or keycap mark joins the next code point to it, and a flag is its
+// pair of regional indicators. One walk over the run, code point by code point; text that opens with anything else, such
+// as "7 of 9's to-do", gives only itself.
+function emojiCuts(text) {
+  const points = [...text];
+  const cuts = new Set([text.trim()]);
+  let at = 0;
+  let regional = 0;
+  for (;;) {
+    let step = 0;
+    if (KEYCAP_BASE.test(points[at] ?? '') && points[at + 1] === '\u20E3') step = 2;
+    else if (KEYCAP_BASE.test(points[at] ?? '') && points[at + 1] === '\uFE0F' && points[at + 2] === '\u20E3') step = 3;
+    else if (at < points.length && EMOJI_PART.test(points[at])) step = 1;
+    else break;
+    regional = step === 1 && REGIONAL.test(points[at]) ? regional + 1 : 0;
+    at += step;
+    const ends = points[at - 1] !== '\u200D' && !CONTINUES.test(points[at] ?? '') && regional % 2 === 0;
+    if (ends && cuts.size <= EMOJI_TRIES) cuts.add(points.slice(at).join('').trim());
+  }
+  cuts.add(points.slice(at).join('').trim());
+  return [...cuts];
+}
 
 // A heading, a bold line, or a line that ends in a colon, with its markup and that colon removed; null for any other line.
 // The text after a colon on the same line, such as "For Adrian: merge it", is returned as `inline`.
@@ -35,6 +73,23 @@ function labelOf(line) {
   const colon = /^([^:]{1,60}):\s*(.*)$/u.exec(text);
   if (colon) return { label: colon[1].trim(), inline: colon[2].trim() };
   return heading ? { label: text, inline: '' } : null;
+}
+
+// labelOf's result for `line` when its label is addressed to the Human (`patterns`), else null. The line is read as
+// written, then without each emoji its text opens with, past a heading's `#`s, as in "🙋 **Needs Adrian:**"; and each
+// label it gives the same way, as in "**🙋 For Adrian**" (emojiCuts). The first cut that matches counts, so a configured
+// name that opens with an emoji, such as "⭐ Adrian", matches as written and behind a decorative emoji alike.
+function addressedLabel(line, patterns) {
+  const heading = /^#{1,6}\s+/u.exec(line)?.[0] ?? '';
+  for (const rest of emojiCuts(line.slice(heading.length))) {
+    const found = labelOf(`${heading}${rest}`);
+    if (!found) continue;
+    // A heading's label is the rest of its line, whose cuts this loop already walks.
+    for (const label of found.label === rest ? [rest] : emojiCuts(found.label)) {
+      if (patterns.some((pattern) => pattern.test(label))) return { ...found, label };
+    }
+  }
+  return null;
 }
 
 // A label addressed to the Human: "For Adrian", "Open items for the Human", "Needs Adrian", "Waiting on the user",
@@ -58,8 +113,8 @@ export function handBackLists(message, human) {
   const patterns = addressed(human);
   const lists = [];
   for (let i = 0; i < lines.length; i += 1) {
-    const found = labelOf(lines[i].trim());
-    if (!found || !patterns.some((pattern) => pattern.test(found.label))) continue;
+    const found = addressedLabel(lines[i].trim(), patterns);
+    if (!found) continue;
     const items = found.inline ? [found.inline] : [];
     let j = i + 1;
     if (!items.length && lines[j]?.trim() === '') j += 1;
@@ -130,7 +185,10 @@ export const HAND_BACK_LEAD = 'The last message lists ';
 // or `pull request <n>`, with no digit after it, the path as written, JSON-quoted, or as quoteData writes it, or its first
 // PATH_CUT characters when longer, and a rating (RATINGS). The wording is not matched: the skill's line holds "your",
 // which a report that names the Human writes as the name. The reason names every refusal not handed over, so the one
-// send-back the check makes in a turn asks for each item. Null while a background task still runs, as its end wakes the
+// send-back the check makes in a turn asks for each item. A refusal a send-back of this check after it names
+// ({ kind: 'sent-back', text }, askedFor) is asked for once: a session no Human types into, woken only by other sessions'
+// messages and task notifications, has one turn that spans every reply since its start, and an item the agent added in a
+// form this does not read, as under an emoji label once, is never asked for again on each later stop. Null while a background task still runs, as its end wakes the
 // session, and with no final message to read.
 export function mergeHandBack(input, transcript, actions, { human = 'the Human' } = {}) {
   if (!Array.isArray(actions) || backgroundRunning(input)) return null;
@@ -155,11 +213,23 @@ export function mergeHandBack(input, transcript, actions, { human = 'the Human' 
   const itemsOf = (text) => handBackLists(text, names).flatMap(({ items }) => items);
   const finalItems = itemsOf(message);
   const missing = refused.filter(([pr, { file, at }]) => {
-    const later = actions.slice(at + 1).filter((action) => action?.kind === 'reply' && typeof action.text === 'string');
-    return ![finalItems, ...later.map((action) => itemsOf(action.text))].some((items) => items.some((item) => handsOver(item, pr, file)));
+    const later = actions.slice(at + 1).filter((action) => typeof action?.text === 'string');
+    if (later.some((action) => action.kind === 'sent-back' && askedFor(action.text).includes(pr))) return false;
+    const replies = later.filter((action) => action.kind === 'reply');
+    return ![finalItems, ...replies.map((action) => itemsOf(action.text))].some((items) => items.some((item) => handsOver(item, pr, file)));
   });
   if (!missing.length) return null;
   return missing.length === 1 ? oneRefusal(missing[0], human) : severalRefusals(missing, human);
+}
+
+// The pull requests a send-back's text asks this check to hand over: those a reason line that starts with
+// MERGE_HAND_BACK_LEAD names, as oneRefusal and severalRefusals write them, `#<n>` or `#<n>, #<m>`.
+export function askedFor(text) {
+  return sentBackLines(text).flatMap((line) => {
+    if (!line.startsWith(MERGE_HAND_BACK_LEAD)) return [];
+    const named = /^\d+(?:, #\d+)*(?= at (?:its|their) path checks?\b)/u.exec(line.slice(MERGE_HAND_BACK_LEAD.length));
+    return named ? named[0].split(', #').map(Number) : [];
+  });
 }
 
 // The reason for one refusal not handed over, [pr, { file }].

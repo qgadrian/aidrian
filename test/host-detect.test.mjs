@@ -58,6 +58,14 @@ test('a session\'s identity comes from its host, and a process no host claims ha
   assert.deepEqual(sessionIdentity({}), { session: null, agent: null });
 });
 
+test('a Codex subagent thread\'s command reads the root session\'s id, which its hooks carry, not its own thread\'s', () => {
+  // Codex gives every shell call CODEX_SESSION_ID, the root session's, and CODEX_THREAD_ID, the running thread's own.
+  assert.deepEqual(sessionIdentity({ CODEX_SESSION_ID: 'root', CODEX_THREAD_ID: 'child' }), { session: 'root', agent: null }, 'a subagent\'s thread');
+  assert.deepEqual(sessionIdentity({ CODEX_SESSION_ID: 'root', CODEX_THREAD_ID: 'root' }), { session: 'root', agent: null }, 'the root thread');
+  assert.deepEqual(sessionIdentity({ CODEX_THREAD_ID: 'root' }), { session: 'root', agent: null }, 'a Codex that sets no CODEX_SESSION_ID');
+  assert.equal(detectHost({ env: { CLAUDECODE: '1', CODEX_SESSION_ID: 'root', CODEX_THREAD_ID: 'child' } }).id, 'claude-code', 'a Claude Code started from a Codex subagent\'s shell');
+});
+
 test('attribution records an unknown host as unknown, never as Claude Code', () => {
   assert.equal(currentAuthor({}, {}).tool, 'unknown');
   assert.equal(currentAuthor({}, { SOME_OTHER_HOST: '1' }).tool, 'unknown');

@@ -899,6 +899,11 @@ test('a reused ledger reaches what a settled marker means, the handoff carries t
   // Worktrees are searched through the working agreement's summary, which every session reads anyway.
   assert.ok(docs['working-agreement.md'].summary.includes('worktrees'), 'working-agreement.md summary: worktrees');
   for (const file of ['config.md', 'project-folder.md', 'review.md']) assert.ok(docs[file].summary.length <= 160, `${file} summary: ${docs[file].summary.length} characters`);
+  // The shell-init command of Replacing the terminal is found through the handoff doc's summary, and the state folder's
+  // write rule through the project folder doc, whose Local state links it, since the hooks doc's summary is full.
+  for (const words of ['shell-init', '--wrap', 'terminal']) assert.ok(docs['handoff.md'].summary.includes(words), `handoff.md summary: ${words}`);
+  assert.ok(docs['handoff.md'].summary.length <= 160, `handoff.md summary: ${docs['handoff.md'].summary.length} characters`);
+  assert.match(flat('docs/project-folder.md'), /\(hooks\.md#the-state-folder\)/u);
 });
 
 test('no eval prompt sets its own run count: the documented --runs flag covers it', () => {
@@ -1990,4 +1995,13 @@ test('pr-review-loop asks the round_limit question word for word, and runs its r
   const plan = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/references/review-plan.md'), 'utf8').replace(/\s+/g, ' ');
   assert.match(plan, /With `question` and `options`, report the open findings, then ask the Human that question with AskUserQuestion, the options word for word/);
   assert.match(plan, /On "Approve", run `raise` exactly as printed, as one plain command/);
+});
+
+test('the README and the Claude Code page state one minimum Claude Code version, the one whose Bash hooks get Monitor commands', () => {
+  const readme = /- Claude Code (\d+\.\d+\.\d+) or later, Codex CLI, or both\./u.exec(flat('README.md'))?.[1];
+  const page = flat('docs/providers/claude-code.md');
+  const stated = /The plugin needs Claude Code (\d+\.\d+\.\d+) or later, the first version whose hooks matched to Bash get the Monitor tool's shell commands/u.exec(page)?.[1];
+  assert.ok(readme && stated, 'both state it');
+  assert.equal(readme, stated);
+  assert.ok(page.includes(`From Claude Code ${stated}, a hook whose matcher is Bash gets those commands as Bash calls`), 'the Monitor section names the same version');
 });

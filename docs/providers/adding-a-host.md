@@ -99,6 +99,7 @@ than 1 s past the longest guard budget a script gives itself, so the script's ow
 | `modelPrices` | Optional: its models' prices as data, `{ models, rows }`, for the cost of its transcripts. [Model prices](../dispatch-log.md#model-prices) lists the fields; `test/model-prices.test.mjs` fails on a listed model with no row of its own |
 | `capabilities.transcripts` | Whether `lib/transcript.mjs` reads its transcripts: cost rows, the names reminder, and the session-length reminder need it. `true` also opts the host into the `review-rounds` rule's reading of the Human's answers and typed grants of review rounds; `false` makes that rule hand the raise to the Human's own shell |
 | `capabilities.workTools` | Optional, with `transcripts: true`: the tool names its transcripts give a file edit or a dispatch. A session resumed from a brief stops reading to resume at the first of them, and the Stop hook records what it read as a [resume tokens](../handoff.md#resume-tokens) sample. No field: no sample is recorded, and the cost model's `B` is the config value or 44,000 |
+| `capabilities.envSettings` | The settings files whose `env` reaches every later session's hooks, given the project's checkouts, and the user's: the override guard refuses an `AIDRIAN_ALLOW_*` name written there (none: no file guarded) |
 | `capabilities.prFooterSettings` | The settings files that say whether it asks for a generated-by footer, when it does |
 | `capabilities.wakesOnChildReport` | When the host delivers a background agent's report to the subagent that started it after that subagent ended its turn, and starts it again: `taskTypes`, the `background_tasks` types of such an agent. The stop hook's [background check](../hooks.md#background-check) leaves those tasks out. No field: every task counts |
 | `capabilities.wakesOnTaskEnd` | When the host starts a subagent that ended its turn again once a background task of another kind it started ends, such as a shell's end notice: `taskTypes`, those `background_tasks` types. With `wakesOnChildReport`, it says which running tasks make a later stop sure, so the stop hook's [delivery check](../hooks.md#delivery-check) lets a handoff file wait for it. No field: no such task wakes it |
@@ -164,12 +165,16 @@ the command's `status: "created"` result where the host's response holds the cal
 the payload's session id; a host added without that fixture fails it. The hook reads that output only through the
 host's `shellOutput`: a host whose adapter gives none records no worktree.
 
-Why the hook and not `aidrian worktree new` itself: the command would file its row under the session id its shell's
-environment names, and on Codex that id is not the hook's. Codex gives a shell call `CODEX_THREAD_ID`, the thread's own
-id, and its hooks `session_id`, the identity the root thread shares with every thread it starts, which equals the
-root thread's id ([Codex](codex.md#session-ids)): in a subagent's shell the two differ, so its row would land where no
-snapshot of the session reads. The hook files the row where the pull request ledger files its own, on Claude Code,
-Codex, and OpenCode alike.
+Two records, two writers. The PostToolUse hook writes the snapshot link in `links.jsonl`, the row this section
+describes. `aidrian worktree new` itself writes a different record, the continuation-store record that worktree grants
+read, under the session id its shell's environment names. The hook files the link under the payload's `session_id`
+whatever the shell names, where the pull request ledger files its own, on Claude Code, Codex, and OpenCode alike, so
+the link never depends on the shell's id. The grant record does: a host's adapter must make the shell's id the hook
+payload's `session_id` in a subagent's shell too, or the record lands under an id the worktree grant hook never looks
+up, and the subagent's worktree gets no grant. Codex gives a shell call `CODEX_THREAD_ID`, the thread's own id, which
+differs in a subagent's thread, and `CODEX_SESSION_ID`, the root session's id its hooks carry as `session_id`
+([Codex](codex.md#session-ids)): its adapter reads the second. A host whose shell names only a thread's own id would
+file a subagent's grant record under that thread, where the grant hook does not read.
 
 ### What else a new host has to check by hand
 
@@ -236,12 +241,16 @@ An adapter makes the guard hold. The skills that act on a tracker are text, and 
 ## Adding a forge
 
 A forge is where a pull request lives: its checks, reviews, comments, and repository. GitHub is the one shipped, through gh.
+The places a forge is mapped:
 
 | File | What it holds |
 | --- | --- |
 | `plugins/aidrian/lib/forges/<id>.mjs` | The adapter: a function that takes `{ cwd, run, timeoutMs, killSignal }` and returns the frozen method object below. `run` is the test seam for the forge's command, and `killSignal` the signal that stops a call at `timeoutMs`, as the ready hold asks for SIGKILL |
 | `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, the facade's helper `repoIdentity(value)` from `identity.mjs`, the repository check `servedRepository(identity)`, which the active adapter answers, `isLogin(name)`, whether a name is shaped like the forge's login, as an invariant's `approvers` must be, `changeNotFound(error)`, whether an error is the forge's answer that it has no such change, such as GitHub's 404, which ends a dropped result at once, `diffTooLarge(error)`, whether a `diff` call failed because the forge refuses a diff that large (GitHub: gh's line `PullRequest.diff too_large`), which `aidrian pr product-feedback diff` replaces with a local diff, `forgeConfigCommands()`, the union of every forge adapter's CLI subcommands that write the user's own config, each `{ programs, subcommands, valueOptions, what }` (`gh config set`, `gh extension install`, `gh alias set`, `import`, and `delete`, `gh auth setup-git`, and `gh auth login`, `logout`, `switch`, and `refresh` on GitHub), which the agent gates hook refuses to a session no Human attends, what a project run's issue session never asks of any forge (`lib/issue-forge-guard.mjs`): `forgeRefCommands()`, the CLI subcommands that release, run or rerun a workflow, or change the repository's settings, secrets, variables, or keys, in the same shape, `forgeApiWrite(program, tokens)`, what a raw API call of the CLI writes outside the session's own pull request and issues (GitHub: a REST route other than its pulls and issues, or a GraphQL mutation other than those on reviews, comments, labels, and draft state), and `forgeWorkflowFolders()`, the folders whose files the forge runs with the repository's secrets on a push (`.github/workflows` and `.github/actions`), what a project run needs to hand its issue session the forge token: `forgeTokenVar(host)`, the variable the forge's CLI and its git credential helper both read a token for that host from (`GH_TOKEN`, or `GH_ENTERPRISE_TOKEN` for a GitHub Enterprise Server host), `forgeLoginStep(host)`, the step that signs the CLI in, `forgeGitHelper(env)`, the `credential.helper` value that answers git with the token the CLI's variable holds (gh's own `auth git-credential`, by the absolute path of the gh on PATH), or null, and `forgeTokenNote(token)`, why a token reaches more than the run's repository, read from its prefix alone (GitHub: any token but a fine-grained `github_pat_` one), or null, and `MAX_BODY`, the longest body the forge takes for a comment or a review, which the adapter names (65,536 characters on GitHub) and an inline review checks its escaped length against. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` promises shared code one thing: an empty answer is null, not an empty list. The GitHub adapter keeps it by naming GitHub's JSON media type on every REST call, its `mediaType`, which shared code cannot pass |
 | `test/forge-<id>.test.mjs` | The exact command or request behind each method, as `test/forge-github.test.mjs` holds gh's |
+| `plugins/aidrian/lib/rules/<id>/session-calls.mjs` | The forge's reader of its own command for the session ledger, as `lib/rules/github/session-calls.mjs` reads gh's: its exports are listed under the ledger's members below |
+| `plugins/aidrian/scripts/hook-bash-post.mjs` | The import of each forge's ledger reader, which the hook hands to `lib/session-prs.mjs`, today GitHub's alone, and `MAY_RECORD`, the words a command must hold before any reader sees it (`push`, `pr`, `worktree`): a forge whose command holds none of them, such as `glab mr create`, adds its word there |
+| `plugins/aidrian-claude-mod/lib/format.mjs` | The [Claude mod](../claude-mod.md)'s forge table, `FORGES`, keyed by the adapter's `id`: the words for one change and several (`pull request`, `PR`, `PRs` on GitHub), and `isLink(row)`, whether a snapshot row's `url` is the forge's link to that row's own change. A forge with no entry shows its rows as a `change`, with no link |
 
 The adapter implements the methods of `lib/forges/github.mjs`, each with the arguments it takes there:
 
@@ -316,7 +325,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   `reviewTrail(repo, n, { host })`, what a merge no Human asks for confirms in one call: the head, the base, the first
   100 changed files, the newest 100 reviews, and the first 100 conversation comments, each author's login and whether it
   is a bot, and every editor of a comment ([Merge trust](../review.md#merge-trust)); and the head branch, title, body,
-  and the first 100 commit messages, whole or not, for the closing-word check.
+  and the first 100 commit messages, whole or not, for the closing-word check, with the first 100 issues the forge links
+  to the pull request to close at the merge, a sidebar link included, whole or not (`closingIssues`, `closingIssuesComplete`).
 - The repository: `repo`, `repository`, `branchHead`, the commit a branch points to, `hasCommit(repo, sha, { host })`,
   whether the forge holds a commit on any ref, false only once it confirms it has none (GitHub: a 404 of the commit
   while the same route reads the default branch's head commit), and a throw on any other answer, `contents`, `tree`, one folder of a
@@ -375,16 +385,18 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 - The auto-merge command's merge state (`lib/pr-auto-merge.mjs`): `mergeStatus(repo, n, { host })`, in one read,
   `{ state, merged, mergedAt, head, autoMerge, queued }`: whether the forge merged it, the merge method of an
   auto-merge request or null, and whether a merge queue holds it ([config.md](../config.md#when-it-is-on)).
-- A project run's preflight (`lib/project-preflight.mjs`): `reviewerSeen(repo, login, { host, limit, counts })`, whether
+- A project run's preflight (`lib/project-preflight.mjs`), and for the last two every start
+  (`lib/project-forge-holds.mjs`): `reviewerSeen(repo, login, { host, limit, counts })`, whether
   the reviewer reviewed, or left a comment whose body `counts` accepts on, any of the repository's last `limit` pull
   requests, as `{ changes, seen }`, a bot's login compared with or without its `[bot]` suffix (preflight's `counts`
   skips a usage-limit notice and a status card that does not yet say the review completed, which show no finished review); `ciWorkflows(repo, { host })`, the names of its active CI workflows;
-  `refProtection(repo, { host })`, `{ branch, protected, why, tags }`: the default branch's name, whether a rule that
+  `refProtection(repo, { host, token })`, `{ branch, protected, why, tags, admin }`: the default branch's name, whether a rule that
   asks for a pull request there binds the signed-in user (true; false; null when the forge shows the rule's settings
-  only to an administrator, which the preflight asks of the driver), why not, and each active tag rule as `{ name, all,
+  only to an administrator, which the preflight asks of the driver and a start halts on), why not, `admin` true and
+  `protected` false for a user who administers the repository, whose token can turn any rule off, and each active tag rule as `{ name, all,
   creation, update, bypass }`: whether it names every tag and excludes none, whether it restricts creating and updating
   a tag, and whether the signed-in user may bypass it (`never` is the only answer the preflight accepts); and
-  `workflowSecrets(repo, { host })`, `{ secrets, workflowPush }`: how many CI secrets the repository's workflows see,
+  `workflowSecrets(repo, { host, token })`, `{ secrets, workflowPush }`: how many CI secrets the repository's workflows see,
   its own, those its organization shares, and those of each environment with no required reviewers rule that holds the
   signed-in user (one that prevents self-review, or names only other users; a team may hold that user), or those of
   every environment when the signed-in user is an admin of the repository, since an admin's token can edit an
@@ -393,6 +405,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   hold against code the run pushes. `projectRun.workflowSecretsAccepted` skips this read whole, accepting all current
   and future workflow secret exposure for project runs, so a team sets it only when that is acceptable. And whether the
   signed-in token may push a change to a workflow file (null when the token does not say), which the preflight's blocker only words: secrets block whatever the scope.
+  With `token`, both make every read with that token, on `host` alone, so the signed-in user is the token's own
+  account; GitHub's adapter puts it in each variable gh reads a token from, with `GH_HOST` unset.
 - Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review
   summary's findings table gives a finding's closing range. It is built only from two full-hex SHAs and the forge's own
   identity of the repository, never from pull request content: GitHub's adapter reads the repository's `html_url` once,

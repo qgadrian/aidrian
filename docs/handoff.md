@@ -53,6 +53,18 @@ start the new session, so a Human who is not watching is no reason to stay. `ask
 The hooks word the route the gate would take: a background route this machine or the base branch has not turned on
 is worded as the clear route it falls back to ([the switches](#the-background-route)).
 
+**At the chain cap.** On a route other than `none`, a session whose [chain floor](#the-chain) is at the
+`maxChain` of every route the gate could take gets no reminder and no plan offer: the gate would continue its next brief by no route, and a background
+session nobody attends would end in a manual resume, with a message the host shows the Human as a problem.
+Both hooks read the gate's own check, `sessionAtChainCap` in `lib/handoff-continue.mjs`, and stay silent only when every
+route the gate could take is at its cap. A background route the hooks take by trusting the local ref's `solo`, which the gate still
+asks the forge to confirm, counts as at the cap only when the route the gate falls back to is at its own cap too.
+So where the forge decides the route, the hooks may still ask for a handoff the gate then refuses at the background cap:
+a guess never silences a handoff the gate would continue, and a refused one ends, as any refusal does, in the manual
+resume the handoff skill prints.
+The Stop hook still records the firing in its marker, so the reminder backs off as after a skipped one.
+With `maxChain: "unlimited"`, or the `none` route, which reads no chain, the reminder is as before.
+
 **Once, then again.** The first firing is at `costRatio`, 2 by default. When it comes back depends on the mode:
 
 - `ask` comes back only once `r` reaches twice the ratio at its last firing: 2, 4, 8 by default, or 1.5, 3, 6 at a
@@ -666,8 +678,12 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   sign-off where [Project run](config.md#project-run) asks for one; otherwise its clone holds the base branch's copies,
   git leaves them out of its commits, and a push that changes one is refused.
   The branch's own changes stay in its commits for the pull request's review.
-  An issue's session never writes a host file, on any attempt and whatever `github.autoMerge.includeGuardedPaths` says.
-  A low or medium review finding whose fix lies in one, that the review step does not mark as a
+  An issue's session never writes a host file, on any attempt and whatever `github.autoMerge.includeGuardedPaths` says,
+  while [`github.autoMerge.includePolicyFiles`](config.md#auto-merge) is off.
+  With it on, the first message says so, and the session may write the host instruction files and the policy files,
+  but no base copy; the host settings, skills, agents, commands, hooks, MCP servers, and workflow files stay refused.
+  One rule decides a review finding in a host file: one in a file the attempt may write is fixed as any other finding.
+  A low or medium review finding whose fix lies in one the attempt may not write, that the review step does not mark as a
   [security finding](review.md#reviewers), and that has the engine's own [id](review.md#finding-ids), is a stated
   residual, never a decision: one item of the residual section
   `github.pullRequest.residuals` names, by default Accepted residuals, in its [format](config.md#pull-request-contract).
@@ -683,7 +699,7 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   When the [pull request body rule](config.md#pull-request-contract) refuses that item or its section for any reason,
   such as a closed list of sections without it or an issue key pattern that matches the id, the session never works
   around it: the issue parks as before.
-  A security finding in a host file, and one with no engine id, parks as before.
+  A security finding in a host file the attempt may not write, and one with no engine id, parks as before.
   A finding outside host files keeps its route.
   A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
   It parks a pull request into another branch than the default.
@@ -1312,9 +1328,24 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
   A `--prior` that is the brief itself exits 2 for both `check` and `snapshot`: its earlier text is gone. Same file
   means the same device and inode, so a symlink, a hard link, and a letter-case variant on a case-insensitive disk count.
   A header that names this same file, with no snapshot to compare, is a finding the session tells the Human.
-  A snapshot is written to a temporary file of a random name in `.prior/` and renamed over its name, so a link planted
-  there is replaced, never written through. Every snapshot file is 0600, and a `.prior/` the command creates is 0700;
-  one that exists keeps its mode. A `.prior` that is itself a link is refused: nothing is written or removed through it.
+  `snapshot` replaces nothing, so a snapshot taken after the write never copies the new text over the good prior.
+  It writes only a vacant name, by a hard link from a temporary file of a random name in `.prior/`, and an entry
+  already there is kept with exit 2 unless it is a regular file with the same bytes, which exits 0 with no write:
+  - other bytes: keep that snapshot, write the brief, and run `aidrian handoff check`, which compares with it;
+    remove it only when that prior is known to be wrong.
+  - a snapshot it cannot read: restore read access to it, or run `aidrian handoff check` with `--prior` naming a
+    known-good readable brief.
+  - a link, a folder, or any entry that is not a regular file, and a hard link to the brief itself: remove it, and
+    run `snapshot` again.
+
+  Only a passing check replaces the snapshot, by a temporary file renamed over its name, so a link planted there is
+  replaced, never written through. A check that passes while a `snapshot` runs can still replace what that `snapshot`
+  just kept or wrote; both write only a brief the session holds.
+  The promise to keep the prior holds for one `snapshot` of a brief at a time. A `snapshot` with no brief to supersede
+  still clears a stale snapshot, as before, so it can remove one that another `snapshot --prior` of that brief wrote
+  at the same moment.
+  Every snapshot file is 0600, and a `.prior/` the command creates is 0700; one that exists keeps its mode.
+  A `.prior` that is itself a link is refused: nothing is written or removed through it.
 - `session-continue`, the first step of the fresh session, reads the newest brief in full, enters its worktree,
   reads the state fresh, and continues at its next steps. It keeps the brief's locked decisions, and checks each other
   claim a step builds on against the docs and code; where they disagree, the docs and code win.

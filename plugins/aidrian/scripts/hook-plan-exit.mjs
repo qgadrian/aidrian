@@ -23,7 +23,7 @@ export async function handle(input) {
   const text = readText(input.transcript_path);
   if (!text || config.session.handoff.mode === 'off') return;
   const handoff = resolvedHandoff(config.session.handoff, resumeState(project, config));
-  const context = planApprovedContext(handoff, sessionUsage(text), await continuation(handoff, detectHost({ input }), project, config));
+  const context = planApprovedContext(handoff, sessionUsage(text), await continuation(handoff, detectHost({ input }), project, config, input.session_id));
   if (context) print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: context } }));
 }
 

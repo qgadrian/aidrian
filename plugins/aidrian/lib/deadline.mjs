@@ -21,6 +21,15 @@ export function guardBudget(env = process.env, { held = false } = {}) {
   return Number.isFinite(lowered) && lowered >= 0 ? Math.min(lowered, own) : own;
 }
 
+// The causes, the `match` of hook-deny.mjs recordBlock, of a refusal because a time budget ran out: the guards'
+// (config-guard.mjs deadlineDenial) and the project run rule's (scripts/hook-tracker-pre.mjs). Such a refusal says the
+// machine was too loaded to judge the call in time, and its message gives the retry steps, so it never counts toward the
+// automatic lesson for a rule an agent keeps fighting (lesson-signals.mjs noteDenial), nor reads as one in the report
+// (report-agents.mjs summarizeDenies); the report still counts it by reason.
+export const GUARDS_PAST_BUDGET = 'past the guards\' time budget';
+export const RUN_RULE_PAST_BUDGET = 'the project run rule ran out of time';
+export const BUDGET_CAUSES = new Set([GUARDS_PAST_BUDGET, RUN_RULE_PAST_BUDGET]);
+
 // What checkDeadline throws once the budget is spent.
 export class PastDeadline extends Error {}
 

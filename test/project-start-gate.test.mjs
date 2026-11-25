@@ -16,7 +16,7 @@ import { ownIssue, runDriver } from '../plugins/aidrian/lib/project-run-guard.mj
 
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
+import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, ISSUE_ATTEMPTS, POLICY_FILES_LINE, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { recordHumanSignoff } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
@@ -27,7 +27,7 @@ import { decisionStoreFolder } from '../plugins/aidrian/lib/project-decision-sto
 import { projectId } from '../plugins/aidrian/lib/project.mjs';
 import { attemptFolder, guardedFolders, runLogFile, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { decidedEntry, decidedFixture, DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
+import { decidedEntry, decidedFixture, DRIVER, fakeClaude, HELD_REFS, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
 const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/autopilot/SKILL.md');
 const at = (ms) => new Date(ms).toISOString();
@@ -44,7 +44,7 @@ test('the caps in code', () => {
 // in the prompt of an attempt on base copies and in the skill's rules for every attempt alike, never as a decision.
 test('a low or medium finding in a host file is a stated residual by its id alone, and pr_open once it is the last stop', () => {
   // Beside severity: no security mark, and the engine's own id. The line publishes nothing, so no post or head condition applies.
-  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, and that has the review engine's own `R<round>-<n>` id, is a stated residual, never a decision: /u);
+  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file this attempt may not write, that the review step does not mark `security`, and that has the review engine's own `R<round>-<n>` id, is a stated residual, never a decision: /u);
   // The project's residual format: its section, the id as the item's lead, and every field it requires, each filled with the fixed text.
   assert.equal(HOST_FILE_REASON, 'the run may not write a host file this finding needs');
   assert.ok(HOST_FILE_RESIDUAL.includes('one item of the residual section the project\'s pull request rules name, config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon, '
@@ -55,7 +55,7 @@ test('a low or medium finding in a host file is a stated residual by its id alon
   assert.ok(HOST_FILE_RESIDUAL.includes('whenever the pull request\'s copy of the record lacks the finding\'s details, the Human reads them in the review record on the machine that ran the review.'));
   // One fail-closed rule: whatever the body rule refuses, the issue parks, as do a security finding and one with no id.
   assert.ok(HOST_FILE_RESIDUAL.includes('When the pull request body rule refuses that item or its section for any reason, never work around it: the issue parks as before.'));
-  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file, and one with no such id, parks as before\.$/u);
+  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file this attempt may not write, and one with no such id, parks as before\.$/u);
   // A mixed round: every other finding takes its own route first, and a decision it raises decides the result.
   assert.match(HOST_FILE_RESIDUAL, /Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result\. Only when such residuals are the one stop left, record the result pr_open/u);
   const given = { run: 'launch', key: 'ENG-1', attempt: 2, branch: 'feat/eng-1', clone: '/c' };
@@ -68,6 +68,17 @@ test('a low or medium finding in a host file is a stated residual by its id alon
   assert.ok(bullet.includes(HOST_FILE_RESIDUAL), 'the skill states the same route');
   assert.match(bullet, /never writes a host file, whatever `github\.autoMerge\.includeGuardedPaths` says/u);
   assert.match(bullet, /A finding outside host files keeps its route\./u);
+  // github.autoMerge.includePolicyFiles on: the session may write those files and fixes a finding in one, as the skill says.
+  const opened = projectPrompt({ ...given, includePolicyFiles: true });
+  assert.ok(opened.includes(POLICY_FILES_LINE), opened);
+  assert.doesNotMatch(projectPrompt(given), /includePolicyFiles/u, 'off: no line');
+  assert.match(POLICY_FILES_LINE, /^The team's `github\.autoMerge\.includePolicyFiles` is on: this session may write host instruction files/u);
+  // One rule, scoped to what this attempt may write: a base copy, a protected host file, or a workflow keeps the host-file route.
+  assert.match(POLICY_FILES_LINE, /and the other policy files, when the issue needs it, but no base copy this message lists\. A review finding in a file this attempt may write is fixed as any other finding\. This attempt may not write a base copy this message lists, a host settings, skills, agents, commands, hooks, or MCP server file, or a forge workflow file: a finding in one keeps the autopilot skill's host-file route, a stated residual or a park\.$/u);
+  const both = projectPrompt({ ...given, includePolicyFiles: true, baseCopies: '/a/base-copies.txt' });
+  assert.ok(both.includes(POLICY_FILES_LINE) && both.includes(HOST_FILE_RESIDUAL), 'base copies keep their route beside the line');
+  assert.match(bullet, /^\*\*A finding in a host file\.\*\* Unless the first message says the team's `github\.autoMerge\.includePolicyFiles` is on, this session never writes a host file/u);
+  assert.match(bullet, /When the first message says `github\.autoMerge\.includePolicyFiles` is on, this session may write .* but no base copy the first message lists, nor a host settings, skills, agents, commands, hooks, or MCP server file, nor a workflow file, and a finding in a file this attempt may write is fixed as any other finding\./u);
 });
 
 test('the driver starts the issue next lists in a fresh clone cut from the base tip, under the host sandbox, held to a floor and a tagged mark, and the ledger records it', (t) => {
@@ -160,7 +171,7 @@ test('start refuses a run the base branch has not switched on, by its local ref 
 test('the team policy is the lowest of the local ref, the forge, and the ceilings', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, maxStarts: 900, issueHours: 24 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 50, issueHours: 30 } } });
   const policy = teamPolicy(fx.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, fx.forge);
-  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, recordedDecisions: false, fullAuto: false, reviewer: 'chatgpt-codex-connector[bot]', includeGuardedPaths: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
+  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, recordedDecisions: false, fullAuto: false, reviewer: 'chatgpt-codex-connector[bot]', includeGuardedPaths: false, includePolicyFiles: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
   const ceiling = runFixture(t, { projectRun: { allow: true, maxStarts: 1000 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 1000 } } });
   assert.equal(teamPolicy(ceiling.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, ceiling.forge).maxStarts, 1000);
 });
@@ -323,6 +334,63 @@ test('start halts when the user\'s git config gives origin a second push URL, wh
   assert.match(halt, /an issue session pushes to exactly one, the URL its start pins; remove the extra push URL, then start again/u);
   assert.deepEqual(fx.rows(), [], 'a halt records nothing');
   assert.deepEqual(fx.claude.starts(), []);
+});
+
+// What the forge holds the issue sessions to, asked again at every start, with the very token the start hands the session
+// (lib/project-forge-holds.mjs holdsProblem): a protection changed since the preflight, or read for another account,
+// starts nothing.
+test('every start reads the forge rules and the secrets with the session\'s token, and halts on a repository they do not hold', (t) => {
+  const fx = runFixture(t);
+  fx.forge.holds = () => ({ refs: { branch: 'main', protected: false, why: 'it has no branch protection', tags: [] }, secrets: { secrets: 0, workflowPush: false } });
+  const open = fx.cmd(['start', 'launch', 'ENG-1']);
+  const halt = open.out.find((line) => line.startsWith('halt ')) ?? '';
+  assert.match(halt, /^halt the forge does not hold the issue sessions as a run needs, and a start has no person to answer it: branch-protection: no rule on the forge holds the signed-in user.*\(it has no branch protection\).*; release-tags: no active tag rule/u, JSON.stringify(open));
+  assert.deepEqual(fx.claude.starts(), [], 'no session');
+  assert.deepEqual(fx.forge.calls.filter(([name]) => ['refProtection', 'workflowSecrets'].includes(name)).map(([name, repo, options]) => [name, repo, options]), [
+    ['refProtection', 'acme/widgets', { host: 'github.com', token: 'given' }], ['workflowSecrets', 'acme/widgets', { host: 'github.com', token: 'given' }],
+  ], 'read with the token the session gets, on the pinned host');
+  // An administrator's token, which can turn off any rule, and secrets a branch's workflows may read, halt too.
+  const admin = runFixture(t);
+  admin.forge.holds = () => ({ refs: { branch: 'main', protected: false, admin: true, why: 'the signed-in user administers the repository', tags: [] }, secrets: { secrets: 2, workflowPush: true } });
+  const held = admin.cmd(['start', 'launch', 'ENG-1']).out.find((line) => line.startsWith('halt ')) ?? '';
+  assert.match(held, /branch-protection: .*does not administer the repository.*; release-tags: no tag rule on the forge holds the signed-in user.*; workflow-secrets: the repository's workflows see 2 CI secrets/u, held);
+  assert.deepEqual(admin.claude.starts(), []);
+});
+
+test('a forge read of the rules or the secrets that fails at a start retries it, and starts nothing', (t) => {
+  for (const failing of ['refs', 'secrets']) {
+    const fx = runFixture(t);
+    fx.forge.holds = () => ({ ...HELD_REFS, [failing]: new Error('gh: Server Error (HTTP 502)') });
+    const started = fx.cmd(['start', 'launch', 'ENG-1']);
+    assert.equal(started.exitCode, 75, `${failing}: ${started.err.join('\n')}`);
+    assert.match(started.out[0], /^retry: (?:branch-protection|workflow-secrets): the forge cannot say .*\(gh: Server Error \(HTTP 502\)\); a fine-grained token needs Administration: Read-only, Secrets: Read-only, and Environments: Read-only for these reads/u, failing);
+    assert.deepEqual(fx.claude.starts(), [], failing);
+    assert.ok(!fx.rows().some((row) => row.event === 'start'), `${failing}: no start row`);
+  }
+  // A blocker the forge confirmed halts though another read failed, so a read that keeps failing never hides it.
+  const both = runFixture(t);
+  both.forge.holds = () => ({ refs: { branch: 'main', protected: false, why: 'it has no branch protection', tags: [] }, secrets: new Error('gh: Server Error (HTTP 502)') });
+  const halted = both.cmd(['start', 'launch', 'ENG-1']);
+  assert.match(halted.out.find((line) => line.startsWith('halt ')) ?? '', /branch-protection: no rule on the forge holds/u, JSON.stringify(halted));
+  assert.deepEqual(both.claude.starts(), []);
+});
+
+test('the team\'s acceptance on the default branch lets a start past the rules or the secrets it accepts, and no other', (t) => {
+  const exposed = { refs: { branch: 'main', protected: false, why: 'it has no branch protection', tags: [] }, secrets: { secrets: 3, workflowPush: true } };
+  const started = (projectRun) => {
+    const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, ...projectRun } });
+    fx.forge.holds = () => exposed;
+    const answer = fx.cmd(['start', 'launch', 'ENG-1']);
+    return { halt: answer.out.find((line) => line.startsWith('halt ')) ?? null, starts: fx.claude.starts().length };
+  };
+  const both = started({ forgeProtectionAccepted: true, workflowSecretsAccepted: true });
+  assert.deepEqual(both, { halt: null, starts: 1 }, 'both accepted');
+  const rules = started({ forgeProtectionAccepted: true });
+  assert.match(rules.halt, /workflow-secrets: the repository's workflows see 3 CI secrets/u);
+  assert.doesNotMatch(rules.halt, /branch-protection|release-tags/u, 'the rules accepted');
+  const secrets = started({ workflowSecretsAccepted: true });
+  assert.match(secrets.halt, /branch-protection: /u);
+  assert.doesNotMatch(secrets.halt, /workflow-secrets/u, 'the secrets accepted');
 });
 
 // The push preflight (docs/handoff.md#the-push-preflight) on the attempt's clone: a driver in auto mode whose user
@@ -903,8 +971,8 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   const head = 'a'.repeat(40);
   const parent = 'b'.repeat(40);
   const repository = { host: 'github.com', owner: 'acme', name: 'widgets' };
-  const ask = (trail, { pr = 12, includeGuardedPaths = false, changed = ['.aidrian/knowledge/docs.json'], reviewer = BOT, policyFiles = [] } = {}) => reviewedProblem({
-    project: fx.project, repository, facade: { reviewTrail: () => trail }, policy: { reviewer, includeGuardedPaths }, policyFiles, main: 'main', branch: 'feat/eng-1-export', pr, head, changed, env: fx.env,
+  const ask = (trail, { pr = 12, includeGuardedPaths = false, includePolicyFiles = false, changed = ['.aidrian/knowledge/docs.json'], reviewer = BOT, policyFiles = [] } = {}) => reviewedProblem({
+    project: fx.project, repository, facade: { reviewTrail: () => trail }, policy: { reviewer, includeGuardedPaths, includePolicyFiles }, policyFiles, main: 'main', branch: 'feat/eng-1-export', pr, head, changed, env: fx.env,
   });
   const unsigned = /flow harness-config needs the Human's sign-off on head aaaaaaa/u;
   assert.match(ask(trailOf(head)), unsigned, 'the bot alone is not enough');
@@ -921,6 +989,10 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   assert.match(ask(trailOf(head), { includeGuardedPaths: true, changed: ['.aidrian/config.json', 'CLAUDE.md'] }), unsigned, 'a policy file needs the Human');
   assert.match(ask(trailOf(head), { includeGuardedPaths: true, changed: ['harness/config.json'], policyFiles: ['.aidrian.json', 'harness/config.json'] }), unsigned, 'a config the pointer file relocates is a policy file');
   assert.equal(ask(trailOf(head), { includeGuardedPaths: true, changed: ['harness/config.json'] }), null, 'one the policy was not read from is not');
+  // With includePolicyFiles too, the bot alone passes a policy file, as the run's sessions may write one; alone it lifts nothing.
+  assert.equal(ask(trailOf(head), { includeGuardedPaths: true, includePolicyFiles: true, changed: ['.aidrian/config.json', 'CLAUDE.md'] }), null);
+  assert.match(ask(trailOf(head), { includePolicyFiles: true, changed: ['.aidrian/config.json'] }), unsigned, 'without includeGuardedPaths');
+  assert.match(ask(trailOf(head, { on: null }), { includeGuardedPaths: true, includePolicyFiles: true, changed: ['.aidrian/config.json'] }), /has not passed head aaaaaaa/u, 'the bot still');
   // The Human's sign-off on exactly the head, read from the sign-off store.
   recordHumanSignoff({ repo: 'acme/widgets', pr: 12, flow: 'harness-config', head: parent, by: 'Adrian', env: fx.env });
   assert.match(ask(trailOf(head), { changed: ['.aidrian/config.json'] }), unsigned, 'a sign-off on another head');
@@ -928,11 +1000,12 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   assert.equal(ask(trailOf(head), { changed: ['.aidrian/config.json'] }), null);
 });
 
-test('the team\'s reviewer is the one both reads name, and includeGuardedPaths is on only when both set it', (t) => {
-  const same = runFixture(t, { config: { github: { reviewer: BOT, autoMerge: { includeGuardedPaths: true } } } });
-  assert.deepEqual(['reviewer', 'includeGuardedPaths'].map((name) => teamPolicy(same.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, same.forge)[name]), [BOT, true]);
-  const differ = runFixture(t, { config: { github: { reviewer: BOT, autoMerge: { includeGuardedPaths: true } } }, forgeConfig: { version: 1, projectRun: { allow: true, unverifiedHosts: true }, github: { reviewer: 'another-bot' } } });
-  assert.deepEqual(['reviewer', 'includeGuardedPaths'].map((name) => teamPolicy(differ.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, differ.forge)[name]), [null, false]);
+test('the team\'s reviewer is the one both reads name, and includeGuardedPaths and includePolicyFiles are on only when both set them', (t) => {
+  const keys = ['reviewer', 'includeGuardedPaths', 'includePolicyFiles'];
+  const same = runFixture(t, { config: { github: { reviewer: BOT, autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } } } });
+  assert.deepEqual(keys.map((name) => teamPolicy(same.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, same.forge)[name]), [BOT, true, true]);
+  const differ = runFixture(t, { config: { github: { reviewer: BOT, autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } } }, forgeConfig: { version: 1, projectRun: { allow: true, unverifiedHosts: true }, github: { reviewer: 'another-bot', autoMerge: { includePolicyFiles: true } } } });
+  assert.deepEqual(keys.map((name) => teamPolicy(differ.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, differ.forge)[name]), [null, false, false], 'both set includePolicyFiles, but the forge not includeGuardedPaths');
 });
 
 // A head the base tip already holds changed nothing itself: a protected change made only on the base moves no branch.

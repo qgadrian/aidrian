@@ -79,6 +79,10 @@ export function partition(changes, roots, { sliceLines = SPLIT_DEFAULTS.sliceLin
   return slices;
 }
 
+// The mark of a slice pass splitPasses made, which a failure may cut into halves because the next plan rebuilds it
+// here from `halved`. A symbol, so a plan command's JSON cannot claim it for its own slice pass, which is never rebuilt.
+export const CUTTABLE = Symbol('cuttable');
+
 // The passes of a split review by one reviewer: a slice pass per slice, then the cross-cutting pass after all of them.
 // `halved` names the passes a failure cut, a half among them: each runs as two halves `<id>.a` and `<id>.b` instead,
 // down to one file.
@@ -86,7 +90,7 @@ export function splitPasses(reviewer, slices, { kind, halved = {} } = {}) {
   const passes = [];
   const add = (id, label, files) => {
     if (!halved[id] || files.length < 2) {
-      passes.push({ id, reviewer, kind, role: 'slice', slice: label, files, context: 'full' });
+      passes.push({ id, reviewer, kind, role: 'slice', slice: label, files, context: 'full', [CUTTABLE]: true });
       return;
     }
     const middle = Math.ceil(files.length / 2);

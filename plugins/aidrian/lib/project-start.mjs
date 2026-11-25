@@ -96,21 +96,26 @@ export function hostStartProblem(cap, policy, env) {
 // source `id`, its `source` label, and `notes`, never the token, which the session's SessionStart hook reads again from
 // that one source, `reads` is empty, or missing for a forge with no such read, and `readNotes` the reads not verified.
 // A read the forge could not answer, with none refused, is { refuse, retry: true, unanswered }: no halt.
-export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false, keychain = null, exec }) {
+// `holds(token)`, when given, is asked once the access passes, with the token the session gets, or null on a host that
+// hands none, whose session keeps the forge CLI's own login, and its answer is the result's `holds`: the start asks
+// what the forge holds that token to (project-forge-holds.mjs holdsProblem), so no other account's reads stand in.
+export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false, keychain = null, exec, holds = null }) {
   const pushed = pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed, localBinding });
-  if (!pushed?.pushUrl || cap.forgeTokenEnv !== true) return pushed;
+  const held = (answer, token) => (holds ? { ...answer, holds: holds(token) } : answer);
+  if (!pushed?.pushUrl) return pushed;
+  if (cap.forgeTokenEnv !== true) return held(pushed, null);
   const read = forgeToken({ forge, repository, keychain, platform, env, ...(exec ? { exec } : {}) });
   if (read.problem) return { halt: read.problem, token: { notes: read.notes } };
   const token = { id: read.id, source: read.source, notes: read.notes, digest: tokenDigest(read.token) };
   const denied = tokenPushProblem({ forge, repository, read });
   if (denied) return { halt: denied, token };
   const reads = tokenReadProblems({ forge, repository, read });
-  if (reads === null) return { ...pushed, token };
+  if (reads === null) return held({ ...pushed, token }, read.token);
   // A refused read is reported whatever else the forge could not answer; with none, an unanswered read may pass later.
   const kept = { token, reads: reads.lines, readNotes: reads.notes, ...(reads.unanswered ? { unanswered: reads.unanswered } : {}) };
   if (reads.lines.length) return { halt: reads.lines.join('; '), ...kept };
   if (reads.unanswered) return { refuse: reads.unanswered, retry: true, ...kept };
-  return { ...pushed, ...kept };
+  return held({ ...pushed, ...kept }, read.token);
 }
 
 // What the token `read` gave may not read of `repository` that an issue session reads, such as the reactions the review

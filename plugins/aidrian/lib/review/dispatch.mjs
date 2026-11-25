@@ -355,7 +355,7 @@ export function dispatchFor(s, pass, stage) {
     // release dispatched.
     // The findings file is the one path the command carries, as one shell argument: a state folder may hold a space
     // or a quote. The pass id and the reviewer are names of the config's name format, and `<file.json>` a placeholder.
-    record: `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings-file ${shellQuote(file)}${input.flows.length ? ' --verdicts <file.json>' : ''}`,
+    record: `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings-file ${shellQuote(file)}${input.flows.length ? ' --verdicts -' : ''}`,
   };
 }
 

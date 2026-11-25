@@ -23,7 +23,7 @@ import path from 'node:path';
 
 import { isObject, writeOwnText } from '../lib/fs.mjs';
 import { loadConfig } from '../lib/config.mjs';
-import { checkDeadline, guardBudget, PastDeadline, withinDeadline } from '../lib/deadline.mjs';
+import { checkDeadline, guardBudget, PastDeadline, RUN_RULE_PAST_BUDGET, withinDeadline } from '../lib/deadline.mjs';
 import { snapshotPath } from '../lib/gate-snapshot.mjs';
 import { baseReader } from '../lib/handoff-guard.mjs';
 import { block, deny, isMain, runHook } from '../lib/hook-io.mjs';
@@ -91,7 +91,7 @@ function runDenial(input, project, config, start) {
     if (writer === null && !heldSession(input.session_id)) return null;
     if (error instanceof PastDeadline) {
       if (readsByName(tool)) return null;
-      return { match: 'the project run rule ran out of time', reason: `aidrian: this tracker call is refused because the project run rule could not judge it in time, and its name does not say it reads, so it may write a tracker for a session no Human attends. Try again, or tell ${human}.` };
+      return { match: RUN_RULE_PAST_BUDGET, reason: `aidrian: this tracker call is refused because the project run rule could not judge it in time, and its name does not say it reads, so it may write a tracker for a session no Human attends. Try again, or tell ${human}.` };
     }
     return { match: 'the project run rule could not be read', reason: 'aidrian: this tracker call is refused because the project run rule could not read who this session is or what it may write, and a session no Human attends is never let through on a guess. Try again, or tell the Human.' };
   }

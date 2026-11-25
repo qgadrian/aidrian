@@ -11,7 +11,9 @@ import { gateDenial } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { callBudget } from '../plugins/aidrian/scripts/hook-agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, WRITE_TARGETS } from '../plugins/aidrian/lib/config-guard.mjs';
-import { GUARD_BUDGET_MS, HELD_BUDGET_MS } from '../plugins/aidrian/lib/deadline.mjs';
+import { GUARD_BUDGET_MS, GUARDS_PAST_BUDGET, HELD_BUDGET_MS } from '../plugins/aidrian/lib/deadline.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { foldCase, globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
@@ -33,13 +35,18 @@ const WELL_INSIDE = 4000;
 // A subagent's call has the held budget, 7.5 seconds, which a call the guards cannot finish runs to before its refusal.
 // The tests of how the guards bound their work lower it to the short one, so a call cut at the deadline is told, inside
 // WELL_INSIDE, from one whose work never stops; the held budget's own room is checked against hooks.json below.
+// Those run on the real clock, as tests of the deadline itself.
 const SHORT = { ...process.env, AIDRIAN_GUARD_BUDGET_MS: String(GUARD_BUDGET_MS) };
-// A preload that moves the hook's clock `ms` ahead, as a loaded machine's slow start and slow reads do, so its guards
-// start that late into their budget without the test waiting for it.
-function late(dir, ms) {
-  const file = path.join(path.dirname(dir), `late-${ms}.mjs`);
-  writeFileSync(file, `const now = performance.now.bind(performance);\nperformance.now = () => now() + ${ms};\n`);
-  return { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import ${pathToFileURL(file).href}`.trim() };
+const FROZEN = pathToFileURL(path.resolve(import.meta.dirname, 'fixtures/frozen-performance.mjs')).href;
+const CPU_USED = path.resolve(import.meta.dirname, 'fixtures/cpu-used.mjs');
+const CPU_LOGS = mkdtempSync(path.join(tmpdir(), 'aidrian-budget-cpu-'));
+after(() => rmSync(CPU_LOGS, { recursive: true, force: true }));
+// The environment of a hook whose clock stands `ms` past its start (test/fixtures/frozen-performance.mjs), as a loaded
+// machine's slow start and slow reads leave it, so its guards start that late into their budget and spend no more of it
+// however slowly this machine runs them. late(0) is a hook whose budget never runs out, the default of `run` below: a
+// test that does not test the deadline gives the guards the time it says, and a busy machine cannot refuse its call.
+function late(ms) {
+  return { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import ${FROZEN}`.trim(), FROZEN_PERFORMANCE_MS: String(ms) };
 }
 
 // A project with `config` and the local file, in a folder named `webapp` as a checkout often is.
@@ -57,15 +64,39 @@ function project(t, config = GATED) {
 const subagent = (cwd, tool, command) => ({ tool_name: tool, tool_input: { command }, agent_type: 'aidrian:explorer', agent_id: 'a5f0c1', cwd });
 const main = ({ agent_id: _id, agent_type: _type, ...input }) => input;
 
-function run(input, env = process.env) {
+// One hook run: `took` its wall time, `cpu` the processor time its own process spent (test/fixtures/cpu-used.mjs), null
+// when it wrote none, as when the host's timeout killed it. On the real clock the run is killed at the host's timeout, as
+// the host would; on a frozen one the wall time races no deadline, so its kill only stops a hang, and "in time" is the
+// processor time alone.
+const HANG = 60_000;
+function run(input, env = late(0)) {
+  const cpuLog = path.join(CPU_LOGS, 'cpu-used.json');
+  rmSync(cpuLog, { force: true });
   const started = performance.now();
-  const result = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: input.cwd, encoding: 'utf8', env, timeout: HOST_TIMEOUT });
-  return { ...result, took: performance.now() - started };
+  const timeout = env.FROZEN_PERFORMANCE_MS === undefined ? HOST_TIMEOUT : HANG;
+  const result = spawnSync(process.execPath, ['--import', CPU_USED, HOOK], { input: JSON.stringify(input), cwd: input.cwd, encoding: 'utf8', env: { ...env, CPU_USED_LOG: cpuLog }, timeout });
+  const cpu = existsSync(cpuLog) ? JSON.parse(readFileSync(cpuLog, 'utf8')) : null;
+  return { ...result, took: performance.now() - started, cpu: cpu && (cpu.user + cpu.system) / 1000 };
+}
+
+// "In time" is the hook's processor time, the work its guards did before they finished or their deadline cut them, which
+// a busy machine does not stretch as it stretches the wall clock: a guard that never stops spends it past WELL_INSIDE.
+// On the real clock the run is still killed at the host's own timeout from hooks.json, so a hook that blocks past it
+// fails on its signal; only the margin inside that timeout is processor time, as a 4 s wall margin is what a loaded
+// machine broke. That the guards' blocking reads stop at what is left of the deadline is tested on a git that stalls
+// (test/config-guard.test.mjs, "the session-folder guard`s checkout read stops at what is left of the guards` budget").
+// A frozen clock tests no deadline, so its runs make no timing claim but the processor time.
+// The processor time `body()` took in this process, in milliseconds.
+function cpuMs(body) {
+  const before = process.cpuUsage();
+  body();
+  const { user, system } = process.cpuUsage(before);
+  return (user + system) / 1000;
 }
 
 function inTime(result, label) {
   assert.equal(result.signal, null, `${label}: stopped after ${Math.round(result.took)} ms`);
-  assert.ok(result.took < WELL_INSIDE, `${label}: took ${Math.round(result.took)} ms`);
+  assert.ok(result.cpu !== null && result.cpu < WELL_INSIDE, `${label}: took ${Math.round(result.cpu)} ms of processor time in ${Math.round(result.took)} ms`);
 }
 
 test('a chain of 1900 links in 20 words answers well inside the host timeout, for Bash and PowerShell', (t) => {
@@ -94,11 +125,10 @@ test('60 Bash(prefix) patterns read a 120 KB command once, so the gates answer i
   // In process: 60 patterns cost about what one does, as the command is read once per call.
   const found = findProject(dir);
   const { config } = loadConfig(found);
+  // Processor time, which a busy machine does not stretch as it stretches the wall clock.
   const timed = (count, suffix) => {
     const input = main(subagent(dir, 'Bash', `${command}; echo ${suffix}`));
-    const started = performance.now();
-    gateDenial(input, { ...config, agents: { main: { deny: config.agents.main.deny.slice(0, count) } } }, found.paths);
-    return performance.now() - started;
+    return cpuMs(() => gateDenial(input, { ...config, agents: { main: { deny: config.agents.main.deny.slice(0, count) } } }, found.paths));
   };
   timed(1, 'warm');
   const [one, sixty] = [timed(1, 'one'), timed(60, 'sixty')];
@@ -138,8 +168,10 @@ test(`a subagent's Bash call that writes more than ${WRITE_TARGETS} targets is r
 test('a guard past its time budget refuses a subagent\'s call and lets the main session\'s run', (t) => {
   const dir = project(t);
   const env = { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '0' };
+  // One agent run, refused three times for the same cause below.
+  const held = (input) => ({ ...input, session_id: 'loaded' });
   for (const tool of ['Bash', 'PowerShell']) {
-    const refused = run(subagent(dir, tool, 'echo x > src/app.js'), env);
+    const refused = run(held(subagent(dir, tool, 'echo x > src/app.js')), env);
     assert.equal(refused.status, 2, tool);
     assert.match(refused.stderr, /the guards could not finish reading this command in time, so it may change a file only the main session may change/u, tool);
     // One ordered recovery, with the Human told only at its end: a retry of the same call, shorter commands, the report.
@@ -148,20 +180,28 @@ test('a guard past its time budget refuses a subagent\'s call and lets the main 
     assert.equal(run(main(subagent(dir, tool, 'echo x > src/app.js')), env).status, 0, `${tool}: the main session`);
   }
   // An Edit has nothing to split: its refusal names the report as the step after the retries.
-  const edit = run({ ...subagent(dir, 'Edit', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js'), old_string: 'a', new_string: 'b' } }, env);
+  const edit = run(held({ ...subagent(dir, 'Edit', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js'), old_string: 'a', new_string: 'b' } }), env);
   assert.equal(edit.status, 2, edit.stderr);
   assert.match(edit.stderr, /1\) retry this same call by itself.*3\) when those are refused too, or the call is no shell call or cannot be split, stop and report/u);
+  // The three refusals are logged by their cause, and the machine's load files no lesson (lesson-signals.mjs noteDenial).
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const denies = readFileSync(logPath(found, config), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+    .filter((row) => row.event === 'hook_deny' && row.session_id === 'loaded');
+  assert.deepEqual(denies.map((row) => [row.rule, row.reason]), Array(3).fill(['config-guard', GUARDS_PAST_BUDGET]));
+  const filed = [...lessons(inboxPath(found, config)), ...lessons(pluginInboxPath())].filter((lesson) => String(lesson.key).startsWith('hook-deny:'));
+  assert.deepEqual(filed, [], 'a time budget\'s refusal files no lesson');
   // A call that writes nothing, which no guard refuses, runs: a loaded machine never stalls a subagent on its reads.
   const read = run({ ...subagent(dir, 'Read', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js') } }, env);
   assert.equal(read.status, 0, read.stderr);
   // The budget may only be lowered: a larger one keeps the hook's own.
-  assert.equal(run(subagent(dir, 'Bash', 'echo x > src/app.js'), { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '600000' }).status, 0);
+  assert.equal(run(subagent(dir, 'Bash', 'echo x > src/app.js'), { ...late(0), AIDRIAN_GUARD_BUDGET_MS: '600000' }).status, 0);
 });
 
 test('AIDRIAN_GUARD_BUDGET_MS above the hook\'s own budget cannot raise it: a call still reading past that budget is refused', (t) => {
   const dir = project(t);
   // A subagent's guards start 200 ms past the held budget, the hook's own for such a call.
-  const env = late(dir, HELD_BUDGET_MS + 200);
+  const env = late(HELD_BUDGET_MS + 200);
   for (const raised of ['99999', String(HELD_BUDGET_MS + 100)]) {
     const refused = run(subagent(dir, 'Bash', 'echo x > src/app.js'), { ...env, AIDRIAN_GUARD_BUDGET_MS: raised });
     assert.equal(refused.signal, null, `${raised}: stopped after ${Math.round(refused.took)} ms`);
@@ -176,13 +216,13 @@ test('AIDRIAN_GUARD_BUDGET_MS above the hook\'s own budget cannot raise it: a ca
 // agent gave up with its plan half written. The guards read those calls in about 100 ms on a quiet machine.
 test('a call the guards start three seconds late, as on a loaded machine, still runs for a subagent', (t) => {
   const dir = project(t);
-  const env = late(dir, 3000);
+  const env = late(3000);
   for (const input of [subagent(dir, 'Bash', 'echo x > src/app.js'), { ...subagent(dir, 'Edit', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js'), old_string: 'a', new_string: 'b' } }]) {
     const result = run(input, env);
     assert.equal(result.status, 0, `${input.tool_name}: ${result.stderr}`);
   }
   // Past the held budget, the same calls are refused: the held budget is what let them run.
-  const past = late(dir, HELD_BUDGET_MS + 200);
+  const past = late(HELD_BUDGET_MS + 200);
   assert.equal(run(subagent(dir, 'Bash', 'echo x > src/app.js'), past).status, 2);
 });
 
@@ -208,9 +248,9 @@ test('the hook gives an attended main session\'s call the short budget: a refusa
   const finished = run(attended);
   assert.equal(finished.status, 2, 'the guards refuse it when they finish');
   assert.match(finished.stderr, /the hooks hold no rule for `aidrian project record`/u);
-  assert.equal(run(attended, late(dir, GUARD_BUDGET_MS + 200)).status, 0, 'past the short budget, short of the held one');
+  assert.equal(run(attended, late(GUARD_BUDGET_MS + 200)).status, 0, 'past the short budget, short of the held one');
   // A subagent's same call, under its held budget, is still read whole, and refused by the guard, not the deadline.
-  const held = run(subagent(dir, 'Bash', 'aidrian project record r1 x'), late(dir, GUARD_BUDGET_MS + 200));
+  const held = run(subagent(dir, 'Bash', 'aidrian project record r1 x'), late(GUARD_BUDGET_MS + 200));
   assert.equal(held.status, 2);
   assert.match(held.stderr, /the hooks hold no rule for `aidrian project record`/u);
   assert.doesNotMatch(held.stderr, /could not finish reading this command in time/u);
@@ -375,9 +415,10 @@ test('globParts rejects at once a name that fails at its end or is shorter than 
   const names = Array.from({ length: 20000 }, (_, i) => `${String(i).padStart(5, '0')}${'a'.repeat(235)}`);
   for (const part of [`*${'a'.repeat(120)}b`, `*${'a*'.repeat(5000)}`]) {
     const { pattern } = globParts(part, [], 'i');
-    const started = performance.now();
-    assert.equal(names.some((name) => pattern.test(name)), false, part.slice(0, 20));
-    assert.ok(performance.now() - started < 500, `${part.slice(0, 20)}: took ${Math.round(performance.now() - started)} ms`);
+    let some;
+    const took = cpuMs(() => (some = names.some((name) => pattern.test(name))));
+    assert.equal(some, false, part.slice(0, 20));
+    assert.ok(took < 500, `${part.slice(0, 20)}: took ${Math.round(took)} ms of processor time`);
   }
 });
 

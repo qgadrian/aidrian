@@ -32,7 +32,7 @@
 // No function throws on a missing folder; a read returns null for anything it cannot use.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, opendirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { CONTINUE_ROUTES } from './config-schema.mjs';
@@ -501,13 +501,12 @@ export function startedFolders(store, session, { now = Date.now() } = {}) {
   return [...new Set(startRecords(store, { now }).filter(names).map((record) => record.cwd))];
 }
 
-// Every background start of the last day the store holds. The store is listed here, from its own listing, and each file
-// read checks the guards' deadline (deadline.mjs), so a store of many files cannot run a hook past its budget.
+// Every background start of the last day the store holds. The store is read one entry at a time (storeEntries), and
+// each entry checks the guards' deadline (deadline.mjs) before it is read, so a store of many files cannot run a hook
+// past its budget, its listing included.
 function startRecords(store, { now }) {
   const records = [];
-  // Accepted residual: the store's one listing runs before the first deadline check; each file read after it checks.
-  for (const name of listStore(store)) {
-    checkDeadline();
+  for (const name of storeEntries(store)) {
     const ran = STARTED_FILE.exec(name)?.[1];
     const record = ran ? readStarted(store, ran, { now }) : null;
     if (record) records.push(record);
@@ -830,3 +829,23 @@ function listFolder(dir) {
 }
 
 const listStore = (store) => listFolder(store.dir);
+
+// The names in the store's folder, read one at a time, the guards' deadline checked before each: none when it cannot
+// be opened.
+function* storeEntries(store) {
+  checkDeadline();
+  let dir;
+  try {
+    dir = opendirSync(store.dir);
+  } catch {
+    return;
+  }
+  try {
+    for (let entry = dir.readSync(); entry !== null; entry = dir.readSync()) {
+      checkDeadline();
+      yield entry.name;
+    }
+  } finally {
+    dir.closeSync();
+  }
+}

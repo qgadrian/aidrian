@@ -61,8 +61,8 @@ const defaultRead = () => undefined;
 // project-run-cli.mjs, project-run-gate.mjs, project-run-guard.mjs, project-recheck.mjs, and project-stops.mjs: they decide
 // which session may start a project run, which issue it starts, which session records its result, when a halt lifts,
 // and what an issue whose merge stopped does, so a pull request that auto-merged itself cannot change them.
-// At the repository root: the marketplace manifests that install the plugin, and the optional `aidrian-claude-mod`
-// plugin's folder, whole, since it picks and runs the aidrian binary.
+// At the repository root: the marketplace manifests that install the plugin, and the optional `aidrian-mod`
+// plugin's folder, `plugins/aidrian-claude-mod/`, whole, since it picks and runs the aidrian binary.
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attempt-clone', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'check-runs',
   'child-send-backs', 'clean-text', 'cli', 'closing-words', 'code-words', 'config', 'config-committed', 'config-defaults', 'config-guard',
@@ -70,8 +70,8 @@ const GUARDED_LIB = [
   'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git',
   'git-push', 'glob-links', 'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io', 'hook-result', 'issue-forge-guard', 'issue-push-checkout',
   'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose', 'markdown-sections', 'markdown-wrap',
-  'model-prices', 'names', 'package-runner', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-diff', 'pr-product-feedback',
-  'pr-ready-wait', 'pr-resolve', 'project', 'project-confine', 'project-decision', 'project-decision-store', 'project-full-auto', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-recheck', 'project-registries', 'project-report',
+  'model-prices', 'names', 'override-guard', 'package-runner', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-diff', 'pr-product-feedback',
+  'pr-ready-wait', 'pr-resolve', 'project', 'project-confine', 'project-decision', 'project-decision-store', 'project-forge-holds', 'project-full-auto', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-recheck', 'project-registries', 'project-report',
   'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-token', 'project-trust', 'push-preflight',
   'remotes', 'resume-tokens', 'review-gate', 'run-driver', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins',
   'session-prs', 'session-rows', 'session-start-gate', 'shell-init', 'shell-lex', 'solo', 'stop-announce', 'stop-handback', 'stop-history', 'stop-review-loop',
@@ -112,8 +112,9 @@ export const knowledgeIn = (configFile) => `${path.posix.dirname(configFile)}/kn
 
 // The files the gate reads its policy from, as names at any depth and in any case: config.json in a default project
 // folder, the pointer file, the local switch, and the default project folder's own entry. pr-auto-merge.mjs refuses them
-// even under `github.autoMerge.includeGuardedPaths`, so no pull request edits the policy that judges the next one; with
-// the key off, GUARDED_PATHS decides. A folder `.aidrian.json` names is no fixed name, so the gate also refuses the exact
+// even under `github.autoMerge.includeGuardedPaths`, so no pull request edits the policy that judges the next one, unless
+// `github.autoMerge.includePolicyFiles` counts too, the team's acceptance of that risk on both branches; with the first
+// key off, GUARDED_PATHS decides. A folder `.aidrian.json` names is no fixed name, so the gate also refuses the exact
 // paths it read on each branch (pr-auto-merge.mjs branchPolicies). Not configurable.
 export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|\.aidrian\.local\.json|\.aidrian)$/iu;
 

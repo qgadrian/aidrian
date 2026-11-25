@@ -224,7 +224,8 @@ Hook denies: 6 in 2 sessions
   The averages leave out runs logged with doc reads off, and the bytes, runs logged before sizes.
 - **Hook denies**: the `hook_deny` rows, per rule, most blocks first: the agents it blocked, the agent runs it blocked
   3 times or more for the same `reason`, which is when a block becomes an [automatic lesson](lessons.md#automatic-lessons),
-  and the `reason` it logged most often. A rule an agent keeps hitting needs clearer words in that agent's instructions or in the rule's message.
+  and the `reason` it logged most often. A time budget's refusal, which files no lesson, counts in the blocks and reasons
+  but never in those runs. A rule an agent keeps hitting needs clearer words in that agent's instructions or in the rule's message.
 
 `--since` takes `30m`, `24h`, `7d`, or a date such as `2026-10-01`; the default is `7d`.
 A date is midnight UTC, and one that does not exist, such as `2026-02-31`, is an error.

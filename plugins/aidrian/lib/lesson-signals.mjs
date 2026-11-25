@@ -10,6 +10,7 @@ import { closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, rmSy
 import path from 'node:path';
 
 import { loadConfig } from './config.mjs';
+import { BUDGET_CAUSES } from './deadline.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { appendRow, withLocks } from './jsonl.mjs';
 import { addRow, homeInbox } from './lesson-inbox.mjs';
@@ -167,9 +168,12 @@ function denialCount(input, rule, cause) {
 // REPEATED_DENIALS, once per session, run, rule, and cause. Parallel subagents share their parent's session and may block
 // at once, so the count is the size of a file in the hooks' counts folder that each block appends one byte to, and the
 // block that creates the `.recorded` marker first is the one that records. A count whose file or folder is not a plain
-// one of this user counts nothing. Never throws.
+// one of this user counts nothing. A refusal because a time budget ran out (deadline.mjs BUDGET_CAUSES) counts nothing:
+// it is the machine's load, which its message already says how to wait out, not a way the agent was never shown, and a
+// loaded machine once filed this lesson for a session whose other refusals were all the rule doing its job. Never throws.
 export function noteDenial(input, rule, { cause = '', dir, env = process.env, now = new Date() } = {}) {
   try {
+    if (BUDGET_CAUSES.has(cause)) return null;
     const session = input.session_id;
     const name = denialCount(input, rule, cause);
     if (typeof session !== 'string' || !FILE_NAME_PART.test(session) || !name) return null;

@@ -20,12 +20,23 @@ import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 import { botProblem, flowsFloor, NO_BOT, readHumanSignoffs, recordHumanSignoff, signoffFile, signoffFolder, signoffFolders, unsignedFlows } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { recordSignoff } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, readLocalState, RECORD_LIST_CAP, recordFile, recordNames, recordProblem, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { check, checkMcp, endpointOf, MERGE_MUTATIONS } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { check as checkAt, checkMcp as checkMcpAt, endpointOf, MERGE_MUTATIONS } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { markDriver, markFolder, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { check as signoffCheck, SUBAGENT_REASON, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 import { DRIVER, ISSUES, OTHER, recordIssue, runFixture, STARTED } from './project-start-fixture.mjs';
 
 import { hookCall } from './hook-call.mjs';
+
+// The merge guard's checks on a clock that stands at the call's start (its `startedAt` and `now`), so its 4 s budget
+// (WAIVER_DEADLINE_MS) never runs out on a loaded machine, where its records folder walk then refused an unattended merge
+// as "could not be listed in time". These tests check what the guard decides; the deadline's own tests give it the time
+// spent, as recordProblem's `pastDeadline` below and test/review-waiver.test.mjs do. A test that gives its own clock keeps it.
+const frozenAtCall = (options) => {
+  const at = Date.now();
+  return { startedAt: at, now: () => at, ...options };
+};
+const check = (command, options) => checkAt(command, frozenAtCall(options));
+const checkMcp = (toolInput, options) => checkMcpAt(toolInput, frozenAtCall(options));
 
 // An unattended merge never rests on a record a confined session can write (docs/review.md, Merge trust): the merge guard
 // and `aidrian pr auto-merge` confirm the team's policy and the review bot's verdict on the forge, and read the Human's
@@ -48,12 +59,13 @@ const card = (sha = HEAD, { unresolved = false, any = unresolved, ...extra } = {
 // The forge's review trail of #7 at HEAD, by default one the policy and the bot both pass: the gh user's own pull
 // request, its checks passed, the bot's card on the head, and both branches' config `text` from the forge.
 const trailOf = (text, over = {}) => ({
-  viewer: 'adrian', head: HEAD, base: 'main', author: 'adrian', draft: false, reviewDecision: '', latestReviews: [],
+  viewer: 'adrian', head: HEAD, base: 'main', baseOid: 'b'.repeat(40), author: 'adrian', draft: false, reviewDecision: '', latestReviews: [],
   checks: { head: HEAD, rows: [{ name: 'e2e', state: 'SUCCESS' }], complete: true },
   files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], filesTotal: 1, filesComplete: true,
   reviews: [], reviewsComplete: true, comments: [card()], commentsComplete: true,
   branches: { default: { name: 'main', pointer: null, config: text, knowledge: null }, base: { name: 'main', pointer: null, config: text } },
   headRef: 'feat/eng-1-export', title: 'feat(export): add CSV export', body: 'Fixes ENG-1', messages: [{ oid: HEAD, message: 'feat: export' }], messagesComplete: true,
+  closingIssues: [], closingIssuesComplete: true,
   ...over,
 });
 // The bot's clean receipt as it posts one on every clean pass, its footer quoting the trigger, by the bot, every edit
@@ -96,19 +108,31 @@ const forged = (flows = []) => (state) => {
   for (const flow of flows) state.signoffs[flow] = { head: HEAD, by: 'the Human', at: '2026-11-18T09:01:00.000Z' };
 };
 
+// The head's folder listings the policy-file lift reads (pr-auto-merge.mjs headPolicyProblem): the root holds the
+// `.aidrian` folder and no pointer, and `.aidrian` holds config.json as `headType`, "file" unless a test makes it a link.
+const headListing = (file, ref, headType) => {
+  if (ref !== HEAD) return null;
+  if (file === '') return [{ type: 'dir', name: '.aidrian', path: '.aidrian' }];
+  if (file === '.aidrian') return [{ type: headType, name: 'config.json', path: '.aidrian/config.json' }];
+  return null;
+};
+
 // The forge facade `aidrian pr auto-merge` reads through, holding `config` on the default branch and `trail` as the
-// review trail. `files` are the pull request's changed paths.
-function cliForge(config, { trail = trailOf(config), files = ['src/app.js'] } = {}) {
+// review trail. `files` are the pull request's changed paths; `head` is the config the head commit holds, `config` by default.
+function cliForge(config, { trail = trailOf(config), files = ['src/app.js'], head = config, compare = { behind_by: 0 }, headType = 'file' } = {}) {
   const calls = [];
   const changed = files.map((each) => ({ path: each, changeType: 'MODIFIED' }));
   const forge = {
-    change: () => ({ number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: 'https://github.com/acme/notes/pull/7', files: changed, changedFiles: changed.length, reviewDecision: '', latestReviews: [] }),
+    change: () => ({ number: 7, headRefOid: HEAD, baseRefName: 'main', baseRefOid: 'b'.repeat(40), author: { login: 'adrian' }, url: 'https://github.com/acme/notes/pull/7', files: changed, changedFiles: changed.length, reviewDecision: '', latestReviews: [] }),
     repository: () => ({ default_branch: 'main' }),
-    contents: (repoName, file) => {
+    contents: (repoName, file, ref) => {
       calls.push(['contents', file]);
+      const listed = headListing(file, ref, headType);
+      if (listed) return listed;
       if (file !== '.aidrian/config.json') throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)\n' });
-      return { type: 'file', encoding: 'base64', content: Buffer.from(config).toString('base64') };
+      return { type: 'file', encoding: 'base64', content: Buffer.from(ref === HEAD ? head : config).toString('base64') };
     },
+    compare: () => compare,
     viewer: () => 'adrian',
     conversationComments: () => [],
     reviews: () => [],
@@ -132,13 +156,17 @@ function autoMerge(t, r, { unattended = true, ...options } = {}) {
 }
 
 // The forge the merge guard's trust reads go through, as budgetedForge's `make`: `trail` as the review trail, and
-// `config` for the REST reads a pointer to another folder needs. Each call is kept in `calls`.
-const guardForge = (config, trail, calls = []) => () => ({
+// `config` for the REST reads a pointer to another folder needs, and `head` the config the head commit holds. Each
+// call is kept in `calls`.
+const guardForge = (config, trail, calls = [], head = config, compare = { behind_by: 0 }, headType = 'file') => () => ({
   repository: () => (calls.push(['repository']), { default_branch: 'main' }),
-  contents: (repoName, file) => {
+  compare: (repoName, base, sha) => (calls.push(['compare', base, sha]), compare),
+  contents: (repoName, file, ref) => {
     calls.push(['contents', file]);
+    const listed = headListing(file, ref, headType);
+    if (listed) return listed;
     if (file !== '.aidrian/config.json') throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)\n' });
-    return { type: 'file', encoding: 'base64', content: Buffer.from(config).toString('base64') };
+    return { type: 'file', encoding: 'base64', content: Buffer.from(ref === HEAD ? head : config).toString('base64') };
   },
   reviewTrail: (repoName, n, { host, paths } = {}) => {
     calls.push(['reviewTrail', repoName, n, host, paths]);
@@ -146,8 +174,8 @@ const guardForge = (config, trail, calls = []) => () => ({
   },
 });
 const viewer = () => ({ number: 7, headRefOid: HEAD });
-const merge = (r, command, { mark = { root: r.dir }, trail = trailOf(r.text), calls = [], input = { session_id: 'unattended-1' }, cwd = r.dir } = {}) =>
-  check(command, { cwd, env: {}, input, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(r.text, trail, calls) });
+const merge = (r, command, { mark = { root: r.dir }, trail = trailOf(r.text), calls = [], input = { session_id: 'unattended-1' }, cwd = r.dir, head = r.text, compare, headType } = {}) =>
+  check(command, { cwd, env: {}, input, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(r.text, trail, calls, head, compare, headType) });
 const mcp = (r, toolInput, { mark = { root: r.dir }, trail = trailOf(r.text), cwd = r.dir } = {}) =>
   checkMcp(toolInput, { cwd, input: { session_id: 'unattended-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(r.text, trail) });
 const MERGE = `gh pr merge 7 --squash --match-head-commit ${HEAD}`;
@@ -224,6 +252,16 @@ test('the bot`s verdict counts only as the bot`s own, on exactly the head, with 
   assert.match(passes(base({ comments: [card(HEAD, { editors: [BOT, 'adrian'] })] })) ?? '', /edited by another account/u);
   assert.equal(botProblem(base(), HEAD, null), NO_BOT);
   assert.match(passes(base({ comments: [], commentsComplete: false })) ?? '', /more comments than the forge read gives/u);
+});
+
+test('the bot`s verdict needs the whole review list: a cut one refuses even beside its passing card, so auto-merge and the guard agree (#448)', () => {
+  const reviewer = `${BOT}[bot]`;
+  for (const over of [{ reviewsComplete: false }, { reviewsComplete: undefined }]) {
+    assert.match(botProblem(trailOf('{}', over), HEAD, reviewer) ?? '', /the forge gave only part of its reviews, so whether chatgpt-codex-connector\[bot\] reviewed head abcdef1 in a state that does not pass cannot be told/u, JSON.stringify(over));
+  }
+  const approved = { comments: [], reviews: [{ login: BOT, bot: true, state: 'APPROVED', commit: HEAD, at: 'x' }] };
+  assert.match(botProblem(trailOf('{}', { ...approved, reviewsComplete: false }), HEAD, reviewer) ?? '', /only part of its reviews/u, 'an approval in a cut list');
+  assert.equal(botProblem(trailOf('{}', approved), HEAD, reviewer), null, 'the same approval in a whole list');
 });
 
 test('a card of the head that still holds a finding of the bot`s own is refused by name, beside a clean receipt; one with both flags false passes', () => {
@@ -513,6 +551,12 @@ test('the floor of flows a merge needs the Human for comes from the forge`s file
   assert.deepEqual(floor(['docs/rules.md']), ['harness-config'], 'a doc an invariant cites');
   assert.deepEqual(floor(['.aidrian/config.json']), ['harness-config'], 'the review config');
   assert.deepEqual(floor(['conf/aidrian/config.json'], { policyFiles: ['.aidrian.json', 'conf/aidrian/config.json'] }), ['harness-config'], 'a config a pointer relocates');
+  // github.autoMerge.includePolicyFiles with includeGuardedPaths on every config lifts the review config's sign-off alone.
+  const lifted = { ...base, github: { autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } } };
+  assert.deepEqual(floor(['.aidrian/config.json', 'conf/aidrian/config.json'], { configs: [lifted, lifted], policyFiles: ['conf/aidrian/config.json'] }), [], 'lifted on both branches');
+  assert.deepEqual(floor(['.aidrian/config.json'], { configs: [lifted, base] }), ['harness-config'], 'on one branch only');
+  assert.deepEqual(floor(['.aidrian/config.json'], { configs: [{ ...base, github: { autoMerge: { includePolicyFiles: true } } }] }), ['harness-config'], 'without includeGuardedPaths');
+  assert.deepEqual(floor(['docs/rules.md', 'src/pay/charge.js'], { configs: [lifted] }), ['harness-config', 'payments'], 'a cited doc and a flow still ask the Human');
   assert.deepEqual(floor(['src/app.js'], { changeType: 'RENAMED' }), ['cited', 'harness-config', 'payments', 'search'], 'a rename may hide a deleted path');
   assert.deepEqual(floor(['src/app.js'], { complete: false }), ['cited', 'harness-config', 'payments', 'search'], 'a list cut short');
   const commanded = (review) => floor(['src/app.js'], { configs: [{ review: { ...base.review, ...review } }] });
@@ -671,6 +715,54 @@ test('a pull request that changes .aidrian/config.json, where projectRun widens 
     assert.match(merge(r, MERGE, { trail: trailOf(r.text, changing(file)) }) ?? '', /a policy file of aidrian|a file the gate reads its policy from/u, `the guard: ${file}`);
   }
   assert.equal(existsSync(signoffFolder()), false, 'nothing reached the store');
+});
+
+test('includePolicyFiles with includeGuardedPaths on both branches lets a .aidrian/config.json change merge unattended, with no sign-off of the Human', (t) => {
+  const config = configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includeGuardedPaths: true, includePolicyFiles: true } }, projectRun: { allow: true } });
+  const r = repo(t, config);
+  r.record(forged());
+  const file = '.aidrian/config.json';
+  const trail = trailOf(r.text, changing(file));
+  assert.deepEqual([autoMerge(t, r, { files: [file], unattended: false, trail }).code], [0], 'attended: every check passes');
+  assert.deepEqual([autoMerge(t, r, { files: [file], trail }).code], [0], 'unattended: no sign-off is asked');
+  assert.equal(merge(r, MERGE, { trail }), null, 'the guard');
+  assert.equal(existsSync(signoffFolder()), false, 'nothing in the store');
+  // The bot stays: with no pass of the head on the forge, an unattended merge is off.
+  const unpassed = autoMerge(t, r, { files: [file], trail: trailOf(r.text, { ...changing(file), comments: [] }) });
+  assert.deepEqual([unpassed.code, unpassed.result.reason, unpassed.result.trust], [1, 'trust', 'bot']);
+  // On the base alone, the default branch without it: paths refuses, and the guard too.
+  const half = JSON.stringify(configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includeGuardedPaths: true } }, projectRun: { allow: true } }));
+  const split = trailOf(r.text, { ...changing(file), branches: { default: { name: 'main', pointer: null, config: half, knowledge: null }, base: { name: 'main', pointer: null, config: r.text } } });
+  assert.match(merge(r, MERGE, { trail: split }) ?? '', /a policy file of aidrian|a file the gate reads its policy from/u, 'the default branch does not hold it');
+  // A head whose own config drops github.requiredChecks, with the checkout the unchanged base, is off in the gate and
+  // the guard alike; one that changes only review.visual merges.
+  const dropped = JSON.stringify({ ...config, github: { ...config.github, requiredChecks: [] } });
+  const refused = autoMerge(t, r, { files: [file], trail, head: dropped });
+  assert.deepEqual([refused.code, refused.result.reason], [1, 'paths']);
+  assert.match(refused.result.why, /its config at head abcdef1 changes github\.requiredChecks from acme\/notes main/u);
+  assert.match(merge(r, MERGE, { trail, head: dropped }) ?? '', /its config at head abcdef1 changes github\.requiredChecks from acme\/notes main/u, 'the guard');
+  assert.match(merge(r, MERGE, { trail, head: '{ not json' }) ?? '', /cannot be read whole/u, 'the guard, a head config that does not parse');
+  const visual = JSON.stringify({ ...config, review: { visual: { platform: 'web', targets: [{ files: ['src/**'], routes: ['/'] }], viewports: [390] } } });
+  assert.equal(autoMerge(t, r, { files: [file], trail, head: visual }).code, 0, 'the gate, only review.visual');
+  assert.equal(merge(r, MERGE, { trail, head: visual }), null, 'the guard, only review.visual');
+  // A head behind its base is off in both: its config is not the one the merge leaves.
+  const stale = autoMerge(t, r, { files: [file], trail, compare: { behind_by: 1 } });
+  assert.match(stale.result.why, /head abcdef1 is behind its base main by 1 commit, so the merged config is not the one checked; merge the base first/u);
+  const calls = [];
+  assert.match(merge(r, MERGE, { trail, compare: { behind_by: 1 }, calls }) ?? '', /is behind its base main by 1 commit/u, 'the guard');
+  assert.ok(calls.some((call) => call[0] === 'compare' && call[1] === 'b'.repeat(40) && call[2] === HEAD), 'the guard compares the base tip by its SHA with the head');
+  assert.match(merge(r, MERGE, { trail: { ...trail, baseOid: null } }) ?? '', /cannot be compared with its base on the forge/u, 'the guard, a trail with no base tip');
+  // A head whose config is a symbolic link is off in both, as the head's listing names it; a regular one merges.
+  const link = /"\.aidrian\/config\.json" at head abcdef1 is a symlink, not a regular file, which includePolicyFiles never lets through/u;
+  const linked = autoMerge(t, r, { files: [file], trail, headType: 'symlink' });
+  assert.deepEqual([linked.code, linked.result.reason], [1, 'paths']);
+  assert.match(linked.result.why, link);
+  assert.match(merge(r, MERGE, { trail, headType: 'symlink' }) ?? '', link, 'the guard');
+  assert.equal(autoMerge(t, r, { files: [file], trail, headType: 'file' }).code, 0, 'the gate, a regular config');
+  assert.equal(merge(r, MERGE, { trail, headType: 'file' }), null, 'the guard, a regular config');
+  // The key alone, with includeGuardedPaths off, lifts nothing.
+  const alone = JSON.stringify(configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includePolicyFiles: true } }, projectRun: { allow: true } }));
+  assert.match(merge({ ...r, text: alone }, MERGE, { trail: trailOf(alone, changing(file)) }) ?? '', /which instructs AI sessions/u, 'the guard, the key alone');
 });
 
 test('`aidrian project init` marks its session the run`s driver, held as one no Human attends for the runs folder, the marks, and the sign-off store, until the run`s recorded end', async (t) => {
@@ -934,6 +1026,25 @@ test('the merge guard refuses a run issue\'s merge whose body, title, commits, o
   assert.match(run(`gh pr merge 7 -F body.md --match-head-commit ${HEAD}`) ?? '', /comes from a file or a variable the guard cannot read/u);
   assert.match(mcpRun({ owner: 'acme', repo: 'widgets', pullNumber: 7, sha: HEAD, commit_message: 'Fixes ENG-2' }) ?? '', /the merge commit's body says "Fixes ENG-2"/u);
   assert.equal(mcpRun({ owner: 'acme', repo: 'widgets', pullNumber: 7, sha: HEAD, commit_message: 'Fixes ENG-1' }), null);
+});
+
+test('the merge guard refuses a run issue\'s merge the forge links to close another issue, by hand in its sidebar included, or a cut list of them (#448)', (t) => {
+  const { run } = closingRun(t);
+  // A sidebar link: no text names #12, and the body still says only Fixes ENG-1.
+  for (const [over, why] of [
+    [{ closingIssues: [{ number: 12, repo: 'acme/widgets' }] }, /the forge links issue acme\/widgets#12 to the pull request to close at the merge, which may be by hand in its sidebar, so its merge would close an issue other than its own issue ENG-1/u],
+    [{ closingIssues: [{ number: 1, repo: 'other/repo' }] }, /links issue other\/repo#1/u],
+    [{ closingIssues: [{ number: null, repo: null }] }, /links issue of no repository#\?/u],
+    [{ closingIssuesComplete: false }, /the forge gave only part of the issues it links to the pull request to close at the merge/u],
+    [{ closingIssues: undefined, closingIssuesComplete: undefined }, /only part of the issues it links/u],
+  ]) assert.match(run(MERGE, { over }) ?? '', why, JSON.stringify(over));
+});
+
+test('a run whose issue is a forge issue merges when the forge links that issue alone (#448)', (t) => {
+  const { fx, run } = closingRun(t);
+  const mark = { root: fx.dir, project: 'launch', issue: '12' };
+  assert.equal(run(MERGE, { mark, over: { body: 'Closes #12', closingIssues: [{ number: 12, repo: 'acme/widgets' }] } }), null, 'its own issue, linked');
+  assert.match(run(MERGE, { mark, over: { body: 'Closes #12', closingIssues: [{ number: 12, repo: 'acme/widgets' }, { number: 13, repo: 'acme/widgets' }] } }) ?? '', /links issue acme\/widgets#13/u);
 });
 
 test('the merge guard holds the run\'s driver, whose mark names no issue, to the issue whose branch the pull request is from; an attended merge reads none of it', (t) => {

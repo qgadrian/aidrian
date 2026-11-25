@@ -169,11 +169,13 @@ and `BASH_MAX_TIMEOUT_MS=900000` in the settings:
   that one was refused. So the [background check](../hooks.md#background-check) relaxes nothing for a shell.
 
 Not verified: a live session that gets the start line; whether a report written after the wake reaches a dispatcher that
-waits in the foreground, since the probe of it ran in the background; and the permission prompt. The plugin ships no
-permission entry for its commands, so in the default permission mode `aidrian wait` is asked for as any other `aidrian`
-command is, unless the settings allow it, as `Bash(aidrian wait:*)` does; the probes ran in the auto mode. That rule names
-the bare command alone: where another copy of the plugin comes first on PATH, the start line and the message name the
-command by its full path, which changes with each version and needs a rule of its own.
+waits in the foreground, since the probe of it ran in the background; and the permission prompt, read from the plugin files
+and not seen live, since the probes ran in the auto mode. The plugin ships no permission entry for its commands, so in the
+default permission mode Claude Code asks before `aidrian wait` runs, as before any other `aidrian` command, unless the
+settings allow it, as `Bash(aidrian wait:*)` does. That rule names the bare command alone: where another copy of the plugin comes
+first on PATH, the start line and the message name the command by its full path, which changes with each version and needs
+a rule of its own. A subagent whose `aidrian wait` cannot run there can be sent back at each stop while its shell runs, up
+to the [background check](../hooks.md#background-check)'s limit.
 
 ## Shell commands of the Monitor tool
 

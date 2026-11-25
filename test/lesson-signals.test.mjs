@@ -7,12 +7,14 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import { binCommand } from '../plugins/aidrian/lib/bin-command.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { CHILD_SEND_BACKS } from '../plugins/aidrian/lib/child-send-backs.mjs';
 import { BUDGET_CAUSES } from '../plugins/aidrian/lib/deadline.mjs';
 import { deliverySignal, denialSignal, forgetDenials, noteDenial, recordSignal, REPEATED_DENIALS, roundLimitSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { projectAt, projectId, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { shellWord } from '../plugins/aidrian/lib/shell-lex.mjs';
 import { hookCall } from './hook-call.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -267,7 +269,8 @@ test('on a host that wakes an idle subagent with its child agent\'s report, the 
   const sent = stop(false, SESSION_TASKS);
   assert.equal(sent.status, 2, 'its own background shell still does');
   assert.match(sent.stderr, /^You started background work that is still running: `bmnjbq03x` \(shell: Push the branch\)\. /u);
-  assert.match(sent.stderr, /before you end the turn: run `\S*aidrian wait bmnjbq03x`, in calls of at most 150 seconds each, with a tool timeout of 170 seconds, and repeat each while it exits 3, until its first line starts with `ended`, or the host says the task ended; on exit 2 no output was found, and repeating the command cannot help: wait with another completion check you have, or report the wait as blocked\. /u);
+  assert.ok(sent.stderr.includes(`before you end the turn: run \`${binCommand('aidrian')} wait bmnjbq03x\`, in calls of at most 150 seconds each, with a tool timeout of 170 seconds, ` +
+    'and repeat each while it exits 3, until its first line starts with `ended`, or the host says the task ended; on exit 2 no output was found, and repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check you have, or report the wait as blocked. '), sent.stderr);
   assert.match(sent.stderr, /Claude Code may move one still running after 180 seconds whatever its timeout\. /u);
   assert.doesNotMatch(sent.stderr, /two minutes|Next time/u);
   // The wait command is this copy's: by its path behind another copy on PATH, by its bare name ahead of it.
@@ -277,7 +280,7 @@ test('on a host that wakes an idle subagent with its child agent\'s report, the 
   const bin = path.join(ROOT, 'plugins/aidrian/bin');
   const told = async (...dirs) => (await call('hook-subagent-stop.mjs', payload(false, SESSION_TASKS), { ...claude, PATH: [...dirs, process.env.PATH].join(path.delimiter) })).stderr;
   const behind = await told(other, bin);
-  assert.ok(behind.includes(`run \`${bin}/aidrian wait bmnjbq03x\``), behind);
+  assert.ok(behind.includes(`run \`${shellWord({ text: path.join(bin, 'aidrian') })} wait bmnjbq03x\``), behind);
   assert.match(await told(bin, other), /run `aidrian wait bmnjbq03x`/u);
   // The id is a part of that command, so a task whose id is none is not the subagent's, though its call launched it.
   const odd = 'bmnj`bq 03x';

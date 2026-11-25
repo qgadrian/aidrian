@@ -2133,7 +2133,7 @@ Setting the machine's clock during a wait does not change how long it lasts.
 | --- | --- |
 | 0 | The task ended, whatever its own exit code |
 | 3 | It still runs when the wait is over: run the command again |
-| 2 | The id is no task id, the host has no output of it in this session or none that can be read, or the host gives no way to read one. Repeating the command cannot help: wait with another completion check, or report the wait as blocked |
+| 2 | The id is no task id, the host has no output of it in this session or none that can be read, or the host gives no way to read one. Repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check, or report the wait as blocked |
 | 1 | Wrong arguments |
 
 It finds a task through the host's adapter alone (`capabilities.taskOutput`), and only in the output folder of the session

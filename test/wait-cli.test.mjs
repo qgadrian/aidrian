@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { binCommand } from '../plugins/aidrian/lib/bin-command.mjs';
 import { processUid } from '../plugins/aidrian/lib/fs.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { findTask, readTask, TAIL } from '../plugins/aidrian/lib/hosts/claude-code-tasks.mjs';
@@ -151,7 +152,7 @@ test('an id that names a path is refused before any file is read, and one with n
   // Each leads to a file that is there, were the id taken.
   for (const id of [`../../${OTHER}/tasks/bother`, '../tasks/bmine', './bmine']) assert.equal(findTask({ id, env }), null, id);
   for (const id of ['bnone', 'bother']) {
-    assert.deepEqual(await wait([id], { env }), { status: 2, out: [], err: [`aidrian wait: no output of a background task ${id} in this session; repeating the command cannot help: wait with another completion check you have, or report the wait as blocked`] }, id);
+    assert.deepEqual(await wait([id], { env }), { status: 2, out: [], err: [`aidrian wait: no output of a background task ${id} in this session; repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check you have, or report the wait as blocked`] }, id);
   }
   for (const session of [undefined, '', '..', `${SESSION}/tasks/../../${OTHER}`]) {
     assert.equal(findTask({ id: 'bother', env: { ...env, CLAUDE_CODE_SESSION_ID: session } }), null, String(session));
@@ -209,7 +210,7 @@ test('a task whose output goes away mid-wait is said so, and a temp folder the s
   const { root, put, env } = hostTemp(t);
   const file = put('bgone', 'x\n');
   const gone = await wait(['bgone'], { env, time: clock({ 2: () => rmSync(file) }) });
-  assert.deepEqual([gone.status, gone.err], [2, ['aidrian wait: the output of background task bgone can no longer be read; repeating the command cannot help: wait with another completion check you have, or report the wait as blocked']]);
+  assert.deepEqual([gone.status, gone.err], [2, ['aidrian wait: the output of background task bgone can no longer be read; repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check you have, or report the wait as blocked']]);
   put('bsand', 'x\n\n[exited with code 0]\n');
   assert.equal((await wait(['bsand'], { env: { ...env, CLAUDE_CODE_TMPDIR: root } })).status, 0);
 });
@@ -218,7 +219,7 @@ test('a host with no way to read a task is refused, and the command runs through
   const { env, put } = hostTemp(t);
   const refused = await wait(['bmine'], { env: {}, host: codex });
   assert.deepEqual([refused.status, refused.out], [2, []]);
-  assert.deepEqual(refused.err, ['aidrian wait: Codex gives a command no way to read a background task; repeating the command cannot help: wait with another completion check you have, or report the wait as blocked']);
+  assert.deepEqual(refused.err, ['aidrian wait: Codex gives a command no way to read a background task; repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check you have, or report the wait as blocked']);
   put('bdone', 'ok\n\n[exited with code 0]\n');
   // Codex is detected first, so its variables must not reach the call.
   const clean = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('CODEX_') && !name.startsWith('PLUGIN_')));
@@ -226,19 +227,25 @@ test('a host with no way to read a task is refused, and the command runs through
   assert.deepEqual(await run('bdone'), [0, 'ended bdone\nexit code: 0\nlast lines of its output (at most 40):\n| ok\n', '']);
   put('brun', '');
   assert.deepEqual(await run('brun', '--max-wait', '0'), [3, 'running brun: run the command again to keep waiting, unless the host says the task ended\nno output yet\n', '']);
-  assert.deepEqual(await run('bnone'), [2, '', 'aidrian wait: no output of a background task bnone in this session; repeating the command cannot help: wait with another completion check you have, or report the wait as blocked\n']);
+  assert.deepEqual(await run('bnone'), [2, '', 'aidrian wait: no output of a background task bnone in this session; repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check you have, or report the wait as blocked\n']);
 });
 
 test('what a subagent is told of a long command takes every number from its host\'s adapter', () => {
   const host = { name: 'Fake Host', capabilities: { foregroundLimit: 90, waitCall: { seconds: 60, toolTimeout: 75 } } };
   assert.equal(longCommandLine(host), 'Long commands: Fake Host may move a command still running after 90 seconds to the background, whatever timeout the call asks for; ' +
     'expect it for a long push or CI wait. Then wait for it in calls of at most 60 seconds each, with a tool timeout of 75 seconds, until it ends.');
-  assert.match(longCommandLine(claudeCode), /after 180 seconds .*aidrian`? wait <task id>`.* at most 150 seconds each, with a tool timeout of 170 seconds, until its first line starts with `ended`, or the host says the task ended\. Exit 3 means the task still runs: wait again\. Exit 2 means no output was found, and repeating the command cannot help: wait with another completion check you have, or report the wait as blocked\.$/u);
+  // By its bare name or its path, as one shell word: test/hook-session-start.test.mjs holds which, and how it is quoted.
+  const aidrian = binCommand('aidrian');
+  const line = longCommandLine(claudeCode);
+  assert.match(line, /after 180 seconds /u);
+  assert.ok(line.endsWith(` Then wait with \`${aidrian} wait <task id>\` in calls of at most 150 seconds each, with a tool timeout of 170 seconds, until its first line starts with \`ended\`, or the host says the task ended. ` +
+    'Exit 3 means the task still runs: wait again. Exit 2 means no output was found, and repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check you have, or report the wait as blocked.'), line);
   assert.deepEqual([longCommandLine(codex), longCommandLine({ capabilities: {} })], [null, null]);
   const shell = { id: 'b1', type: 'shell' };
   const agent = { id: 'a1', type: 'subagent' };
-  assert.match(waitWords(claudeCode, [shell, { id: 'b2', type: 'shell' }]), /^run `\S*aidrian wait b1`, `\S*aidrian wait b2`, in calls of at most 150 seconds each, with a tool timeout of 170 seconds, and repeat each while it exits 3, until its first line starts with `ended`, or the host says the task ended; on exit 2 no output was found, and repeating the command cannot help: wait with another completion check you have, or report the wait as blocked\. $/u);
-  assert.match(waitWords(claudeCode, [shell, agent]), /aidrian wait b1`.*; poll any other task with a foreground command/u);
+  assert.equal(waitWords(claudeCode, [shell, { id: 'b2', type: 'shell' }]), `run \`${aidrian} wait b1\`, \`${aidrian} wait b2\`, in calls of at most 150 seconds each, with a tool timeout of 170 seconds, ` +
+    'and repeat each while it exits 3, until its first line starts with `ended`, or the host says the task ended; on exit 2 no output was found, and repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check you have, or report the wait as blocked. ');
+  assert.match(waitWords(claudeCode, [shell, agent]), / wait b1`.*; poll any other task with a foreground command/u);
   assert.match(waitWords(codex, [shell]), /^poll it with a foreground command whose loop ends on its own before the command's timeout/u);
   assert.match(movedWords(claudeCode), /Claude Code may move one still running after 180 seconds whatever its timeout$/u);
   assert.doesNotMatch(movedWords(codex), /\d/u);

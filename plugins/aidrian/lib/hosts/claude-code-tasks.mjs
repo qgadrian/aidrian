@@ -59,6 +59,7 @@ export function findTask({ id, env = process.env, uid = processUid() }) {
 // A command can print that line itself, so it counts only as the file's last: one still running whose latest output is
 // that line reads as ended, and one that printed more after it was killed reads as running, known limits.
 export function readTask(file, uid = processUid()) {
+  // A race with another process of the same user is accepted here.
   const text = plainFile(file) ? tailText(file, TAIL, uid) : null;
   if (text === null) return null;
   const trailer = TRAILER.exec(text);

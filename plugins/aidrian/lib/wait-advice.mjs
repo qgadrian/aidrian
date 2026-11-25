@@ -9,8 +9,8 @@ import { waitsFor } from './hosts/index.mjs';
 const callWords = ({ waitCall }) => ` in calls of at most ${waitCall.seconds} seconds each, with a tool timeout of ${waitCall.toolTimeout} seconds,`;
 // When a wait is over. A task can end with no end line for the command to read, so the host's own word counts too.
 const ENDED = 'until its first line starts with `ended`, or the host says the task ended';
-// What is left once the command found no output: it finds none the next time either. `aidrian wait` says it too.
-export const OTHER_CHECK = 'repeating the command cannot help: wait with another completion check you have, or report the wait as blocked';
+// What is left once the command found no output: a later call finds one only when it appears. `aidrian wait` says it too.
+export const OTHER_CHECK = 'repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check you have, or report the wait as blocked';
 
 // The start line of a subagent on `host`, or null on a host that declares no limit. "May": a host can move the commands
 // of one kind of subagent only, and its start payload need not tell the kinds apart.

@@ -1357,11 +1357,12 @@ test('plan-review gates stop re-running on minor findings, cap their runs, and c
   assert.match(reruns, /under the line `Implementation notes from plan review:`/);
   // The carry-forward holds only when the applied plan records the notes and the slice reviewers read them.
   const apply = read('skills/plan-review/steps/apply.md');
-  assert.match(apply, /5\. When step 3 or 3b carried findings .* check whether the saved plan holds each one as an implementation note in its `## Risks`, under the line `Implementation notes from plan review:`\./);
-  // A repair loop would put back a note the Human edited out of the diff, so the step only reports.
-  assert.match(apply, /A note the approved diff, with the Human's edits, held and the saved plan does not means the apply is incomplete: the run reports `blocked` at step 5\.2 and does not close\. The report names each carried finding, .* says `not recorded in the plan` for a note the Human's edits removed: that is the Human's decision\./);
-  assert.match(section(skill, '## Close', '## Do not'), /an applied plan passed steps 5\.4 and 5\.5,/);
-  assert.doesNotMatch(apply, /\bpatch\b/i);
+  assert.match(apply, /5\. When step 3 or 3b carried findings .* look for each one among the implementation notes in the saved plan's `## Risks`, under the line `Implementation notes from plan review:`\./);
+  // A repair or a blocked outcome needed its own retry and approval rules, so the step names what the plan holds and stops nothing.
+  assert.match(apply, /The report names each carried finding, .* says `recorded` or `not recorded in the plan`, whatever the cause\. This step only reports\./);
+  assert.doesNotMatch(apply, /\bpatch\b|`blocked`/i);
+  assert.match(section(skill, '## Close', '## Do not'), /an applied plan passed step 5\.4, the report names each carried finding,/);
+  assert.match(reruns, /Step 5\.5 reports each one as `recorded` or `not recorded in the plan`\./);
   assert.match(read('skills/quorum/references/ledger.md'), /narrower than one the immediately preceding run accepted/);
   assert.match(read('skills/quorum/references/ledger.md'), /Such a rerun follows the stop rule and cap of `plan-review`'s `steps\/reruns\.md`, as its gates do\./);
   assert.match(read('skills/quorum/references/ledger.md'), /The quorum runs at most 3 times in one `plan-review` run, the first included, as that run counts them\. A reused ledger counts no run; the stop rule applies to it as to a run, and it is the next one's previous run\./);

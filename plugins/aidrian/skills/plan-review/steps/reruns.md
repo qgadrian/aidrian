@@ -45,5 +45,5 @@ A gate runs at most 3 times in this review, the first run included, and so does 
 2. The proposed diff adds them to the plan's `## Risks`, under the line `Implementation notes from plan review:`,
    one item each: the gate or the quorum and its run number, the severity, the surface, and the finding in a few words.
 3. The report's Gates item names each carried finding, with the run, as `security gate run 3 of 3: approved by the stop rule`.
-4. Step 5.5 checks that the saved plan holds each one the approved diff, with the Human's edits, held.
+4. Step 5.5 reports each one as `recorded` or `not recorded in the plan`.
    The `issue-implement` skill, which `plan-implement` runs, puts that list in the brief of each slice's `code-reviewer` and `security-engineer`.

@@ -5,7 +5,7 @@ description: Review a local plan before anyone implements it. Use when asked to 
 
 # plan-review
 
-One critique-and-refine pass before a plan is implemented. This session runs the gates and has `planning-agent`
+One critique-and-refine pass before implementation. This session runs the gates and has `planning-agent`
 critique the plan, propose a diff, and apply it on the Human's approval. It never commits the plan.
 
 Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the critical flows
@@ -17,7 +17,7 @@ and `security` docs for the surfaces that need a security pass.
 [<plan path> | <issue key or URL>] [--findings-only] [--apply] [--extended] [--quorum | --no-quorum]
 ```
 
-- A plan path: absolute or from the repository root. An issue key or URL: the plan for that issue, found as step 1 says.
+- A plan path: absolute or from the repository root. An issue key or URL: that issue's plan, as step 1 finds it.
 - `--findings-only`: critique without a proposed diff.
 - `--apply`: the Human approves the diff this session proposed earlier; go to step 5. Valid only as step 5 says.
 - `--extended`: allow one refinement pass more than step 6 does.
@@ -108,10 +108,10 @@ A consult that returns a dispute stops the run: escalate both positions and the 
 
 ## Close
 
-The run is done only when each gate is cleared or not applicable, the Human answered step 4, an applied plan passed steps 5.4 and 5.5,
-and no dispute or blocked consult was dropped. Otherwise report `blocked` or `needs_input` with the step to resume from.
+The run is done only when each gate is cleared or not applicable, the Human answered step 4, an applied plan passed step 5.4,
+the report names each carried finding, and no dispute or blocked consult was dropped. Otherwise report `blocked` or `needs_input` with the step to resume from.
 
-End with the next step: the `issue-implement` skill for an issue-anchored plan, and the `plan-implement` skill for any other,
+End with the next step: the `issue-implement` skill for an issue-anchored plan, `plan-implement` for any other,
 design imports included. The report names a changed design-import plan as a file change.
 
 ## Do not

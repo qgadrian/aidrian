@@ -2157,7 +2157,7 @@ file changed, or it sets `github.autoMerge.includePolicyFiles` too; otherwise it
 git leaves them out of its commits, and a push that
 changes one is refused.
 With `github.autoMerge.includePolicyFiles` on as the start reads the team policy, the session may write the host
-instruction files and the policy files, but no base copy; with it off, it writes none of them,
+instruction files and the policy files, but no base copy save a knowledge index file (below); with it off, it writes none of them,
 whatever `github.autoMerge.includeGuardedPaths` says.
 Either way, it never writes the host settings, skills, agents, commands, hooks, or MCP servers, nor the forge's workflow files.
 One rule decides a review finding in a host file: one in a file the attempt may write is fixed as any other finding.
@@ -2181,8 +2181,23 @@ a head that moved after a good fetch, or a local base ref that names another com
 after the read is an accepted residual.
 The start row records that head as `overlay`, and `<attempt>/base-copies.txt` lists the files, cleaned and fenced as
 data from the branch.
+With `github.autoMerge.includeGuardedPaths` and `includePolicyFiles` both on, the attempt may still edit the knowledge index
+files among them, in git's index alone.
+The start row keeps them as `indexFiles`, each a `path` and its `base`, the pinned base tip's blob id or null; a second
+list in `base-copies.txt` names them, at most 20.
+Such a file is a direct `.json` child of the knowledge folder beside the config the tip names, its exact case, its name
+starting with a lowercase letter or a digit and holding only letters, digits, `_`, `-`, and `.`, that the branch's head
+holds as a plain file (mode `100644`).
+The session reads the branch's text with `git show :<path>`, edits a temporary copy, puts it back with `git hash-object`
+and `git update-index`, and commits.
+The disk keeps the base copy all along, since the start hook and `aidrian-knowledge` load an index from there, so no
+session loads one no review passed.
+The push guard still refuses a deletion, a link, another mode, the base copy committed over the branch's version, and an
+index that conflicts in a merge of the base.
+A check or reviewer that reads the disk sees the base copy, so CI checks the edit on the pushed head.
+`config.json` and the instruction files keep the route above, a stated residual or a park.
 The branch's own changes stay in its commits for the pull request's review.
-The one change to those files a push may carry is a merge of a moved base, which a later or resumed attempt makes when its pull request conflicts with it.
+The one change to the other files a push may carry is a merge of a moved base, which a later or resumed attempt makes when its pull request conflicts with it.
 The session asks `aidrian project stop-action RUN ISSUE --catch-up` first, whose `merge_base` line names the one route (below).
 The push guard lets each host file through only as git's clean merge of `overlay` and that base gives it ([agent gates](hooks.md#agent-gates)).
 Once HEAD holds a newer base, every host file must be as that merge gives it, one the branch kept as it was too.

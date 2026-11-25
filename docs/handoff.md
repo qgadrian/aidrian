@@ -708,6 +708,9 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   while [`github.autoMerge.includePolicyFiles`](config.md#auto-merge) is off.
   With it on, the first message says so, and the session may write the host instruction files and the policy files,
   but no base copy; the host settings, skills, agents, commands, hooks, MCP servers, and workflow files stay refused.
+  The exception, with both keys on, is a knowledge index file the branch changes: the session edits it in git's index
+  alone, as the first message says, and the disk keeps the base copy ([Project run](config.md#project-run)).
+  Such a file counts as one the attempt may write.
   One rule decides a review finding in a host file: one in a file the attempt may write is fixed as any other finding.
   A low or medium review finding whose fix lies in one the attempt may not write, that the review step does not mark as a
   [security finding](review.md#reviewers), and that has the engine's own [id](review.md#finding-ids), is a stated

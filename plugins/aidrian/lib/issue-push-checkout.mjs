@@ -2,7 +2,7 @@
 // pushProblem), once the words have passed: that it is the session's own clone or worktree, not a repository nested in
 // it; that origin pushes to the URL the issue's start pinned; that, when that start gave its clone the base branch's
 // copies of the host files (its `overlay`), its commits change no host config or instruction file from the head it
-// started from; that its commits change none of the forge's workflow files
+// started from, but the knowledge index files that start let it edit in git's index; that its commits change none of the forge's workflow files
 // from where they leave origin's default branch; and that it holds no uncommitted change to one, which a command run
 // beside the push, or after the guard read it, could commit into the push. Every git call runs within the guards' budget,
 // and one that fails, or does not answer in time, refuses the push.
@@ -11,6 +11,7 @@ import { maskSecrets } from './clean-text.mjs';
 import { checkDeadline, remainingMs } from './deadline.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { runGit } from './git.mjs';
+import { INDEX_RECIPE, PLAIN_FILE } from './index-edits.mjs';
 import { GUARDED_PATHS, isPolicyPath } from './project.mjs';
 import { namedFiles } from './project-trust.mjs';
 
@@ -53,31 +54,62 @@ function ownCloneProblem(folder, root, pushUrl, fold) {
 // attempt started from on the base branch's copies of them (lib/project-start.mjs prepareAttempt), or null, as for an
 // attempt with none. The one change it lets through is a merge of the base (mergedProblem): each such file as git's
 // clean merge of `overlay` and the base gives it, and none that conflicted in that merge, whatever bytes HEAD holds.
+// An exact path of `indexFiles`, the knowledge index files the start let the attempt edit in git's index, is no such
+// file but for a conflict; indexProblem holds what its commits leave there.
 // A git call that fails refuses the push.
-function overlayProblem(folder, overlay, policyFiles) {
+function overlayProblem(folder, overlay, policyFiles, indexFiles) {
   if (!overlay) return null;
-  const guarded = (file) => file !== '' && (GUARDED_PATHS.test(file) || isPolicyPath(file, policyFiles));
+  const editable = new Set(indexFiles.map((each) => each.path));
+  const held = (file) => file !== '' && (GUARDED_PATHS.test(file) || isPolicyPath(file, policyFiles));
+  const guarded = (file) => held(file) && !editable.has(file);
   const diff = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', overlay, 'HEAD', '--'], folder);
   if (diff.status !== 0) return `it pushes, and ${SLOW} which files its commits change from ${overlay.slice(0, 7)}, the head its attempt started from on the base branch's copies of the host config and instruction files`;
-  const count = diff.stdout.split('\0').filter(guarded).length;
-  const merged = mergedProblem(folder, overlay, guarded, count > 0);
-  if (merged === null) return null;
+  const changed = diff.stdout.split('\0');
+  const count = changed.filter(guarded).length;
+  const merged = mergedProblem(folder, overlay, { held, guarded }, count > 0);
+  if (!merged.conflict && !merged.edited && !merged.reason) return indexProblem(folder, indexFiles, changed, merged.differ);
   const why = merged.conflict ? `${namedFiles([merged.conflict])} conflicts in that merge, which a session never resolves by hand`
     : merged.edited ? `${namedFiles([merged.edited])} differs from git's merge of the base` : merged.reason;
   if (!count) return `it pushes a merge of the base into the branch in which ${why}, and this attempt runs on the base branch's copies of the host config and instruction files; record the result with that file in its stop: \`pr_open\` when the branch has a pull request, otherwise \`parked\` with a decision for the Human naming the file`;
   return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none but as git merges the base into the branch (${why}); take those changes out of the commits, or, when the issue needs them, record the result with that file in its stop: \`pr_open\` when the branch has a pull request, otherwise \`parked\` with a decision for the Human naming the file`;
 }
 
+// Why HEAD in `folder` leaves a knowledge index file of `indexFiles` (index-edits.mjs indexFilesOf) as no edit of it, or
+// null. One HEAD holds as the recorded head does (none of `changed`), or as git's clean merge of a newer base gives it
+// (none of `differ`, when HEAD holds such a merge), was not edited. Any other must be a plain file that is not the base's
+// copy: the disk holds that one, so a commit of it would take the branch's own version away unseen.
+function indexProblem(folder, indexFiles, changed, differ = changed) {
+  for (const { path: file, base } of indexFiles.filter((each) => changed.includes(each.path) && differ.includes(each.path))) {
+    const listed = budgeted(['ls-tree', '-z', 'HEAD', '--', `:(top,literal)${file}`], folder);
+    const name = namedFiles([file]);
+    if (listed.status !== 0) return `it pushes, and ${SLOW} what its commits leave at ${name}, a knowledge index file this attempt may change only in git's index: ${INDEX_RECIPE}`;
+    const left = leftAt(listed.stdout.split('\0').filter((each) => each !== ''), name, base);
+    if (left) return `it pushes commits that ${left}, a knowledge index file this attempt may change only in git's index: ${INDEX_RECIPE}; its disk keeps the base branch's copy, and the branch's own version is in the commits before`;
+  }
+  return null;
+}
+
+// What the tree entries `entries` (git ls-tree) leave at the index file `name` that is no edit of it, or null: none, one
+// of another kind or mode than a plain file, or the blob `base`, the base's copy.
+function leftAt(entries, name, base) {
+  if (entries.length === 0) return `delete ${name}`;
+  const [info] = entries[0].split('\t');
+  const [mode, type, id] = info.split(' ');
+  if (entries.length > 1 || mode !== PLAIN_FILE || type !== 'blob') return `leave ${name} as something other than a plain file`;
+  return id === base ? `put the base branch's copy of ${name} over the branch's own version` : null;
+}
+
 // Why HEAD in `folder` holds a file `guarded` names other than as git's clean merge of `overlay` with the base it holds,
-// or null when it holds every one as that merge gives it: what a session that merged origin's default branch in, and
+// or {} when it holds every one as that merge gives it: what a session that merged origin's default branch in, and
 // edited none of them, pushes. The base is HEAD's merge base with the first of BASE_REFS git resolves, the commit such a
 // merge brought in. When that base is past `overlay`'s own, HEAD holds a merge of a newer base: a file that conflicted
 // in it is { conflict } whatever HEAD holds, since only a hand resolved it, and every other one must be as the merge
 // gives it, one kept as `overlay` holds it too. Else only `changed`, some such file differs from `overlay`, reads them.
-// A file HEAD holds otherwise is { edited }. { reason } when git cannot say.
+// A file HEAD holds otherwise is { edited }. { reason } when git cannot say. The conflict is of any file `held` names,
+// and `differ`, beside no problem, lists every path HEAD holds other than that merge does, when one was read.
 // SHORTCUT: origin's remote-tracking ref is the session's own copy, as committedProblem's is; the pull request's diff
 // against the forge's own base, which the merge gate holds for a review of these files, stands behind it.
-function mergedProblem(folder, overlay, guarded, changed) {
+function mergedProblem(folder, overlay, { held, guarded }, changed) {
   for (const ref of BASE_REFS) {
     const found = budgeted(['merge-base', 'HEAD', ref], folder);
     if (found.status === null) return { reason: SLOW };
@@ -86,19 +118,20 @@ function mergedProblem(folder, overlay, guarded, changed) {
     // Exit 0: the base is the recorded head's own or older, so no newer base was merged in; 1: it is newer.
     const older = budgeted(['merge-base', '--is-ancestor', base, overlay], folder);
     if (older.status !== 0 && older.status !== 1) return { reason: `${SLOW} whether the head merged a newer base` };
-    if (older.status === 0 && !changed) return null;
+    if (older.status === 0 && !changed) return {};
     const merge = budgeted(['merge-tree', '--write-tree', '--no-messages', '--name-only', '-z', overlay, base], folder);
     if (merge.status !== 0 && merge.status !== 1) return { reason: `${SLOW} how the base merges` };
     const [tree, ...conflicted] = merge.stdout.split('\0').filter((each) => each !== '');
-    const conflict = conflicted.find(guarded);
+    const conflict = conflicted.find(held);
     if (conflict) return { conflict };
     const differ = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', tree, 'HEAD', '--'], folder);
     if (differ.status !== 0) return { reason: `${SLOW} how the head differs from the merge` };
-    const edited = differ.stdout.split('\0').find(guarded);
-    return edited ? { edited } : null;
+    const paths = differ.stdout.split('\0');
+    const edited = paths.find(guarded);
+    return edited ? { edited } : { differ: paths };
   }
   // No base to read: committedProblem refuses the push with the advice that brings one back.
-  return changed ? { reason: 'git names no merge base with origin\'s default branch' } : null;
+  return changed ? { reason: 'git names no merge base with origin\'s default branch' } : {};
 }
 
 // The forge's workflow folders and every folder that holds one, as `:(top,literal)` pathspecs: a holding folder, as
@@ -180,8 +213,8 @@ const shellWord = (file) => (/^[\w./@%+=:,-]+$/u.test(file) ? file : `'${file.re
 
 // Why the exact push from `folder` may not run, or null (see the header). `root` is the session's root that holds it
 // ({ root, common }), `pushUrl` the URL its issue's start pinned, `overlay` the head that start recorded its base copies
-// over, or null, with `policyFiles`, and `fold(path)` gives a path as `root` holds them.
-export function pushCheckoutProblem(folder, { root, pushUrl, fold, overlay = null, policyFiles = [] }) {
+// over, or null, with `policyFiles` and `indexFiles`, and `fold(path)` gives a path as `root` holds them.
+export function pushCheckoutProblem(folder, { root, pushUrl, fold, overlay = null, policyFiles = [], indexFiles = [] }) {
   const paths = workflowPaths();
-  return ownCloneProblem(folder, root, pushUrl, fold) ?? overlayProblem(folder, overlay, policyFiles) ?? committedProblem(folder, paths) ?? uncommittedProblem(folder, paths);
+  return ownCloneProblem(folder, root, pushUrl, fold) ?? overlayProblem(folder, overlay, policyFiles, indexFiles) ?? committedProblem(folder, paths) ?? uncommittedProblem(folder, paths);
 }

@@ -63,7 +63,7 @@ import { maskSecrets } from './clean-text.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { changeNotFound, forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
-import { configPathIn, DEFAULT_CONFIG, isPolicyPath, knowledgeIn, mayFollowTeamDefault, projectId, stateRoot, trailPaths } from './project.mjs';
+import { configPathIn, DEFAULT_CONFIG, foldPath, isPolicyPath, knowledgeIn, mayFollowTeamDefault, projectId, stateRoot, trailPaths } from './project.mjs';
 import { botProblem, NO_BOT, readHumanSignoffs, signoffProblem } from './review/merge-trust.mjs';
 import { HARNESS_FLOW } from './review/plan.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
@@ -87,7 +87,7 @@ import { keptLines, keptPrompt } from './project-kept.mjs';
 import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, recordedHead, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
-import { ancestorProblem, commitFiles, commitGitlinks, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
+import { ancestorProblem, commitFiles, commitGitlinks, isGuarded, namedFiles, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { holdsProblem } from './project-forge-holds.mjs';
 import { pushPreflight } from './push-preflight.mjs';
 import { signoffFolder, signoffFolders, storePathProblem } from './review/signoff-store.mjs';
@@ -673,12 +673,16 @@ export function policyFilesAt(root, tip, prefix) {
 // cannot be read, as pr-auto-merge.mjs startDocs reads a branch on the forge, each path from the top of the repository:
 // the `always` docs of each direct `.json` child of the knowledge folder beside `configFile`, the config.json
 // policyFilesAt located, and that folder. No folder there is no docs. A folder or an index that is a link or a submodule
-// is no answer, since the disk's reader follows a link to what no list here holds.
+// is no answer, since the disk's reader follows a link to what no list here holds; nor is a path that is, or lies under,
+// a folder of another spelling with that folder's fold (foldPath), which a disk that ignores case reads as the same one.
 export function startDocsAt(root, tip, configFile, prefix) {
   const folder = knowledgeIn(configFile);
   const [files, links] = [commitFiles(root, tip), commitGitlinks(root, tip)];
   if (!files || !links) return `git cannot read the files of the base tip ${tip.slice(0, 7)}`;
   if (files.has(folder) || links.has(folder)) return `${folder} at the base tip ${tip.slice(0, 7)} is no folder`;
+  const [depth, folded] = [folder.split('/').length, foldPath(folder)];
+  const other = [...files.keys(), ...links].map((file) => file.split('/').slice(0, depth).join('/')).find((above) => above !== folder && foldPath(above) === folded);
+  if (other !== undefined) return `${namedFiles([other])} at the base tip ${tip.slice(0, 7)} is ${folder} in another spelling, which a disk may read as the same folder`;
   const child = (file) => file.startsWith(`${folder}/`) && file.endsWith('.json') && !file.slice(folder.length + 1).includes('/');
   const docs = [];
   for (const file of [...files.keys(), ...links].filter(child).sort()) {

@@ -362,7 +362,7 @@ const indexFixture = (t) => {
   const gitAt = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...identity, ...args], { encoding: 'utf8', stdio: 'pipe' });
   const fx = issueFixture(t, {
     overlay: true,
-    policyFiles: ['.aidrian.json', '.aidrian/config.json'],
+    policyFiles: ['.aidrian.json', '.aidrian/config.json', 'harness/stra\u00dfe.json'],
     startLoaded: LOADED,
     files: { [INDEX]: NINE.join(''), [BASE_ONLY]: 'other\n', 'CLAUDE.md': 'base\n', [ALWAYS]: NINE.join(''), [OWN_ALWAYS]: NINE.join('') },
     branchWork: (work) => {
@@ -418,7 +418,7 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   assert.match(fx.asked(), /: it pushes commits that change 1 host config or instruction file, .*\(docs\/rules\.md differs/u);
   fx.reset();
   // Each refusal names the file and the recipe.
-  const refused = (what) => new RegExp(`it pushes commits that ${what}, a knowledge index file this attempt may change only in git's index: from the clone's root, \`git show :<path>\` into a temporary file outside the clone, .*\`git update-index --cacheinfo 100644,<id>,<path> --skip-worktree <path>\``, 'u');
+  const refused = (what) => new RegExp(`it pushes commits that ${what}, a knowledge index file this attempt may change only in git's index: from the clone's root, each word that holds \`<path>\` quoted as one shell word, \`git show :<path>\` into a temporary file outside the clone, .*\`git update-index --cacheinfo 100644,<id>,<path> --skip-worktree -- <path>\``, 'u');
   const name = INDEX.replaceAll('.', '\\.');
   fx.commit([INDEX, '100644', NINE.join('')]);
   assert.match(fx.push(), refused(`put the base branch's copy of ${name} over the branch's own version`));
@@ -472,8 +472,8 @@ test('an edit of a knowledge index lifts the push guard for no other file: an in
   }
   // So is what the start hook loads: an always doc, in any case, and a path that stands where one lies, as a link would.
   fx.reset();
-  fx.commit([ALWAYS, '100644', 'edited\n'], ['docs/RULES.md', '100644', 'edited\n'], [OWN_ALWAYS, '100644', NINE.join('')]);
-  assert.match(fx.push(), /^it pushes commits that change 3 host config or instruction files, /u, 'an edit, another case, and the base copy');
+  fx.commit([ALWAYS, '100644', 'edited\n'], ['docs/RULES.md', '100644', 'edited\n'], ['docs/rule\u017f.md', '100644', 'edited\n'], ['.aidrian/\u212anowledge/x.json', '100644', '{}\n'], ['harness/STRASSE.json', '100644', '{}\n'], [OWN_ALWAYS, '100644', NINE.join('')]);
+  assert.match(fx.push(), /^it pushes commits that change 6 host config or instruction files, /u, 'an edit, other spellings of it, of the folder, and of a policy file, and the base copy');
   // A link in their folder's place, and a submodule, whose own `ignore` setting hides no entry of it from the guard.
   fx.reset();
   fx.commit([ALWAYS, null], [OWN_ALWAYS, null], ['docs', '120000', 'elsewhere'], ['.gitmodules', '100644', '[submodule "x"]\n\tpath = .claude/x\n\turl = ./x\n\tignore = all\n'], ['.claude/x', '160000', fx.head]);

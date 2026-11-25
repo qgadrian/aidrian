@@ -11,7 +11,7 @@ import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
 import { headPolicyProblem, pathsProblem, reviewProblem, runAutoMerge, runAutoMergeCommand } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { markOnce } from '../plugins/aidrian/lib/closing-words.mjs';
 import { configFromText, loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { isPolicyPath, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { classify, evaluateRules } from '../plugins/aidrian/lib/review/plan.mjs';
 import { emptyState, noteOutcome, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
@@ -1579,6 +1579,14 @@ test('the knowledge folder a pointer file names is guarded whole, and a project 
   for (const file of ['harness/knowledge', 'harness', 'Harness', 'apps', 'apps/web/docs']) {
     assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: loaded }), `it changes ${JSON.stringify(file)}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`);
   }
+  // By the fold of a path, as a disk that ignores case or Unicode form reads it: a long s, a Kelvin sign, a sharp s, a ligature, and each form of an accent.
+  const spelled = { docs: ['docs/stra\u00dfe.md', 'docs/caf\u00e9.md', 'docs/rules.md', 'docs/fig.md'], folder: 'ma\u00df/knowledge' };
+  for (const file of ['docs/STRASSE.md', 'docs/cafe\u0301.md', 'docs/CAFE\u0301.md', 'docs/rule\u017f.md', 'docs/\ufb01g.md', 'ma\u00df/\u212anowledge/x.json', 'MASS/knowledge/x.json', 'mass/knowledge', 'MASS']) {
+    assert.match(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: spelled }) ?? '', /the start hook loads/u, file);
+  }
+  for (const file of ['docs/strase.md', 'docs/cafe.md', 'docs/g.md']) assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: spelled }), null, file);
+  for (const file of ['.AIDRIAN.json', 'x/.aidrian/con\ufb01g.json', 'harne\u017f\u017f/CON\ufb01G.json', 'harne\u00df/config.json']) assert.equal(isPolicyPath(file, ['harness/config.json']), true, file);
+  for (const file of ['harness/config.jso', 'x/harness/config.json']) assert.equal(isPolicyPath(file, ['harness/config.json']), false, file);
   for (const file of ['harness/know', 'app', 'apps/web/docs/rules.md.bak']) assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: loaded }), null, file);
 
   const below = projectBelow(t, 'apps/web', configText(TEAM));

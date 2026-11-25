@@ -2157,10 +2157,11 @@ file changed, or it sets `github.autoMerge.includePolicyFiles` too; otherwise it
 git leaves them out of its commits, and a push that
 changes one is refused.
 What the start hook loads is the knowledge folder beside that `config.json`, wherever it lies, with every path below it,
-and each `always` doc its indexes name, by the rule of the [auto-merge](#auto-merge) `paths` check, case ignored, and a
+and each `always` doc its indexes name, by the rule of the [auto-merge](#auto-merge) `paths` check, case and Unicode form ignored, and a
 link, file, or submodule in the place of one or of a folder that holds it.
 The start row keeps it as `startLoaded`, `{ docs, folder }`; a doc only the base moved counts too.
-When the tip's indexes cannot be read, as one that is malformed or a link, a start on existing work, a later attempt or
+When the tip's indexes cannot be read, as one that is malformed or a link, or the tip holds that folder in another
+spelling a disk may read as the same one, such as `.aidrian/Knowledge`, a start on existing work, a later attempt or
 one at a recorded head, is refused before any clone, with no attempt folder and no row; a first attempt, cut from the
 tip, starts.
 With `github.autoMerge.includePolicyFiles` on as the start reads the team policy, the session may write the host
@@ -2231,12 +2232,13 @@ Residuals of the base copies:
 
 - A doc a session reaches by tag or search, and a file an instruction file imports, come from the branch's head, as at the
   merge gate.
-- The target of an `always` doc the tip keeps as a link is not held.
+- The target of an `always` doc the tip keeps as a link, or a doc below a folder it keeps as a link, is not held.
 - Another project folder in the same repository is not held.
 - A doc the base makes `always` after the start's pin counts from the next attempt.
 - An attempt on base copies cannot edit an `always` doc: a finding in one takes the residual or park route, and one only
   the base moved puts an attempt there. No recipe edits an `always` doc.
-- A checkout filter that rewrites an `always` doc, such as `eol=crlf`, refuses a start on existing work, as it does for `AGENTS.md`.
+- A checkout filter that rewrites an `always` doc, such as `eol=crlf`, refuses a start on existing work, as it does for `AGENTS.md`;
+  one that rewrites a policy file refuses a first attempt too.
 - A hand write by the session, a first attempt, and a base that renames a host file the branch changed are not held.
 
 Every park row names the recorded head.

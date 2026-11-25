@@ -118,10 +118,17 @@ export const knowledgeIn = (configFile) => `${path.posix.dirname(configFile)}/kn
 // paths it read on each branch (pr-auto-merge.mjs branchPolicies). Not configurable.
 export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|\.aidrian\.local\.json|\.aidrian)$/iu;
 
+// A path as a disk that ignores case and Unicode form names it, such as macOS's: two spellings with one fold may be one
+// file there. It may fold two a disk keeps apart, so a guard that compares folds only holds more.
+export const foldPath = (file) => file.normalize('NFD').toUpperCase().toLowerCase();
+
 // Whether `file`, from the top of the repository, is a policy file: a POLICY_PATHS name, or one of `policyFiles`, the
-// paths pr-auto-merge.mjs branchPolicies read the gate's policy from, as a config.json a pointer file relocates, in any
-// case, as the auto-merge gate matches them.
-export const isPolicyPath = (file, policyFiles = []) => POLICY_PATHS.test(file) || policyFiles.some((each) => typeof each === 'string' && each.toLowerCase() === file.toLowerCase());
+// paths pr-auto-merge.mjs branchPolicies read the gate's policy from, as a config.json a pointer file relocates, each by
+// its fold (foldPath).
+export function isPolicyPath(file, policyFiles = []) {
+  const folded = foldPath(file);
+  return POLICY_PATHS.test(folded) || policyFiles.some((each) => typeof each === 'string' && foldPath(each) === folded);
+}
 
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.
 // In a git checkout the search stops at its top folder, so a worktree whose branch has no project folder has no project,

@@ -13,7 +13,7 @@
 
 import path from 'node:path';
 
-import { GUARDED_PATHS, PLUGIN_REPOSITORY_PATHS } from './project.mjs';
+import { foldPath, GUARDED_PATHS, PLUGIN_REPOSITORY_PATHS } from './project.mjs';
 import { QUIET_TEST_FILES } from './review/diff.mjs';
 import { globPattern } from './fs.mjs';
 import { classify, ONLY_NON_BEHAVIOUR, pathPattern } from './review/plan.mjs';
@@ -64,13 +64,14 @@ export const startUnreadable = (loaded) =>
 // Why the changed file `file`, from the top of the repository, is one the start hook loads, by `loaded`, or null: an
 // `always` doc of a bucket, or a file in the knowledge folder whose indexes name them; or the folder's own path, or a
 // parent of it or of such a doc, where a changed path can only be a link, a file, or a submodule, which puts other files
-// in their place. Compared ignoring case, as the policy files are, since a disk that ignores case loads either spelling.
+// in their place. Compared by the fold of the path (project.mjs foldPath), as the policy files are, since a disk that
+// ignores case or Unicode form loads either spelling.
 export function startLoadProblem(file, loaded) {
-  const lower = file.toLowerCase();
+  const folded = foldPath(file);
   const named = JSON.stringify(file);
-  if (loaded.docs.some((doc) => doc.toLowerCase() === lower)) return `it changes ${named}, a knowledge doc the start hook loads into every session`;
-  if (loaded.folder && lower.startsWith(`${loaded.folder.toLowerCase()}/`)) return `it changes ${named}, in the default branch's knowledge folder, which decides what the start hook loads`;
-  if ([...loaded.docs, ...(loaded.folder ? [`${loaded.folder}/`] : [])].some((each) => each.toLowerCase().startsWith(`${lower}/`))) return `it changes ${named}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`;
+  if (loaded.docs.some((doc) => foldPath(doc) === folded)) return `it changes ${named}, a knowledge doc the start hook loads into every session`;
+  if (loaded.folder && folded.startsWith(`${foldPath(loaded.folder)}/`)) return `it changes ${named}, in the default branch's knowledge folder, which decides what the start hook loads`;
+  if ([...loaded.docs, ...(loaded.folder ? [`${loaded.folder}/`] : [])].some((each) => foldPath(each).startsWith(`${folded}/`))) return `it changes ${named}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`;
   return null;
 }
 

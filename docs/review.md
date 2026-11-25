@@ -1179,21 +1179,22 @@ doc or an ADR that does not read, a failed git scan): then it prints those probl
 Otherwise whether a residual contradicts a decision is a judgment, so `product-manager` returns one row per residual owed,
 `{ residual, contradicts, evidence }`, with `contradicts` a decision id or ADR `path:line` from that list, or null, and `evidence` the wording it contradicts.
 The listing prints `record`, the record's hash, null when nothing may be kept, and the judged file is `{ record, rows }`
-with that hash beside the rows. A judged run that exits 0 keeps each residual's clean verdict in
-`<state>/decisions/residual-verdicts.json` only when that hash is of the record it reads itself, so rows judged before a
-merge, or with another `--adr`, keep nothing; a bare array of rows validates and keeps nothing, and a note says so. A
-verdict is two hashes: the residual's text, and the whole record, which is every listed decision's id, status, and
-wording, every listed ADR line with its path and number, and the ADR folder. A decision with no wording on record counts
-with its whole doc, where the judge reads it. A later listing over the same record marks such a residual `kept` and
-names the others in `owed`; with none owed it ends `every residual was judged against this record` and exits 0,
-`nothing: true` in `--json`. `--judged` needs no row for a kept residual, though one given counts, and its exit covers
-the whole body. A changed character of a residual, or any change to the record, makes it owed again, and a row that says
-a kept residual contradicts something drops its verdict. Nothing is kept from a run that exits 1. Nothing is kept or
-reused under `--residual` or `--path`, with no project folder, for an item the body holds twice, or while a decision or
-an ADR could not be read, or a marker problem is off every listed marker, such as a marker that does not parse or one in
-a doc no index lists; a note then says so. `--rejudge` reuses nothing. A store that cannot be read, or that the command
-does not recognise, holds nothing, and one that cannot be written is a note: the run's answer stands. In a confined
-project run session, where `<state>/decisions/` is not writable, nothing is kept.
+with that hash beside the rows. A hash of another record than the judged run reads, as of rows judged before a merge or
+with another `--adr`, exits 1: list again, and judge again. A run that exits 0 and is given its record keeps the clean
+verdict of each residual it has a row for in `<state>/decisions/residual-verdicts.json`; a bare array, or a null
+`record`, validates and keeps nothing, and a note says so. A verdict is two hashes: the residual's text, and the whole
+record, which is every listed decision's id, status, and wording, every listed ADR line with its path and number, and
+the ADR folder. A decision with no wording on record counts with its whole doc, where the judge reads it. A later
+listing over the same record marks such a residual `kept` and names the others in `owed`; with none owed it ends `every
+residual was judged against this record` and exits 0, `nothing: true` in `--json`. `--judged` needs no row for a kept
+residual, though one given counts, and its exit covers the whole body. A changed character of a residual, or any change
+to the record, makes it owed again, and a row that says a kept residual contradicts something drops its verdict. Nothing
+is kept from a run that exits 1. Nothing is kept or reused under `--residual` or `--path`, with no project folder, for
+an item the body holds twice, or while a decision or an ADR could not be read, or a marker problem is off every listed
+marker, such as a marker that does not parse or one in a doc no index lists; a note then says so. `--rejudge` reuses
+nothing. A store that cannot be read, or that the command does not recognise, holds nothing, and one that cannot be
+written is a note: the run's answer stands. In a confined project run session, where `<state>/decisions/` is not
+writable, nothing is kept.
 `--judged <file>` validates the rows: an owed residual with no row, a residual with two, an item the body holds twice, a
 `contradicts` that names nothing listed or an id two markers hold, or one with no evidence is invalid. The command prints each contradiction as
 `residual -> id, doc:line`, or `residual -> path:line` for an ADR line, and exits 1 on any contradiction or invalid row; 0 when

@@ -22,13 +22,14 @@ An accepted residual that contradicts a decision on record never ships.
    exactly as printed, `contradicts` a decision id or ADR `path:line` from the pairing, or `null`, and `evidence` the quoted
    wording it contradicts. The pairing lists only `confirmed` and `unconfirmed` decisions: a `rejected` one is no rule,
    so the command leaves it out.
-3. Write `{ "record": <step 1's record>, "rows": [...] }` as JSON to `<state>/tmp/pr-residuals-<branch>.json`, with the same
-   `<branch>` spelling as the body file, and run `aidrian decisions residuals --body <file> --judged <that file>`, with the
-   same `--adr <folder>` as step 1. The rows answer the record step 1 listed, so a later listing's `record` never goes beside
-   them. Spell both paths out, with the folder `aidrian state` prints and the branch put in before the command, as the body
-   file's is: the Bash hook refuses a write to a path built in a shell variable, such as `> $S/pr-residuals.json`. A `kept`
-   residual needs no row; the exit covers the whole body, and on 0 each clean verdict is kept. To judge every residual again,
-   add `--rejudge` here and in step 1.
+3. Write `{ "record": <step 1's record>, "rows": [...] }` as JSON to `<state>/tmp/pr-residuals-<branch>.json`, with the
+   same `<branch>` spelling as the body file, and run `aidrian decisions residuals --body <file> --judged <that file>`,
+   with the same `--adr <folder>` as step 1. The rows answer the record step 1 listed, so a later listing's `record`
+   never goes beside them, and a file with another `record` than the run reads exits 1: run step 1 again, and judge
+   again. Spell both paths out, with the folder `aidrian state` prints and the branch put in before the command, as the
+   body file's is: the Bash hook refuses a write to a path built in a shell variable, such as `> $S/pr-residuals.json`.
+   A `kept` residual needs no row; the exit covers the whole body, and on 0 each clean verdict is kept. To judge every
+   residual again, add `--rejudge` here and in step 1.
 4. Each printed contradiction goes back to the owner of the change, who fixes the defect or drops the residual; an
    `invalid:` row goes back to `product-manager`. Rerun steps 1 to 3 until the judged run exits 0: the body ships only then.
 

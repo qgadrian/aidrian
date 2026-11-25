@@ -26,9 +26,10 @@
 // line. With no project folder the record is the ADR lines alone, and a superseded ADR adds none, as a note says. A scan
 // problem (an index problem, a doc, an ADR, or an ADR folder that is there but does not read, a failed git scan) prints as a
 // note, and forces exit 1 only where the pairing would otherwise say nothing is on record. It exits 1 too when `--adr` names no folder or `--project` no project.
-// The judged file is `{ record, rows }`, with `record` the hash the listing printed, or the rows alone. A judged run that exits 0
-// keeps each residual's clean verdict (residual-verdicts.mjs) when that hash is of the record it reads itself, and says so when
-// it keeps none: a later listing marks such a residual `kept`, `--judged` needs no row for it, and `--rejudge` ignores it.
+// The judged file is `{ record, rows }`, with `record` the hash the listing printed, or the rows alone. A hash of another record
+// than this run reads exits 1. A judged run that exits 0 and is given its record keeps the clean verdict of each residual it has
+// a row for (residual-verdicts.mjs), and says so when it keeps none: a later listing marks such a residual `kept`, `--judged`
+// needs no row for it, and `--rejudge` ignores it.
 // Nothing is kept or reused under `--residual` or `--path`, with no project folder, or while a decision or an ADR could not be read.
 // `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision), and `quorum route` and `quorum provisional` add `resolve`'s;
 // docs/dispatch-log.md describes them.
@@ -494,11 +495,13 @@ function residuals(args) {
   const named = isObject(given) && Array.isArray(given.rows);
   const rows = named ? given.rows : given;
   const { contradictions, invalid } = judgeResiduals(paired, withKept(rows, marked));
-  const status = contradictions.length || invalid.length ? 1 : 0;
   // Rows judged against another record, as before a merge from the base branch, are no verdict on this one.
-  const otherRecord = store !== null && status === 0 && !(named && given.record === record);
-  const unsaved = store === null || otherRecord ? null : saveVerdicts(store, record, { residuals: paired.residuals, rows, clean: status === 0 });
-  if (otherRecord && owed.length) notes.push('no verdict was kept: the judged file does not name the record this run read');
+  const judgedRecord = named ? given.record ?? null : null;
+  if (judgedRecord !== null && judgedRecord !== record) invalid.push('the judged file answers another record than this run read: list again, and judge again');
+  const status = contradictions.length || invalid.length ? 1 : 0;
+  const unnamed = store !== null && status === 0 && judgedRecord === null;
+  const unsaved = store === null || unnamed ? null : saveVerdicts(store, record, { residuals: paired.residuals, rows, clean: status === 0 });
+  if (unnamed && owed.length) notes.push('no verdict was kept: the judged file does not name the record this run read');
   const keptCount = marked.length - owed.length;
   if (keptCount) notes.push(`${keptCount} residual${keptCount === 1 ? '' : 's'} kept from an earlier judgment of this record`);
   if (unsaved) notes.push(status === 0 ? `no verdict was kept: ${unsaved}` : `an earlier verdict may still be kept, so list with --rejudge: ${unsaved}`);

@@ -43,7 +43,8 @@ export const recordHash = ({ decisions, adrs }, adrFolder, texts) => sha256(JSON
   texts,
 ]));
 
-const isVerdict = (value) => isObject(value) && HASH.test(value.residual) && HASH.test(value.record) && typeof value.at === 'string';
+const isHash = (value) => typeof value === 'string' && HASH.test(value);
+const isVerdict = (value) => isObject(value) && isHash(value.residual) && isHash(value.record) && typeof value.at === 'string';
 
 function readVerdicts(file) {
   const store = readSmallJson(file, STORE_CAP);
@@ -65,12 +66,16 @@ const rowsFor = (rows, residual) => rows.filter((row) => typeof row?.residual ==
 export const withKept = (rows, residuals) => (!Array.isArray(rows) ? rows
   : [...rows, ...residuals.filter(({ kept, residual }) => kept && rowsFor(rows, residual).length === 0).map(({ residual }) => ({ residual, contradicts: null }))]);
 
-// Takes a judged run into the store: with `clean`, a run that exited 0, every residual's verdict is kept, and otherwise
-// the verdict of each residual a row says contradicts something is dropped. Returns null, or why the store was not
-// written: the run's answer stands either way.
+// Takes a judged run into the store: with `clean`, a run that exited 0, the verdict of each residual with a row in `rows` is
+// kept, and otherwise the verdict of each one a row says contradicts something is dropped. A residual filled in from the
+// store has no row, so a run never restores what another dropped meanwhile. Returns null, or why the store was not written:
+// the run's answer stands either way.
 export function saveVerdicts(file, record, { residuals, rows, clean, at = new Date().toISOString() }) {
-  const contradicted = Array.isArray(rows) ? residuals.filter(({ residual }) => rowsFor(rows, residual).some(({ contradicts }) => contradicts !== null)) : [];
-  const keys = new Set((clean ? residuals : contradicted).map(({ residual }) => residualHash(residual)));
+  const judged = residuals.filter(({ residual }) => {
+    const own = Array.isArray(rows) ? rowsFor(rows, residual) : [];
+    return clean ? own.length > 0 : own.some(({ contradicts }) => contradicts !== null);
+  });
+  const keys = new Set(judged.map(({ residual }) => residualHash(residual)));
   if (keys.size === 0) return null;
   const ours = (each) => each.record === record && keys.has(each.residual);
   try {

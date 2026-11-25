@@ -1677,10 +1677,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     through another name of the manifest is judged by its real path, a shell command that makes a link to a file in a
     reviews folder is refused, and so is interpreter code that names the manifest. A shell write of a temporary copy is
     refused when its command names a `reviewer`, and any shell write to `pr-<n>.json` itself but a delete, or a rename
-    or copy of a file on disk with no such key that the same call does not write. Of interpreter code it reads only an
-    absolute or home path the code names, not a path the code builds at run time, a relative one, or one named only in
-    a script file the interpreter runs (the interpreter row below), and it does not see a hard link to the manifest made
-    before the session.
+    or copy of a file on disk with no such key that the same call does not write. Interpreter code is judged as the
+    interpreter row below says.
     Its cost: an agent that edits the manifest in place is refused, and writes it whole instead.
 
   The two ways a session writes are read differently, so a refused path is refused through both:

@@ -127,6 +127,8 @@ function judgedAfter({ kind, subject, sample }, resolvedMs, input, later) {
   // Strictly after, as an occurrence must be to count against a fix.
   if (!later.has(resolvedMs)) later.set(resolvedMs, judge({ ...input, sinceMs: resolvedMs + 1, reviews: null, lessons: [] }));
   const { problems, signals } = later.get(resolvedMs);
+  // Accepted residual: a sent-back lesson is judged again by any send-back of its agent, whatever the cause, since
+  // its key names no cause.
   const again = problems.find((item) => item.kind === kind && item.subject === subject);
   if (again) return { n: again.sample.n, status: PROBLEM };
   // Not found again: not enough data or unavailable as the signal says, else judged and within its threshold.
@@ -213,6 +215,8 @@ function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPer
     const [cause, runs] = agent.sent_back_causes[0] ?? [];
     const leading = cause ? { cause, runs } : null;
     const sentBack = { ...rate(agent.runs - unknown, agent.sent_back, sentBackPercent), unknown, leading };
+    // Accepted residual: every cause shares the delivery check's lesson key, as before rows named causes, so a
+    // background-led problem does not match the stop hook's own background lesson.
     const sentBackLesson = labels(deliverySignal({ agentType: agent.agent_type, missing: [] }));
     if (redispatch.status === PROBLEM) {
       add('redispatch', {

@@ -140,7 +140,7 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const plain = unquoted(command);
   const erases = isBash && named.length === 0 && /aidrian|[*?[]|\bclean\b|\bstash\b/iu.test(plain);
   if (named.length === 0 && !erases) return null;
-  const { files, names, globs } = writeTargets(input);
+  const { files, names, globs, interpreted = [] } = writeTargets(input);
   const local = project.paths.local;
   const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
   const locals = configFiles(project).filter((file) => path.basename(file) === local).map((file) => [file]);
@@ -169,10 +169,15 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
     const why = `it ${how} ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which ${only('only the main session may set')}`;
     return { match: `may set a switch in ${local}`, reason: projectRuleReason(input, `${why}; to read the file, use Read`, human) };
   }
+  // Code an interpreter runs that names the file counts as a write to it, even where it only mentions it, as a docs or
+  // test edit written from Python does, so its refusal names the tools that make that edit: they write one file, by name.
+  const edit = isBash && interpreted.some((text) => text.toLowerCase().includes(local))
+    ? `; to edit a doc or test file that mentions ${local}, use the Edit or Write tool, which the guard judges by the file it writes`
+    : '';
   if (hit === EVERY_SWITCH) {
-    return { match: `changes ${local}`, reason: projectRuleReason(input, `it writes, moves, links, or removes ${local}, or may, which holds the machine's switches, and ${only(hit.why)}; to read the file, use Read`, human) };
+    return { match: `changes ${local}`, reason: projectRuleReason(input, `it writes, moves, links, or removes ${local}, or may, which holds the machine's switches, and ${only(hit.why)}; to read the file, use Read${edit}`, human) };
   }
-  return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${only(hit.why)}`, human) };
+  return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${only(hit.why)}${edit}`, human) };
 }
 
 // `text` with its quotes, backslashes, and backticks taken out, so a word split by them, as `rm .aid""rian.local.json`
@@ -342,6 +347,8 @@ function readTargets(input) {
     // Whether each of `names`, by its place, is an interpreter's code, input, or words, for a refusal that says it read
     // the path there: not a target, or a whole line read for want of its code.
     code: [...targets.map(() => false), ...interpreted.map((each) => each.code)],
+    // The texts an interpreter runs or reads, the tail of `names`, kept apart so a refusal reads them with no second scan.
+    interpreted: interpreted.map(({ text }) => text),
     // The lexer reads a bracket class, as in `[.]continue`, as a plain word; the shell expands it as a glob.
     globs: [...writes.filter((write) => write.glob), ...files.filter((file) => BRACKET.test(file)).map((text) => ({ text, dirs: [], unsure: false }))],
   };

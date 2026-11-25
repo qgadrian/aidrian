@@ -1201,6 +1201,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   names the file and writes to a word built from a variable or a bracket glob. A read, such as `cat`, or a plain copy
   from it, runs. Its known limits: a link already on disk under another name, and a program that deletes what it
   finds, such as `find -delete`.
+  An interpreter's code that names the file anywhere, in a quoted text or a comment, counts as naming it, as the
+  interpreter rule above says: code can derive the path from any text, as `'see .aidrian.local.json'.split()[1]` does.
+  So a docs or test file edit written from Python or Node whose new text mentions the file and a switch is refused, and
+  the refusal says to make it with the Edit or Write tool, which this rule judges by the file it writes. A shell heredoc
+  to that file, as `cat > docs/x.md <<'EOF'`, writes that file alone and runs too, and so does a read-only search, such
+  as a `grep` of a transcript for the key and the file.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's. So does

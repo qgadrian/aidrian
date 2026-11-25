@@ -90,7 +90,7 @@ import { driverHold } from '../../run-driver.mjs';
 import { readUnattendedMark } from '../../unattended-mark.mjs';
 import { transcriptAnswers, waitingRoute } from '../review-extend.mjs';
 import { severalRemotes } from '../review-signoff.mjs';
-import { commandPath, fillRepo, invocationRepo, readWords, switchOn } from './review-request.mjs';
+import { commandPath, fillRepo, invocationRepo, readWords, switchValue } from './review-request.mjs';
 
 // How long the head lookup may take, inside the hook's 5 s, as pr-body's open pull request lookup.
 const VIEW_TIMEOUT_MS = 3000;
@@ -160,10 +160,10 @@ function readGh(args, environment, env, cwd) {
   if (command[0] !== 'pr' || command[1] !== 'merge') return null;
   const { words, flags } = readWords(args, new Set(MERGE_VALUES));
   // `--help` prints the command's options and merges nothing, so a read of them is never held; nor is `--disable-auto`.
-  // Each exempts only as gh reads it: `-h` anywhere, and a last `--help` or `--disable-auto` that is on, so
-  // `gh pr merge 7 --help=false`, which merges, is judged as `gh pr merge 7`.
-  const on = (name) => switchOn(flags.filter((flag) => flag.name === name).at(-1));
-  if (flags.some((flag) => flag.name === '-h') || on('--help') || on('--disable-auto')) return null;
+  // Each exempts only as gh reads it: `-h` anywhere, and a last `--help` or `--disable-auto` that is on with no word the
+  // shell fills in after it (switchValue), so `gh pr merge 7 --help=false`, which merges, is judged as `gh pr merge 7`.
+  const value = (name) => switchValue(args, flags, name);
+  if (flags.some((flag) => flag.name === '-h') || value('--help') === true || value('--disable-auto') === true) return null;
   const last = (...names) => flags.filter((flag) => names.includes(flag.name)).at(-1)?.value ?? null;
   const target = words[2] ? literal(words[2]) : null;
   const head = literal(last('--match-head-commit'));
@@ -178,8 +178,9 @@ function readGh(args, environment, env, cwd) {
     // repository or host an `-R` beside it contradicts, since the guard would read one and gh may merge the other.
     unreadable: (Boolean(words[2]) && target === null) || selectorsDisagree(target, urlRepo, flagRepo),
     text: mergeText(last('-t', '--subject'), last('-b', '--body'), last('-F', '--body-file')),
-    // `--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then.
-    ...(flags.some((flag) => flag.name === '--auto') ? { auto: true } : {}),
+    // `--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then. gh reads its last
+    // value: `--auto=false` merges at once. One the rule cannot read counts as on, which a session no Human attends is refused.
+    ...(value('--auto') !== false ? { auto: true } : {}),
   };
 }
 

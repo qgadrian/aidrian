@@ -55,6 +55,11 @@ test('a limited record with no answer holds post, in the plain, runner, and shel
     `echo '${p.post}' | sh`,
     `echo 7 | xargs -I{} aidrian pr product-feedback post {} --body-file ${p.body}`,
     `npx aidrian pr product-feedback post 7 --body-file ${p.body}`,
+    // Quotes or a line continuation the shell takes out of every word the rule's quick look names (the body path, relative
+    // to the session's folder, names none), and fed text read as the shell reads its words.
+    'aid""rian pr prod""uct-feedback post 7 --body-file state/tmp/prod""uct-feedback-7.md',
+    'aid\\\nrian pr prod\\\nuct-feedback post 7 --body-file state/tmp/prod\\\nuct-feedback-7.md',
+    "cat <<'EOF' | sh\naidrian pr prod\"\"uct-feedback p\"\"ost 7 --body-file state/tmp/x.md\nEOF",
   ];
   for (const command of forms) {
     const reason = p.run(command);

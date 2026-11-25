@@ -168,7 +168,9 @@ test('a head the guard cannot read refuses the merge, and --match-head-commit ne
   assert.equal(r.run('gh pr merge 5 --help=true', { head: null }), null, 'a help gh reads as on');
   assert.equal(r.run('gh pr merge 5 --help=false -h', { head: null }), null, 'gh prints the help for a `-h` anywhere');
   // A switch gh reads as off merges: `--help=false` and `--disable-auto=false` run the merge, and are judged as one.
-  for (const command of ['gh pr merge 5 --help=false', 'gh pr merge 5 --help --help=0', 'gh pr merge 5 --disable-auto=false', 'gh pr merge 5 --help="$H"']) {
+  // So does one a word the shell fills in after it may turn off: `"$X"` may be `--help=false`.
+  for (const command of ['gh pr merge 5 --help=false', 'gh pr merge 5 --help --help=0', 'gh pr merge 5 --disable-auto=false', 'gh pr merge 5 --help="$H"',
+    'gh pr merge 5 --help "$X"', 'gh pr merge 5 --disable-auto $X', 'gh pr merge 5 --help *.md']) {
     assert.match(r.run(command, { head: null }) ?? '', /could not read its head commit/u, command);
   }
   // A backslash and a line break inside a word, which the shell drops: `gh pr merge 5`.

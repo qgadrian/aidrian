@@ -9,6 +9,7 @@ import path from 'node:path';
 import { costUsd, priceFor, promptTokens } from './model-prices.mjs';
 import { isPrompt } from './names.mjs';
 import { readBodyCall, readPrCall } from './rules/github/pr-body.mjs';
+import { readWords, switchValue } from './rules/github/review-request.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 
 const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h'];
@@ -334,22 +335,12 @@ function mergeTarget({ segment, invocation }) {
 
 // The `gh pr merge` options that take the next word as their value, which is then no option.
 const MERGE_VALUES = new Set(['-b', '--body', '-F', '--body-file', '-t', '--subject', '-A', '--author-email', '--match-head-commit', '-R', '--repo']);
-const FALSE_WORDS = new Set(['false', 'f', '0', 'FALSE', 'False', 'F']);
-// Whether a `gh pr merge` command's words turn auto-merge on or off: `--auto` or `--disable-auto`, alone or with a
-// value that is not false. A dynamic value reads as false: a merge read as a merge can only miss a refusal.
+// Whether a `gh pr merge` command's words may turn auto-merge on or off: the last `--auto` or the last `--disable-auto`
+// is on, or one the rule cannot read (switchValue), so `--auto --auto=false` is a merge. A toggle clears no refusal, so a
+// merge read as one only leaves a refusal standing.
 function togglesAutoMerge(args) {
-  for (let at = 0; at < args.length; at += 1) {
-    const { text, dynamic } = args[at];
-    if (text === '--') return false;
-    if (MERGE_VALUES.has(text)) {
-      at += 1;
-      continue;
-    }
-    const [flag, value] = text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
-    if (!['--auto', '--disable-auto'].includes(flag)) continue;
-    if (value === null || (!dynamic && !FALSE_WORDS.has(value))) return true;
-  }
-  return false;
+  const { flags } = readWords(args, MERGE_VALUES);
+  return ['--auto', '--disable-auto'].some((name) => switchValue(args, flags, name) !== false);
 }
 
 // The commands a Bash command line runs that pass `test`; none for a line the lexer cannot read.

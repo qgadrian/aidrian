@@ -548,6 +548,11 @@ test('turnActions lists a pull request merge that ran, by its target or by what 
     assert.deepEqual(actions(turn.human('go'), merge('m1', form, '')), [], `${form} merges nothing`);
   }
   assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge 401 --auto=false --squash', '')), [{ kind: 'merge', pr: 401 }], 'auto-merge turned off is a merge');
+  // gh reads the last of each: off last is a merge, on last a toggle, and one a later word the shell fills in may turn on a toggle.
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge 401 --auto --auto=false --squash', '')), [{ kind: 'merge', pr: 401 }], 'the last --auto is off');
+  for (const form of ['gh pr merge 401 --auto=false --auto', 'gh pr merge 401 --disable-auto=0 --disable-auto', 'gh pr merge 401 --auto=false "$X"']) {
+    assert.deepEqual(actions(turn.human('go'), merge('m1', form, '')), [], `${form} may only toggle auto-merge`);
+  }
   assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge 401 --squash --subject --auto', '')), [{ kind: 'merge', pr: 401 }], 'a subject that reads --auto');
   assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge fix/x --squash', '')), [{ kind: 'merge', pr: null }], 'a merge of a branch: a pull request it cannot tell');
 });

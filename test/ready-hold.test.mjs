@@ -154,6 +154,9 @@ test('with nothing recorded, every way of marking ready is held, and the deny na
     'gh pr ready 7 --undo=false',
     'gh pr ready 7 --undo=0',
     'gh pr ready --undo --undo=false 7',
+    // A word the shell fills in after `--undo` may be another, false, `--undo`.
+    'gh pr ready 7 --undo "$U"',
+    'gh pr ready 7 --undo=$U',
     // The graphql endpoint in any spelling, and a legacy node id.
     graphql('/graphql', 'PR_kwDOabc123'),
     graphql('https://api.github.com/graphql', 'PR_kwDOabc123'),

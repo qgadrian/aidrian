@@ -134,7 +134,8 @@ export function invocationRepo(environment, env) {
 }
 
 // The positional words and the options of a gh command line, as gh reads them with `values` taking a value: `--x=v`,
-// `--x v`, `-xv`, `-x=v`, `-x v`, and a cluster of switches ending in one that takes a value, `-cb v`.
+// `--x v`, `-xv`, `-x=v`, `-x v`, and a cluster of switches ending in one that takes a value, `-cb v`. Each flag is
+// { name, at, value }, `at` the index in `args` of the word that names it.
 export function readWords(args, values) {
   const words = [];
   const flags = [];
@@ -148,20 +149,29 @@ export function readWords(args, values) {
     else if (text.startsWith('--')) {
       const at = text.indexOf('=');
       const name = at === -1 ? text : text.slice(0, at);
-      flags.push({ name, value: at !== -1 ? { text: text.slice(at + 1), dynamic } : values.has(name) ? args[++i] ?? null : null });
+      flags.push({ name, at: i, value: at !== -1 ? { text: text.slice(at + 1), dynamic } : values.has(name) ? args[++i] ?? null : null });
     } else {
       const { options, value } = readShortOptions(text, values);
-      for (const name of options) if (name !== value?.option) flags.push({ name, value: null });
-      if (value) flags.push({ name: value.option, value: value.attached !== null ? { text: value.attached.replace(/^=/u, ''), dynamic } : args[++i] ?? null });
+      for (const name of options) if (name !== value?.option) flags.push({ name, at: i, value: null });
+      if (value) flags.push({ name: value.option, at: i, value: value.attached !== null ? { text: value.attached.replace(/^=/u, ''), dynamic } : args[++i] ?? null });
     }
   }
   return { words, flags };
 }
 
-// Whether a switch `flag` of readWords is on as gh reads a bool (Go's strconv.ParseBool): given with no value, or with a
-// literal true word. Absent (undefined), false, or a value the shell fills in is off, so it grants no exemption.
+// The last `name` switch of a gh command line `args`, from readWords' `flags`, as gh reads a bool (Go's
+// strconv.ParseBool), where the last one given wins: true when given with no value or a literal true word, false when
+// absent or given a false one, and null when gh's reading cannot be known: its value is one the shell fills in, or a word
+// after it is one the shell fills in or expands, which may become another `name`. A caller takes null the way that
+// refuses more: no exemption, or the switch on when on is what is held.
 const TRUE_WORDS = new Set(['1', 't', 'T', 'TRUE', 'true', 'True']);
-export const switchOn = (flag) => Boolean(flag) && (flag.value === null || (!flag.value.dynamic && TRUE_WORDS.has(flag.value.text)));
+export function switchValue(args, flags, name) {
+  const flag = flags.filter((each) => each.name === name).at(-1);
+  if (!flag) return false;
+  if (args.slice(flag.at + 1).some((token) => token.dynamic || token.expands || token.splits)) return null;
+  if (flag.value === null) return true;
+  return flag.value.dynamic ? null : TRUE_WORDS.has(flag.value.text);
+}
 
 // The body text: an inline body (a substitution's text, heredoc included, is read as written), or a readable file.
 function bodyOf(inline, file, read) {

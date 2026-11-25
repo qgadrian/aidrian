@@ -185,6 +185,9 @@ test('each spelling of a call is read: refused with no answer in the transcript,
     `eval "aidrian ${TAIL}"`,
     `bash <<'EOF'\naidrian ${TAIL}\nEOF`,
     `git status && aidrian ${TAIL}`,
+    // Quotes or a line continuation the shell takes out of every word the rule's quick look names.
+    'aid""rian pr prod""uct-feedback answer 7 PF1 drop --by human --reason gone',
+    'aid\\\nrian pr prod\\\nuct-feedback answer 7 PF1 drop --by human --reason gone',
   ]) {
     const g = guarded(t);
     assert.match(g.run(command) ?? '', /no such answer/u, `with no answer: ${command}`);
@@ -376,7 +379,9 @@ test('record alone, or chained with calls that claim no human, still runs', (t) 
 test('text fed to a shell that names a call is refused, audits record while a record lists a key, and it passes with nothing to hold', (t) => {
   const g = guarded(t);
   const subagent = { transcript_path: g.transcript, agent_id: 'a1' };
-  for (const command of [`echo '${RECORD}' | sh`, `sh -c '${RECORD}'`, `echo '${ANSWER}' | bash`, "echo 'aidrian pr product-feedback answer 7 PF1 fix-now' | bash"]) {
+  // Fed text is read as the shell reads its words: quotes inside a word hide no call.
+  for (const command of [`echo '${RECORD}' | sh`, `sh -c '${RECORD}'`, `echo '${ANSWER}' | bash`, "echo 'aidrian pr product-feedback answer 7 PF1 fix-now' | bash",
+    'echo \'aidrian pr prod""uct-feedback ans""wer 7 PF1 drop --by hu""man\' | bash']) {
     assert.ok(g.run(command), `an open item: ${command}`);
     assert.match(g.run(command, subagent) ?? '', /subagent/u, `a subagent: ${command}`);
   }

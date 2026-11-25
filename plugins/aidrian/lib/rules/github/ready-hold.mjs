@@ -34,7 +34,7 @@ import { findProject } from '../../project.mjs';
 import { originRepo } from '../../review-gate.mjs';
 import { shellPlain, walkCommands } from '../../shell-lex.mjs';
 import { projectReader, UNKNOWN, unreadable } from '../product-feedback-answer.mjs';
-import { commandPath, readWords, switchOn } from './review-request.mjs';
+import { commandPath, readWords, switchValue } from './review-request.mjs';
 
 // The one deadline every gh call of one check shares: 3.5 s from the first gh call, and never later than 4 s after the
 // hook's process started (`startedAt`, when the hook passes it), so another rule's lookups in the same command, such as
@@ -84,7 +84,7 @@ export function readReady({ program, args, environment = [] }, env = {}) {
   }
   if (command[0] !== 'pr' || command[1] !== 'ready') return null;
   const { words, flags } = readWords(args, READY_VALUES);
-  if (switchOn(flags.filter((flag) => flag.name === '--undo').at(-1))) return null;
+  if (switchValue(args, flags, '--undo') === true) return null;
   const word = words[2] ?? null;
   if (word && (unreadable(word) || word.text.startsWith('-'))) return { unreadable: 'a pull request the shell fills in' };
   const target = word?.text ?? null;

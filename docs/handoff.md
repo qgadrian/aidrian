@@ -1328,9 +1328,24 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
   A `--prior` that is the brief itself exits 2 for both `check` and `snapshot`: its earlier text is gone. Same file
   means the same device and inode, so a symlink, a hard link, and a letter-case variant on a case-insensitive disk count.
   A header that names this same file, with no snapshot to compare, is a finding the session tells the Human.
-  A snapshot is written to a temporary file of a random name in `.prior/` and renamed over its name, so a link planted
-  there is replaced, never written through. Every snapshot file is 0600, and a `.prior/` the command creates is 0700;
-  one that exists keeps its mode. A `.prior` that is itself a link is refused: nothing is written or removed through it.
+  `snapshot` replaces nothing, so a snapshot taken after the write never copies the new text over the good prior.
+  It writes only a vacant name, by a hard link from a temporary file of a random name in `.prior/`, and an entry
+  already there is kept with exit 2 unless it is a regular file with the same bytes, which exits 0 with no write:
+  - other bytes: keep that snapshot, write the brief, and run `aidrian handoff check`, which compares with it;
+    remove it only when that prior is known to be wrong.
+  - a snapshot it cannot read: restore read access to it, or run `aidrian handoff check` with `--prior` naming a
+    known-good readable brief.
+  - a link, a folder, or any entry that is not a regular file, and a hard link to the brief itself: remove it, and
+    run `snapshot` again.
+
+  Only a passing check replaces the snapshot, by a temporary file renamed over its name, so a link planted there is
+  replaced, never written through. A check that passes while a `snapshot` runs can still replace what that `snapshot`
+  just kept or wrote; both write only a brief the session holds.
+  The promise to keep the prior holds for one `snapshot` of a brief at a time. A `snapshot` with no brief to supersede
+  still clears a stale snapshot, as before, so it can remove one that another `snapshot --prior` of that brief wrote
+  at the same moment.
+  Every snapshot file is 0600, and a `.prior/` the command creates is 0700; one that exists keeps its mode.
+  A `.prior` that is itself a link is refused: nothing is written or removed through it.
 - `session-continue`, the first step of the fresh session, reads the newest brief in full, enters its worktree,
   reads the state fresh, and continues at its next steps. It keeps the brief's locked decisions, and checks each other
   claim a step builds on against the docs and code; where they disagree, the docs and code win.

@@ -9,7 +9,7 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -354,6 +354,17 @@ test('a chain whose second session cannot be stopped is named by that session, o
   settled.claude.held.add(CHILD).add(NEXT.session);
   assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0'], { now: past }).out, ['lingered ENG-1 attempt 1 ended', 'released ENG-1 attempt 1', 'idle']);
   assert.deepEqual(stops(settled), [STARTED[0].id, NEXT.id]);
+  // One member done and held, the other working again: the done one is stopped, and no `released` line says the host
+  // let the attempt go while it still holds a session of it.
+  settled.claude.states[CHILD] = 'done';
+  settled.claude.states[NEXT.session] = 'working';
+  settled.claude.held.add(CHILD);
+  assert.deepEqual(release(settled), []);
+  assert.deepEqual(stops(settled), [STARTED[0].id, NEXT.id, STARTED[0].id]);
+  settled.claude.states[NEXT.session] = 'done';
+  settled.claude.held.add(NEXT.session);
+  assert.deepEqual(release(settled), ['released ENG-1 attempt 1']);
+  assert.deepEqual(stops(settled), [STARTED[0].id, NEXT.id, STARTED[0].id, NEXT.id]);
 });
 
 // One run through the release of sessions the host still holds (project-linger.mjs releaseAttempts): a session the host
@@ -405,7 +416,14 @@ test('wait records an issue whose sessions all ended with no result, and stops e
   const slowest = Math.max(...reads, elapsed - resumed);
   assert.ok(passes >= 4 && elapsed <= 120_000 && elapsed >= 120_000 - slowest - WAIT_MARGIN, `the wait ran its time out (${passes} pauses, ${elapsed} ms, reads of ${reads})`);
   assert.ok(stopped.length > 0 && stopped.every((id) => id === STARTED[0].id), 'the session of the attempt that runs is never stopped');
-  assert.deepEqual(release(fx), ['released ENG-1 attempt 1']);
+  // A stop that fails on the first pass of a wait and goes through on a later one: `released` alone, so no session
+  // already stopped is left for the Human to stop by hand.
+  fails = 1;
+  stopped.length = 0;
+  const from = now + elapsed;
+  const again = fx.cmd(['wait', 'launch', '--max-wait', '60'], { spawn: slow, now: from, clock: () => now + elapsed, pause });
+  assert.deepEqual(again.out, ['released ENG-1 attempt 1', 'running ENG-1']);
+  assert.deepEqual(stopped, [STARTED[0].id, STARTED[0].id], 'it failed once, then went through');
   assert.equal(fx.claude.held.has(CHILD), false, 'the host holds it no more');
 
   // A session that lingers after its result, with no `gone` row yet, is the linger path's alone: no release stops it.
@@ -414,12 +432,20 @@ test('wait records an issue whose sessions all ended with no result, and stops e
   assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, ['result ENG-1 blocked -> parked blocked', 'lingering ENG-1 attempt 2']);
   assert.match(fx.cmd(['wait', 'launch', '--max-wait', '9999']).err.at(-1), /takes --max-wait as whole seconds from 0 to 540/u);
   assert.deepEqual(stopped, []);
-  // Attempt 2 ends held: of the two gone attempts, only the one whose session the host still holds is stopped.
-  fails = 0;
+  // Attempt 2 ends held: of the two gone attempts, only the one whose session the host still holds is stopped. The
+  // ledger fails right after that pass, and the refusal still prints the release line.
   fx.claude.states[STARTED[1].session] = 'done';
   fx.claude.held.add(STARTED[1].session);
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, ['lingered ENG-1 attempt 2 ended', 'released ENG-1 attempt 2', 'idle']);
+  const snapshot = path.join(runFolder(fx.state, 'launch'), 'snapshot.json');
+  const breaking = (command, args, options) => {
+    if (args[0] === 'stop') renameSync(snapshot, `${snapshot}.away`);
+    return failing(command, args, options);
+  };
+  const refused = fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: breaking });
   assert.deepEqual(stopped, [STARTED[1].id]);
+  renameSync(`${snapshot}.away`, snapshot);
+  assert.deepEqual([refused.exitCode, refused.out], [1, ['released ENG-1 attempt 2']]);
+  assert.match(refused.err.join('\n'), /^aidrian project wait: the snapshot of run launch/u);
   assert.deepEqual(fx.rows().filter((row) => row.event === 'gone').map((row) => row.attempt), [1, 2]);
 
   stopped.length = 0;

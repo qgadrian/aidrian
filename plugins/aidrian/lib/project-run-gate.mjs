@@ -1051,7 +1051,7 @@ function startLines({ result, state, run, key, attempt, session, base, proof, pr
 // waits on a session that runs on after its issue settled, and stops it once LINGER_GRACE has passed (`lingered KEY
 // attempt N ended|stopped`, lib/project-linger.mjs); it stops each session the host still holds after its `gone` row
 // (`released KEY attempt N`, `not released KEY attempt N: ...`, or `note sessions: REASON`, each printed once when the
-// wait returns, and none of them a reason to return); then it removes the folders of confined attempts whose session ended.
+// wait returns or refuses, and none of them a reason to return); then it removes the folders of confined attempts whose session ended.
 // It returns once any issue settles, none runs, none runs on, and the run is not paused, or the time is up, with a line
 // for each: `settled KEY STATE`, `result KEY STATUS -> STATE`, `ended KEY REASON -> STATE`, `orphan ...`, `running KEY`,
 // `lingering KEY attempt N`, `paused until TIME` while a pause lasts, or `idle` when none runs or runs on.
@@ -1096,16 +1096,16 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   // The slowest read so far, in ms, and the answer of the last read, which a read that would not fit returns.
   let slowest = 0;
   let last = null;
-  // The release's lines end no wait: each prints once, after the lines that did, when the wait returns.
-  const released = [];
+  // The release's lines end no wait: each prints once, after the lines that did, when the wait returns (mergeRelease).
+  let released = [];
   for (let pass = 0; ; pass += 1) {
     const began = time();
     if (last && until - began < slowest + WAIT_MARGIN) return last;
     const at = pass === 0 ? now : began;
     const { lines, lingering, release } = waitPass({ state, run, store, cap, host, env, home, spawn, policy, forge: facade, now: at });
-    released.push(...release.filter((line) => !released.includes(line)));
+    released = mergeRelease(released, release);
     const found = readRun(state, run);
-    if (found.problem) return refuse(found.problem);
+    if (found.problem) return { ...refuse(found.problem), out: released };
     for (const [key, was] of before) {
       const is = found.states.get(key);
       if (was.state === 'running' && is && is.state !== 'running' && !lines.some((line) => line.includes(` ${key} `))) lines.push(`settled ${key} ${is.state}${is.decision ? ` ${is.decision}` : ''}`);
@@ -1122,6 +1122,18 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
     // The last pause ends where the next read, as slow as the slowest, still ends by the deadline.
     pause(Math.max(0, Math.min(WAIT_STEP, pauseLeft, until - time() - slowest - WAIT_MARGIN)));
   }
+}
+
+// The release lines one wait prints (project-linger.mjs releaseAttempts): `held`, those of its passes so far, with
+// `fresh`, those of one more, each once. A `released KEY attempt N` line takes the place of an earlier `not released KEY
+// attempt N: ...`, so a session a later pass stopped is never left for the Human to stop by hand.
+function mergeRelease(held, fresh) {
+  let merged = held;
+  for (const line of fresh) {
+    const kept = merged.filter((each) => each !== line && !each.startsWith(`not ${line}:`));
+    merged = [...kept, line];
+  }
+  return merged;
 }
 
 // The policy `wait` settles a run's issues under, from the team's policy `team` (teamPolicy): { policy, note }, where

@@ -85,8 +85,9 @@ export function lingeringStarts({ found, store, cap, env, spawn, now }) {
 // `wait` and `end` do: one read of which members of those attempts' chains it holds (hosts/index.mjs backgroundHeld),
 // then the project start's `stop` (`cap`) for each held one the host still lists as ended, so one that works or waits
 // on a response again, as while a person's turn runs in it, is left alone. It writes no row. Returns a line for each
-// attempt with such a member, `released KEY attempt N` once each stopped, else `not released KEY attempt N: ` and
-// notStopped's text for the first that did not; and `note sessions: <host name>: <reason>` when the host cannot say now
+// attempt with such a member: `not released KEY attempt N: ` and notStopped's text for the first that did not stop,
+// else `released KEY attempt N` once each held member ended and stopped, so none is printed while a held member of the
+// chain still works, or the host cannot say whether it ended; and `note sessions: <host name>: <reason>` when the host cannot say now
 // which it holds, or whether one it holds ended. A host that by design holds no such session, and a member it answers
 // false or null for, stops nothing and prints nothing.
 export function releaseAttempts({ found, store, cap, host, env, spawn, now }) {
@@ -109,8 +110,8 @@ export function releaseAttempts({ found, store, cap, host, env, spawn, now }) {
     if (finished.length === 0) continue;
     const stuck = finished.filter((member) => safely(() => cap.stop({ id: member.session ?? member.id, started: member.id, env, run: spawn })) !== true);
     const attempt = `${row.key} attempt ${row.attempt}`;
-    const line = stuck.length === 0 ? `released ${attempt}` : `not released ${attempt}: ${notStopped(cap, stuck[0], 'stayed with the host after its work ended and ')}`;
-    lines.push(line);
+    if (stuck.length > 0) lines.push(`not released ${attempt}: ${notStopped(cap, stuck[0], 'stayed with the host after its work ended and ')}`);
+    else if (finished.length === held.length) lines.push(`released ${attempt}`);
   }
   if (unsure) lines.push(`note sessions: ${hostName(host)}: ${UNSURE}`);
   return lines;

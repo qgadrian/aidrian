@@ -2411,14 +2411,17 @@ A `gone` row says the host listed the session ended, which says its work ended, 
 Code keeps a finished background session in its plain `claude agents --json` listing until `claude stop`. Such a
 session no longer counts toward the run's caps, and a start passes beside it. Each pass of `wait`, and each `end`, asks
 the host once which sessions of the attempts with a `gone` row it still holds (`capabilities.backgroundSessions`) and
-stops each one with the project start's `stop`, printing `released <issue> attempt <n>` once every such session of the
-attempt stopped, `not released <issue> attempt <n>: a session of it, <id>, stayed with the host after its work ended
-and could not be stopped; <how>` when one did not, and `note sessions: <host name>: <reason>` when the host cannot say
-now which sessions it holds, or whether one it holds ended. None of the three ends a `wait`: each prints once, after
-the lines that did, when it returns, and `wait` still prints `idle`. Only a session the host lists as ended is
-released: one that works or waits on a response again is left alone, as while a person's turn runs in a session they
-attached to. That holds only for the turn: once it ends, the next pass of `wait` stops the session, as it stops a
-session that runs on after its issue settled. A session whose attempt has no `gone` row yet is the linger rule's alone.
+stops each one with the project start's `stop`, printing `released <issue> attempt <n>` once every session of the
+attempt the host held ended and stopped, `not released <issue> attempt <n>: a session of it, <id>, stayed with the host
+after its work ended and could not be stopped; <how>` when a stop failed, and `note sessions: <host name>: <reason>`
+when the host cannot say now which sessions it holds, or whether one it holds ended. None of the three ends a `wait`:
+each prints once, after the lines that did, when it returns, or with the refusal of a `wait` that could no longer read
+the run, and `wait` still prints `idle`. Within one `wait`, a `released` line takes the place of an earlier
+`not released` line of its attempt, so a stop that failed on one pass and worked on a later one prints `released` alone.
+Only a session the host lists as ended is released: one that works or waits on a response again is left alone, as while
+a person's turn runs in a session they attached to, and its attempt prints no `released` line meanwhile. That holds
+only for the turn: once it ends, the next pass of `wait` stops the session, as it stops a session that runs on after its
+issue settled. A session whose attempt has no `gone` row yet is the linger rule's alone.
 On Codex a process that ended is not held, so nothing is stopped or printed.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.

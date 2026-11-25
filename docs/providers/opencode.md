@@ -95,8 +95,8 @@ To turn it off for one project while the global configuration names it, add `"-a
 
 - Restart the service after changing either, so it runs with the new value: a bridge that found no Node at setup runs
   no hook for the life of its process; it keeps a notice saying so, which no hook of this version shows the session,
-  so the trace's `off` line is the sign ([Troubleshooting](#troubleshooting)). A script that fails to start later
-  fails that call alone.
+  so the trace's `off` line is the sign ([Troubleshooting](#troubleshooting)). A script that fails to start later,
+  or is gone from disk, fails that call alone, and on a blocking route refuses a subagent's call ([Hooks](#hooks)).
 - `AIDRIAN_NODE` reaches only the bridge's hook scripts. The `aidrian` and `aidrian-knowledge` commands run `node`
   from the shell's `PATH`, so a shell where only `AIDRIAN_NODE` names Node records the ledger through its hooks while
   `aidrian session snapshot` in that shell fails: put Node 22 on the shell's `PATH` as well.
@@ -165,7 +165,10 @@ the bound carries no text: an exit 2 on a blocking route still refuses, with
 A `PostToolUse` answer gives no block, and the call's result stays as it was. Only an `execute.before` callback ever
 rejects, and only for a refusal; every other callback resolves whatever fails inside it. A hook that cannot run, by a
 bridge timeout or crash, lets the call run, as a hook error does on Claude Code, with one exception: on a blocking
-route, a script that does not start refuses a subagent's call.
+route, a script that does not start refuses a subagent's call. A script not on disk does not start: the bridge checks
+each script is a file right before it spawns it, since Node would exit 1 on a missing one, which reads as a hook
+error. A route whose script was missing at setup stays registered for that reason, so a subagent's call it guards is
+refused, a root session's call runs, and a record-only route records nothing.
 
 A blocking route, on `execute.before`, which `EVENTS` does not name in this version, is built to these rules, and the
 tests reach it through the bridge's `events` seam. It never skips a call for a reason the call's input controls: a
@@ -177,7 +180,7 @@ the call: the callback rejects with an `Error` whose message is the script's std
 adapter turns into a `Tool.Error` with that message, failing that call alone, so the bridge imports nothing of
 OpenCode's. An `updatedInput` replaces the event's `input` before the tool runs, and two hooks that rewrite the input
 differently refuse it. A subagent's call, or one whose caller could not be read ([Session ids](#session-ids)), is
-refused when a script does not start, and when it is made in code mode (`codemode` true): no recorded OpenCode session
+refused when a script does not start, one gone from disk at setup or since included, and when it is made in code mode (`codemode` true): no recorded OpenCode session
 shows this plugin's hooks reading a code-mode call as they read a direct one.
 
 The stop route, `Stop` on OpenCode's `experimental.idle` session hook, which `EVENTS` does not name either, is built
@@ -329,8 +332,8 @@ Set it as `AIDRIAN_NODE` is set: `opencode service set env AIDRIAN_OPENCODE_TRAC
 | --- | --- | --- |
 | `setup` | Once, when OpenCode loads the plugin | How many OpenCode hooks of its routes it registered: 1 in this version, 0 when it read no route or found no Node |
 | `off` | Once, at setup, when it found no Node, before `setup` | `node` |
-| `unregistered` | At setup, for each OpenCode hook that failed to register, and each route whose script is not on disk, before `setup` | The OpenCode hook, such as `execute.after`, with `script`, one line for each script it would have run (`create.before` has no `script`), or `missing`, with the script not on disk |
-| `run` | Each time it ran a script | The exit code or signal, `timeout` when it killed the script at its time, or a start error's code, such as `ENOENT`, which ends that call alone, and on a blocking route refuses a subagent's call |
+| `unregistered` | At setup, for each OpenCode hook that failed to register, and each route whose script is not on disk, before `setup` | The OpenCode hook, such as `execute.after`, with `script`, one line for each script it would have run (`create.before` has no `script`), or `missing`, with the script not on disk, whose route stays registered and meets each call as a `run` with `missing` |
+| `run` | Each time it ran a script, or found it gone | The exit code or signal, `timeout` when it killed the script at its time, a start error's code, such as `ENOENT`, or `missing`, a script not on disk when the call came, which it does not spawn; each of the last two ends that call alone, and on a blocking route refuses a subagent's call |
 | `skip` | A call it sent nothing for, and once at setup for a route list it could not read | `status` (after a call that did not complete), `command` (after a shell call whose `command` is no text), `session` (no session id), `cwd` (after a shell call whose `workdir` names no folder here, such as one on another machine, or whose session's folder is gone or could not be read while its `workdir` is neither absolute nor `~`), `unguarded` (a tool whose name the leaf does not read, such as an MCP tool, with `count`, how many such calls this process has met), `subagent` (a child session's idle, or one whose caller could not be read ([Session ids](#session-ids)), which runs no stop route), or `routes` (at setup: `routes.generated.json` is missing or no JSON list, so no tool hook is registered) |
 | `refuse` | A call a blocking route refused, after its `run` lines | `hook` (a script's exit 2), `rewrite` (two rewrites of the input that differ), `spawn` (a subagent's call whose script did not start), or `codemode` (a subagent's call in code mode) |
 | `send-back` | A session a stop route sent back, once the session admitted the message | `stop` |
@@ -340,7 +343,7 @@ Set it as `AIDRIAN_NODE` is set: `opencode service set env AIDRIAN_OPENCODE_TRAC
 - An `off` line: no Node on the service's `PATH`. Set `PATH` or `AIDRIAN_NODE`, then restart the service
   ([Running aidrian](#running-aidrian)).
 - An `unregistered` line: OpenCode refused that hook, or the script is `missing` from the installed package, so the
-  scripts it names do not run in that process. The bridge keeps a notice for it, as for `off`, which no hook of this
+  scripts it names do not run in that process; a blocking route whose script is missing refuses a subagent's call. The bridge keeps a notice for it, as for `off`, which no hook of this
   version shows; the trace is the only sign. A `routes` line keeps one too.
 - `skip` with `cwd`: the call's `workdir` names no folder on this machine, or the session's folder is gone, as a
   removed worktree's is, or could not be read, and no absolute `workdir` names the folder instead.

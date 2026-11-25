@@ -9,11 +9,12 @@
 // call.mjs finds the call's folders and who made it, and output.mjs turns the scripts' answers into OpenCode's. It also
 // prepends the plugin's bin/ to every shell's PATH, so the `aidrian` that reads a record is the copy whose hook wrote it.
 //
-// output.mjs spawns each script, pinned to Node resolved to an absolute file at setup, and reads its bounded answer.
-// `setup` never throws. Only an execute.before callback rejects, for a refusal (output.mjs); every
-// other callback resolves, and a hook that cannot run leaves the call as it would be without the plugin. EVENTS names
-// PostToolUse alone, whose answer changes nothing of the call; tests reach the blocking (execute.before) path and the
-// stop path (experimental.idle) through the `events` seam.
+// output.mjs spawns each script, pinned to Node resolved to an absolute file at setup, and reads its bounded answer. A
+// script not on disk, at setup or since, is a script that does not start: its route stays registered, so on a blocking
+// route a subagent's call it guards is refused, and a root's runs. `setup` never throws. Only an execute.before
+// callback rejects, for a refusal (output.mjs); every other callback resolves, and a hook that cannot run leaves the
+// call as it would be without the plugin. EVENTS names PostToolUse alone, whose answer changes nothing of the call;
+// tests reach the blocking (execute.before) path and the stop path (experimental.idle) through the `events` seam.
 //
 // The stop path keeps `stop_hook_active` for each session: true once a Stop route sent that session back with a
 // `session.synthetic` message the session admitted, and dropped at the session's next idle, which reads it, and on its
@@ -21,25 +22,25 @@
 //
 // With AIDRIAN_OPENCODE_TRACE naming an absolute file, it appends one JSON line a step, { at, step, script?, status?,
 // count? }: `setup` once, `off` once at setup when it found no Node, `unregistered` for a hook OpenCode refused and for a
-// route whose script is not on disk, `run` for each script it ran, `skip` for a call it sent nothing for, `refuse` for
-// a call it refused, and `send-back` for a session it sent back. A call whose tool name the leaf cannot read, such as an
-// MCP tool's, runs nothing and is a `skip` with status `unguarded`, whose `count` is how many such calls this process
-// has met. Each value is a script's file name, a word, or a number; no command, path, payload, or output is ever written
-// there. What the session should be told, that no hook runs, that one did not register, or that a route file or script
-// is missing, is kept in `notices`, which no hook reads in this version.
+// route whose script is not on disk, `run` for each script it ran or found `missing`, `skip` for a call it sent
+// nothing for, `refuse` for a call it refused, and `send-back` for a session it sent back. A call whose tool name the
+// leaf cannot read, such as an MCP tool's, runs nothing and is a `skip` with status `unguarded`, whose `count` is how
+// many such calls this process has met. Each value is a script's file name, a word, or a number; no command, path,
+// payload, or output is ever written there. What the session should be told, that no hook runs, that one did not
+// register, or that a route file or script is missing, is kept in `notices`, which no hook reads in this version.
 //
 // It imports node: built-ins, its own folder, the leaf, which imports nothing, and lib/deadline.mjs, which imports
 // nothing, so it loads in OpenCode's Bun and under `node --test` alike.
 
 import { spawn as nodeSpawn } from 'node:child_process';
-import { accessSync, appendFileSync, constants, statSync } from 'node:fs';
+import { accessSync, appendFileSync, constants } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { HELD_BUDGET_MS } from '../lib/deadline.mjs';
 import { infoRead, standardToolName } from '../lib/hosts/opencode-names.mjs';
 import { callOf, lastAssistantText } from './call.mjs';
-import { BLOCKING_HOOK, run, settle, transform } from './output.mjs';
+import { BLOCKING_HOOK, isFile, run, settle, transform } from './output.mjs';
 import { readRoutes, selectRoutes } from './route-select.mjs';
 import { EVENTS } from './routes.mjs';
 
@@ -50,14 +51,6 @@ const IDLE_HOOK = 'experimental.idle';
 export const BLOCKING_KILL_MS = HELD_BUDGET_MS + 1000;
 
 const absolute = (value) => typeof value === 'string' && path.isAbsolute(value);
-const isFile = (file) => {
-  try {
-    return statSync(file).isFile();
-  } catch {
-    return false;
-  }
-};
-
 const isProgram = (file) => {
   if (!absolute(file) || !isFile(file)) return false;
   try {
@@ -120,9 +113,9 @@ export function nodeOf(env, execPath = process.execPath) {
   return dirs.map((dir) => path.join(dir, 'node')).find(isProgram) ?? null;
 }
 
-// Registers one callback for each OpenCode hook of `events` that a route with its script on disk runs on, the idle hook
-// on `context.session` and the tool hooks on `context.tool`, then the PATH hook. The `setup` trace line counts the hooks
-// registered. With no Node it registers no hook of a route, and says so once.
+// Registers one callback for each OpenCode hook of `events` that a route runs on, its script on disk or not, the idle
+// hook on `context.session` and the tool hooks on `context.tool`, then the PATH hook. The `setup` trace line counts the
+// hooks registered. With no Node it registers no hook of a route, and says so once.
 async function registerAll(context, seams) {
   const { spawn = nodeSpawn, env = process.env, scripts = fileURLToPath(new URL('../scripts', import.meta.url)),
     bin = fileURLToPath(new URL('../bin', import.meta.url)), node = nodeOf(env),
@@ -151,9 +144,11 @@ async function registerAll(context, seams) {
   trace('setup', { status: registered });
 }
 
-// The routes of `file` whose event `events` names, each with its script's absolute `file`, that script on disk. A route
-// file that cannot be read is a `skip` with status `routes`, and a route whose script is not on disk an `unregistered`
-// line with status `missing`; each keeps a notice.
+// The routes of `file` whose event `events` names, each with its script's absolute `file`. A route file that cannot be
+// read is a `skip` with status `routes`, and a route whose script is not on disk an `unregistered` line with status
+// `missing`; each keeps a notice. A missing script's route stays, so its call meets the script's absence as a script
+// that does not start (output.mjs run): a blocking route refuses a subagent's call, and a record-only one records
+// nothing.
 function routesOf(file, scripts, events, trace, notices) {
   const read = readRoutes(file);
   if (read === null) {
@@ -163,8 +158,8 @@ function routesOf(file, scripts, events, trace, notices) {
   const routes = (read ?? []).filter((route) => Object.hasOwn(events, route.event)).map((route) => ({ ...route, file: path.join(scripts, route.script) }));
   const missing = [...new Set(routes.filter((route) => !isFile(route.file)).map((route) => route.script))];
   for (const script of missing) trace('unregistered', { script, status: 'missing' });
-  if (missing.length > 0) notices.push(`aidrian's hook scripts not on disk do not run in this session: ${missing.join(', ')}.`);
-  return routes.filter((route) => isFile(route.file));
+  if (missing.length > 0) notices.push(`aidrian's hook scripts not on disk do not run in this session, and a subagent's call one of them guards is refused: ${missing.join(', ')}.`);
+  return routes;
 }
 
 // Traces and keeps a notice for the OpenCode hook `hook` that did not register, with the `scripts` it would have run.

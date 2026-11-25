@@ -733,20 +733,44 @@ test('setup resolves when one registration rejects, still makes the other, and t
   }
 });
 
-test('a route whose script is not a file in the scripts folder registers nothing, and is traced missing with a notice naming it', async () => {
+test('a route whose script is not a file in the scripts folder is traced missing with a notice naming it, and its call records nothing', async () => {
   const context = fakeContext();
   const trace = path.join(ROOT, 'trace-missing.jsonl');
   const notices = [];
-  await bridge({ context, scripts: path.join(ROOT, 'no-scripts'), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace }, notices });
-  assert.deepEqual(Object.keys(context.hooks), ['create.before']);
+  const { calls, fire } = await bridge({ context, scripts: path.join(ROOT, 'no-scripts'), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace }, notices });
+  assert.deepEqual(Object.keys(context.hooks), ['execute.after', 'create.before'], 'its route stays registered');
   const lost = [...new Set(GENERATED.filter((route) => route.event === 'PostToolUse').map((route) => route.script))];
-  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [...lost.map((script) => ({ step: 'unregistered', script, status: 'missing' })), { step: 'setup', status: 0 }]);
-  assert.deepEqual(notices, [`aidrian's hook scripts not on disk do not run in this session: ${lost.join(', ')}.`]);
-  const scripts = scriptsFolder('half-scripts', ['hook-here.mjs']);
-  const half = await bridge({ scripts, routes: routesFile('half.json', [bashRoute('hook-here.mjs'), bashRoute('hook-gone.mjs'), bashRoute('hook-gone.mjs', { args: ['--x'] })]), notices: [] });
-  await half.fire(shellEvent());
-  assert.deepEqual(half.calls.map((call) => path.basename(call.args[0])), ['hook-here.mjs'], 'the script on disk still runs');
+  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [...lost.map((script) => ({ step: 'unregistered', script, status: 'missing' })), { step: 'setup', status: 1 }]);
+  assert.deepEqual(notices, [`aidrian's hook scripts not on disk do not run in this session, and a subagent's call one of them guards is refused: ${lost.join(', ')}.`]);
+  const event = shellEvent();
+  const before = structuredClone(event);
+  assert.equal(await fire(event), undefined);
+  assert.deepEqual([calls.length, event], [0, before], 'nothing spawned, and the call stays as it was');
+  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest).at(-1), { step: 'run', script: 'hook-bash-post.mjs', status: 'missing' });
+  const scripts = scriptsFolder('half-scripts', ['hook-here.mjs', 'hook-later.mjs']);
+  const half = await bridge({ scripts, routes: routesFile('half.json', [bashRoute('hook-here.mjs'), bashRoute('hook-gone.mjs'), bashRoute('hook-later.mjs'), bashRoute('hook-gone.mjs', { args: ['--x'] })]), notices: [] });
+  rmSync(path.join(scripts, 'hook-later.mjs'));
+  assert.equal(await half.fire(shellEvent()), undefined);
+  assert.deepEqual(half.calls.map((call) => path.basename(call.args[0])), ['hook-here.mjs'], 'the script on disk still runs; one gone at setup or since spawns nothing');
 });
+
+// A blocking route whose script is gone, at setup (`at`) or after it (`since`): a subagent's call is refused, a root's runs.
+for (const when of ['at', 'since']) {
+  test(`a blocking route whose script is gone ${when} setup refuses a subagent's call and lets a root's run, and spawns nothing`, async () => {
+    const scripts = scriptsFolder(`gone-${when}-setup-scripts`, when === 'since' ? ['hook-pre.mjs'] : []);
+    const trace = path.join(ROOT, `trace-gone-${when}-setup.jsonl`);
+    const context = fakeContext({ sessions: { ses_child: { parentID: 'ses_main', location: { directory: SESSION_DIR } } } });
+    const { calls } = await bridge({ context, scripts, routes: routesFile(`gone-${when}-setup.json`, [preRoute({ script: 'hook-pre.mjs' })]), events: BLOCKING, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+    assert.deepEqual(Object.keys(context.hooks), ['execute.before', 'create.before'], 'its route stays registered');
+    if (when === 'since') rmSync(path.join(scripts, 'hook-pre.mjs'));
+    await assert.rejects(context.hooks['execute.before'](beforeEvent({ sessionID: 'ses_child' })), { message: SPAWN_REFUSAL });
+    assert.equal(await context.hooks['execute.before'](beforeEvent()), undefined, 'the root session`s call runs');
+    assert.equal(calls.length, 0, 'nothing spawned');
+    const steps = traceLines(trace).map(({ at, ...rest }) => rest).filter((line) => line.step !== 'setup');
+    const missing = { step: 'run', script: 'hook-pre.mjs', status: 'missing' };
+    assert.deepEqual(steps, [...(when === 'at' ? [{ step: 'unregistered', script: 'hook-pre.mjs', status: 'missing' }] : []), missing, { step: 'refuse', status: 'spawn' }, missing]);
+  });
+}
 
 test('create.before prepends bin once, leaves a PATH that holds it, and leaves a shell with no PATH of its own as it is', async () => {
   const { context } = await bridge({ bin: BIN });

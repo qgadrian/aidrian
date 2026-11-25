@@ -4,10 +4,10 @@
 // is applied to the event OpenCode passes.
 //
 // Only an execute.before callback ever rejects, and only for a refusal: a hook's block, two different rewrites of the
-// input, and the two fail-closed refusals of a subagent's call, a script that did not start and a call made in code
-// mode. OpenCode 2.4.1's plugin adapter turns that rejection into a `Tool.Error` whose message is the error's
-// (`toolError` in @opencode/plugin's promise adapter), which fails that call alone, so the bridge rejects with a plain
-// Error and imports nothing of OpenCode's. Every other callback resolves whatever its steps do, and so does an
+// input, and the two fail-closed refusals of a subagent's call, a script that did not start, one not on disk included,
+// and a call made in code mode. OpenCode 2.4.1's plugin adapter turns that rejection into a `Tool.Error` whose message
+// is the error's (`toolError` in @opencode/plugin's promise adapter), which fails that call alone, so the bridge
+// rejects with a plain Error and imports nothing of OpenCode's. Every other callback resolves whatever its steps do, and so does an
 // execute.before callback whose own steps fail: a bridge crash lets the call run, as a hook error does on Claude Code.
 //
 // It also runs each script (run). The payload holds text a model wrote, so the spawn is pinned: the program is Node,
@@ -20,6 +20,7 @@
 // Bun and under `node --test` alike.
 
 import { Buffer } from 'node:buffer';
+import { statSync } from 'node:fs';
 
 import { combineHookResults, readHookResult } from '../lib/hook-result.mjs';
 
@@ -33,6 +34,15 @@ export const CAPTURE_BYTES = 256 * 1024;
 // The fail-closed refusals of a subagent's call on a blocking route.
 export const SPAWN_REFUSAL = 'aidrian could not start a hook that guards this call, so a subagent\'s call does not run.';
 export const CODEMODE_REFUSAL = 'No recorded OpenCode session shows aidrian\'s hooks reading a code-mode call as they read a direct one, so a subagent\'s code-mode call does not run.';
+
+// Whether `file` is a file on disk now.
+export const isFile = (file) => {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+};
 
 // The bytes `stream` writes, read as they come so the child never waits on a full pipe: `text()` what it wrote, ''
 // once it passed `bound`, and `overflow` whether it did. Past the bound it keeps reading and keeps nothing, and never
@@ -67,14 +77,17 @@ export function capture(stream, bound = CAPTURE_BYTES) {
 
 // Runs `route`'s script on `call` with `runner`'s spawn, Node, environment, and trace, in the session's folder, and
 // resolves its answer once it closes: { exit, signal, stdout, stderr, overflow }, or { failed: true } when it does not
-// start, Node gone since setup included, which ends this call alone. Once `ms`, counted from its spawn, ends, a script
-// that has not exited is killed, and its answer is a signal's; one that exited is read with what it wrote.
+// start, Node gone since setup included, which ends this call alone. A script that is no file when its call comes, gone
+// at setup or since, is one that does not start, traced `missing`: Node would exit 1 on it, which reads as a hook error
+// and would let a subagent's call run. Once `ms`, counted from its spawn, ends, a script that has not exited is killed, and
+// its answer is a signal's; one that exited is read with what it wrote.
 export function run(runner, route, call, ms) {
   return new Promise((resolve) => {
     const answer = settler(runner, route, resolve);
     let text;
     let child;
     try {
+      if (!isFile(route.file)) return answer.failed('missing');
       text = JSON.stringify(call.payload(route));
       child = runner.spawn(runner.node, [route.file, ...route.args], { cwd: call.base, env: runner.env, stdio: ['pipe', 'pipe', 'pipe'] });
       answer.read(child);

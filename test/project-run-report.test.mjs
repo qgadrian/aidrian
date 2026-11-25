@@ -1008,47 +1008,36 @@ test('init --check counts a started issue an earlier run parked on the same bran
   assert.ok(moved.out.includes('blocker snapshot: ENG-1 is started in the tracker, which a run does not start from'), moved.out.join('\n'));
 });
 
-test('end refuses while an issue runs, naming it, and passes once none does', (t) => {
+// One run, ended three times, each on the ledger as it was once the issue settled. The host holds the session of the
+// settled attempt again after its `gone` row, as Claude Code 2.1.331's plain listing keeps one whose state is done: end
+// stops it, and ends the run whatever the host answers (project-linger.mjs releaseAttempts).
+test('end refuses while an issue runs, and once none does stops each attempt session the host still holds, and ends the run when one cannot be stopped or the host cannot say', (t) => {
   const fx = started(t);
   const early = fx.cmd(['end', 'launch']);
   assert.equal(early.exitCode, 1);
   assert.match(early.err[0], /the issues ENG-1 still run; run `aidrian project wait launch` until it prints idle/u);
   fx.settle({ status: 'parked', pr: null, decisions: [DECISION], stop: 'x' });
-  assert.deepEqual(fx.cmd(['end', 'launch']).exitCode, 0);
-});
+  assert.ok(fx.rows().some((row) => row.event === 'gone' && row.key === 'ENG-1' && row.how === 'ended'), 'its gone row');
 
-// The host held the session of a settled attempt again after its `gone` row, as Claude Code 2.1.331's plain listing
-// keeps one whose state is done: end stops it, and ends the run whatever the host answers (project-linger.mjs
-// releaseAttempts).
-test('end stops each attempt session the host still holds after its gone row, and ends the run when one cannot be stopped or the host cannot say', (t) => {
   const END = 'end: run launch ended, and its driver\'s hold is released';
-  const heldAgain = () => {
-    const fx = started(t);
-    fx.settle({ status: 'parked', pr: null, decisions: [DECISION], stop: 'x' });
-    assert.ok(fx.rows().some((row) => row.event === 'gone' && row.key === 'ENG-1' && row.how === 'ended'), 'its gone row');
+  const ledger = path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl');
+  const settled = readFileSync(ledger);
+  const ends = () => fx.rows().filter((row) => row.event === 'end').length;
+  const endAgain = (spawn) => {
+    writeFileSync(ledger, settled);
+    fx.claude.states[CHILD] = 'done';
     fx.claude.held.add(CHILD);
-    return fx;
+    const answer = fx.cmd(['end', 'launch'], { spawn });
+    assert.deepEqual([answer.exitCode, answer.out.at(-1), answer.err, ends()], [0, END, [], 1], 'the run ends, whatever the host answers');
+    return answer.out[0];
   };
-  const ends = (fx) => fx.rows().filter((row) => row.event === 'end').length;
-
-  const fx = heldAgain();
-  const ended = fx.cmd(['end', 'launch']);
-  assert.deepEqual([ended.exitCode, ended.out[0], ended.out.at(-1), ended.err], [0, 'released ENG-1 attempt 1', END, []]);
-  assert.equal(ends(fx), 1);
+  assert.equal(endAgain(fx.claude.run), 'released ENG-1 attempt 1');
   const plain = JSON.parse(fx.claude.run('claude', ['agents', '--json'], {}).stdout);
   assert.deepEqual(plain.filter((row) => row.kind === 'background'), [], 'the host holds no session of the run');
-
-  const stuck = heldAgain();
-  const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : stuck.claude.run(command, args, options));
-  const kept = stuck.cmd(['end', 'launch'], { spawn: failing });
-  assert.deepEqual([kept.exitCode, kept.out[0], kept.out.at(-1)], [0, `not released ENG-1 attempt 1: a session of it, ${STARTED[0].id}, stayed with the host after its work ended and could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`, END]);
-  assert.equal(ends(stuck), 1, 'the run ends all the same');
-
-  const blind = heldAgain();
-  const unlisted = (command, args, options) => (args[0] === 'agents' && !args.includes('--all') ? { status: 1, stdout: '', stderr: 'down' } : blind.claude.run(command, args, options));
-  const unsure = blind.cmd(['end', 'launch'], { spawn: unlisted });
-  assert.deepEqual([unsure.exitCode, unsure.out[0], unsure.out.at(-1)], [0, 'note sessions: Claude Code: `claude agents --json` did not answer, so the background sessions it holds are unknown', END]);
-  assert.equal(ends(blind), 1, 'the run ends all the same');
+  const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : fx.claude.run(command, args, options));
+  assert.equal(endAgain(failing), `not released ENG-1 attempt 1: a session of it, ${STARTED[0].id}, stayed with the host after its work ended and could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`);
+  const unlisted = (command, args, options) => (args[0] === 'agents' && !args.includes('--all') ? { status: 1, stdout: '', stderr: 'down' } : fx.claude.run(command, args, options));
+  assert.equal(endAgain(unlisted), 'note sessions: Claude Code: `claude agents --json` did not answer, so the background sessions it holds are unknown');
 });
 
 test('an attended resume takes custody of a run whose driver the host lists as ended, and never otherwise', (t) => {

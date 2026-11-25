@@ -41,6 +41,10 @@ export function fileList(numstat, names) {
   return out;
 }
 
+// The header prefixes parseUnified and headerPaths read, passed by every read whose output goes to them, since a user's
+// diff.noprefix, diff.srcPrefix, or diff.dstPrefix changes git's own.
+const PREFIXES = Object.freeze(['--src-prefix=a/', '--dst-prefix=b/']);
+
 // The added lines per file, the files that lost lines and the lines they lost, and each file's hunks, from one unified
 // diff with no context. `addedAt` holds each file's added line numbers on the `to` side, the lines a review comment
 // may anchor to. `renames` reads a moved file as the forge's diff shows it, its unchanged lines not added: the inline
@@ -48,7 +52,7 @@ export function fileList(numstat, names) {
 export function diffLines(root, from, to, files = null, { renames = false } = {}) {
   // Bytes past ASCII unquoted (core.quotePath=false), so a header names `src/café.ts` raw; headerName undoes the rest.
   // No external diff or text conversion, so the lines are the file's own.
-  return parseUnified(git(root, ['-c', 'core.quotePath=false', 'diff', '--relative', '--unified=0', '--no-color', renames ? '--find-renames' : '--no-renames', '--no-ext-diff', '--no-textconv', from, to, ...(files ? ['--', ...files] : [])]));
+  return parseUnified(git(root, ['-c', 'core.quotePath=false', 'diff', '--relative', '--unified=0', '--no-color', ...PREFIXES, renames ? '--find-renames' : '--no-renames', '--no-ext-diff', '--no-textconv', from, to, ...(files ? ['--', ...files] : [])]));
 }
 
 const ESCAPES = Object.freeze({ a: '\x07', b: '\b', t: '\t', n: '\n', v: '\v', f: '\f', r: '\r', '"': '"', '\\': '\\' });
@@ -258,7 +262,7 @@ export function remergeDiff(root, commit, auto = null) {
   const show = ['show', '--remerge-diff', '--format=', '--relative', '--no-renames', '--no-ext-diff'];
   const numstat = git(root, [...show, '--numstat', '-z', '--no-textconv', commit]);
   const names = git(root, [...show, '--name-status', '-z', commit]);
-  const text = git(root, ['-c', 'core.quotePath=false', ...show, '--unified=0', '--no-color', '--no-textconv', commit]);
+  const text = git(root, ['-c', 'core.quotePath=false', ...show, '--unified=0', '--no-color', ...PREFIXES, '--no-textconv', commit]);
   const changes = fileList(numstat, names);
   // git's conflict list names paths from the repository root; `--relative` names them from `root`.
   const prefix = showPrefix(root);

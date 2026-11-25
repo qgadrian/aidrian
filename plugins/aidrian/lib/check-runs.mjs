@@ -600,9 +600,11 @@ function ownClause(clause, { said, ends }) {
 }
 
 const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])\s/u;
-// A line that ends a table, beside a blank line and a heading: a block quote, a list marker with text or none after it,
-// or a thematic break.
-const TABLE_END = /^\s*(?:>|(?:[-*+]|\d+[.)])(?:\s|$)|([-*_])(?:\s*\1){2,}\s*$)/u;
+// A line that ends a table, beside a blank line and a heading: a block quote, a bullet or a `1.` with text or none after
+// it, or a thematic break. Any other number ends one only in a list item, where it is the next item, and is a row elsewhere.
+const TABLE_END = /^\s*(?:>|(?:[-*+]|1[.)])(?:\s|$)|([-*_])(?:\s*\1){2,}\s*$)/u;
+const NUMBER_MARKER = /^\s*\d+[.)](?:\s|$)/u;
+const endsTable = (line, above) => TABLE_END.test(line) || (NUMBER_MARKER.test(line) && LIST_MARKER.test(above));
 // The cells of a Markdown table row, split at each `|` but an escaped one, which reads as a plain `|`, and one inside
 // backticks.
 const cellsOf = (line) => line.trim().replace(/^\|/u, '').replace(/(?<!\\)\|$/u, '')
@@ -622,9 +624,9 @@ function rowText(cells, labels) {
 
 // The list items, paragraphs, and table rows of `lines`, each one string: a list marker starts one, a blank line or a
 // heading ends it, and any other line continues it, as a wrapped line does. A line with a `|` and a delimiter row after
-// it opens a table, as GFM has it: each line from there, with a `|` or not, to a blank line, a heading, or a TABLE_END
-// line is a row, and one string with what the table stands under, its header and the paragraph it continues, but not
-// with the other rows. A line that ends the table starts its own string.
+// it opens a table, as GFM has it: each line from there, with a `|` or not, to a blank line, a heading, or a line that
+// ends it (endsTable) is a row, and one string with what the table stands under, its header and the paragraph it
+// continues, but not with the other rows. A line that ends the table starts its own string.
 function units(lines) {
   const out = [];
   let open = null;
@@ -636,7 +638,7 @@ function units(lines) {
       labels = null;
       continue;
     }
-    if (labels && !TABLE_END.test(line)) {
+    if (labels && !endsTable(line, out[open])) {
       out.push(`${out[open]}, ${rowText(cellsOf(line), labels)}`);
       continue;
     }

@@ -2550,7 +2550,8 @@ Two checks read it:
   paragraph, or table row at a time with its wrapped lines joined, split at `;` and sentence ends. A table row is read
   as its own item, each cell before its header cell, after the header and any line right above it, and apart from the
   other rows. Every line after the delimiter row is a row, one with no `|` a row of one cell, to a blank line, a heading,
-  a list marker, a block quote, or a thematic break, which starts its own item; a line with a `|` and no delimiter row
+  a block quote, a thematic break, or a list marker, which starts its own item; a number other than 1, as in `2.`, is
+  such a marker only when the table stands in a list item, and a row elsewhere. A line with a `|` and no delimiter row
   after it is a paragraph. A cell past the header's last is not read, and one under "Commit" reads as "commit" and the
   cell. A clause that names a test command,
   in backticks or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or

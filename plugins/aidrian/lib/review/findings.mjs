@@ -543,11 +543,30 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
   const ruledBefore = new Map(recordedFindings(state).filter((each) => trimmed(each.already_ruled) && isFindingId(each.ruled_id))
     .map((each) => [placeKey({ title: each.already_ruled, file: each.file }), each.ruled_id]));
   const held = new Map(recordedFindings(state).filter((each) => isFindingId(each.id) && isMint(each.mint)).map((each) => [each.id, each]));
+  // A carried ruling is the engine's own rebuild, and a pass's input shows no reviewer a mark (settled.mjs inputCopy), so
+  // it arrives with none: it takes the mark the record holds for what it repeats, an earlier ruling of its name and file,
+  // else the finding of that title and file, true over false where two disagree.
+  const marks = (ruled) => {
+    const out = new Map();
+    for (const each of recordedFindings(state)) {
+      if (typeof each.security !== 'boolean' || Boolean(trimmed(each.already_ruled)) !== ruled) continue;
+      const key = placeKey(ruled ? { title: each.already_ruled, file: each.file } : each);
+      out.set(key, out.get(key) === true || each.security);
+    }
+    return out;
+  };
+  const rulingMarks = marks(true);
+  const raisedMarks = marks(false);
+  const carriedMark = (finding) => {
+    const key = placeKey({ title: finding.already_ruled, file: finding.file });
+    return rulingMarks.get(key) ?? raisedMarks.get(key);
+  };
   const taken = new Set();
   const dropped = [];
   const fresh = () => mintId(state);
-  const one = (raw) => {
-    const { id, mint: mark, aliases, ruled_id: _named, security, returned_id: returned, ...finding } = raw;
+  const one = (group) => (raw) => {
+    const { id, mint: mark, aliases, ruled_id: _named, security: given, returned_id: returned, ...finding } = raw;
+    const security = given === undefined && group === 'carried' && trimmed(finding.already_ruled) ? carriedMark(finding) : given;
     const kept = isFindingId(id) && isMint(mark) && held.get(id)?.mint === mark ? held.get(id) : null;
     // A ruling carries a prior ruling's id, and a finding a prior finding's: a ruling never takes the id of the finding
     // it repeats, whose title it shares, nor an id it returned.
@@ -576,7 +595,7 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
     delete out.line;
     return { ...out, ...(file !== null ? { file } : {}), ...(line !== null ? { line } : {}) };
   };
-  const groups = Object.fromEntries(GROUPS.filter((key) => Array.isArray(result[key])).map((key) => [key, result[key].filter(isObject).map(one)]));
+  const groups = Object.fromEntries(GROUPS.filter((key) => Array.isArray(result[key])).map((key) => [key, result[key].filter(isObject).map(one(key))]));
   const recorded = { ...result, ...groups, ...(dropped.length ? { dropped: [...(Array.isArray(result.dropped) ? result.dropped : []), ...dropped] } : {}) };
   const raised = [...(groups.list ?? []).filter((each) => isFindingId(each.id)), ...raisedBefore];
   for (const ruling of [...(groups.ruled ?? []), ...(groups.carried ?? [])]) {

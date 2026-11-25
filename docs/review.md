@@ -821,7 +821,8 @@ A project adds its own in `review.reviewers`:
 `security` (Codex's schema requires the key, a project's exec reviewer and `--findings-file` may leave it out, and any
 value but `false` counts as true), or when the head's plan requires `agent:security-engineer` and the pass is in its
 `local` or `independent` stage, unless its reviewer wrote `"security": false`, which the finding, its index entry, the
-round's list, a ruling, and the `pr review` output keep. Such a finding still comes from a security pass, which its cap
+round's list, a ruling, and the `pr review` output keep. A pass's input shows no reviewer a mark, so a ruling carried to
+a later head takes the mark the record holds for what it repeats: an earlier ruling of its name and file, else that finding. Such a finding still comes from a security pass, which its cap
 item says as `security_pass`: no waiver or delegation takes it, and the posted record withholds its place unless the plan
 note holds its pass. The engine stores that mark on the finding, and a finding that keeps its id keeps it.
 The mark covers a twin: a finding at the same place (the same file and lines within 3), under the same title words

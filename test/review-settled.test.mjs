@@ -16,7 +16,7 @@ import { reviewProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { bodyAccepts, contextFindings, heldWaiver as heldWaiverOf, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled, withEndedWaivers } from '../plugins/aidrian/lib/review/settled.mjs';
 import { emptyState, readLocalState, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { freshId, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
-import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
+import { postedCopy, securityReading } from '../plugins/aidrian/lib/review/publish.mjs';
 
 const body = (items, section = 'Accepted residuals') => `## Summary\n\nWhy.\n\n## ${section}\n\n${items.map((item) => `- ${item}`).join('\n')}\n\n## Tests\n\n- npm test\n`;
 
@@ -145,6 +145,33 @@ test('a ruling keeps the reviewer`s security mark as it was: true, false, or lef
   const repeat = (title, extra) => ({ file: 'a.js', line: 3, title, body: 'b', severity: 'low', already_ruled: 'Accepted', ...extra });
   const out = splitRuled([repeat('Quiet', { security: false }), repeat('Marked', { security: true }), repeat('Unsaid')], settled);
   assert.deepEqual(out.ruled.map((each) => [each.title, each.security]), [['Quiet', false], ['Marked', true], ['Unsaid', undefined]]);
+});
+
+test('a ruling recorded false and carried into the next round by a security pass reads false, as does the finding it names', () => {
+  const map = { 'codex-local': { kind: 'exec' }, 'code-reviewer': { kind: 'agent' } };
+  const pass = { id: 'engine:codex-local', reviewer: 'codex-local', files: null };
+  const stage = { name: 'independent', passes: [pass] };
+  const paths = { tracked: () => true, lines: () => 50 };
+  const state = { ...emptyState(7, 'o/r'), rounds: [{ head: 'a'.repeat(40) }],
+    planNote: { head: 'h1', passes: { 'agent:code-reviewer': { stage: 'local', reviewer: 'code-reviewer', security: true }, [pass.id]: { stage: 'independent', reviewer: 'codex-local', security: true } }, pairs: [] } };
+  // Round one: the code-reviewer accepts a low finding it calls not security, and codex-local repeats it, false too.
+  recordFindings(state, 'agent:code-reviewer', { head: 'h1', list: [{ title: 'Accepted', file: 'a.js', line: 3, severity: 'low', likelihood: 'routine', affects: 'users', state: 'accepted', disposition: 'drop_unless_cited', security: false }] }, { mint: true, securityPass: true, paths });
+  const first = splitRuled([{ file: 'a.js', line: 4, title: 'The same cause', body: 'b', severity: 'low', security: false, already_ruled: 'Accepted' }], settledEntries(passInput(context({ state, map, info: { body: '' } }), pass, stage)));
+  recordFindings(state, pass.id, { head: 'h1', list: [], ruled: first.ruled }, { mint: true, securityPass: true, paths });
+  const named = state.passes['agent:code-reviewer'].list[0];
+  assert.deepEqual([state.passes[pass.id].ruled[0].security, state.passes[pass.id].ruled[0].ruled_id, named.security], [false, named.id, false]);
+  // Round two: the code-reviewer no longer lists it, and codex-local is offered the ruling as carried and repeats nothing.
+  state.rounds.push({ head: 'b'.repeat(40) });
+  state.passes['agent:code-reviewer'] = { head: 'h2', files: null, list: [] };
+  const carried = offeredCarried(passInput(context({ state, map, info: { body: '' } }), pass, stage));
+  assert.equal(carried.length, 1, 'the ruling is carried');
+  assert.ok(!('security' in carried[0]), 'the input shows the reviewer no mark');
+  recordFindings(state, pass.id, { head: 'h2', list: [], ruled: [], carried }, { mint: true, securityPass: true, paths });
+  const [kept] = state.passes[pass.id].carried;
+  assert.equal(kept.security, false, 'the carried ruling keeps the false');
+  assert.equal(state.index[named.id].security, false, 'the finding it names stays false');
+  const reading = new Set([...securityReading(state)].map((each) => each.id));
+  assert.ok(!reading.has(named.id) && !reading.has(kept.id));
 });
 
 test('a carried ruling is dropped once any pass holds its source as fixed or open, or blocking', () => {

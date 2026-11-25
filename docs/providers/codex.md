@@ -172,9 +172,15 @@ node "${aidrian_dir}codex/install-agents.mjs" --target .codex/agents
 
 ## Agent gates
 
-In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to hold.
+In Codex, the `*` and `main` [agent gates](../hooks.md#agent-gates) hold.
 
-- A named agent's gates hold only when Codex sends the call's `agent_type`, which no live session has confirmed yet.
+- A subagent's call with `agent_id` and no `agent_type` is held to every entry's gates, `main`'s deny and every
+  `allow` list included.
+- A named agent is held to its own entry only when Codex sends the call's `agent_type`, which no live session has
+  confirmed yet.
+- So in a project whose `agents.main.deny` forbids edits, or that gives one agent a narrow `allow` list, a Codex
+  subagent's call that carries `agent_id` and no `agent_type` is held to those too: it cannot edit, and runs only what
+  that list allows.
 - Codex names this plugin's roles `aidrian-<agent>`; the gates read that as `<agent>`.
 - A tool pattern matches a call by its standard name or by what Codex sends:
   `mcp__codex_apps_linear__*` and `mcp__codex_apps__linear__*` hold the same tools,

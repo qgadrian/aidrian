@@ -299,6 +299,6 @@ as `aidrian`'s does in a clone with no tags. Tag the commit that set the version
 
 ## Not included
 
-- Any guard on OpenCode, which runs the session ledger alone ([OpenCode](providers/opencode.md#limits)), and a tracker
+- Any guard on OpenCode, which runs only the hooks that cannot block ([OpenCode](providers/opencode.md#limits)), and a tracker
   other than Linear. [Adding a host, a tracker, or a forge](providers/adding-a-host.md) says what each needs.
 - A band for Codex: the optional Claude mod, `aidrian-mod`, is a Claude Code mod alone.

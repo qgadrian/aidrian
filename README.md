@@ -2,7 +2,7 @@
 
 ###### what is this (disclaimer)
 
-* Claude Code and Codex plugin, with the session ledger on OpenCode (for now)
+* Claude Code and Codex plugin; on OpenCode, the start lines, the hooks after a tool call, and a root session's end, with no guard (for now)
 * A team of agents, skills, and safety hooks
 * Very opinionated, it might be extended or not
 * Very opinionated, deterministic behavior preferred ("less AI" for some things)
@@ -40,8 +40,9 @@
 ## Prerequisites
 
 - Node 22 or later, and git.
-- Claude Code 2.1.314 or later, Codex CLI, or both. OpenCode 2.0 or later runs the session ledger alone, with no guard, and its hook
-  scripts need Node 22 on its service's PATH ([Running aidrian](docs/providers/opencode.md#running-aidrian)).
+- Claude Code 2.1.314 or later, Codex CLI, or both. OpenCode 2.0 or later runs the start lines, the hooks
+  after a tool call, and a root session's end, with no guard ([its limits](docs/providers/opencode.md#limits)), and its
+  hook scripts need Node 22 on its service's PATH ([Running aidrian](docs/providers/opencode.md#running-aidrian)).
 - The GitHub CLI, signed in with `gh auth login`. The `aidrian pr`, `aidrian report`, and `aidrian worktree` commands,
   and the `pr-*` skills, call `gh`.
 - Optional: a review bot. The default is `chatgpt-codex-connector[bot]`, the Codex GitHub connector, which reviews pull requests.
@@ -83,7 +84,9 @@ Installing from a private fork or mirror: [Codex](docs/providers/codex.md#privat
 
 ### OpenCode
 
-On OpenCode 2.0 and later the plugin keeps the session ledger only, and no aidrian guard holds an OpenCode session.
+On OpenCode 2.0 and later the plugin runs each session's start lines, the hooks after a tool call, the session ledger
+among them, and a root session's end, and no aidrian guard holds an OpenCode session
+([its limits](docs/providers/opencode.md#limits)).
 Run this in a terminal:
 
 ```sh
@@ -241,7 +244,7 @@ Codex names an agent `aidrian-<agent>`; ask for a skill by name.
 | [Adopting in a project](docs/adopting.md) | Finish setting up a project. |
 | [Claude Code](docs/providers/claude-code.md) | Update the plugin and see how Claude Code runs it. |
 | [Codex](docs/providers/codex.md) | Update the plugin and see how Codex runs it. |
-| [OpenCode](docs/providers/opencode.md) | Install the session ledger on OpenCode, and see what does not run there. |
+| [OpenCode](docs/providers/opencode.md) | Install the plugin on OpenCode, and see what runs there and what does not. |
 | [Claude mod](docs/claude-mod.md) | Install the band, pane, and notifications, or the status line fallback. |
 | [Agents and skills](docs/agents-and-skills.md) | Find the agent or skill for a job. |
 | [Agents](docs/agent-sources.md) | See how the agent sources are written and built. |

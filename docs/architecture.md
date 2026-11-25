@@ -89,5 +89,5 @@ test/                               node --test suites
 - **Codex agents**: Codex plugins cannot carry agents, so `codex/install-agents.mjs` copies the generated roles into Codex.
 - **OpenCode**: OpenCode reads no `hooks.json`, so the plugin folder is also an OpenCode package, installed by Git
   specifier, whose bridge runs the hooks of `opencode/routes.generated.json` that `opencode/routes.mjs` and the name
-  table `lib/hosts/opencode-names.mjs` select on OpenCode's events: each session's start and
-  the hooks after a tool call, with no guard.
+  table `lib/hosts/opencode-names.mjs` select on OpenCode's events: each session's start,
+  the hooks after a tool call, and a root session's end, with no guard ([its limits](providers/opencode.md#limits)).

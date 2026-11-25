@@ -34,12 +34,12 @@ it: it was not run here, is not supported, and its case has no code yet. Check i
 | --- | --- |
 | `plugins/aidrian/lib/hosts/<id>.mjs` | The adapter, with the fields below |
 | `plugins/aidrian/lib/hosts/index.mjs` | The adapter in `HOSTS`. `detectHost` runs in two passes: first every adapter's `payloadMark`, in `HOSTS` order, so a hook's payload names its host whatever variables the process inherited; then each `detect` in `HOSTS` order. So the host a shell can start inside another comes first, and a host whose only environment mark another host's process can inherit, as OpenCode's `OPENCODE_SESSION_ID`, comes last |
-| `plugins/aidrian/<id>/routes.mjs` | For a `bridge` host: `EVENTS`, each standard event the bridge runs to the host's own hook, as OpenCode's `{ SessionStart: 'context', SubagentStart: 'context', PostToolUse: 'execute.after' }`. A hook runs on the host once its event is here and, for a tool event, its matcher fires on a name the host's leaf returns. A blocking event waits for a live session to record its route refusing a call, so the conformance suite refuses a route of any event `canBlock` (`lib/hook-result.mjs`) says a hook can block on |
+| `plugins/aidrian/<id>/routes.mjs` | For a `bridge` host: `EVENTS`, each standard event the bridge runs to the host's own hook or event, as OpenCode's `{ SessionStart: 'context', SubagentStart: 'context', PostToolUse: 'execute.after', SessionEnd: 'session.deleted' }`. An event entry, such as `session.deleted`, is read from the host's event stream, not registered as a hook. A hook runs on the host once its event is here and, for a tool event, its matcher fires on a name the host's leaf returns. A blocking event waits for a live session to record its route refusing a call, so the conformance suite refuses a route of any event `canBlock` (`lib/hook-result.mjs`) says a hook can block on |
 | `plugins/aidrian/<id>/routes.generated.json` | For a `bridge` host: the generated route list, every `hooks.json` hook in its order as `{ event, matcher, script, args, timeoutMs }`, which `npm run build` writes and `--check` fails when stale. Never edit it; change `hooks.json` |
 | `plugins/aidrian/lib/hosts/<id>-names.mjs` | For a `bridge` host: the leaf that maps the host's tool names to the standard ones, importing nothing, read by both the adapter and the bridge, so both pick by the same name. `STANDARD_NAMES` is every name it returns; the conformance suite reads the routes a bridge host runs from it |
 | `plugins/aidrian/<id>/route-select.mjs` | For a `bridge` host: the route list half of the bridge, importing `node:` built-ins alone. `readRoutes` reads the generated list and leaves out an entry the bridge cannot spawn as it is; `selectRoutes(routes, events, hook, name)` gives the routes of a host hook whose matcher fires on a standard name, in order |
 | `plugins/aidrian/<id>/call.mjs` | For a `bridge` host: what a call sends, importing `node:` built-ins alone, as `test/opencode-bridge.test.mjs` holds: the folder the script is spawned in, the session's; the payload's `cwd`, the folder the call runs in; the root session as `session_id` and the calling one as `agent_id`; the cap on the session reads of one call; and the text of a session's last assistant message, read under that cap at idle |
-| `plugins/aidrian/<id>/bridge.mjs` | For a `bridge` host: the runner. It reads the generated list through `route-select.mjs`, registers one callback a host hook of `EVENTS`, and on each call runs, in parallel, every route `selectRoutes` gives for the leaf's name, each under its own timeout through `output.mjs`. It does not change for a hook that runs after a call, and the bash-post fixture's `output_path` says where a call's output lies in `tool_response`. It keeps the host's per-session state a payload needs, such as `stop_hook_active` |
+| `plugins/aidrian/<id>/bridge.mjs` | For a `bridge` host: the runner. It reads the generated list through `route-select.mjs`, registers one callback for each host hook of `EVENTS`, reads each event entry of `EVENTS` from the host's event stream, and on each call runs, in parallel, every route `selectRoutes` gives for the leaf's name, each under its own timeout through `output.mjs`. It does not change for a hook that runs after a call, and the bash-post fixture's `output_path` says where a call's output lies in `tool_response`. It keeps the host's per-session state a payload needs, such as `stop_hook_active` |
 | `plugins/aidrian/<id>/output.mjs` | For a `bridge` host: the output transformer, importing `node:` built-ins and `lib/hook-result.mjs` alone. It runs each script, pinned to Node with the standard payload on stdin, and reads its answer, a bounded part of its stdout and stderr, through `readHookResult`, merges a call's answers with `combineHookResults`, and applies the verdict to the host's event: a blocking route's refusal rejects, a rewrite replaces the input, and every other callback resolves whatever fails inside it. It holds the byte bound of a script's output |
 | `plugins/aidrian/hooks/hooks.json` | The host's raw names, where they miss a matcher. Matchers run on the raw name, before any mapping reaches a hook |
 | `test/fixtures/hosts/<id>/tracker.json` | Recorded payloads, with `live` and `provenance` saying where they came from |
@@ -57,6 +57,21 @@ awaits, so a script can finish first; a way for that callback to refuse the call
 OpenCode fails a call whose `execute.before` callback rejects; an input the callback can replace, for `updatedInput`;
 and who made the call, so a subagent's call can fail closed when a script does not start. Its kill time is no sooner
 than 1 s past the longest guard budget a script gives itself, so the script's own refusal comes first.
+
+### Before a bridge host routes a blocking event
+
+A blocking event, one `canBlock` (`lib/hook-result.mjs`) says a hook can block on, joins a bridge host's `EVENTS`
+only once each of these holds for every script that event routes:
+
+- Live evidence: a recorded session on the host where that hook refused a call, and a control call it let run.
+  It is earned for each script, never by editing the list of events `canBlock` reads.
+- A call whose session the bridge cannot read is sent as a subagent's, with `agent_id` and no `agent_type`, so the
+  agent gates hold it as the strictest subagent ([Agents](../config.md#agents)), never as the main session.
+- A tool whose name the leaf cannot read runs no route, so it counts as unguarded: the adapter names it, in
+  `unguardedRoutes` or `unguarded`, and `aidrian check` warns of it where the host is set up.
+- A change of a session's working folder, such as a tool that moves the session, reaches the
+  [main-checkout guard](../hooks.md#main-checkout) as a directory change, as a `cd` does.
+- A session's end never removes a root session's records while its children can still call tools.
 
 ### The adapter's fields
 

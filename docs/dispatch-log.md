@@ -26,7 +26,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | Field | Meaning |
 | --- | --- |
 | `ts`, `session_id` | When, and in which session. |
-| `dispatcher` | The agent that dispatched: the subagent's type inside a subagent, else the session's `--agent`, else `main`. |
+| `dispatcher` | The agent that dispatched: the subagent's type inside a subagent, `general-purpose` for a subagent whose call names no agent, else the session's `--agent`, else `main`. |
 | `agent_id`, `agent_type`, `name` | The dispatched agent, as the host names it. `agent_type` is `general-purpose` when none was given. |
 | `description` | The task label the dispatcher gave, cut to 80 characters. |
 | `background`, `status` | Whether it runs in the background, and the tool's status, such as `completed` or `async_launched`. |
@@ -115,7 +115,7 @@ It writes one row at the end of a session with no read recorded, on a host with 
 | `ts`, `session_id` | When, and in which session. |
 | `rule` | Its name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `attribution`, `pr-body`, `public-text`, `main-checkout`, `agent-gates`, `config-guard`, `tracker-guard`, or `ask-names`. |
 | `tool` | The tool it blocked, such as `Bash`, `Edit`, or a tool an agent gate names. |
-| `agent_type` | The agent that made the call, named as a `dispatch` row names its dispatcher: `main` for the main session. |
+| `agent_type` | The agent that made the call, named as a `dispatch` row names its dispatcher: `main` for the main session, `general-purpose` for a subagent whose call names no agent. |
 | `agent_id` | The subagent run that made the call, null for the main thread. A row written before the field has none. |
 | `reason` | What the rule matched, at most 120 characters, as the list below says. |
 

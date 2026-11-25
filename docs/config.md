@@ -1360,9 +1360,13 @@ Each key names who its entry applies to:
 | `main` | The main session, also one started with `claude --agent <name>`. |
 | A short name, such as `explorer` | Every agent of that name: `aidrian:explorer`, another plugin's `explorer`, and a project's `explorer`. |
 | A full name, such as `aidrian:explorer` | That plugin's agent only. |
+| Every key, `main` included | A subagent's call that names no agent: an `agent_id` and no `agent_type`. Each entry's `deny` and each `allow` list hold it. |
 
 Every entry that applies is checked, and a tool call runs only when each one lets it.
 A session started with `claude --agent aidrian:explorer` is both `main` and `explorer`.
+A subagent's call that names no agent is the strictest subagent: no gate can tell which entry is its own, so it meets them all.
+A subagent's `agent_type` that no key can name, one with a character other than letters, digits, `_`, `.`, `:`, and
+`-`, names no agent. A block by an entry that does not name the call says "the call names no agent".
 
 An entry has `deny`, `allow`, or both, each a list of tool patterns:
 

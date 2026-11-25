@@ -1267,11 +1267,14 @@ test('every plain tool name of a hooks.json matcher is mapped by the leaf, anoth
   assert.deepEqual(unaccounted(plainAlternatives, noEquivalentNames(PAGE).filter((name) => name !== 'ExitPlanMode')), ['ExitPlanMode']);
 });
 
-test('the README`s OpenCode entry says the plugin keeps the session ledger only, and that no guard holds an OpenCode session', () => {
+test('the README`s OpenCode entry says the plugin runs the start lines, the after-hooks, and a root`s end, and that no guard holds an OpenCode session', () => {
   const readme = readFileSync(path.join(REPO, 'README.md'), 'utf8');
   const entry = /^### OpenCode\n([\s\S]*?)(?=^#{2,3} )/mu.exec(readme)?.[1] ?? '';
-  assert.match(entry, /session ledger/u);
-  assert.match(entry.replace(/\s+/gu, ' '), /no aidrian guard holds an OpenCode session/u);
+  const flat = entry.replace(/\s+/gu, ' ');
+  assert.match(flat, /runs each session's start lines, the hooks after a tool call, the session ledger among them, and a root session's end/u);
+  assert.doesNotMatch(flat, /session ledger (?:only|alone)/u, 'the ledger is not all that runs there');
+  assert.match(flat, /no aidrian guard holds an OpenCode session/u);
+  assert.match(entry, /docs\/providers\/opencode\.md#limits/u);
   // The repository's slug comes from the manifest, so this file never names its owner (test/plugin.test.mjs).
   const slug = new URL(JSON.parse(readFileSync(path.join(PLUGIN, 'plugin.json'), 'utf8')).repository).pathname.replace(/^\/|\.git$/gu, '');
   assert.ok(entry.includes(`opencode plugin add 'github:${slug}#main::path:plugins/aidrian'`), entry);

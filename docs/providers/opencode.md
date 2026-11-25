@@ -1,9 +1,9 @@
 # OpenCode
 
 How the plugin installs and runs in OpenCode 2.0 and later.
-On OpenCode a bridge plugin runs each session's start and the hooks after a tool call, the
-[session ledger](../hooks.md#session-ledger) among them ([Hooks](#hooks)), and no aidrian guard holds an OpenCode
-session ([Limits](#limits)). No OpenCode session has run any of these hooks.
+On OpenCode a bridge plugin runs each session's start, the hooks after a tool call, the
+[session ledger](../hooks.md#session-ledger) among them, and a root session's end ([Hooks](#hooks)), and no aidrian
+guard holds an OpenCode session ([Limits](#limits)). No OpenCode session has run any of these hooks.
 OpenCode 1.x is not supported. The install command is also in the [README](../../README.md#opencode).
 
 ## Install
@@ -227,6 +227,12 @@ root's `session.deleted`, run in process on the bridge's fake spawn; for the oth
 `test/opencode-adapter.test.mjs` builds from the 2.4.1 source and runs in process, not through the bridge's spawn, for
 `hook-markdown-wrap.mjs` a `write` call alone: a `patch` carries no text that script reads. Script not run, on no row
 today, means the bridge's tests run its route with a fake spawn alone.
+`test/opencode-fixtures.test.mjs` fails on a committed OpenCode fixture that holds a home path; a key the fixture, the
+payload the bridge sends, its `opencode` mark, or a tool result does not have; a message or system key; a prompt or last
+message other than a placeholder; a session id of another shape; an environment beyond the adapter's session variables,
+as a map or a list of `NAME=value`; or text the public-text guard refuses, such as a local path, an email address, or a
+secret. No check can tell conversation text from tool output inside a recorded result: that text is bounded by the
+fixture's `live` flag, its provenance line, and the pull request's review.
 
 | Script | Runs on OpenCode | Verified | Why not |
 | --- | --- | --- | --- |
@@ -394,7 +400,7 @@ through the `events` seam. None means no OpenCode hook or session read gives the
 | `effort` | `hook-session-start.mjs`, for a subagent's effort line, through Claude Code's adapter (`subagentEffort`, which reads `effort.level`) | None: the OpenCode adapter reads no effort |
 | `session_id` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-bash-post.mjs`, `hook-write.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-post.mjs`, `hook-session-start.mjs`, `hook-prompt.mjs`, `hook-stop.mjs`, `hook-subagent-stop.mjs`, `hook-session-end.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `sessionID`, followed up its parents to the root session ([Session ids](#session-ids)) |
 | `agent_id` | `hook-agent-gates.mjs` and the guards it calls, `hook-bash.mjs` and its rules, `hook-bash-post.mjs`, `hook-agent-pre.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, `hook-session-start.mjs`, `hook-prompt.mjs`, `hook-subagent-stop.mjs`, `hook-session-end.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `sessionID`, when it is a child session's |
-| `agent_type` | `hook-agent-gates.mjs`, `hook-tracker-pre.mjs`, `hook-subagent-stop.mjs` (its delivery check and stop row), `hook-agent-post.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | None: a tool event's `agent` names the agent a session runs, OpenCode's own `build` or `plan` among them, and no agent of this plugin is installed there. A child session's call carries `agent_id` alone |
+| `agent_type` | `hook-agent-gates.mjs`, `hook-tracker-pre.mjs`, `hook-subagent-stop.mjs` (its delivery check and stop row), `hook-agent-post.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | None: a tool event's `agent` names the agent a session runs, OpenCode's own `build` or `plan` among them, and no agent of this plugin is installed there. A child session's call carries `agent_id` alone, so the agent gates hold it to every `agents` entry, as the strictest subagent ([Agents](../config.md#agents)), once a route runs before a tool call; none does yet |
 | `cwd` | Every script but `hook-compact.mjs` | A tool event: a shell call's `workdir`, which no other tool's input is read for, `~` from the home folder, resolved by path from the session's folder, else the session's folder from a session read; on `execute.after`, a call whose folder neither names is skipped, as [Hooks](#hooks) says. Any other hook: the root session's folder, from its session read, and a child's `--subagent` start the child's own. `SessionEnd`: the root's last folder a read gave, since a deleted session is not read |
 | `tool_name`, `raw_tool_name` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-pre.mjs`, `hook-agent-post.mjs`, `hook-ask.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `tool`, mapped by the adapter's `hookInput` through the name table the bridge picks its routes by: a built-in tool as the standard tool of its job, and an MCP tool as `mcp__<server>__<tool>` from `info` |
 | `permission_tool_name` | `hook-agent-gates.mjs` | None: the adapter sets none, as no OpenCode tool is known to run under another tool's permission rules |
@@ -430,9 +436,10 @@ through the `events` seam. None means no OpenCode hook or session read gives the
   call, and that answer is not kept, so the next call reads again.
   A kept root saves the walk alone: the calling session's folder is read on every call, and a kept root answers only a
   call whose own read gave the session, so a call whose read fails is sent with `agent_id` even when its session's
-  root is kept. That call still carries the kept root as `session_id`, so a kept child's call keeps its root
-  session's holds: a root is kept only from a walk that reached its end for that same session, and a session's
-  parent never changes.
+  root is kept, and the agent gates would judge it as the strictest subagent once a route runs before a tool call
+  ([Agents](../config.md#agents)); none does yet.
+  That call still carries the kept root as `session_id`, so a kept child's call keeps its root session's holds:
+  a root is kept only from a walk that reached its end for that same session, and a session's parent never changes.
 - A subagent's own shell names the child session in `OPENCODE_SESSION_ID`, so that command run there shows none of
   the root session's pull requests.
 - A command in an OpenCode that was itself started from a Claude Code or Codex shell reads the outer host's session:
@@ -687,6 +694,9 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
 - OpenCode removes a root's children only after the root's delete event, so the root's records are deleted before its
   children stop: a child's call that settles later can leave records under the root's id, and those wait for the
   30-day sweep.
+  This is owed before any route runs before a tool call ([Adding a host](adding-a-host.md#before-a-bridge-host-routes-a-blocking-event)).
+- A session read that fails puts the session's start off to its next callback, so a model step can run without the
+  start lines.
 - If OpenCode's event stream fails or is absent, `SessionEnd` stops running for that setup, with no notice.
 - The start lines go into `system` with the values a project and its machine hold: those of `config.json` and the names
   of `.aidrian.local.json` over them, doc paths, and the main checkout's branch name. No OpenCode session has run this.
@@ -714,7 +724,7 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
 - No agents: no agent of this plugin is installed on OpenCode. A `subagent` call of OpenCode's own agents still writes
   a dispatch row.
   Its agent type is the agent the call named, or `general-purpose` when its input names none.
-  Its dispatcher is `main` even in a child session, whose call carries no agent type.
+  Its dispatcher is `main` in a root session, and `general-purpose` in a child session, whose call carries no agent type.
   A call whose input sets `sessionID` is a follow-up to a subagent already started, by the 2.4.1 source.
   It writes a row too, so the rows count more dispatches than there were subagents.
   A row says its subagent did not run in the background, since it reads Claude Code's
@@ -735,6 +745,11 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
     This is owed before `hook-bash.mjs` runs there.
   - A plugin loaded after this one may change the event's `tool` or `input` once the guards answered, since both are
     mutable on `execute.before`.
+  - The `move` tool of `opencode_session_*` changes a session's folder, which a route before a tool call has to read
+    as a directory change for the main-checkout guard. This is owed before any such route runs.
+  - A command in a child session's shell gets no session identity from the shell hook, since the shell's
+    `create.before` event carries no session id: the hook cannot name the root session or mark the command a
+    subagent's, so the command reads the child as its own session ([Session ids](#session-ids)).
   - `read` of a path that does not exist opens the one file of that folder whose name differs only in Unicode
     normalization, no-break spaces, or curly single quotes, so a gate reads the path as written, not the file opened.
   - `patch`, which can add a whole file, reads as `Edit`, so a gate that denies `Write` alone does not hold it.

@@ -289,8 +289,9 @@ export function stateWorkFolders(state, { env, home }) {
 // has it. When the forge has the branch and it holds the recorded head, the clone also takes in the commits an ended
 // attempt's kept clone holds over that head, under a ref alone, where its session may take them (project-kept.mjs):
 // `kept` is that offer, or why the latest kept clone's are not offered, or null. Nothing else here reads them: the
-// checkout, the review asked, and the base copies go by the forge's head. `env` is the environment of its network calls.
-export function prepareAttempt({ project, state, run, found, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, env }) {
+// checkout, the review asked, and the base copies go by the forge's head. `spelled(paths)`, when given, says why a path of
+// that head spells a name the harness holds another way, which refuses the start. `env` is the environment of its network calls.
+export function prepareAttempt({ project, state, run, found, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, spelled = null, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
@@ -356,6 +357,13 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
       if (head.status !== 0) return failed('rev-parse', head);
       from = head.stdout.trim();
       onHead = from;
+      // A path of the head that spells a name the harness holds another way (project-run-gate.mjs spellingAt) refuses.
+      if (spelled) {
+        const tree = git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', from]);
+        if (tree.status !== 0) return failed('ls-tree', tree);
+        const why = spelled(tree.stdout.split('\0').filter(Boolean));
+        if (why) return gone(`the branch's head ${from.slice(0, 7)} holds ${why}`);
+      }
       // The recorded commit, or one after it: exit 1 is another history, and 128 a commit the fetch did not bring.
       const ours = own ? git(['merge-base', '--is-ancestor', own, from]) : null;
       if (ours && ours.status !== 0) return park(own, `its head ${from.slice(0, 7)} does not hold ${own.slice(0, 7)}, the commit this project's runs recorded it at`);

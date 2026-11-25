@@ -63,13 +63,14 @@ import { maskSecrets } from './clean-text.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { changeNotFound, forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
-import { configPathIn, DEFAULT_CONFIG, foldPath, isPolicyPath, knowledgeIn, mayFollowTeamDefault, projectId, stateRoot, trailPaths } from './project.mjs';
+import { configPathIn, DEFAULT_CONFIG, foldPath, isGuardedPath, isPolicyPath, knowledgeIn, mayFollowTeamDefault, projectId, spellingRule, stateRoot, trailPaths } from './project.mjs';
 import { botProblem, NO_BOT, readHumanSignoffs, signoffProblem } from './review/merge-trust.mjs';
 import { HARNESS_FLOW } from './review/plan.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
 import { credentialStores, detectHost, nestedGlobs, otherPlaceholders, protectedPaths, sessionIdentity } from './hosts/index.mjs';
 import { INDEX_RECIPE, indexFilesOf, shownPath } from './index-edits.mjs';
+import { workflowPaths } from './issue-push-checkout.mjs';
 import { indexedAlways } from './knowledge.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { FILE_MODES, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
@@ -573,13 +574,16 @@ function startPlace(context) {
   const startLoaded = capped.attempt > 1 || recorded !== null ? startDocsAt(project.root, base.tip, policyFiles[1], prefix) : null;
   const unreadable = startLoaded === null ? null : startUnreadable(startLoaded);
   if (unreadable) return refuse(unreadable, orphans);
+  // No path of the tip, nor of the branch's head once the clone fetched it, spells a name the harness holds another way.
+  const spelling = startLoaded === null ? null : spellingAt(project.root, base.tip, { policyFiles, startLoaded, prefix });
+  if (spelling?.problem) return refuse(spelling.problem, orphans);
   const guards = startGuards(policyFiles, startLoaded);
   // An ended attempt's work may wait for a sweep that could not decide it, as through a forge outage: one more, as `wait`
   // runs it, before any later attempt, and the ledger again for the offer (project-kept.mjs keptCandidate).
   if (capped.attempt > 1) orphans.push(...sweepAttempts({ state, run, found: current, cap, env, home, spawn, forge: facade }));
   const ledger = capped.attempt > 1 ? readRun(state, run) : current;
   if (ledger.problem) return refuse(ledger.problem, orphans);
-  const where = { ...context, policy, found: ledger, attempt: capped.attempt, tip: base.tip, branch, resumed, recorded, reviewed, guards, policyFiles, startLoaded, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
+  const where = { ...context, policy, found: ledger, attempt: capped.attempt, tip: base.tip, branch, resumed, recorded, reviewed, guards, spelled: spelling?.spelled ?? null, policyFiles, startLoaded, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
   const room = confinedRoom(where);
   if (room.halt) return { answer: noted(haltAnswer(room.halt, { lines: orphans })) };
   if (room.retry) return { answer: noted(retryAnswer('start', room.retry, orphans)) };
@@ -698,6 +702,21 @@ export function startDocsAt(root, tip, configFile, prefix) {
   return { docs, folder };
 }
 
+// The names a start on existing work holds by their exact spelling (project.mjs spellingRule), from the base tip
+// `tip`, read in `root`: the pointer and config.json `policyFiles` name, what the start hook loads (`startLoaded`), the
+// forge's workflow folders, and each guarded path the tip holds. { problem } when a path of the tip spells one another
+// way, else { spelled }, which gives why a list of a head's paths does, or null.
+function spellingAt(root, tip, { policyFiles, startLoaded, prefix }) {
+  const [files, links] = [commitFiles(root, tip), commitGitlinks(root, tip)];
+  if (!files || !links) return { problem: `git cannot read the files of the base tip ${tip.slice(0, 7)}` };
+  const paths = [...files.keys(), ...links];
+  const names = [...new Set([`${prefix}.aidrian.json`, ...policyFiles, ...startLoaded.docs, `${startLoaded.folder}/`, ...workflowPaths().names, ...paths.filter(isGuardedPath)])];
+  const rule = spellingRule(names);
+  const spelled = (list) => list.map(rule).find(Boolean) ?? null;
+  const own = spelled(paths);
+  return own ? { problem: `the base tip ${tip.slice(0, 7)} holds ${own}` } : { spelled };
+}
+
 // The files no attempt loads from a branch no review passed, as a test of one path from the repository's top: the host
 // files, the policy files `policyFiles` the base tip names, and what the start hook loads there (`startLoaded`,
 // startDocsAt, or null). A folder git lists whole ends with a slash.
@@ -724,10 +743,10 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the placeholders go in (placeHolders,
 // clonePlaceholders).
-function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, startLoaded, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
+function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, spelled, policyFiles, startLoaded, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
-  const clone = prepareAttempt({ project, state, run, found, key, attempt, branch, recorded, tip, reviewed, guards, env });
+  const clone = prepareAttempt({ project, state, run, found, key, attempt, branch, recorded, tip, reviewed, guards, spelled, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.retry) return { retry: clone.retry };
   if (clone.park) return { park: clone.park };

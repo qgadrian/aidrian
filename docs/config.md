@@ -2160,6 +2160,9 @@ What the start hook loads is the knowledge folder beside that `config.json`, whe
 and each `always` doc its indexes name, by the rule of the [auto-merge](#auto-merge) `paths` check, case and Unicode form ignored, and a
 link, file, or submodule in the place of one or of a folder that holds it.
 The start row keeps it as `startLoaded`, `{ docs, folder }`; a doc only the base moved counts too.
+A start on existing work is refused, too, when a path of the tip, or of the branch's head once fetched, spells another
+way a name the harness holds by its exact spelling: the pointer, the policy files, what the start hook loads, the
+forge's workflow folders, and each guarded path of the tip (`spellingRule` in `lib/project.mjs`), such as `.AIDRIAN.JSON`.
 When the tip's indexes cannot be read, as one that is malformed or a link, or the tip holds that folder in another
 spelling a disk may read as the same one, such as `.aidrian/Knowledge`, a start on existing work, a later attempt or
 one at a recorded head, is refused before any clone, with no attempt folder and no row; a first attempt, cut from the
@@ -2197,7 +2200,7 @@ Such a file is a direct `.json` child of the knowledge folder beside the config 
 starting with a lowercase letter or a digit and holding only letters, digits, `_`, `-`, and `.`, that the branch's head
 holds as a plain file (mode `100644`); a name a host loads at any depth, such as `opencode.json`, and a path the list
 would show cleaned or cut are none.
-The session reads the branch's text with `git show :<path>`, edits a temporary copy outside the clone, puts it back with
+The session reads the branch's text with `git show :./<path>`, edits a temporary copy outside the clone, puts it back with
 `git hash-object` and one `git update-index`, and commits.
 The disk keeps the base copy all along, since the start hook and `aidrian-knowledge` load an index from there, so the
 start puts none on disk that no review passed; a session can still write the branch's version there by hand, and a first

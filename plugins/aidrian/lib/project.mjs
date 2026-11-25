@@ -128,6 +128,37 @@ export const foldPath = (file) => file.normalize('NFD').toLowerCase().toUpperCas
 // itself (test/auto-merge-guard.test.mjs).
 export const isGuardedPath = (file) => GUARDED_PATHS.test(file) || GUARDED_PATHS.test(foldPath(file));
 
+// The one spelling rule, for `names`, the paths the harness holds by their exact spelling, a folder's with a trailing
+// `/`: (file) => why `file` is one of them in another spelling, or null. That is when its fold (foldPath) is a name's,
+// a file's in a folder name, or a folder's that holds a name, and either its own spelling is none of them or two
+// spellings share that fold; or when it is a guarded path (isGuardedPath) by its fold alone. A disk that ignores case or
+// Unicode form reads it as that name, so the rule refuses each such path wherever the harness reads one.
+export function spellingRule(names) {
+  const [files, folders, parents] = [new Map(), new Map(), new Map()];
+  const add = (map, exact) => map.set(foldPath(exact), new Set([...(map.get(foldPath(exact)) ?? []), exact]));
+  for (const name of names) {
+    const exact = name.replace(/\/$/u, '');
+    add(name.endsWith('/') ? folders : files, exact);
+    exact.split('/').slice(0, -1).forEach((_, at, parts) => add(parents, parts.slice(0, at + 1).join('/')));
+  }
+  const line = (file, spellings) => `${JSON.stringify(file).slice(0, 200)} is ${JSON.stringify([...spellings].find((each) => each !== file) ?? file).slice(0, 200)} in another spelling, which a disk that ignores case or Unicode form reads as the same path`;
+  const other = (map, key, spelled) => {
+    const spellings = map.get(key);
+    return spellings && (spellings.size > 1 || !spellings.has(spelled)) ? spellings : null;
+  };
+  return (file) => {
+    const folded = foldPath(file);
+    const parts = file.split('/');
+    const at = other(files, folded, file) ?? other(parents, folded, file) ?? other(folders, folded, file)
+      ?? parts.slice(0, -1).map((_, end) => other(folders, foldPath(parts.slice(0, end + 1).join('/')), parts.slice(0, end + 1).join('/'))).find(Boolean);
+    if (at) return line(file, at);
+    return isGuardedPath(file) && !GUARDED_PATHS.test(file) ? `${JSON.stringify(file).slice(0, 200)} is a guarded path in another spelling, which a disk that ignores case or Unicode form reads as one` : null;
+  };
+}
+
+// spellingRule's answer for one path.
+export const spellingProblem = (file, names) => spellingRule(names)(file);
+
 // Whether `file`, from the top of the repository, is a policy file: a POLICY_PATHS name, or one of `policyFiles`, the
 // paths pr-auto-merge.mjs branchPolicies read the gate's policy from, as a config.json a pointer file relocates, each by
 // its fold (foldPath).

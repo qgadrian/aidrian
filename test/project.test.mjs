@@ -9,7 +9,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { DEFAULTS, loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { findProject, foldPath, GUARDED_PATHS, isGuardedPath, knowledgeIn, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
+import { findProject, foldPath, GUARDED_PATHS, isGuardedPath, spellingProblem, knowledgeIn, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -755,6 +755,18 @@ test('GUARDED_PATHS holds every host\'s instruction files, by name at any depth,
   for (const file of ['.github/in\ufb06ructions/x.md', '.github/copilot-in\ufb05ructions.md', '.github/work\ufb02ows/ci.yml', '.GITHUB/WORK\ufb02OWS/ci.yml']) {
     assert.deepEqual([GUARDED_PATHS.test(file), isGuardedPath(file)], [false, true], file);
   }
+});
+
+// The one spelling rule: names the harness holds by their exact spelling, a folder's with a trailing slash.
+test('spellingProblem refuses a path that is a held name, a file in a held folder, or a folder that holds one, in another spelling', () => {
+  const names = ['.aidrian.json', 'docs/rules.md', '.aidrian/knowledge/', '.github/workflows/', '.github'];
+  const refused = { '.AIDRIAN.JSON': '.aidrian.json', 'docs/RULES.md': 'docs/rules.md', DOCS: 'docs', '.aidrian/Knowledge/x.json': '.aidrian/knowledge', '.aidrian/KNOWLEDGE': '.aidrian/knowledge', '.github/work\ufb02ows/ci.yml': '.github/workflows', '.GITHUB': '.github' };
+  for (const [file, name] of Object.entries(refused)) assert.equal(spellingProblem(file, names), `${JSON.stringify(file)} is ${JSON.stringify(name)} in another spelling, which a disk that ignores case or Unicode form reads as the same path`, file);
+  for (const file of ['.aidrian.json', 'docs/rules.md', 'docs', 'docs/other.md', 'DOCS/other.md', '.aidrian/knowledge/x.json', '.github/workflows/ci.yml', '.GITHUB/ISSUE_TEMPLATE/a.md', 'src/a.js']) assert.equal(spellingProblem(file, names), null, file);
+  // A guarded path by its fold alone, and two spellings of one name the harness holds.
+  assert.match(spellingProblem('.github/in\ufb06ructions/x.md', []) ?? '', /is a guarded path in another spelling/u);
+  assert.equal(spellingProblem('CLAUDE.md', ['CLAUDE.md']), null);
+  assert.match(spellingProblem('CLAUDE.md', ['CLAUDE.md', 'claude.md']) ?? '', /^"CLAUDE\.md" is "claude\.md" in another spelling/u);
 });
 
 // A refusal compares folds, so a fold that told apart two paths equal in lower case would drop one.

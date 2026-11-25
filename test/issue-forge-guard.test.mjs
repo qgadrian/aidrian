@@ -412,16 +412,16 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   assert.deepEqual(fx.own().indexFiles.map((each) => each.path), [INDEX, ADDED]);
   fx.commit(EDIT, [ADDED, '100644', 'edited\n']);
   assert.equal(fx.push(), null, 'an edit of both');
-  assert.equal(fx.push(path.join(fx.work, '.aidrian')), null, 'from a subfolder too');
   // As the hook asks it, with the row's own lists: both edits pass, and an always doc beside them does not.
   fx.commit([ALWAYS, '100644', 'edited\n']);
   assert.match(fx.asked(), /: it pushes commits that change 1 host config or instruction file, .*\(docs\/rules\.md differs/u);
   fx.reset();
   // Each refusal names the file and the recipe.
-  const refused = (what) => new RegExp(`it pushes commits that ${what}, a knowledge index file this attempt may change only in git's index: from the clone's root, each word that holds \`<path>\` quoted as one shell word, \`git show :<path>\` into a temporary file outside the clone, .*\`git update-index --cacheinfo 100644,<id>,<path> --skip-worktree -- <path>\``, 'u');
+  const refused = (what) => new RegExp(`it pushes commits that ${what}, a knowledge index file this attempt may change only in git's index: from the clone's root, each word that holds \`<path>\` quoted as one shell word, \`git show :./<path>\` into a temporary file outside the clone, .*\`git update-index --cacheinfo 100644,<id>,<path> --skip-worktree -- <path>\``, 'u');
   const name = INDEX.replaceAll('.', '\\.');
   fx.commit([INDEX, '100644', NINE.join('')]);
-  assert.match(fx.push(), refused(`put the base branch's copy of ${name} over the branch's own version`));
+  // Asked from a subfolder, which reads HEAD's tree from the top all the same.
+  assert.match(fx.push(path.join(fx.work, '.aidrian')), refused(`put the base branch's copy of ${name} over the branch's own version`));
   for (const [file, spelled] of [[INDEX, name], [ADDED, ADDED.replaceAll('.', '\\.')]]) {
     fx.reset();
     fx.commit([file, null]);
@@ -445,7 +445,6 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   } finally {
     process.env.PATH = before;
   }
-  assert.equal(fx.push(), null);
   // The recipe, as the first message gives it.
   const temp = path.join(fx.root, 'scratch', 'index.json');
   const id = fx.git('rev-parse', `HEAD:${INDEX}`).trim();
@@ -474,6 +473,15 @@ test('an edit of a knowledge index lifts the push guard for no other file: an in
   fx.reset();
   fx.commit([ALWAYS, '100644', 'edited\n'], ['docs/RULES.md', '100644', 'edited\n'], ['docs/rule\u017f.md', '100644', 'edited\n'], ['.aidrian/\u212anowledge/x.json', '100644', '{}\n'], ['harness/STRASSE.json', '100644', '{}\n'], ['.github/work\ufb02ows/ci.yml', '100644', 'on: push\n'], [OWN_ALWAYS, '100644', NINE.join('')]);
   assert.match(fx.push(), /^it pushes commits that change 7 host config or instruction files, /u, 'an edit, other spellings of it, of the folder, of a policy file, and of a workflow, and the base copy');
+  // With no base copies, and so no lists of the start's, the one spelling rule holds the workflow folder all the same:
+  // committed, then only on disk.
+  const plain = { ...fx.own(), overlay: null, policyFiles: [], startLoaded: null };
+  assert.match(fx.push(fx.work, plain) ?? '', /^it pushes commits that change "\.github\/work\ufb02ows\/ci\.yml" is "\.github\/workflows" in another spelling/u);
+  fx.reset();
+  mkdirSync(path.join(fx.work, '.github', 'work\ufb02ows'), { recursive: true });
+  writeFileSync(path.join(fx.work, '.github', 'work\ufb02ows', 'x.yml'), 'on: push\n');
+  assert.match(fx.push(fx.work, plain) ?? '', /^it pushes from a checkout that holds an uncommitted change to "\.github\/work\ufb02ows\/x\.yml" is "\.github\/workflows" in another spelling/u);
+  rmSync(path.join(fx.work, '.github'), { recursive: true });
   assert.deepEqual(['.github/work\ufb02ows/ci.yml', '.GitHub', '.github/workflows', '.github/other.yml', 'x/.github/workflows/ci.yml'].map(workflowPaths().counts), [true, true, true, false, false], 'the forge\'s workflow folder, by its fold');
   // A link in their folder's place, and a submodule, whose own `ignore` setting hides no entry of it from the guard.
   fx.reset();

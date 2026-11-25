@@ -40,5 +40,5 @@ export const indexFilesIn = (value) => (Array.isArray(value) ? value : [])
 
 // How a session changes such a file, for the first message and the push guard's refusals. `<path>` stays a placeholder:
 // a file name is the branch's text, so it reaches neither as a command.
-export const INDEX_RECIPE = 'from the clone\'s root, each word that holds `<path>` quoted as one shell word, `git show :<path>` into a temporary file outside the clone, edit that, `git hash-object -w --no-filters <temporary file>`, '
+export const INDEX_RECIPE = 'from the clone\'s root, each word that holds `<path>` quoted as one shell word, `git show :./<path>` into a temporary file outside the clone, edit that, `git hash-object -w --no-filters <temporary file>`, '
   + `\`git update-index --cacheinfo ${PLAIN_FILE},<id>,<path> --skip-worktree -- <path>\`, then \`git commit\` with no \`-a\` and no path`;

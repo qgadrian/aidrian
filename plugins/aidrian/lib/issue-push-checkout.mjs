@@ -13,7 +13,7 @@ import { forgeWorkflowFolders } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { INDEX_RECIPE, PLAIN_FILE } from './index-edits.mjs';
 import { startLoadProblem } from './pr-auto-merge-docs.mjs';
-import { foldPath, isGuardedPath, isPolicyPath } from './project.mjs';
+import { foldPath, isGuardedPath, isPolicyPath, spellingRule } from './project.mjs';
 import { namedFiles } from './project-trust.mjs';
 
 // The refs a push's commits are compared with, the first that git resolves: origin's default branch, as config-committed.mjs
@@ -140,9 +140,9 @@ function mergedProblem(folder, overlay, { held, guarded }, changed) {
   return changed ? { reason: 'git names no merge base with origin\'s default branch' } : {};
 }
 
-// The forge's workflow folders and every folder that holds one, as `:(top,literal)` pathspecs: a holding folder, as
-// `.github`, counts only when its own entry changes, as when it becomes a link to a folder of other files: { pathspecs,
-// counts }, `counts(file)` whether a changed path is one, by its fold (foldPath); git's pathspecs give exact names alone. lib/project-kept.mjs holds an attempt's kept commits to it too.
+// The forge's workflow folders and every folder that holds one: a holding folder, as `.github`, counts only when its own
+// entry changes, as when it becomes a link to a folder of other files: { names, counts }, `names` as spellingRule takes
+// them, and `counts(file)` whether a changed path is one, by its fold (foldPath). lib/project-kept.mjs holds an attempt's kept commits to it too.
 export function workflowPaths() {
   const folders = forgeWorkflowFolders();
   const holders = [...new Set(folders.flatMap((each) => each.split('/').slice(0, -1).map((_, at, parts) => parts.slice(0, at + 1).join('/'))))];
@@ -151,21 +151,25 @@ export function workflowPaths() {
     const folded = foldPath(file);
     return foldedHolders.includes(folded) || foldedFolders.some((each) => folded === each || folded.startsWith(`${each}/`));
   };
-  return { pathspecs: [...folders, ...holders].map((each) => `:(top,literal)${each}`), counts };
+  return { names: [...folders.map((each) => `${each}/`), ...holders], counts };
 }
 
 // Why the commits a push from `folder` carries change the forge's workflow files (forges/index.mjs
 // forgeWorkflowFolders), or a folder that holds them, or null: the paths HEAD changes from its merge base with origin's
-// default branch (BASE_REFS), so a merge of the default branch brings none of that branch's own changes in.
+// default branch (BASE_REFS), so a merge of the default branch brings none of that branch's own changes in; or, first, a
+// path of them in another spelling of a name the harness holds (`spelling`, project.mjs spellingRule), which a disk may
+// read as that name.
 // `--no-relative` keeps a clone's `diff.relative` from hiding, in a push from a subfolder, every path outside it;
 // `git status --porcelain` already names paths from the root whatever `status.relativePaths` says.
 // SHORTCUT: origin's remote-tracking ref is the session's own copy, which git in its checkout can move; the forge's
 // branch and tag rules and its secrets' environments stand behind it (docs/hooks.md#agent-gates names the residual).
-function committedProblem(folder, { pathspecs, counts }) {
+function committedProblem(folder, { counts }, spelling) {
   for (const base of BASE_REFS) {
-    const diff = budgeted(['diff', '--raw', '-z', '--no-renames', '--no-abbrev', '--no-relative', `${base}...HEAD`, '--', ...pathspecs], folder);
+    const diff = budgeted(['diff', '--raw', '-z', '--no-renames', '--no-abbrev', '--no-relative', `${base}...HEAD`, '--'], folder);
     if (diff.status === null) return `it pushes, and ${SLOW} which files its commits change, so they may change the forge's workflow files`;
     if (diff.status !== 0) continue;
+    const spelled = rawPaths(diff.stdout).map(spelling).find(Boolean);
+    if (spelled) return `it pushes commits that change ${spelled}; take that path out of the commits`;
     const changed = rawPaths(diff.stdout).filter((file) => counts(file));
     return changed.length ? `it pushes commits that change ${changed[0].slice(0, 120)}, a workflow file the forge runs with the repository's secrets on that push, before any review; an issue that needs such a change is parked for the Human, and one the default branch made counts once \`git fetch origin\` brings it` : null;
   }
@@ -173,11 +177,15 @@ function committedProblem(folder, { pathspecs, counts }) {
 }
 
 // Why `folder` holds a staged, unstaged, or untracked change to a workflow file, which a command beside the push or
-// run after the guard read it could commit into the push, or null.
-function uncommittedProblem(folder, { pathspecs, counts }) {
-  const status = budgeted(['status', '--porcelain', '-z', '--untracked-files=all', '--ignored=no', '--', ...pathspecs], folder);
+// run after the guard read it could commit into the push, or null; first, one at a path in another spelling of a name
+// the harness holds (`spelling`).
+function uncommittedProblem(folder, { counts }, spelling) {
+  const status = budgeted(['status', '--porcelain', '-z', '--untracked-files=all', '--ignored=no', '--'], folder);
   if (status.status !== 0) return `it pushes, and ${SLOW} whether its checkout holds a change to the forge's workflow files`;
-  const found = statusEntries(status.stdout).find(({ paths }) => paths.some((file) => counts(file)));
+  const entries = statusEntries(status.stdout);
+  const spelled = entries.flatMap(({ paths }) => paths).map(spelling).find(Boolean);
+  if (spelled) return `it pushes from a checkout that holds an uncommitted change to ${spelled}, which a command run beside the push could commit into it; take it out, then push again`;
+  const found = entries.find(({ paths }) => paths.some((file) => counts(file)));
   if (!found) return null;
   const file = found.paths.find((each) => counts(each));
   const undo = found.untracked ? `git clean -f -- ${shellWord(file)}` : `git restore --staged --worktree -- ${shellWord(file)}`;
@@ -226,5 +234,8 @@ const shellWord = (file) => (/^[\w./@%+=:,-]+$/u.test(file) ? file : `'${file.re
 // over, or null, with `policyFiles`, `startLoaded`, and `indexFiles`, and `fold(path)` gives a path as `root` holds them.
 export function pushCheckoutProblem(folder, { root, pushUrl, fold, overlay = null, policyFiles = [], startLoaded = null, indexFiles = [] }) {
   const paths = workflowPaths();
-  return ownCloneProblem(folder, root, pushUrl, fold) ?? overlayProblem(folder, overlay, { policyFiles, startLoaded, indexFiles }) ?? committedProblem(folder, paths) ?? uncommittedProblem(folder, paths);
+  // The names the harness holds by their exact spelling: the workflow folders, and the start's policy files and what its
+  // start hook loads, when its row keeps them.
+  const spelling = spellingRule([...paths.names, ...policyFiles, ...(startLoaded ? [...startLoaded.docs, `${startLoaded.folder}/`] : [])]);
+  return ownCloneProblem(folder, root, pushUrl, fold) ?? overlayProblem(folder, overlay, { policyFiles, startLoaded, indexFiles }) ?? committedProblem(folder, paths, spelling) ?? uncommittedProblem(folder, paths, spelling);
 }

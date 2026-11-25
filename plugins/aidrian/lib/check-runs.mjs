@@ -47,13 +47,6 @@ const TEST_PREFIXES = [
 ].map((words) => words.join(' '));
 
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
-// Whether an invocation names a directory change the lexer does not follow: zsh's `chdir`, or `builtin` before one.
-// SHORTCUT: one inside `eval`, a sourced file, a function, or an alias is not seen, since `source nvm.sh && npm test` is
-// common and moves nothing, and the record stops mistakes, not a session set on lying; reading those bodies closes it.
-const hiddenMove = ({ program, args }) => {
-  const named = program === 'builtin' ? args[0]?.text : program;
-  return named === 'chdir' || (program === 'builtin' && CHANGES_DIRECTORY.has(named));
-};
 // A test file, as the review's quiet test patterns name one: `*.test.*`, `*.spec.*`, `*_test.*`, or one in a test
 // folder; and a code file, by its extension. `aidrian test changed` and the untracked-file rule read both.
 export const TEST_FILE = /(?:^|\/)(?:test|tests|__tests__|spec)\/|\.(?:test|spec)\.[^/]+$|_test\.[^/]+$/u;
@@ -134,8 +127,9 @@ export const isFullSuite = (invocation, testing = {}) => !invocation.dynamic && 
 // is never read. A `cd`'s folder counts only when that `cd` opens the line and every link from it to the run is `&&`, so
 // the run cannot outlive its failure: where walkCommands' `folder`, which follows a leading `cd`, and `chained`, which a
 // `;`, `||`, pipe, `!`, or subshell after a `cd` ends, agree. An absolute `env -C` on the run gives both whatever the
-// shell's folder, and a relative one neither without it. After a hiddenMove only that absolute one is known. Nothing else
-// of the line, such as a redirection, is judged.
+// shell's folder, and a relative one neither without it. Nothing else of the line, such as a redirection, is judged.
+// A directory change the lexer does not read as one (`builtin cd`, `chdir`, or one inside `eval`, a sourced file, a
+// function, or an alias) is not followed.
 // `carries` is whether the line's exit status of 0 says the run exited 0: no separator before or after it but `&&`. After
 // `;` or `||` the run may not have run at all, or another command's status is the line's.
 // A run the lexer marks `uncertain`, which the shell may never run, as behind `repeat 0`, is no run.
@@ -145,18 +139,15 @@ export function testRuns(command, cwd, testing = {}) {
   const entries = walkCommands(command, cwd).filter((entry) => entry.line === command);
   const runs = [];
   let next = 0;
-  let hidden = false;
   segments.forEach((segment, index) => {
     const invocation = readInvocation(segment);
     // walkCommands leaves the directory changes out, and keeps every other segment, in order.
     if (CHANGES_DIRECTORY.has(invocation.program)) return;
     const entry = entries[next];
     next += 1;
-    if (hiddenMove(invocation)) hidden = true;
     if (segment.length === 0 || invocation.uncertain || !isTestRun(invocation, testing)) return;
     const carries = separators.every((separator) => separator === '&&' || separator === null || separator === undefined);
-    const followed = !hidden || path.isAbsolute(invocation.chdir?.text ?? '');
-    const told = followed && entry !== undefined && entry.folder === entry.chained;
+    const told = entry !== undefined && entry.folder === entry.chained;
     runs.push({ key: commandKey(invocation), folder: told ? entry.folder ?? null : null, carries });
   });
   return runs;

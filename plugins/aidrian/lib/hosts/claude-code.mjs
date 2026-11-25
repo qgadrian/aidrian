@@ -15,6 +15,7 @@ import modelPrices from './claude-code-prices.mjs';
 import { continuedIn, transcriptRoot } from './claude-code-continuation.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
 import { accessProblem, cloneProblem, confineDomains, confineReads, forgetEnvFiles, limitContinueProblem, localBindingRisk, loopbackReach, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionEnvFile, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
+import { FOREGROUND, findTask, readTask } from './claude-code-tasks.mjs';
 import { trustProblem } from './claude-code-trust.mjs';
 import { responseObjects } from './response.mjs';
 
@@ -348,6 +349,14 @@ export default {
     // hook lets a handoff file wait for the stop after such a wake (hooks.md#delivery-check); a shell that never ends, such
     // as a dev server, wakes it never. `taskTypes` are its `background_tasks` types of a shell.
     wakesOnTaskEnd: { taskTypes: ['shell'] },
+    // A foreground command of a background subagent still running after this many seconds is moved to the background,
+    // whatever timeout the call asks for, and the length and tool timeout of one wait call that stays under it
+    // (hosts/claude-code-tasks.mjs). Seen on 2.1.332 for an unnamed background subagent, and not for a named agent or a
+    // foreground one; the SubagentStart payload does not tell the kinds apart. docs/providers/claude-code.md#long-commands.
+    foregroundLimit: FOREGROUND.limit,
+    waitCall: { seconds: FOREGROUND.wait, toolTimeout: FOREGROUND.toolTimeout },
+    // The output of a background shell of the session a command runs in, and whether it ended, for `aidrian wait`.
+    taskOutput: { taskTypes: ['shell'], find: findTask, read: readTask },
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
     // Whether auto mode would let a session push to the remote, from the user settings (lib/hosts/claude-code-push.mjs).

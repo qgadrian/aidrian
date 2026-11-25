@@ -7,12 +7,15 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import { binCommand } from '../plugins/aidrian/lib/bin-command.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { CHILD_SEND_BACKS } from '../plugins/aidrian/lib/child-send-backs.mjs';
 import { BUDGET_CAUSES } from '../plugins/aidrian/lib/deadline.mjs';
 import { deliverySignal, denialSignal, forgetDenials, noteDenial, recordSignal, REPEATED_DENIALS, roundLimitSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { projectAt, projectId, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { shellWord } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { hookCall } from './hook-call.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPTS = path.join(ROOT, 'plugins/aidrian/scripts');
@@ -41,7 +44,9 @@ function project(t, config = { version: 1 }) {
   const hook = (script, input, extra = {}) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify({ cwd: dir, ...input }), encoding: 'utf8', env: { ...env, ...extra } });
   // The hooks' counts folder in that state root (lesson-signals.mjs hookCountsFolder), never the temporary folder.
   const counts = path.join(env.XDG_STATE_HOME, 'aidrian', 'hook-counts');
-  return { dir, temp, counts, proj, all, plugin, hook };
+  // The same call in this process, as a hook a test needs no process for.
+  const call = (script, input, extra = {}) => hookCall(path.join(SCRIPTS, script), { input: JSON.stringify({ cwd: dir, ...input }), cwd: dir, env: { ...env, ...extra } });
+  return { base, dir, temp, counts, proj, all, plugin, hook, call };
 }
 
 test('each signal names its key, tier, and target; a plugin agent is the plugin\'s to fix', () => {
@@ -250,19 +255,37 @@ test('a delivery-check send-back becomes a lesson for that agent type; the secon
 // Claude Code starts an idle subagent again with its background agent's report, and tells the subagent's own dispatcher it
 // stopped only once no child of its runs: each idle-with-children occurrence of 2026-11-14 to 17 was woken that way. The five
 // send-backs only cost turns, and an agent with no shell handed back before the report arrived.
-test('on a host that wakes an idle subagent with its child agent\'s report, the background check counts only its shell tasks', (t) => {
-  const { dir, plugin, hook } = project(t);
+test('on a host that wakes an idle subagent with its child agent\'s report, the background check counts only its shell tasks', async (t) => {
+  const { base, dir, plugin, hook, call } = project(t);
   const transcript = childTranscript(dir);
   const claude = { CLAUDECODE: '1' };
-  const stop = (active, tasks, extra = claude) => hook('hook-subagent-stop.mjs', {
+  const payload = (active, tasks) => ({
     session_id: 's1', agent_id: 'a1', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: 'Waiting for the review.',
     stop_hook_active: active, background_tasks: tasks,
-  }, extra);
+  });
+  const stop = (active, tasks, extra = claude) => hook('hook-subagent-stop.mjs', payload(active, tasks), extra);
   const reviewer = SESSION_TASKS.slice(1, 2);
   assert.deepEqual([stop(false, reviewer).status, stop(true, reviewer).status], [0, 0], 'its own background agent sends it back on no stop');
   const sent = stop(false, SESSION_TASKS);
   assert.equal(sent.status, 2, 'its own background shell still does');
   assert.match(sent.stderr, /^You started background work that is still running: `bmnjbq03x` \(shell: Push the branch\)\. /u);
+  assert.ok(sent.stderr.includes(`before you end the turn: run \`${binCommand('aidrian')} wait bmnjbq03x\`, in calls of at most 150 seconds each, with a tool timeout of 170 seconds, ` +
+    'and repeat each while it exits 3, until its first line starts with `ended`, or the host says the task ended; on exit 2 no output was found, and repeating the command is worth one more try at most, only when the output may still appear: otherwise wait with another completion check you have, or report the wait as blocked. '), sent.stderr);
+  assert.match(sent.stderr, /Claude Code may move one still running after 180 seconds whatever its timeout\. /u);
+  assert.doesNotMatch(sent.stderr, /two minutes|Next time/u);
+  // The wait command is this copy's: by its path behind another copy on PATH, by its bare name ahead of it.
+  const other = path.join(base, 'other');
+  mkdirSync(other);
+  writeFileSync(path.join(other, 'aidrian'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const bin = path.join(ROOT, 'plugins/aidrian/bin');
+  const told = async (...dirs) => (await call('hook-subagent-stop.mjs', payload(false, SESSION_TASKS), { ...claude, PATH: [...dirs, process.env.PATH].join(path.delimiter) })).stderr;
+  const behind = await told(other, bin);
+  assert.ok(behind.includes(`run \`${shellWord({ text: path.join(bin, 'aidrian') })} wait bmnjbq03x\``), behind);
+  assert.match(await told(bin, other), /run `aidrian wait bmnjbq03x`/u);
+  // The id is a part of that command, so a task whose id is none is not the subagent's, though its call launched it.
+  const odd = 'bmnj`bq 03x';
+  writeFileSync(transcript, readFileSync(transcript, 'utf8').replaceAll('bmnjbq03x', odd));
+  assert.deepEqual(await call('hook-subagent-stop.mjs', payload(false, [{ ...SESSION_TASKS[0], id: odd }]), claude), { status: 0, stdout: '', stderr: '' });
   assert.deepEqual(plugin(), [], 'ending with only a background agent running is no lesson');
   assert.equal(stop(false, reviewer, {}).status, 2, 'a host that declares no such wake keeps the check for an agent');
 });
@@ -391,7 +414,8 @@ test('a subagent that stops with a background task it started still running is s
   assert.match(sent.stderr, /^You started background work that is still running: `bmnjbq03x` \(shell: Push the branch\), `a51c8e798c62f1139` \(subagent: Delta review\)\. /);
   assert.match(sent.stderr, /Wait for it in the foreground before you end the turn/);
   assert.match(sent.stderr, /ends on its own before the command's timeout/);
-  assert.match(sent.stderr, /This is send-back 1 of 5\./);
+  assert.match(sent.stderr, /This is send-back 1 of 5\.\s*$/u);
+  assert.doesNotMatch(sent.stderr, /two minutes|Next time|aidrian wait/u, 'a host that declares no limit and no wait');
   assert.doesNotMatch(sent.stderr, /bother0001|afix-1475/, 'a task another agent started, and a peer teammate, are not its children');
   assert.deepEqual([...all(), ...plugin()], [], 'the send-back is the check working, not a lesson');
 

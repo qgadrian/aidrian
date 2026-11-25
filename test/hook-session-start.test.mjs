@@ -5,6 +5,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { GIT_TIMEOUT_MS } from '../plugins/aidrian/lib/git.mjs';
@@ -12,12 +13,15 @@ import { DEFINITION_CAP, readDefinition, SCAN_BUDGET } from '../plugins/aidrian/
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { agentCheckouts } from '../plugins/aidrian/scripts/hook-session-start.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
+import { shellWord } from '../plugins/aidrian/lib/shell-lex.mjs';
 import { hookCall } from './hook-call.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const BIN = path.join(ROOT, 'plugins/aidrian/bin');
 const HOOK = path.join(ROOT, 'plugins/aidrian/scripts/hook-session-start.mjs');
 const PLUGIN_DIR = path.join(ROOT, 'plugins/aidrian');
+// A command by its full path, quoted where this checkout's path needs it. What the quoting gives has its own test below.
+const BY_PATH = (name) => shellWord({ text: path.join(BIN, name) });
 // An empty state folder, so a developer's own lesson inbox never reaches these tests.
 const XDG = mkdtempSync(path.join(tmpdir(), 'aidrian-start-state-'));
 test.after(() => rmSync(XDG, { recursive: true, force: true }));
@@ -44,6 +48,11 @@ const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to
 const MAIN = (ai) => `${NAMES(ai)}\n${VOICE()}\n${FORMAT}\n`;
 const FOOTER = 'Pull requests: a body here never carries the "Generated with [Claude Code]" line. This project rule takes ' +
   "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
+const LONG = 'Long commands: Claude Code may move a command still running after 180 seconds to the background, whatever timeout the call asks for; ' +
+  `expect it for a long push or CI wait. Then wait with \`${BY_PATH('aidrian')} wait <task id>\` in calls of at most 150 seconds each, ` +
+  'with a tool timeout of 170 seconds, until its first line starts with `ended`, or the host says the task ended. ' +
+  'Exit 3 means the task still runs: wait again. Exit 2 means no output was found, and repeating the command is worth one more try at most, ' +
+  'only when the output may still appear: otherwise wait with another completion check you have, or report the wait as blocked.';
 // An empty Claude Code user settings folder, so a developer's own settings never reach these tests.
 const USER_SETTINGS = mkdtempSync(path.join(tmpdir(), 'aidrian-start-claude-'));
 test.after(() => rmSync(USER_SETTINGS, { recursive: true, force: true }));
@@ -89,7 +98,7 @@ function hookOptions({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, 
 
 test('at session start, one plain line names the always docs and the commands, by full path when bin/ is not on PATH', () => {
   const { status, stdout, stderr } = hookProcess({ input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: EXAMPLE }) });
-  assert.deepEqual([status, stdout, stderr], [0, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${MAIN('Codex')}`, '']);
+  assert.deepEqual([status, stdout, stderr], [0, `${LINE(BY_PATH('aidrian-knowledge'))}\n${MAIN('Codex')}`, '']);
 });
 
 test('the bare command name is used when bin/ is on PATH, and the project is found from the process folder without a cwd', () => {
@@ -102,13 +111,21 @@ test('at subagent start, the same lines but the format line come as SubagentStar
   const { status, stdout } = await hook({ args: ['--subagent'], input: JSON.stringify({ cwd: EXAMPLE, agent_type: 'Explore' }), CLAUDECODE: '1' });
   assert.equal(status, 0);
   assert.deepEqual(JSON.parse(stdout), {
-    hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}` },
+    hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${LINE(BY_PATH('aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}\n${LONG}` },
   });
+});
+
+test('only a subagent on a host that declares a foreground limit hears how to wait for a long command', async () => {
+  const input = JSON.stringify({ cwd: EXAMPLE, agent_type: 'Explore' });
+  assert.doesNotMatch((await hook({ args: ['--subagent'], input })).stdout, /Long commands:/u, 'Codex declares none');
+  assert.doesNotMatch((await hook({ args: ['--subagent'], input, PLUGIN_ROOT: null })).stdout, /Long commands:/u, 'nor does an unknown host');
+  assert.doesNotMatch((await hook({ input, CLAUDECODE: '1' })).stdout, /Long commands:/u, 'the main session is not moved');
+  assert.match((await hook({ args: ['--subagent'], input, CLAUDECODE: '1', PATH: `${BIN}${path.delimiter}${WITHOUT_BIN}` })).stdout, /wait with `aidrian wait <task id>`/u);
 });
 
 test('in Claude Code, a line settles the pull request footer, unless its own attribution settings already drop it', async (t) => {
   const input = JSON.stringify({ cwd: EXAMPLE });
-  assert.equal((await hook({ input, CLAUDECODE: '1' })).stdout, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}\n${FORMAT}\n`);
+  assert.equal((await hook({ input, CLAUDECODE: '1' })).stdout, `${LINE(BY_PATH('aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}\n${FORMAT}\n`);
   assert.doesNotMatch((await hook({ input })).stdout, /Pull requests:/, 'Codex adds no such footer');
   const settings = (dir, file, value) => {
     mkdirSync(dir, { recursive: true });
@@ -412,8 +429,11 @@ test('outside a project, and for any stdin, the hook prints nothing and exits 0'
   t.after(() => rmSync(outside, { recursive: true, force: true }));
   for (const input of ['', 'not json', '[]', JSON.stringify({ cwd: outside }), JSON.stringify({ cwd: 42 })]) {
     for (const args of [[], ['--subagent']]) {
-      const { status, stdout, stderr } = await hook({ input, args, cwd: outside });
-      assert.deepEqual([status, stdout, stderr], [0, '', ''], `${input} ${args}`);
+      // Claude Code too, whose subagents hear the `Long commands:` line inside a project.
+      for (const CLAUDECODE of [undefined, '1']) {
+        const { status, stdout, stderr } = await hook({ input, args, cwd: outside, CLAUDECODE });
+        assert.deepEqual([status, stdout, stderr], [0, '', ''], `${input} ${args} ${CLAUDECODE}`);
+      }
     }
   }
 });
@@ -426,8 +446,10 @@ test('a project with a broken folder still gets the line, plus how many problems
   writeFileSync(path.join(project, '.aidrian/knowledge/kb.json'), JSON.stringify({ dir: 'missing' }));
   const { status, stdout } = await hook({ input: JSON.stringify({ cwd: project }) });
   assert.equal(status, 0);
-  assert.match(stdout, /^Project knowledge: 0 buckets, 0 docs\. For more, run .* for a topic\. The project folder has 2 problems; run `\S+\/aidrian check`\.\n/);
-  assert.equal(stdout.split('\n').slice(1).join('\n'), MAIN('Codex'));
+  const [line, ...rest] = stdout.split('\n');
+  assert.match(line, /^Project knowledge: 0 buckets, 0 docs\. For more, run /);
+  assert.ok(line.endsWith(` for a topic. The project folder has 2 problems; run \`${BY_PATH('aidrian')} check\`.`), line);
+  assert.equal(rest.join('\n'), MAIN('Codex'));
 });
 
 test('the main session also hears about open lessons, escalated with the command to list them once a P1 is open; a subagent does not', async (t) => {
@@ -440,7 +462,7 @@ test('the main session also hears about open lessons, escalated with the command
 
   const input = JSON.stringify({ cwd: EXAMPLE });
   const [knowledge, names, voice, format, lessons, rest] = (await hook({ input, XDG_STATE_HOME: xdg })).stdout.split('\n');
-  assert.equal(knowledge, LINE(path.join(BIN, 'aidrian-knowledge')));
+  assert.equal(knowledge, LINE(BY_PATH('aidrian-knowledge')));
   assert.equal(names, NAMES('Codex'));
   assert.equal(voice, VOICE());
   assert.equal(format, FORMAT);
@@ -451,7 +473,8 @@ test('the main session also hears about open lessons, escalated with the command
   const urgent = spawnSync(path.join(BIN, 'aidrian'), ['lesson', 'add', '--tier', 'P1'], { cwd: EXAMPLE, input: 'lost a commit', encoding: 'utf8', env });
   assert.equal(urgent.status, 0);
   const escalated = (await hook({ input, XDG_STATE_HOME: xdg })).stdout.split('\n')[4];
-  assert.match(escalated, /^Lesson inbox needs triage: 1 P1 open\. Tell the Human once, then go on with the task: .* `\S+\/bin\/aidrian lesson list` shows the order\.$/);
+  assert.match(escalated, /^Lesson inbox needs triage: 1 P1 open\. Tell the Human once, then go on with the task: /);
+  assert.ok(escalated.endsWith(` \`${BY_PATH('aidrian')} lesson list\` shows the order.`), escalated);
 });
 
 // A project with `docs` indexed, each a file of docs/, and optional config.
@@ -534,7 +557,7 @@ test('the main session hears about untriaged persona audits only while some are;
   writeFileSync(path.join(audits, 'triage.json'), '{ cut short');
   const broken = await run();
   assert.equal(broken.status, 0);
-  assert.equal(broken.stdout, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${MAIN('Codex')}`, 'an unreadable triage record costs the line, nothing else');
+  assert.equal(broken.stdout, `${LINE(BY_PATH('aidrian-knowledge'))}\n${MAIN('Codex')}`, 'an unreadable triage record costs the line, nothing else');
 
   // Every item decided: the line goes away.
   const sidecar = {
@@ -554,14 +577,54 @@ test('when another copy of the plugin\'s aidrian comes first on PATH, one line n
   t.after(() => rmSync(other, { recursive: true, force: true }));
   writeFileSync(path.join(other, 'aidrian'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const input = JSON.stringify({ cwd: EXAMPLE });
-  const line = `Commands: the aidrian on PATH, in ${other}, is another copy of this plugin; run this session's as ${path.join(BIN, 'aidrian')}.`;
+  const line = `Commands: the aidrian on PATH, in ${other}, is another copy of this plugin; run this session's as ${BY_PATH('aidrian')}.`;
   const first = await hook({ input, PATH: `${other}${path.delimiter}${BIN}${path.delimiter}${WITHOUT_BIN}` });
   assert.equal(first.status, 0);
   assert.deepEqual(first.stdout.split('\n').slice(3, 5), [line, FORMAT], 'after the voice line, in the main session');
   const subagent = JSON.parse((await hook({ input, args: ['--subagent'], PATH: `${other}${path.delimiter}${WITHOUT_BIN}` })).stdout);
   assert.match(subagent.hookSpecificOutput.additionalContext, new RegExp(`\n${line.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}$`, 'u'), 'and in a subagent');
+  // Every command a subagent is told to run is this copy's then, each by its bare name where this copy's comes first.
+  const told = async (PATH) => JSON.parse((await hook({ input, args: ['--subagent'], CLAUDECODE: '1', PATH })).stdout).hookSpecificOutput.additionalContext;
+  const behind = await told(`${other}${path.delimiter}${BIN}${path.delimiter}${WITHOUT_BIN}`);
+  assert.ok(behind.startsWith(LINE('aidrian-knowledge')) && behind.includes(line) && behind.endsWith(`\n${LONG}`), behind);
+  writeFileSync(path.join(other, 'aidrian-knowledge'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  assert.ok((await told(`${other}${path.delimiter}${BIN}${path.delimiter}${WITHOUT_BIN}`)).startsWith(LINE(BY_PATH('aidrian-knowledge'))));
+  const ahead = await told(`${BIN}${path.delimiter}${other}${path.delimiter}${WITHOUT_BIN}`);
+  assert.ok(ahead.startsWith(LINE('aidrian-knowledge')) && ahead.includes('wait with `aidrian wait <task id>`'), ahead);
   assert.doesNotMatch((await hook({ input, PATH: `${BIN}${path.delimiter}${other}${path.delimiter}${WITHOUT_BIN}` })).stdout, /^Commands:/mu, 'this copy first: nothing');
   assert.doesNotMatch((await hook({ input })).stdout, /^Commands:/mu, 'no aidrian on PATH: nothing');
+});
+
+test('each command named by its path is one literal shell word, whatever characters the plugin\'s folder holds', async (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-quote-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const plugin = path.join(dir, 'a b$(id)$HOME`id`"it\'s;&|*!~');
+  for (const part of ['lib', 'scripts', '.claude-plugin', 'plugin.json']) cpSync(path.join(PLUGIN_DIR, part), path.join(plugin, part), { recursive: true });
+  const load = (rel) => import(pathToFileURL(path.join(plugin, rel)).href);
+  const named = (name) => `'${dir}/a b$(id)$HOME\`id\`"it'\\''s;&|*!~/bin/${name}'`;
+  mkdirSync(path.join(dir, 'project/.aidrian'), { recursive: true });
+  writeFileSync(path.join(dir, 'project/.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1 }));
+  mkdirSync(path.join(dir, 'other'));
+  writeFileSync(path.join(dir, 'other/aidrian'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const { callHook } = await load('lib/hook-io.mjs');
+  const { handle } = await load('scripts/hook-session-start.mjs');
+  const { env } = hookOptions({ CLAUDECODE: '1', PATH: `${path.join(dir, 'other')}${path.delimiter}${WITHOUT_BIN}` });
+  const saved = process.argv;
+  process.argv = [...saved.slice(0, 2), '--subagent'];
+  t.after(() => {
+    process.argv = saved;
+  });
+  const { stdout } = await callHook(handle, { cwd: path.join(dir, 'project') }, { cwd: dir, env });
+  const context = JSON.parse(stdout).hookSpecificOutput.additionalContext;
+  for (const words of [
+    `run \`${named('aidrian-knowledge')} route <tag>\` for your tags or \`${named('aidrian-knowledge')} search <words>\``,
+    `run \`${named('aidrian')} check\`.`,
+    `run this session's as ${named('aidrian')}.`,
+    `wait with \`${named('aidrian')} wait <task id>\``,
+  ]) assert.ok(context.includes(words), `${words}\n${context}`);
+  const { waitWords } = await load('lib/wait-advice.mjs');
+  const { default: host } = await load('lib/hosts/claude-code.mjs');
+  assert.ok(waitWords(host, [{ id: 'b1', type: 'shell' }]).startsWith(`run \`${named('aidrian')} wait b1\``));
 });
 
 test('the gate snapshot is saved before the knowledge loads, so a knowledge folder that throws still leaves the gates held', async (t) => {

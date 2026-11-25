@@ -63,6 +63,6 @@ Use `rule` instead of `mechanism` when the fix is text an agent reads. A lesson 
   An instruction written for an earlier model can hurt its successor, so removing one is as valid as adding one.
 - Change the docs in the same commit as the behavior they describe.
 - Wait in the foreground for every command and agent you start: once you end your turn, nothing wakes you when one finishes.
-  Run a long push or CI wait as a foreground command with a timeout, repeated until it ends, and a reviewer agent in the foreground.
+  Start a long push or CI wait, and when the host moves it to the background, wait for it before you end the turn; run a reviewer agent in the foreground.
 
 When another agent dispatched you, return the machine handoff, with every command you ran.

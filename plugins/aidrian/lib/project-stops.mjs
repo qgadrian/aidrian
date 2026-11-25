@@ -32,7 +32,7 @@
 import path from 'node:path';
 
 import { forgeFor } from './forges/index.mjs';
-import { sessionIdentity } from './hosts/index.mjs';
+import { sessionIdentity, WAIT_CALL_SECONDS } from './hosts/index.mjs';
 import { changesRequested, defaultBranch, ghError, runAutoMerge } from './pr-auto-merge.mjs';
 import { computeVerdict, currentRows } from './pr-checks.mjs';
 import { CAPS, cleanText, mergeProblem } from './project-result.mjs';
@@ -56,9 +56,9 @@ export const POLICY_REASONS = Object.freeze(['team', 'local', 'checks', 'paths',
 const KNOWN_REASONS = new Set([...POLICY_REASONS, 'review', 'trust']);
 // How long a wait on a read or an action that failed lasts, in seconds.
 export const WAIT_PAUSE = 60;
-// The longest one wait call may last, in seconds: a host moves a command still running at 180 s to the background, so a
-// longer wait is taken in calls of at most this many seconds each.
-export const WAIT_STEP = 150;
+// The longest one wait call may last, in seconds, under the foreground limit past which a host moves a subagent's command
+// to the background: a longer wait is taken in calls of at most this many seconds each.
+export const WAIT_STEP = WAIT_CALL_SECONDS;
 // How long each wait on a failed read or action lasts, in seconds, in turn: the `retry` cap, per attempt.
 export const RETRY_PAUSES = Object.freeze([60, 300, 900]);
 // The head a retry row records when the forge named none: retries count per attempt, never per head.

@@ -135,6 +135,48 @@ shell, since one that never ends, such as a dev server, never wakes it.
 Checked by reading the transcripts of four such subagents and Claude Code 2.1.328's launch code. Not verified: a
 session with the fork-subagent mode turned off.
 
+## Long commands
+
+Claude Code moves a background subagent's foreground command to the background once it ran 180 seconds, whatever timeout
+the call asks for. The adapter declares it as `capabilities.foregroundLimit`, with the wait call that stays under it: 150
+seconds, with a tool timeout of 170 seconds ([Waiting for a long command](../hooks.md#waiting-for-a-long-command)).
+All of it lies in `lib/hosts/claude-code-tasks.mjs`. Checked on 2.1.332 on 2026-11-25, with `BASH_DEFAULT_TIMEOUT_MS=300000`
+and `BASH_MAX_TIMEOUT_MS=900000` in the settings:
+
+- **Who is moved.** An unnamed background subagent that asked for a timeout of 600000 ms was moved "after running for
+  180s". A named agent (a teammate) ran 200 and 240 seconds to the end. In local transcripts of 23 to 25 November, of the
+  foreground Bash calls that were moved or ran 185 seconds or more, 451 of an unnamed background subagent were moved
+  (`subagentCapApplied`) and 76 ran past; 0 of a foreground subagent were moved and 2 ran past; 0 of a teammate were
+  moved and 385 ran past. The host's code holds the 180000 ms as a constant no setting reads, and leaves out the main
+  session, a subagent that is not async, and one whose prompt cache is off or lasts an hour.
+- **Why the start line says "may".** The SubagentStart payload adds `agent_id` and `agent_type` alone to the fields every
+  hook gets, read in the host's code and in no live payload: nothing in it says whether the subagent runs in the
+  background. A teammate's id holds its name, where an unnamed subagent's is `a` and hex digits, in all 1,513 local
+  subagents of those days, but that shape is undocumented, and does not tell a foreground subagent from a background
+  one, so nothing reads it.
+- **What a later command can learn.** The shell's output is
+  `<temp>/claude-<uid>/<project>/<session>/tasks/<task id>.output`, where `<temp>` is `CLAUDE_CODE_TMPDIR` or `/tmp`, and
+  `<project>` the folder the session started in with each character but a letter or digit as `-`. While the shell runs the
+  file has no end line. Once it ended, the host appends `[exited with code N]`, for 0 and for 7 alike, or `[killed]` for a
+  task that was stopped. It is not always the last line: a killed process that prints as it shuts down writes after it.
+  Of 2,385 local shell outputs, 1,990 end in an exit code and 359 in `[killed]`, 17 hold `[killed]` with more text after
+  it, and 19 hold no end line, those of running commands among them. The host's code also writes
+  `[exited with code unknown]`. No other file holds the exit code, and the subagent had no tool that reads a task.
+- **Which session.** `aidrian wait` reads the folder of `CLAUDE_CODE_SESSION_ID` alone, which a subagent's shell inherits
+  from the session that started it. A background agent's entry there is a link to its transcript, which is never read.
+- **A report after the wake.** A background subagent handed its report back while its shell ran. The shell's end notice
+  woke it, exit code included, and its second report was refused ("one report per result"): its dispatcher learned only
+  that one was refused. So the [background check](../hooks.md#background-check) relaxes nothing for a shell.
+
+Not verified: a live session that gets the start line; whether a report written after the wake reaches a dispatcher that
+waits in the foreground, since the probe of it ran in the background; and the permission prompt, read from the plugin files
+and not seen live, since the probes ran in the auto mode. The plugin ships no permission entry for its commands, so in the
+default permission mode Claude Code asks before `aidrian wait` runs, as before any other `aidrian` command, unless the
+settings allow it, as `Bash(aidrian wait:*)` does. That rule names the bare command alone: where another copy of the plugin comes
+first on PATH, the start line and the message name the command by its full path, which changes with each version and needs
+a rule of its own. A subagent whose `aidrian wait` cannot run there can be sent back at each stop while its shell runs, up
+to the [background check](../hooks.md#background-check)'s limit.
+
 ## Shell commands of the Monitor tool
 
 The Monitor tool runs its `command` in a shell, in the background, under Bash's permission rules, and a subagent may

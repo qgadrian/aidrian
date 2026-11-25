@@ -308,26 +308,42 @@ export const continueRoutes = (host) => host.capabilities.handoffContinue?.route
 export const PUSH_ANSWERS = Object.freeze(['allowed', 'denied', 'unknown']);
 const DENIAL_FIELDS = ['setting', 'file', 'why', 'fix'];
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
-const UNKNOWN_PUSH = Object.freeze({ answer: 'unknown' });
+const UNKNOWN_PERMISSION = Object.freeze({ answer: 'unknown' });
 
 // The host's answer, never thrown: { answer: 'allowed' }, { answer: 'unknown' }, or { answer: 'denied', setting, file,
 // why, fix }. Unknown for a host without the capability, one that throws or answers outside PUSH_ANSWERS, and a denial
 // missing one of its four strings, with a control character in one, or with a `file` that is not absolute: a denial that
 // cannot name its setting and its file is not clear.
-export function pushPermission(host, ask) {
+export const pushPermission = (host, ask) => askPermission(host, 'pushPermission', ask, { answers: PUSH_ANSWERS, named: 'denied', fields: DENIAL_FIELDS });
+
+// What a host says of a merge no human approved, for a note before a run no Human attends
+// (docs/providers/adding-a-host.md, capabilities.mergePermission). `ask` is { session, cwd, env }. It allows nothing and
+// blocks nothing: 'uncovered' says only that the host blocks such a merge by default, and that no setting it can read
+// names one: prose that names none may still cover it.
+export const MERGE_ANSWERS = Object.freeze(['uncovered', 'unknown']);
+const UNCOVERED_FIELDS = ['setting', 'file', 'why'];
+
+// The host's answer, never thrown: { answer: 'unknown' }, or { answer: 'uncovered', setting, file, why }, as guarded as a
+// push denial is.
+export const mergePermission = (host, ask) => askPermission(host, 'mergePermission', ask, { answers: MERGE_ANSWERS, named: 'uncovered', fields: UNCOVERED_FIELDS });
+
+// The answer of the host's permission capability `member` to `ask`: one of `answers` alone, or, for the answer `named`,
+// with each of `fields`, strings on one line of which `file` is an absolute path. Anything else is unknown.
+function askPermission(host, member, ask, { answers, named, fields }) {
   try {
-    const read = host?.capabilities?.pushPermission?.(ask);
+    const read = host?.capabilities?.[member]?.(ask);
     if (typeof read?.then === 'function') {
       Promise.resolve(read).catch(() => {});
-      return UNKNOWN_PUSH;
+      return UNKNOWN_PERMISSION;
     }
-    if (!PUSH_ANSWERS.includes(read?.answer)) return UNKNOWN_PUSH;
-    if (read.answer !== 'denied') return { answer: read.answer };
-    const denial = Object.fromEntries(DENIAL_FIELDS.map((field) => [field, read[field]]));
-    const clear = Object.values(denial).every((value) => typeof value === 'string' && value.trim() !== '' && !CONTROL.test(value));
-    return clear && path.isAbsolute(denial.file) ? { answer: 'denied', ...denial } : UNKNOWN_PUSH;
+    const answer = read?.answer;
+    if (!answers.includes(answer)) return UNKNOWN_PERMISSION;
+    if (answer !== named) return { answer };
+    const said = Object.fromEntries(fields.map((field) => [field, read[field]]));
+    const clear = Object.values(said).every((value) => typeof value === 'string' && value.trim() !== '' && !CONTROL.test(value));
+    return clear && path.isAbsolute(said.file) ? { answer, ...said } : UNKNOWN_PERMISSION;
   } catch {
-    return UNKNOWN_PUSH;
+    return UNKNOWN_PERMISSION;
   }
 }
 

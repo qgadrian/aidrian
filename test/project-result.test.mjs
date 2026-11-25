@@ -16,12 +16,12 @@ import test from 'node:test';
 
 import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { cleanText, mergeRelease, RESULT_CAP, validateResult, WAIT_MARGIN, waitRun } from '../plugins/aidrian/lib/project-run-gate.mjs';
-import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
+import { DROP_FILE, ingestDrops } from '../plugins/aidrian/lib/project-result.mjs';
 import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
 import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
 import { detectHost } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { LINGER_GRACE, releaseAttempts } from '../plugins/aidrian/lib/project-linger.mjs';
-import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, HOST_DENIED_MERGE, readRun, runFolder, summaryText } from '../plugins/aidrian/lib/project-run.mjs';
 import { recheckHalt } from '../plugins/aidrian/lib/project-recheck.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -55,6 +55,14 @@ function started(t, options, make = runFixture) {
   };
   return { ...fx, file, result, recorded };
 }
+
+// Writes a drop of the running ENG-1 of `fx` as its session could by hand, its stopCause the JSON text `stopCause`.
+function dropWith(fx, stopCause) {
+  const { drop, attempt } = fx.rows().findLast((row) => row.event === 'start' && row.key === 'ENG-1');
+  writeFileSync(path.join(drop, DROP_FILE), `{"run":"launch","key":"ENG-1","attempt":${attempt},"status":"pr_open","pr":12,"stop":"x","stopCause":${stopCause}}`);
+}
+// The step of `wait` that takes drops in, alone: its lines.
+const takeIn = (fx) => ingestDrops({ state: fx.state, run: 'launch', found: fx.run(), forge: fx.forge, now: Date.now() });
 
 const merged = (more = {}) => ({ state: 'MERGED', mergedAt: new Date(Date.now() + 60_000).toISOString(), headRefName: 'feat/eng-1-export', baseRefName: 'main', url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false, ...more });
 
@@ -102,9 +110,10 @@ test('a result that parks the issue records the head the forge shows its branch 
   assert.deepEqual(unpushed.recorded({ status: 'blocked', stop: 'no access' }).out, ['result ENG-1 blocked -> parked blocked']);
   assert.equal(unpushed.rows().find((row) => row.event === 'result').head, null, 'a null head: no later run falls back to a pull request');
   // An open pull request's result records the head its check read: a second read that differs, or fails, changes nothing.
-  for (const later of [() => 'c'.repeat(40), () => {
+  // One of the two says the host denied the merge, which its row, its result file, and the summary keep, and no other's do.
+  for (const [later, cause] of [[() => 'c'.repeat(40), { stopCause: HOST_DENIED_MERGE }], [() => {
     throw new Error('gh: HTTP 502');
-  }]) {
+  }, {}]]) {
     const open = started(t);
     const own = open.forge.change;
     open.forge.change = (ref, fields, options) => (ref === '12' ? { state: 'OPEN', headRefName: 'feat/eng-1-export', headRefOid: head, url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false } : own(ref, fields, options));
@@ -114,8 +123,14 @@ test('a result that parks the issue records the head the forge shows its branch 
       reads += 1;
       return reads === 1 ? head : later();
     };
-    assert.deepEqual(open.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['result ENG-1 pr_open -> parked pr-open']);
-    assert.equal(open.rows().find((row) => row.event === 'result').head, head);
+    assert.deepEqual(open.recorded({ status: 'pr_open', pr: 12, stop: 'review', ...cause }).out, ['result ENG-1 pr_open -> parked pr-open']);
+    const row = open.rows().find((each) => each.event === 'result');
+    assert.equal(row.head, head);
+    assert.deepEqual([row.status, row.verified, row.stopCause], ['pr_open', false, cause.stopCause]);
+    assert.equal(JSON.parse(readFileSync(path.join(runFolder(open.state, 'launch'), 'results', 'ENG-1.json'), 'utf8')).stopCause, cause.stopCause);
+    assert.equal(open.rows().some((each) => each.event === 'halt' || each.halt), false, 'the run goes on');
+    const denied = /\n## Merges the host denied\n\n[^\n]+#auto-merge-and-ci\)\.\n\n- ENG-1: pull request #12\n/u.test(summaryText('launch', open.run()));
+    assert.equal(denied, cause.stopCause !== undefined);
     assert.equal(reads, 1, 'the branch is read once');
   }
   // A closed pull request still parks the issue as pr-open, but keeps no head, so no later run goes on from its branch.
@@ -123,8 +138,11 @@ test('a result that parks the issue records the head the forge shows its branch 
   const theirs = closed.forge.change;
   closed.forge.change = (ref, fields, options) => (ref === '12' ? { state: 'CLOSED', headRefName: 'feat/eng-1-export', headRefOid: head, url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false } : theirs(ref, fields, options));
   closed.forge.branchHead = () => head;
-  assert.deepEqual(closed.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['result ENG-1 pr_open -> parked pr-open']);
-  assert.equal(closed.rows().find((row) => row.event === 'result').head, null);
+  // It waits for no merge either, so a merge the host denied on it keeps its cause in the row alone, out of the summary.
+  assert.deepEqual(closed.recorded({ status: 'pr_open', pr: 12, stop: 'review', stopCause: HOST_DENIED_MERGE }).out, ['result ENG-1 pr_open -> parked pr-open']);
+  const closedRow = closed.rows().find((row) => row.event === 'result');
+  assert.deepEqual([closedRow.head, closedRow.stopCause], [null, HOST_DENIED_MERGE]);
+  assert.doesNotMatch(summaryText('launch', closed.run()), /the host denied/u);
   const failed = started(t);
   failed.forge.branchHead = () => head;
   assert.deepEqual(failed.recorded({ status: 'failed', pr: null, stop: 'flaky' }).out, ['result ENG-1 failed -> open']);
@@ -169,13 +187,14 @@ test('merged is kept only when the forge shows the pull request merged from the 
   }
   // A pr_open result whose pull request merged before the driver took it in is checked as merged is: the issue is done,
   // and the branch, which a merge may have deleted, is never read. One merged elsewhere, or before the attempt, is refused.
+  // That the host denied the session's merge lifts none of these checks, and a merged result keeps no word of it.
   for (const [view, line, why] of [cases[0], cases[3], cases[6]]) {
     const fx = started(t);
     fx.forge.change = () => view;
     fx.forge.branchHead = () => {
       throw new Error('gh: HTTP 404: Branch not found');
     };
-    assert.deepEqual(fx.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, [line], JSON.stringify(view));
+    assert.deepEqual(fx.recorded({ status: 'pr_open', pr: 12, stop: 'review', stopCause: HOST_DENIED_MERGE }).out, [line], JSON.stringify(view));
     if (why) {
       assert.equal(fx.rows().find((row) => row.event === 'ended').why, why, JSON.stringify(view));
       continue;
@@ -184,6 +203,7 @@ test('merged is kept only when the forge shows the pull request merged from the 
     assert.deepEqual([result.status, result.verified, Object.hasOwn(result, 'head')], ['merged', true, false]);
     const kept = JSON.parse(readFileSync(path.join(runFolder(fx.state, 'launch'), 'results', 'ENG-1.json'), 'utf8'));
     assert.deepEqual([kept.status, kept.reported], ['merged', 'pr_open']);
+    assert.deepEqual([Object.hasOwn(result, 'stopCause'), Object.hasOwn(kept, 'stopCause')], [false, false]);
   }
   // One that merges between the first read, which shows it open, and the park is taken as merged too.
   const racing = started(t);
@@ -215,6 +235,12 @@ test('merged is kept only when the forge shows the pull request merged from the 
   flaky.forge.branchHead = () => head;
   assert.deepEqual(flaky.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['running ENG-1']);
   assert.equal(flaky.rows().filter((row) => row.event === 'result').length, 0, 'read again on a later wait');
+  // A drop the session wrote by itself, with a token as its stopCause, ends the attempt, and no part of it is kept.
+  const token = `ghp_${'a1B2'.repeat(9)}`;
+  dropWith(flaky, JSON.stringify(token));
+  assert.deepEqual(takeIn(flaky), ['ended ENG-1 bad_result -> open']);
+  assert.equal(flaky.rows().find((row) => row.event === 'ended').why, STOP_CAUSE_REFUSED);
+  assert.equal(JSON.stringify(flaky.rows()).includes(token), false);
   // A second read the forge answers with no such pull request ends the attempt at once, as the first read's would.
   const gone = started(t);
   const fixture = gone.forge.change;
@@ -242,6 +268,32 @@ test('merged is kept only when the forge shows the pull request merged from the 
   const none = started(t);
   assert.deepEqual(none.recorded({ status: 'merged', pr: null }).out, ['ended ENG-1 bad_result -> open']);
   assert.equal(none.rows().find((row) => row.event === 'ended').why, 'the result names no pull request');
+});
+
+const STOP_CAUSE_REFUSED = '"stopCause" is not "host_denied_merge"; leave it out for any other stop';
+
+test('a stopCause on another status, or of another value, is refused', () => {
+  const named = { decisions: [{ question: 'Which?', options: ['a', 'b'], recommended: 0, class: 'other' }], stop: 'x', pr: 12 };
+  for (const status of ['merged', 'parked', 'blocked', 'failed', 'environment']) {
+    const { result, problems } = validateResult({ ...named, status, stopCause: 'host_denied_merge' });
+    assert.deepEqual([result, problems], [null, ['"stopCause" is for a pr_open result alone']], status);
+  }
+  for (const stopCause of ['HOST_DENIED_MERGE', 'guard', '', null, true, 1, ['host_denied_merge'], {}]) {
+    const { result, problems } = validateResult({ status: 'pr_open', pr: 12, stop: 'x', stopCause });
+    assert.equal(result, null, JSON.stringify(stopCause));
+    assert.equal(problems.length, 1);
+    assert.equal(problems[0], STOP_CAUSE_REFUSED);
+  }
+  assert.deepEqual(validateResult({ status: 'pr_open', pr: 12, stop: 'x' }).result, { status: 'pr_open', pr: 12, decisions: [], stop: 'x' });
+});
+
+test('the issue session\'s instructions name the cause for the host\'s own denial alone, and ask for no second attempt', () => {
+  const skill = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/autopilot/references');
+  const phases = readFileSync(path.join(skill, 'phases.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.ok(phases.includes(`"stopCause": "${HOST_DENIED_MERGE}"`));
+  assert.match(phases, /host's own permission check denies the merge command, make no second attempt/u);
+  assert.match(phases, /Set `stopCause` for that denial alone: not for a guard hook's refusal, the forge's answer, or a stop of `aidrian pr auto-merge`/u);
+  assert.ok(readFileSync(path.join(skill, 'entry-task.md'), 'utf8').includes(`| \`stopCause\` | \`"${HOST_DENIED_MERGE}"\` on a \`pr_open\``));
 });
 
 test('the result\'s text is cleaned of controls, bidirectional and zero-width characters, links, images, HTML, and mentions, and capped', (t) => {
@@ -277,6 +329,19 @@ test('a result of a wrong shape, too large, not JSON, or behind a symlink is ref
   assert.equal(bad.result, null);
   assert.equal(bad.problems.length, 7);
   assert.match(fx.result({ status: 'done' }).err.join('\n'), /"status" "done" is not one of merged, pr_open, parked, blocked, failed/u);
+  // A value a problem names is one masked scalar: a token is masked before the cut, so none of it comes back, and a
+  // value nested too deep for JSON.stringify is a fixed word, never thrown on.
+  const token = `ghp_${'a1B2'.repeat(9)}`;
+  const [masked] = validateResult({ status: token }).problems;
+  assert.match(masked, /^"status" "\[redacted\]" is not one of /u);
+  assert.equal(masked.includes('ghp_') || masked.includes('a1B2'), false, masked);
+  const deep = JSON.parse(`${'['.repeat(20_000)}${']'.repeat(20_000)}`);
+  const decision = { question: 'Which?', options: ['a', 'b'], recommended: 0 };
+  assert.match(validateResult({ status: deep }).problems[0], /^"status" a list is not one of /u);
+  assert.deepEqual(validateResult({ status: 'failed', pr: deep }).problems, ['"pr" a list is not a pull request number or null']);
+  assert.match(validateResult({ status: 'parked', decisions: [{ ...decision, class: deep }] }).problems[0], /^decisions\[0\]\.class a list is not one of /u);
+  assert.deepEqual(['nothing', 'an object', '7', 'true', 'null'].map((word, i) => validateResult({ status: [undefined, {}, 7, true, null][i] }).problems[0].split(' is not')[0]),
+    ['"status" nothing', '"status" an object', '"status" 7', '"status" true', '"status" null']);
   assert.match(fx.result(`{"status":"failed","pad":"${'x'.repeat(RESULT_CAP)}"}`).err[0], /over the 65536 it may hold/u);
   assert.match(fx.result('{ nope').err[0], /is not JSON/u);
   const real = fx.file({ status: 'failed' });
@@ -284,6 +349,11 @@ test('a result of a wrong shape, too large, not JSON, or behind a symlink is ref
   symlinkSync(real, link);
   assert.match(fx.cmd(['result', 'launch', 'ENG-1', '--file', link], { session: CHILD }).err[0], /is a symlink/u);
   assert.equal(fx.run().states.get('ENG-1').state, 'running', 'nothing recorded');
+  // A stopCause nested too deep for JSON.stringify, in a drop the session wrote by itself: refused, and the wait goes on.
+  dropWith(fx, '['.repeat(20_000) + ']'.repeat(20_000));
+  const waited = fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  assert.deepEqual([waited.exitCode, waited.out[0]], [0, 'ended ENG-1 bad_result -> open'], waited.err.join('\n'));
+  assert.equal(fx.rows().find((row) => row.event === 'ended').why, STOP_CAUSE_REFUSED);
 });
 
 test('an issue\'s session that stops with no result is sent back once; after its result, or for another session, nothing holds', (t) => {

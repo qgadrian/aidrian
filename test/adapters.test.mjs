@@ -17,9 +17,10 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
 import { CONTINUE_ROUTES } from '../plugins/aidrian/lib/config-schema.mjs';
 import { canBlock } from '../plugins/aidrian/lib/hook-result.mjs';
+import { mergePermission as claudeMergePermission } from '../plugins/aidrian/lib/hosts/claude-code-merge.mjs';
 import { pushPermission as claudePushPermission } from '../plugins/aidrian/lib/hosts/claude-code-push.mjs';
 import { heldSessions, listBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
-import { agentAliases, backgroundHeld, backgroundList, continueRoutes, deniedNames, detectHost, fileEditOf, fileReadOf, HOSTS, humanPrompts, normalizeHookInput, opaqueShellCommand, PUSH_ANSWERS, pushPermission, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { agentAliases, backgroundHeld, backgroundList, continueRoutes, deniedNames, detectHost, fileEditOf, fileReadOf, HOSTS, humanPrompts, MERGE_ANSWERS, mergePermission, normalizeHookInput, opaqueShellCommand, PUSH_ANSWERS, pushPermission, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import { expandTracker, knownServers, readToolsOf, TRACKERS, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
@@ -669,7 +670,7 @@ test('the page on adding a host says what the adapter does not cover, and names 
   for (const delivery of DELIVERIES) assert.ok(text.includes(`\`${delivery}\``), delivery);
   for (const name of ['plugins/aidrian/hooks/hooks.json', 'scripts/version.mjs', 'test/hosts.test.mjs', 'lib/agent-models.mjs', 'What the fixtures do not prove', 'plugins/aidrian/<id>/routes.mjs', 'plugins/aidrian/<id>/routes.generated.json', 'plugins/aidrian/lib/hosts/<id>-names.mjs', 'plugins/aidrian/<id>/bridge.mjs']) assert.ok(text.includes(name), name);
   assert.doesNotMatch(text, /hookEvents/u);
-  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes', 'capabilities.pushPermission', 'payloadMark', 'nestedGlobs', 'packages', 'credentialStores']) assert.ok(text.includes(`\`${field}`), field);
+  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes', 'capabilities.pushPermission', 'capabilities.mergePermission', 'payloadMark', 'nestedGlobs', 'packages', 'credentialStores']) assert.ok(text.includes(`\`${field}`), field);
 });
 
 test('a value the file sets for what an adapter fills stays as written', () => {
@@ -1279,6 +1280,129 @@ test('Claude Code\'s adapter answers denied from a transcript in auto mode and s
   writeFileSync(path.join(config, 'settings.json'), JSON.stringify(trusting(['$defaults'])));
   assert.deepEqual(pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-1', cwd, env: { CLAUDE_CONFIG_DIR: config } }), { answer: 'allowed' });
   assert.deepEqual(pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-2', cwd, env: { CLAUDE_CONFIG_DIR: config } }), { answer: 'unknown' }, 'a session with no transcript');
+});
+
+// capabilities.mergePermission: whether a host blocks by default a merge no human approved, and no setting it can read names one.
+// Shared code reads it only through mergePermission in lib/hosts/index.mjs, for a preflight note. Claude Code answers
+// `uncovered` for one shape alone, checked on fixtures only, from its documentation.
+const UNCOVERED = { answer: 'uncovered', setting: 'a.setting', file: '/x/settings.json', why: 'it blocks a merge' };
+
+test('the merge permission is unknown for a host without it, one that throws, a junk answer, and an uncovered it cannot name', () => {
+  assert.deepEqual(MERGE_ANSWERS, ['uncovered', 'unknown']);
+  const others = HOSTS.filter((host) => host.id !== 'claude-code');
+  for (const host of [...others, fakeHost, UNKNOWN_HOST]) assert.equal(host.capabilities.mergePermission, undefined, `${host.id} leaves the capability out`);
+  for (const host of [...others, fakeHost, UNKNOWN_HOST, null, undefined, {}, { capabilities: null }]) {
+    assert.deepEqual(mergePermission(host, { session: 's', cwd: '/x', env: {} }), { answer: 'unknown' }, String(host?.id));
+  }
+  const answering = (read) => ({ ...fakeHost, capabilities: { ...fakeHost.capabilities, mergePermission: () => read } });
+  assert.deepEqual(mergePermission({ capabilities: { mergePermission: () => { throw new Error('boom'); } } }, {}), { answer: 'unknown' });
+  const rejected = Promise.reject(new Error('later'));
+  for (const read of [undefined, null, 'uncovered', 7, [], {}, { answer: 'allowed' }, { answer: 'covered' }, { ...UNCOVERED, answer: 'denied' }, rejected, Promise.resolve(UNCOVERED)]) {
+    assert.deepEqual(mergePermission(answering(read), {}), { answer: 'unknown' }, String(read?.answer ?? read));
+  }
+  for (const field of ['setting', 'file', 'why']) {
+    for (const value of [undefined, '', '  ', 7, null, 'two\nlines', 'a\u0007bell', 'a line']) {
+      assert.deepEqual(mergePermission(answering({ ...UNCOVERED, [field]: value }), {}), { answer: 'unknown' }, `${field}: ${JSON.stringify(value)}`);
+    }
+  }
+  assert.deepEqual(mergePermission(answering({ ...UNCOVERED, file: 'settings.json' }), {}), { answer: 'unknown' }, 'a file that is not absolute');
+  assert.deepEqual(mergePermission(answering({ ...UNCOVERED, extra: 'kept out' }), {}), UNCOVERED);
+  assert.deepEqual(mergePermission(answering({ answer: 'unknown', setting: 'x' }), {}), { answer: 'unknown' });
+  let asked = null;
+  const ask = { session: 's', cwd: '/x', env: {} };
+  mergePermission({ capabilities: { mergePermission: (given) => { asked = given; return UNCOVERED; } } }, ask);
+  assert.equal(asked, ask, 'the capability gets the ask as given');
+});
+
+const askMerge = (config, extra = {}) => claudeMergePermission({ session: 'session-1', cwd: config, env: { CLAUDE_CONFIG_DIR: config }, readMode: inAuto, ...extra });
+const rules = (list, ...entries) => ({ permissions: { [list]: entries } });
+
+test('Claude Code in auto mode answers uncovered when no readable setting names a merge, and unknown beside any that may', (t) => {
+  const cases = [
+    ['no permissions and no auto mode list', {}, 'uncovered'],
+    ['narrow rules that reach no merge', { permissions: { allow: ['Bash(git push:*)', 'Bash(git merge-base:*)', 'Bash(npm test)', 'Read(**)'], deny: ['Bash(rm:*)'], ask: ['Bash(gh pr create *)'] } }, 'uncovered'],
+    ['an allow list that speaks of no merge', { autoMode: { allow: ['$defaults', 'Deploying to staging is allowed'] } }, 'uncovered'],
+    ['custom block lists that keep the built-in rules', { autoMode: { soft_deny: ['$defaults', 'Never merge on Fridays'], hard_deny: ['$defaults'], classifyAllShell: true } }, 'uncovered'],
+    ['an allow rule for the merge command', rules('allow', 'Bash(gh pr merge:*)'), 'unknown'],
+    ['an allow rule for the command\'s program', rules('allow', 'Bash(gh:*)'), 'unknown'],
+    ['an allow rule with a glob inside', rules('allow', 'Bash(gh pr *)'), 'unknown'],
+    ['an allow rule that names the repository first', rules('allow', 'Bash(gh -R acme/widget pr merge 12)'), 'unknown'],
+    ['a broad shell rule', rules('allow', 'Bash(*)'), 'unknown'],
+    ['a tool-name glob', rules('allow', 'B*'), 'unknown'],
+    ['a tool that merges a pull request', rules('allow', 'mcp__github__merge_pull_request'), 'unknown'],
+    ['a deny rule', rules('deny', 'Bash(gh pr merge *)'), 'unknown'],
+    ['an ask rule', rules('ask', 'Bash(GH PR  MERGE *)'), 'unknown'],
+    ['an allow entry that speaks of a merge', { autoMode: { allow: ['$defaults', 'Merging reviewed work is allowed'] } }, 'unknown'],
+    ['an allow entry that speaks of pull requests', { autoMode: { allow: ['Pull requests of acme/widget may land'] } }, 'unknown'],
+    ['an allow entry that speaks of a PR', { autoMode: { allow: ['Landing a PR is routine'] } }, 'unknown'],
+    ['an environment entry that speaks of a merge', { autoMode: { environment: ['$defaults', 'Our bot merges everything'] } }, 'unknown'],
+    ['a block list without the built-in rules', { autoMode: { soft_deny: ['Never drop a table'] } }, 'unknown'],
+    ['a hard block list without the built-in rules', { autoMode: { hard_deny: [] } }, 'unknown'],
+    ['an auto mode that is no object', { autoMode: [] }, 'unknown'],
+    ['an auto mode of null', { autoMode: null }, 'unknown'],
+    ['an allow that is no list', { autoMode: { allow: 'none' } }, 'unknown'],
+    ['an allow that holds a non-string', { autoMode: { allow: [7] } }, 'unknown'],
+    ['a block list that is no list', { autoMode: { soft_deny: '$defaults' } }, 'unknown'],
+    ['an auto mode key this does not know', { autoMode: { soft_allow: [] } }, 'unknown'],
+    ['permissions that are no object', { permissions: [] }, 'unknown'],
+    ['a rule list that is no list', { permissions: { allow: 'Bash' } }, 'unknown'],
+    ['a rule that is no string', { permissions: { deny: [{}] } }, 'unknown'],
+    ['a file that is no JSON', '{ nope', 'unknown'],
+    ['a file that is no object', '[]', 'unknown'],
+    ['a file over the size limit', JSON.stringify({ pad: 'x'.repeat(1024 * 1024) }), 'unknown'],
+    ['no user settings file', undefined, 'unknown'],
+  ];
+  for (const [name, settings, answer] of cases) {
+    const config = claudeSettings(t, settings);
+    const read = askMerge(config);
+    assert.equal(read.answer, answer, name);
+    if (answer === 'unknown') {
+      assert.deepEqual(read, { answer }, name);
+      continue;
+    }
+    assert.deepEqual([read.setting, read.file], ['autoMode.allow', path.join(config, 'settings.json')], name);
+    assert.match(read.why, /blocks by default a merge of a pull request no human approved, and the settings this check can read hold no rule or entry that names a merge$/u, name);
+    assert.deepEqual(mergePermission({ capabilities: { mergePermission: () => read } }, {}), read, 'the registry passes it on');
+  }
+});
+
+test('Claude Code reads no project settings for a merge: an issue session loads the user settings alone', (t) => {
+  for (const name of ['settings.json', 'settings.local.json']) {
+    for (const text of [JSON.stringify(rules('allow', 'Bash(gh pr merge:*)')), JSON.stringify({ autoMode: { allow: ['Merging is fine'] } }), '{ nope']) {
+      const config = claudeSettings(t, {});
+      const cwd = path.join(config, 'work');
+      mkdirSync(path.join(cwd, '.claude'), { recursive: true });
+      mkdirSync(path.join(cwd, '.git'));
+      writeFileSync(path.join(cwd, '.claude', name), text);
+      assert.equal(askMerge(config, { cwd }).answer, 'uncovered', `${name}: ${text}`);
+    }
+  }
+  const config = claudeSettings(t, {});
+  assert.deepEqual(askMerge(config, { env: { CLAUDE_CONFIG_DIR: 'relative' } }), { answer: 'unknown' }, 'a config folder that is not absolute');
+});
+
+test('Claude Code answers the merge permission unknown outside auto mode and then reads no settings file', (t) => {
+  const config = claudeSettings(t, {});
+  for (const mode of ['acceptEdits', 'manual', 'plan', 'dontAsk', null, '(unreadable)', undefined]) {
+    const read = [];
+    const env = new Proxy({ CLAUDE_CONFIG_DIR: config }, { get: (target, name) => { read.push(name); return target[name]; } });
+    assert.deepEqual(claudeMergePermission({ session: 'session-1', cwd: '/work', env, readMode: () => mode }), { answer: 'unknown' }, String(mode));
+    assert.deepEqual(read, [], `${mode}: no config folder looked up, so no settings file read`);
+  }
+});
+
+test('Claude Code\'s adapter answers uncovered from a transcript in auto mode, and writes no settings', (t) => {
+  const config = claudeSettings(t, {});
+  const cwd = path.join(config, 'work');
+  const transcripts = path.join(config, 'projects', cwd.replace(/[^A-Za-z0-9]/gu, '-'));
+  mkdirSync(transcripts, { recursive: true });
+  writeFileSync(path.join(transcripts, 'session-1.jsonl'), `${JSON.stringify({ type: 'permission-mode', permissionMode: 'auto', sessionId: 'session-1' })}\n`);
+  const claudeCode = HOSTS.find((host) => host.id === 'claude-code');
+  const env = { CLAUDE_CONFIG_DIR: config };
+  assert.equal(mergePermission(claudeCode, { session: 'session-1', cwd, env }).answer, 'uncovered');
+  assert.deepEqual(mergePermission(claudeCode, { session: 'session-2', cwd, env }), { answer: 'unknown' }, 'a session with no transcript');
+  assert.equal(readFileSync(path.join(config, 'settings.json'), 'utf8'), '{}', 'the settings file is as it was');
+  assert.equal(existsSync(path.join(cwd, '.claude')), false, 'no project settings file is made');
 });
 
 // capabilities.backgroundSessions: which background sessions a host holds, which of a given set it still holds, or

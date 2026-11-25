@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { cleanText, maskSecrets } from './clean-text.mjs';
 import { changeNotFound } from './forges/index.mjs';
-import { appendToRun, issueBranch, runFolder, SHA } from './project-run.mjs';
+import { appendToRun, HOST_DENIED_MERGE, issueBranch, runFolder, SHA } from './project-run.mjs';
 import { ATTEMPT_CEILING, ISSUE_ATTEMPTS, latestStart, spentAttempts } from './project-run-guard.mjs';
 import { defaultBranch } from './pr-auto-merge.mjs';
 import { hostOf, repoName } from './remotes.mjs';
@@ -32,8 +32,15 @@ export const CAPS = Object.freeze({ question: 300, option: 120, stop: 300 });
 export const DROP_FILE = 'result.json';
 
 const iso = (now) => new Date(now).toISOString();
+// A value a problem names, as one short scalar: a string masked (maskSecrets) and only then cut at 40, so no part of a
+// token comes back, a number or a boolean as it is, null as `null`, and anything else as a fixed word. No value is
+// serialized whole: a session's file may nest one too deep for JSON.stringify, which would throw on every read of it.
+const QUOTE_WORDS = Object.freeze({ object: 'an object', undefined: 'nothing' });
 const quote = (value) => {
-  const text = JSON.stringify(value) ?? String(value);
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return String(value);
+  if (Array.isArray(value)) return 'a list';
+  if (typeof value !== 'string') return QUOTE_WORDS[typeof value] ?? 'a value';
+  const text = JSON.stringify(maskSecrets(value));
   return text.length > 40 ? `${text.slice(0, 37)}...` : text;
 };
 const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
@@ -49,7 +56,8 @@ export const afterFailure = (key, spent, attempt) => (spent < ISSUE_ATTEMPTS && 
 export { cleanText };
 
 // The result a session wrote, `value`: { result, problems }, where `result` is { status, pr, decisions, stop } with only
-// those fields, each checked and its text cleaned (cleanText), or null when `problems` lists any.
+// those fields, and `stopCause` on a `pr_open` one that carries it, each checked and its text cleaned (cleanText), or
+// null when `problems` lists any. `stopCause` is for the run's report alone: it lifts no check of the result.
 export function validateResult(value) {
   if (!isObject(value)) return { result: null, problems: ['the result is not a JSON object'] };
   const problems = [];
@@ -77,7 +85,13 @@ export function validateResult(value) {
   if (value.status === 'environment' && (typeof value.stop !== 'string' || !cleanText(value.stop, CAPS.stop))) problems.push('an environment result names in "stop" what failed');
   const stop = value.stop === undefined || value.stop === null || typeof value.stop !== 'string' ? null : cleanText(maskSecrets(value.stop), CAPS.stop);
   if (value.stop !== undefined && value.stop !== null && typeof value.stop !== 'string') problems.push('"stop" is not text or null');
-  return problems.length ? { result: null, problems } : { result: { status: value.status, pr, decisions, stop }, problems };
+  // The message quotes nothing of the value: a token in it would reach the ended row, and a deeply nested one overflows
+  // JSON.stringify, which would stop every later wait on the same drop.
+  const { stopCause } = value;
+  if (stopCause !== undefined && stopCause !== HOST_DENIED_MERGE) problems.push(`"stopCause" is not "${HOST_DENIED_MERGE}"; leave it out for any other stop`);
+  else if (stopCause !== undefined && value.status !== 'pr_open') problems.push('"stopCause" is for a pr_open result alone');
+  if (problems.length) return { result: null, problems };
+  return { result: { status: value.status, pr, decisions, stop, ...(stopCause === undefined ? {} : { stopCause }) }, problems };
 }
 
 // Why the forge does not show pull request `pr` merged as the run's work on issue `key`, or null: it must be in the
@@ -308,14 +322,17 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const pull = droppedPullProblem({ forge, repository, result: checked.result, branch, since: Date.parse(start.at), verified });
   if (pull?.retry) return null;
   if (pull) return bad(pull);
-  // A pr_open result whose pull request merged in the meantime is taken as merged, with the status the session reported.
-  const result = verified.merged ? { ...checked.result, status: 'merged', reported: checked.result.status } : checked.result;
+  // A pr_open result whose pull request merged in the meantime is taken as merged, with the status the session reported,
+  // and without its stopCause: nothing is left to merge.
+  const { stopCause: _moot, ...fields } = checked.result;
+  const result = verified.merged ? { ...fields, status: 'merged', reported: fields.status } : checked.result;
+  const cause = result.stopCause === undefined ? {} : { stopCause: result.stopCause };
   const next = afterResult(key, start.attempt, result.status, spent);
   // The head the pull request's check read, when one did, never a second read that could differ or fail.
   const head = next.state === 'parked' ? { head: Object.hasOwn(verified, 'head') ? verified.head : forgeHead({ forge, repository, branch }) } : {};
   return {
     rows: [{
-      event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', ...head,
+      event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', ...cause, ...head,
       ...(result.status === 'environment' ? { halt: haltCause({ key, attempt: start.attempt, stop: result.stop }) } : {}), at,
     }, { ...next, at }],
     line: `${result.status} -> ${next.state}${next.decision ? ` ${next.decision}` : ''}`,

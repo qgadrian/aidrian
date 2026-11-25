@@ -33,6 +33,7 @@ import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
 import { appendRowsAtOnce, withLocks } from './jsonl.mjs';
 import { committedConfigFile, defaultStateDir, stateDir, stateRoot } from './project.mjs';
 import { dropIssueReads, recordedTexts, sweepIssueReads, writeIssueTexts } from './project-issue-text.mjs';
+import { setupPointer } from './project-setup-doc.mjs';
 import { endedIn } from './run-driver.mjs';
 import { MARK_FOLDER, markDriver, readUnattendedMark } from './unattended-mark.mjs';
 
@@ -1035,8 +1036,8 @@ function statusNotes(plan) {
 }
 
 // The text of summary.md for run `run` as `found` (readRun) holds it: the repository and driver, then each issue's
-// status in plan order, the parked decisions, and the skipped issues. It holds keys, branches, statuses, and decision ids
-// alone.
+// status in plan order, the parked decisions, the merges the host denied, when there are any, and the skipped issues. It
+// holds keys, branches, statuses, decision ids, and pull request numbers alone.
 export function summaryText(run, found) {
   const plan = planRun(found.snapshot, found.states);
   const notes = statusNotes(plan);
@@ -1066,11 +1067,33 @@ export function summaryText(run, found) {
     '',
     ...orNone(plan.parked.map(({ key, decision }) => `- ${key}: ${decisionNote(decision)}`)),
     '',
+    ...deniedMergeLines(found),
     '## Skipped',
     '',
     ...orNone(plan.skipped.map(({ key, skipped_blocked_by: by }) => `- ${key}: blocked by ${by.join(', ')}`)),
     '',
   ].join('\n');
+}
+
+// The cause a `pr_open` result may carry (project-result.mjs validateResult): the host's own permission check denied the
+// merge, as the issue's session recorded it. It decides nothing: the pull request is checked as any open one's is.
+export const HOST_DENIED_MERGE = 'host_denied_merge';
+
+// The section of summary.md for the parked issues whose latest result carries HOST_DENIED_MERGE, or none: the cause once,
+// where the setup doc says what the Human may do about it, and each issue's pull request. One the result's own check found
+// closed (a null `head`, project-result.mjs droppedPullProblem) waits for no merge, so it is left out.
+function deniedMergeLines(found) {
+  const denied = found.snapshot.issues.map(({ key }) => found.rows.findLast((row) => row.event === 'result' && row.key === key))
+    .filter((row) => row?.status === 'pr_open' && row.stopCause === HOST_DENIED_MERGE && row.head !== null && Number.isInteger(row.pr) && found.states.get(row.key)?.state === 'parked');
+  if (!denied.length) return [];
+  return [
+    '## Merges the host denied',
+    '',
+    `The host's own permission check denied the merge of each pull request below, as its session recorded it. Each waits for the Human's merge${setupPointer('auto-merge')}.`,
+    '',
+    ...denied.map(({ key, pr }) => `- ${key}: pull request #${pr}`),
+    '',
+  ];
 }
 
 // The branch issue `key` of the run `found` works on now: the one its latest start row names, as a run before this

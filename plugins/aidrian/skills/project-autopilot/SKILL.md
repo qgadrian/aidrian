@@ -94,6 +94,7 @@ At the end, or at a halt, for a reader who saw nothing of the run, naming the Hu
 3. **Decisions for the Human**: each parked issue, its decisions with their options and the recommendation, and the
    issues skipped because they wait on it. Each sign-off a pull request waits on, with its number, comes first:
    the Human gives it in a separate session the Human attends, never in this one.
+   When the summary has `Merges the host denied`, give that section once, as printed: the cause, each pull request, and the setup link.
 4. **Stopped**: a halt or refusal, its cause, and the fix; then `aidrian project resume <run>` when the cause was a halt,
    for the Human to run once it is fixed. Each session a `not released` line of the last `wait` or `end` named,
    with the command that stops it. When that one printed a `note sessions:` line: that line, and each session an earlier

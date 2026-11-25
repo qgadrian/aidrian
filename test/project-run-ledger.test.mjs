@@ -532,6 +532,25 @@ test('summary.md holds each issue\'s status, the parked decisions, and the skipp
   assert.deepEqual(readdirSync(runFolder(state, 'launch')).filter((name) => !/\.lock\.\d+(?:\.released)?$/u.test(name)).sort(), ['ledger.jsonl', 'snapshot.json', 'summary.md'], 'no temporary file is left');
 });
 
+test('summary.md names a merge the host denied once, with each pull request it denied under it', (t) => {
+  const { state, input, init } = setup(t);
+  assert.equal(init('launch', input(SNAPSHOT)).exitCode, 0);
+  const result = (key, more) => appendToRun(state, 'launch', () => ({ rows: [{ event: 'result', key, attempt: 1, status: 'pr_open', ...more, at: new Date().toISOString() }] }));
+  result('ENG-1', { pr: 12, stopCause: 'host_denied_merge' });
+  recordIssue(state, 'launch', { key: 'ENG-1', state: 'parked', decision: 'pr-open' });
+  result('ENG-4', { pr: 14, stopCause: 'host_denied_merge' });
+  recordIssue(state, 'launch', { key: 'ENG-4', state: 'parked', decision: 'pr-open' });
+  result('ENG-2', { pr: 15 });
+  recordIssue(state, 'launch', { key: 'ENG-2', state: 'parked', decision: 'pr-open' });
+  const { text } = writeSummary(state, 'launch');
+  assert.equal(text.match(/permission check denied/gu).length, 1, 'the cause once');
+  assert.match(text, /\n## Merges the host denied\n\nThe host's own permission check denied the merge of each pull request below, as its session recorded it\. Each waits for the Human's merge \(setup: [^\s]+#auto-merge-and-ci\)\.\n\n- ENG-1: pull request #12\n- ENG-4: pull request #14\n\n## Skipped\n/u);
+  assert.doesNotMatch(text, /#15/u, 'a pr_open with another stop is told apart');
+  // An issue whose latest result carries the cause but that is no longer parked is listed no more.
+  recordIssue(state, 'launch', { key: 'ENG-4', state: 'done' });
+  assert.doesNotMatch(writeSummary(state, 'launch').text, /#14/u);
+});
+
 test('projectRun: its keys and defaults, as docs/config.md shows them', () => {
   assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [], localBinding: false, recordedDecisions: false, fullAuto: false });
   assert.deepEqual(Object.keys(SCHEMA.projectRun), Object.keys(DEFAULTS.projectRun));

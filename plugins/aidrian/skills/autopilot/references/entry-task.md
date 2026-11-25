@@ -125,5 +125,6 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   | `pr` | the pull request's number, or `null` |
   | `decisions` | each parked decision: `question`, 2 to 6 `options`, `recommended` (the index of the safest), and `class`: `product`, `ux`, `architecture`, `security`, `scope`, or `other` |
   | `stop` | why the work stopped, in one line, or `null`; for `environment`, the failing command and its error |
+  | `stopCause` | `"host_denied_merge"` on a `pr_open` whose merge the host's own permission check denied, as `references/phases.md` § When the merge stops says; else leave the key out |
 
   The driver reads only these fields, cleaned: put nothing else in them, and no link, address, or mention.

@@ -12,21 +12,13 @@
 // source-control host or path, and no rule that may reach a push. Every other shape it cannot read answers `unknown`,
 // and nothing here throws on one. It reads no network, starts no process, and reads no file when loaded.
 
-import { closeSync, constants, existsSync, fstatSync, openSync, readSync } from 'node:fs';
 import path from 'node:path';
 
 import { sessionMode } from './claude-code-background.mjs';
 import { configDir } from './claude-code-config.mjs';
+import { DEFAULTS, isObject, isStrings, mayReach, MISSING, projectFiles, readSettings, RULE_LISTS } from './claude-code-settings.mjs';
 
-const MAX_SETTINGS = 1024 * 1024;
-// A worktree's `.git` file and its `commondir` hold one path each.
-const MAX_POINTER = 4096;
 const UNKNOWN = Object.freeze({ answer: 'unknown' });
-const DEFAULTS = '$defaults';
-// A settings file that is not there, as opposed to one that is there and cannot be read.
-const MISSING = Symbol('missing');
-// The lists of permission rules a settings file may hold.
-const RULE_LISTS = ['allow', 'deny', 'ask'];
 // The command the run pushes with, which a rule that may reach a push mentions or starts.
 const PUSH = 'git push';
 // A pattern that names a push to `origin`, or to no remote: `git push`, its flags, then nothing, `:*`, ` *`, or `origin`.
@@ -44,42 +36,6 @@ const FILE_EXTENSIONS = Object.freeze(['md', 'markdown', 'rst', 'txt', 'js', 'mj
 // that matches the same text, so it takes time linear in the entry.
 const SOURCE_NAME = /(?<![\p{L}\p{N}_.\-/@:])(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[\p{L}\p{N}_.~%+-]+@)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?![\p{L}\p{N}_-])((?::\d+)?(?:[/:][\p{L}\p{N}_.~%+*-]+)*)/giu;
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
-const isStrings = (value) => Array.isArray(value) && value.every((each) => typeof each === 'string');
-
-// The text of the file, MISSING when no file is at that path, or null when one is there and cannot be read: it follows
-// a symlink, and takes a regular file of at most `max` bytes. One open, whose descriptor is checked and read, so the
-// file checked is the file read; a file that grew past the limit since its check reads as too large. The open does not
-// block, so a named pipe at that path answers at once, as a file it cannot read.
-function readText(file, max) {
-  let fd;
-  try {
-    fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > max) return null;
-    const buffer = Buffer.alloc(max + 1);
-    let size = 0;
-    for (let read = 1; read > 0 && size < buffer.length; size += read) read = readSync(fd, buffer, size, buffer.length - size, size);
-    return size > max ? null : buffer.toString('utf8', 0, size);
-  } catch (error) {
-    return fd === undefined && (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') ? MISSING : null;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-}
-
-// The settings file as an object, MISSING when no file is at that path, or null when one is there and cannot be read
-// as a JSON object of at most MAX_SETTINGS bytes.
-function readSettings(file) {
-  const text = readText(file, MAX_SETTINGS);
-  if (typeof text !== 'string') return text;
-  try {
-    const settings = JSON.parse(text);
-    return isObject(settings) ? settings : null;
-  } catch {
-    return null;
-  }
-}
 
 // A test of whether an entry names the repository, in lower case: its path after the host, such as `acme/widget`, as a
 // whole name, which `.git` or a bracket may follow; its host and owner, such as `github.com/acme` or the scp-style
@@ -97,40 +53,7 @@ function namesRepository(repository) {
   return (entry) => [repo, owner, host].some((each) => each.test(entry.toLowerCase()));
 }
 
-// Whether the tool-name glob `glob`, where `*` is any text, matches all of `text`. Each run between stars is found in
-// order, the first at the start and the last at the end, so it never backtracks: a project's checked-in settings file
-// chooses the glob.
-function globMatches(glob, text) {
-  const parts = glob.split('*');
-  if (parts.length === 1) return glob === text;
-  const last = parts.at(-1);
-  if (!text.startsWith(parts[0]) || !text.endsWith(last)) return false;
-  let at = parts[0].length;
-  for (const part of parts.slice(1, -1)) {
-    const found = text.indexOf(part, at);
-    if (found === -1) return false;
-    at = found + part.length;
-  }
-  return at <= text.length - last.length;
-}
-
-// Whether the permission rule `rule` may reach a `git push`, read in lower case with its spaces run together: it mentions
-// `git push`; or its tool is the shell tool, `Bash` or a tool-name glob that matches it, such as `B*` or `*`, with no
-// pattern, an empty one, or one whose text before its first `*`, less a final `:`, starts `git push`, such as
-// `Bash(*)`, `Bash(git:*)`, or `Bash(git *)`. It reads no rule the way Claude Code matches one: it only finds the rules
-// beside which this file gives no verdict.
-function mayReachPush(rule) {
-  const text = rule.trim().toLowerCase().replace(/\s+/gu, ' ');
-  if (text.includes(PUSH)) return true;
-  const open = text.indexOf('(');
-  if (!globMatches((open === -1 ? text : text.slice(0, open)).trim(), 'bash')) return false;
-  if (open === -1) return true;
-  const pattern = text.slice(open + 1).replace(/\)$/u, '').trim();
-  const star = pattern.indexOf('*');
-  return star === -1 ? pattern === '' : PUSH.startsWith(pattern.slice(0, star).replace(/:$/u, ''));
-}
-
-// Whether the allow rule `rule`, read as mayReachPush reads one, may cover a push to `origin`, the remote the push
+// Whether the allow rule `rule`, read as mayReach reads one, may cover a push to `origin`, the remote the push
 // preflight reads: a `Bash` pattern whose text before its first `*`, less a final `:`, starts `git push`, such as
 // `git:*`, `git *`, or `git p*`; or `git push`, then any flags, then nothing, `:*`, ` *`, or `origin` with any rest after
 // a word boundary, such as `git push -u origin:*`. On entering auto mode Claude Code drops broad allow rules, such as
@@ -144,36 +67,9 @@ function allowsPush(rule) {
   return (star > 0 && PUSH.startsWith(call[1].slice(0, star).replace(/:$/u, ''))) || PUSH_FORM.test(call[1]);
 }
 
-// The main checkout of the worktree at `root`, whose `.git` is a file naming its git folder, from that folder's
-// `commondir`: null for a checkout whose `.git` is a folder, or any pointer this cannot read.
-function mainCheckout(root) {
-  const pointer = readText(path.join(root, '.git'), MAX_POINTER);
-  const gitdir = typeof pointer === 'string' ? /^gitdir:[ \t]*(.+?)[ \t]*$/mu.exec(pointer)?.[1] : null;
-  if (!gitdir) return null;
-  const common = readText(path.join(path.resolve(root, gitdir), 'commondir'), MAX_POINTER);
-  if (typeof common !== 'string' || common.trim() === '') return null;
-  const shared = path.resolve(root, gitdir, common.trim());
-  return path.basename(shared) === '.git' ? path.dirname(shared) : null;
-}
-
-// The project settings files Claude Code loads for a session in `cwd`, each from its own folder
-// (code.claude.com/docs/en/settings, read on 2026-11-20): `.claude/settings.json` from `cwd` alone, the session's
-// primary working directory, never from the repository root above it; `.claude/settings.local.json` from the root of
-// the git repository, the nearest folder at or above `cwd` that holds `.git`, or its main checkout for a worktree, and
-// from `cwd` too, where versions before 2.1.211 kept it and Claude Code still reads it, and where it stays outside a
-// repository.
-function projectFiles(cwd) {
-  const local = (folder) => path.join(folder, '.claude', 'settings.local.json');
-  const files = [path.join(cwd, '.claude', 'settings.json'), local(cwd)];
-  for (let folder = cwd; ; folder = path.dirname(folder)) {
-    if (existsSync(path.join(folder, '.git'))) return [...new Set([...files, local(mainCheckout(folder) ?? folder)])];
-    if (path.dirname(folder) === folder) return files;
-  }
-}
-
 // Whether the settings `settings` leave no verdict to give: a file that is there and cannot be read, whose `permissions`
 // is not an object, whose `allow`, `deny`, or `ask` is not a list of strings, or that holds an allow rule that covers a
-// push (allowsPush), or a deny or ask rule that may reach one (mayReachPush). A file that is not there, or that sets no
+// push (allowsPush), or a deny or ask rule that may reach one (mayReach). A file that is not there, or that sets no
 // such rules, leaves one.
 function standsAside(settings) {
   if (settings === MISSING) return false;
@@ -182,7 +78,7 @@ function standsAside(settings) {
   if (permissions === undefined) return false;
   if (!isObject(permissions)) return true;
   return RULE_LISTS.some((key) => permissions[key] !== undefined
-    && (!isStrings(permissions[key]) || permissions[key].some(key === 'allow' ? allowsPush : mayReachPush)));
+    && (!isStrings(permissions[key]) || permissions[key].some(key === 'allow' ? allowsPush : (rule) => mayReach(rule, PUSH))));
 }
 
 // Whether the `environment` entry `entry` names exactly one source-control host or path, and nothing that could also

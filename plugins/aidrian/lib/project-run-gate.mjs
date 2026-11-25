@@ -80,10 +80,10 @@ import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, vali
 import { decisionStoreFolder, decisionStoreFolders, readRecordedDecision } from './project-decision-store.mjs';
 import { DECISION_SCOPE, recordedDecision, writeDecisionFile } from './project-decision.mjs';
 import { fenceFor, writeIssueFile } from './project-issue-text.mjs';
-import { keptLines, keptPrompt, NOT_SWEPT } from './project-kept.mjs';
+import { keptLines, keptPrompt } from './project-kept.mjs';
 import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, recordedHead, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
-import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, keptOffer, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
+import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { holdsProblem } from './project-forge-holds.mjs';
 import { pushPreflight } from './push-preflight.mjs';
@@ -558,11 +558,10 @@ function startPlace(context) {
   // The host files and the policy files the base tip names, which no attempt loads from a branch no review passed.
   const guards = (file) => isGuarded(file) || isPolicyPath(file, policyFiles);
   const recorded = recordedHead(current, key) ?? resumed?.head ?? null;
-  // An attempt since the kept one may hold newer work no sweep has decided, as through a forge outage: one sweep, as
-  // `wait` runs it, then the ledger again. It still undecided, the start goes on with no offer (keptCandidate).
-  const unswept = keptOffer({ found: current, state, run, key, branch })?.why === NOT_SWEPT;
-  if (unswept) orphans.push(...sweepAttempts({ state, run, found: current, cap, env, home, spawn, forge: facade }));
-  const ledger = unswept ? readRun(state, run) : current;
+  // An ended attempt's work may wait for a sweep that could not decide it, as through a forge outage: one more, as `wait`
+  // runs it, before any later attempt, and the ledger again for the offer (project-kept.mjs keptCandidate).
+  if (capped.attempt > 1) orphans.push(...sweepAttempts({ state, run, found: current, cap, env, home, spawn, forge: facade }));
+  const ledger = capped.attempt > 1 ? readRun(state, run) : current;
   if (ledger.problem) return refuse(ledger.problem, orphans);
   const where = { ...context, policy, found: ledger, attempt: capped.attempt, tip: base.tip, branch, resumed, recorded, reviewed, guards, policyFiles, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
   const room = confinedRoom(where);

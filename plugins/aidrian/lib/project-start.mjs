@@ -256,12 +256,6 @@ export function stateWorkFolders(state, { env, home }) {
   return { folders };
 }
 
-// The kept commits the next attempt of issue `key` of the run `run`, as `found` holds it, may be offered for `branch`, or
-// why none, or null (project-kept.mjs keptCandidate).
-export const keptOffer = ({ found, state, run, key, branch }) => keptCandidate({
-  found, key, branch, folderOf: (attempt) => attemptFolder(state, run, key, attempt), refs: cloneRefs,
-});
-
 // The fresh clone of attempt `attempt` of issue `key` for a confined host: { folder, work, git, drop, cache, branch,
 // onForge, head, reviewed, overlay, kept }, or { problem }, { halt }, { retry }, or { park }, each of which leaves no
 // attempt folder. `head` is the commit the forge's branch was at, or the tip it was cut from, which the start row records.
@@ -353,7 +347,7 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
   if (!later && listed.status === 0) return park(null, `the forge has ${branch}, and the ledger records no head of it`);
   if (!later && listed.status !== 2) return failed('ls-remote', listed);
   if (later) {
-    kept = keptOffer({ found, state, run, key, branch });
+    kept = keptCandidate({ found, key, branch, folderOf: (each) => attemptFolder(state, run, key, each), refs: cloneRefs });
     if (listed.status === 0) {
       const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
       if (fetched.status !== 0) return failed('fetch', fetched);
@@ -365,8 +359,6 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
       // The recorded commit, or one after it: exit 1 is another history, and 128 a commit the fetch did not bring.
       const ours = own ? git(['merge-base', '--is-ancestor', own, from]) : null;
       if (ours && ours.status !== 0) return park(own, `its head ${from.slice(0, 7)} does not hold ${own.slice(0, 7)}, the commit this project's runs recorded it at`);
-      if (kept?.head) kept = takeKept({ candidate: kept, folder, work, gitFolder, forgeHead: onHead, guards, git });
-      if (kept?.problem) return gone(kept.problem);
       const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--']);
       if (changed.status !== 0) return failed('diff', changed);
       const paths = changed.stdout.split('\0').filter((file) => file !== '');
@@ -391,6 +383,8 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
           if (unsafe) return park(own, unsafe.why);
         }
       }
+      if (kept?.head) kept = takeKept({ candidate: kept, folder, work, gitFolder, forgeHead: onHead, from, guards, git });
+      if (kept?.problem) return gone(kept.problem);
     } else if (listed.status !== 2) return failed('ls-remote', listed);
     // A branch a person deleted on the forge starts the issue over, its kept commits included.
     else if (kept?.head) kept = { attempt: kept.attempt, why: 'the forge has no branch of the issue' };
@@ -825,23 +819,24 @@ const PACKED_CAP = 32 * 1024 * 1024;
 
 // The commits of HEAD and of the branch `branch` in the git folder `gitFolder` of an attempt's clone, read as files
 // without following a link: { heads }, each a full hex id once, none for a folder with no HEAD or a branch not born yet,
-// or { problem }, for a ref the read cannot trust, which keeps the folder.
+// or { problem }, for a ref the read cannot trust, or a folder that changed under it, which keeps the folder.
 export function cloneHeads(gitFolder, branch) {
-  const refs = cloneRefs(gitFolder, branch, { pins: null });
+  const refs = cloneRefs(gitFolder, branch);
   return refs.problem ? refs : { heads: [...new Set([refs.head, refs.branch].filter(Boolean))] };
 }
 
 // The same two refs each by its name, { head, branch }, a full hex id or null for one that is missing or not born yet, or
 // { problem }: a kept clone is taken from only with both at its one commit (project-kept.mjs). Each ref file is read only
-// through the folders pinned before its open (pinnedFolders), but with `pins` null, as cloneHeads reads them;
-// `before(relative)` is a test's hook, called right before each open.
-export function cloneRefs(gitFolder, branch, { pins = pinnedFolders(), before = () => {} } = {}) {
+// through the folders pinned before its open (pinnedFolders); `before(relative)` is a test's hook, called right before
+// each open.
+export function cloneRefs(gitFolder, branch, before = () => {}) {
+  const pins = pinnedFolders();
   const walk = (relative) => [path.dirname(gitFolder), gitFolder, ...relative.split('/').slice(0, -1).map((_, at, parts) => path.join(gitFolder, ...parts.slice(0, at + 1)))];
   const read = (relative, cap) => {
-    pins?.pin(walk(relative));
-    return refFile(gitFolder, relative, cap, { whole: () => !pins || pins.whole(), before });
+    pins.pin(walk(relative));
+    return refFile(gitFolder, relative, cap, pins.whole, before);
   };
-  pins?.pin(walk(`refs/heads/${branch}`));
+  pins.pin(walk(`refs/heads/${branch}`));
   let folder;
   try {
     folder = lstatSync(gitFolder);
@@ -879,7 +874,7 @@ export function cloneRefs(gitFolder, branch, { pins = pinnedFolders(), before = 
 // `cap` bytes read without following a link, at the file or at any folder on its way there, or waiting on a FIFO:
 // { text }, { missing }, or { problem }. The session wrote that folder, so a link in it could lead the read anywhere. With
 // the file open, and before its read, `whole()` says whether the folders on the way are still the ones pinned.
-function refFile(gitFolder, relative, cap, { whole, before }) {
+function refFile(gitFolder, relative, cap, whole, before) {
   let fd;
   try {
     const linked = linkedPart(gitFolder, path.posix.dirname(relative) === '.' ? '' : path.posix.dirname(relative));

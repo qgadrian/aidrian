@@ -2036,22 +2036,24 @@ folder went: recover the work and start the issue in a new run.
 The issue's next attempt is offered the commits a kept clone holds (`lib/project-kept.mjs`) when its attempt ended on a
 usage or rate limit, no other attempt ran since but ones offered that very commit whose folders the sweep removed, the
 clone's HEAD and its issue branch, each read as a file, both resolve to the one commit its `kept` row names, and the
-forge has the issue's branch at a commit they descend from. While the folder of such an attempt is there, as through a
-forge outage, the start runs the sweep once, as `wait` does; if it is still there, none is offered, since it may hold
-newer work. The gate pushes nothing and runs no git in the kept clone. It copies the clone's loose objects alone, each a
-regular file of one link, never through a link or a folder swapped while it reads, at most 64 MiB each and 256 MiB in
-all, as files and as they expand, out of at most 20,000 folder entries, into a repository it makes in the new attempt's
-folder. A second one there fetches from it under git's fsck, the commits are judged in it, and only then does the new
-clone fetch from that second one, so an object enters only under the id its bytes hash to, once fsck passed it, and no
-refused commit does. The gate removes both before the session starts.
+forge has the issue's branch at a commit they descend from. Every start of a later attempt runs the sweep once first, as
+`wait` does. While the folder of such an attempt is there all the same, as through a forge outage, none is offered,
+since it may hold newer work. The gate pushes nothing and runs no git in the kept clone. It copies the clone's loose
+objects alone, each a regular file of one link, never through a link or a folder swapped while it reads, at most 64 MiB
+each and 256 MiB in all, as files and as they expand, out of at most 20,000 folder entries, into a repository it makes
+in the new attempt's folder. A second one there fetches from it under git's fsck, the commits are judged in it, and only
+then does the new clone fetch from that second one, so an object enters only under the id its bytes hash to, once fsck
+passed it, and no refused commit does. A fetch into the new clone that fails ends the start and removes that clone:
+start again. The gate removes both before the session starts.
 They are never offered when any one of them, a merge read from each of its parents, changes a host config, instruction,
-or policy file, or a forge workflow file, even when a later one takes the change back.
+or policy file, or a forge workflow file, even when a later one takes the change back; nor when the start checks out the
+base tip, which holds the branch's head on the forge already, and they do not descend from it.
 The offered commits lie in the new clone under `refs/aidrian/kept` alone. The gate checks none of them out: the
 checkout, the review asked, and the base copies go by the forge's head, as with no kept clone. The first message names
 them as unreviewed data, and has the session, after its confine call and before any other work, run `git merge --ff-only
-<commit>` in its own sandbox, check the work, and push it through its own push guard; when the merge fails, it goes on
-without them. Nothing reads whether it did. Base copies of host files stay in place, since none of the commits changes
-one.
+<commit>` in its own sandbox, check the work, and push it through its own push guard; when the merge fails, it removes
+each file they add, ignored ones too, restores the rest until `git status` is clean, and goes on without them. Nothing
+reads whether it did. Base copies of host files stay in place, since none of the commits changes one.
 A start that offers them prints `offered ISSUE attempt N: <count> unpushed commits, <commit>` and records `took`, the
 attempt and the commit, in its start row, whose `head` stays the forge's. Any other start of an issue with a kept clone
 prints `not taken ISSUE attempt N: <why>`; the row and the folder stay, and nothing parks. The sweep judges an attempt

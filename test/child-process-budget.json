@@ -24,7 +24,7 @@
     "product-feedback-answer.test.mjs": 1100,
     "project-confine.test.mjs": 1550,
     "project-decision.test.mjs": 750,
-    "project-kept.test.mjs": 7350,
+    "project-kept.test.mjs": 8750,
     "project-limit.test.mjs": 5250,
     "project-local-binding.test.mjs": 1050,
     "project-parallel.test.mjs": 5050,

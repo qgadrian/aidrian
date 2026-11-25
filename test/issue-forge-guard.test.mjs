@@ -175,17 +175,20 @@ test('the agent gate hook, run as the host runs it, refuses an issue session eac
   assert.match(moved.stderr, /blocked for the issue session of a project run \(launch, ENG-1\) in this project: .*or a remote-tracking ref.*this session works an issue of a project run/u);
 });
 
-test('the merge a first message names for an ended attempt\'s kept commits passes every Bash hook of an issue session', async (t) => {
+test('every command a first message names for an ended attempt\'s kept commits passes every Bash hook of an issue session', async (t) => {
   const fx = issueFixture(t);
   const [line] = keptPrompt({ took: { attempt: 1, head: 'a'.repeat(40) }, count: 2 });
-  const command = /`(git merge [^`]+)`/u.exec(line)[1];
-  assert.equal(command, `git merge --ff-only ${'a'.repeat(40)}`);
-  assert.equal(fx.ask(bash(command)), null);
-  for (const script of ['hook-agent-gates.mjs', 'hook-bash.mjs']) {
-    const ran = await hookCall(path.resolve(import.meta.dirname, '../plugins/aidrian/scripts', script), {
-      input: JSON.stringify({ session_id: SESSION, cwd: fx.work, hook_event_name: 'PreToolUse', ...bash(command) }), encoding: 'utf8', env: { ...fx.env, CLAUDECODE: '1', AIDRIAN_TELEMETRY: '0' },
-    });
-    assert.deepEqual([ran.status, ran.stdout], [0, ''], `${script}: ${ran.stderr}`);
+  // Each command the line names, and the removal it asks for.
+  const commands = [...line.matchAll(/`(git [^`]+)`/gu)].map((match) => match[1]);
+  assert.deepEqual(commands, [`git merge --ff-only ${'a'.repeat(40)}`, `git diff --diff-filter=A --name-only HEAD ${'a'.repeat(40)}`, 'git restore .', 'git status']);
+  for (const command of [...commands, 'rm -f -- added/one.js out/ignored.log']) {
+    assert.equal(fx.ask(bash(command)), null, command);
+    for (const script of ['hook-agent-gates.mjs', 'hook-bash.mjs']) {
+      const ran = await hookCall(path.resolve(import.meta.dirname, '../plugins/aidrian/scripts', script), {
+        input: JSON.stringify({ session_id: SESSION, cwd: fx.work, hook_event_name: 'PreToolUse', ...bash(command) }), encoding: 'utf8', env: { ...fx.env, CLAUDECODE: '1', AIDRIAN_TELEMETRY: '0' },
+      });
+      assert.deepEqual([ran.status, ran.stdout], [0, ''], `${command}, ${script}: ${ran.stderr}`);
+    }
   }
 });
 

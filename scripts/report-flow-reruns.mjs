@@ -7,10 +7,11 @@
 // pass first raised in that round. A re-run is a run in a round after an earlier run. Each goes to the first group that
 // holds (GROUPS): an open finding of the reviewer's on the pass's flows was owed a re-check; a file of the pass's recorded
 // list changed, by name, as resultFor's delta counts it, so an edit of the base's to such a file counts; the recorded file
-// list changed, as of a pass that covers other flows; none of these. What the record cannot settle is not sorted: whether
-// a round's finding was carried, whether a run the record no longer holds lies between, which files the pass covered
-// then, and whether a merge (its resolution, or the base's edits) is the cause. So the counts are a floor, the shares are
-// of the sorted re-runs alone, and the costs are an estimate, matched by time, label, and session ledger.
+// list changed, as of a pass that covers other flows; the base was merged, which is uncertain, since the merge's own
+// resolution may have touched the pass's files; none of these. What the record cannot settle is not sorted: whether a
+// round's finding was carried, whether a run the record no longer holds lies between, and which files the pass covered
+// then. So the counts are a floor, the shares are of the sorted re-runs alone, without the uncertain group, and the costs
+// are an estimate, matched by time, label, and session ledger.
 
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -21,7 +22,10 @@ import { runGit } from '../plugins/aidrian/lib/git.mjs';
 import { readRows } from '../plugins/aidrian/lib/jsonl.mjs';
 import { changedFiles } from '../plugins/aidrian/lib/review/diff.mjs';
 
-export const GROUPS = ['open finding', 'files touched', 'file list changed', 'none of these'];
+// The group no share counts, with why.
+const UNCERTAIN = 'base merged';
+const WHY = 'uncertain: a merge resolution may have touched the pass\'s files';
+export const GROUPS = ['open finding', 'files touched', 'file list changed', UNCERTAIN, 'none of these'];
 // A dispatch of the reviewer for something other than a review pass, by the label the dispatcher gave it.
 const OTHER_WORK = /residual|quorum|decision|ruling|\brule\b|\bplan\b|prepare|draft|shape|interview/iu;
 const GIT_READ = { timeout: 30_000, maxBuffer: 64 * 1024 * 1024 };
@@ -78,7 +82,7 @@ function groupOf({ record, id, index, head, earlier, checkout, mine }) {
   const other = !exact && earlier.id !== id && record.passes[earlier.id]?.head === earlier.head ? record.passes[earlier.id] : null;
   if (other && listKey(other.files) !== listKey(files)) return { from, group: 'file list changed' };
   if (!exact) return { unread: 'the record does not say which files the pass covered before' };
-  if (merged) return { unread: 'a merge since: its resolution or the base may be the cause' };
+  if (merged) return { from, group: UNCERTAIN };
   return { from, group: 'none of these' };
 }
 
@@ -174,16 +178,18 @@ export function addCosts(reruns, records, runs, touches) {
   }
 }
 
-const isSorted = ({ unread }) => unread === undefined;
+const isRead = ({ unread }) => unread === undefined;
+const isSorted = (each) => isRead(each) && each.group !== UNCERTAIN;
 
-// The report's totals by group: [{ group, count, share, costed, cost }], `share` of the sorted re-runs, and `cost` the sum
-// over the `costed` ones.
+// The report's totals by group: [{ group, count, share, costed, cost }], `share` of the sorted re-runs, null for the
+// uncertain group, and `cost` the sum over the `costed` ones.
 export function totals(reruns) {
-  const sorted = reruns.filter(isSorted);
+  const sorted = reruns.filter(isSorted).length;
   return GROUPS.map((group) => {
-    const rows = sorted.filter((each) => each.group === group);
+    const rows = reruns.filter((each) => each.group === group);
     const costed = rows.filter(({ cost }) => cost !== undefined);
-    return { group, count: rows.length, share: sorted.length ? rows.length / sorted.length : 0, costed: costed.length, cost: costed.reduce((sum, { cost }) => sum + cost, 0) };
+    const share = sorted ? rows.length / sorted : 0;
+    return { group, count: rows.length, share: group === UNCERTAIN ? null : share, costed: costed.length, cost: costed.reduce((sum, { cost }) => sum + cost, 0) };
   });
 }
 
@@ -200,15 +206,17 @@ function ledgers(state) {
 const percent = (share) => `${Math.round(share * 100)}%`;
 
 export function reportLines({ reviewer, records, withPass, reruns, first, groups }) {
-  const unread = reruns.filter((each) => !isSorted(each));
-  const row = ({ group, count, share, costed, cost }) => [group, count, percent(share), `$${cost.toFixed(2)} over ${costed}`, costed ? `$${(cost / costed).toFixed(2)} each` : '-'].join('\t');
+  const unread = reruns.filter((each) => !isRead(each));
+  const sorted = reruns.filter(isSorted).length;
+  const label = (group) => (group === UNCERTAIN ? `${group} (${WHY})` : group);
+  const row = ({ group, count, share, costed, cost }) => [label(group), count, share === null ? '-' : percent(share), `$${cost.toFixed(2)} over ${costed}`, costed ? `$${(cost / costed).toFixed(2)} each` : '-'].join('\t');
   const reasons = [...new Set(unread.map((each) => each.unread))].map((reason) => `  ${unread.filter((each) => each.unread === reason).length}\t${reason}`);
   const detail = reruns.filter(({ group }) => group === 'file list changed' || group === 'none of these')
     .map((each) => [each.group, `#${each.pr}`, `round ${each.round}`, each.pass, `${each.from.slice(0, 10)}..${each.to.slice(0, 10)}`].join('\t'));
   return [
-    `${reviewer}: ${reruns.length - unread.length} re-runs sorted, ${unread.length} not sorted, and ${first} runs in a first round, on ${withPass} of ${records} review records`,
+    `${reviewer}: ${sorted} re-runs sorted, ${reruns.length - unread.length - sorted} uncertain, ${unread.length} not sorted, and ${first} runs in a first round, on ${withPass} of ${records} review records`,
     'a floor: a record keeps each pass\'s latest result alone, so a clean re-run a later run replaced is not counted',
-    'estimates: the shares are of the sorted re-runs, files touched goes by name, and the costs are matched by time, label, and session ledger',
+    'estimates: the shares are of the sorted re-runs, without the uncertain ones, files touched goes by name, and the costs are matched by time, label, and session ledger',
     `not sorted: ${unread.length}`,
     ...reasons,
     'group\tre-runs\tshare of sorted\tcost\tmean',
@@ -230,7 +238,7 @@ function main(args) {
   const sorted = records.map((record) => sortReruns(record, checkout, reviewer));
   const reruns = sorted.flatMap((each) => each.reruns);
   const rows = ['dispatch-log.1.jsonl', 'dispatch-log.jsonl'].flatMap((name) => readRows(path.join(state, name)).rows);
-  addCosts(reruns.filter(isSorted), records, reviewerRuns(rows, reviewer), ledgers(state));
+  addCosts(reruns.filter(isRead), records, reviewerRuns(rows, reviewer), ledgers(state));
   const report = {
     reviewer, records: records.length, withPass: sorted.filter((each) => each.first + each.reruns.length > 0).length, reruns,
     first: sorted.reduce((sum, each) => sum + each.first, 0), groups: totals(reruns),

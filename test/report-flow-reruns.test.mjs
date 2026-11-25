@@ -31,23 +31,23 @@ const only = (rec, co = checkout()) => {
   return reruns[0];
 };
 
-test('a round of each kind goes to its own group, the first that holds, and the one a merge may explain to none', () => {
+test('a round of each kind goes to its own group, the first that holds', () => {
   const cases = [
     ['open finding', record({ rounds: [round('h1', [finding()]), round('h2')] }), checkout({ 'h1..h2': [FILES[0]] })],
     ['open finding', record(withNote({ listed: ['R1-1'] })), checkout()],
     ['files touched', record(), checkout({ 'h1..h2': [FILES[0]] })],
     ['files touched', record(), checkout({ 'h1..h2': [FILES[0]] }, ['h1..h2'])],
     ['file list changed', regrouped([FILES[0]]), checkout({ 'h1..h2': ['docs/x.md'] })],
+    // A resolution that keeps the pull request's side changes no file of the pass, and the engine still re-runs the pass.
+    ['base merged', record(), checkout({ 'h1..h2': ['src/from-main.mjs'] }, ['h1..h2'])],
     ['none of these', record(), checkout({ 'h1..h2': ['docs/x.md'] })],
   ];
   for (const [group, rec, co] of cases) assert.equal(only(rec, co).group, group);
   assert.deepEqual(new Set(cases.map(([group]) => group)), new Set(GROUPS));
-  // A resolution that keeps the pull request's side changes no file of the pass, and the engine still re-runs the pass.
-  const merge = only(record(), checkout({ 'h1..h2': ['src/from-main.mjs'] }, ['h1..h2']));
-  assert.deepEqual([merge.group, merge.unread], [undefined, 'a merge since: its resolution or the base may be the cause']);
-  const reruns = [...cases.map(([, rec, co]) => only(rec, co)), merge];
-  assert.deepEqual(totals(reruns).map(({ group, count }) => [group, count]), [['open finding', 2], ['files touched', 2], ['file list changed', 1], ['none of these', 1]]);
-  assert.equal(totals(reruns)[3].share, 1 / 6, 'a share is of the sorted re-runs');
+  const reruns = cases.map(([, rec, co]) => only(rec, co));
+  assert.deepEqual(totals(reruns).map(({ group, count, share }) => [group, count, share]),
+    [['open finding', 2, 2 / 6], ['files touched', 2, 2 / 6], ['file list changed', 1, 1 / 6], ['base merged', 1, null], ['none of these', 1, 1 / 6]],
+    'a share is of the sorted re-runs, and the uncertain group has none');
 });
 
 test('a file the pass does not cover is no touch, and a finding of another reviewer is owed nothing', () => {
@@ -90,12 +90,13 @@ test('what the record or git cannot say is sorted in no group', () => {
 });
 
 test('the report says what is a floor and what is an estimate, beside its counts', () => {
-  const reruns = [only(record()), only(record(), checkout({}, ['h1..h2']))];
+  const reruns = [only(record()), only(record(), checkout({}, ['h1..h2'])), only(record(withNote({ base: 'merge-base' })))];
   const lines = reportLines({ reviewer: 'product-manager', records: 3, withPass: 2, reruns, first: 1, groups: totals(reruns) });
-  assert.match(lines[0], /1 re-runs sorted, 1 not sorted, and 1 runs in a first round, on 2 of 3 review records/u);
+  assert.match(lines[0], /1 re-runs sorted, 1 uncertain, 1 not sorted, and 1 runs in a first round, on 2 of 3 review records/u);
   assert.match(lines[1], /^a floor: /u);
   assert.match(lines[2], /^estimates: /u);
-  assert.ok(lines.includes('  1\ta merge since: its resolution or the base may be the cause'));
+  assert.ok(lines.includes('  1\tno earlier run is on record, so it may be a first run'));
+  assert.ok(lines.includes('base merged (uncertain: a merge resolution may have touched the pass\'s files)\t1\t-\t$0.00 over 0\t-'));
   assert.ok(lines.includes('none of these\t1\t100%\t$0.00 over 0\t-'));
   assert.ok(lines.includes(`none of these\t#7\tround 2\t${PASS}\th1..h2`));
 });

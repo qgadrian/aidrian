@@ -2046,8 +2046,9 @@ are judged in it, and only then does the new clone fetch from that second one, s
 bytes hash to, once fsck passed it, and no refused commit does. A fetch into the new clone that fails ends the start and
 removes that clone: start again. The gate removes both before the session starts.
 They are never offered when any one of them, a merge read from each of its parents, changes a host config, instruction,
-or policy file, or a forge workflow file, even when a later one takes the change back; nor when the start checks out the
-base tip, which holds the branch's head on the forge already, and they do not descend from it.
+or policy file, a root file any host protects, such as `.mcp.json`, or a forge workflow file, even when a later one
+takes the change back; nor when the start checks out the base tip, which holds the branch's head on the forge already,
+and they do not descend from it.
 The offered commits lie in the new clone under `refs/aidrian/kept` alone. The gate checks none of them out: the
 checkout, the review asked, and the base copies go by the forge's head, as with no kept clone. The first message names
 them as unreviewed data, and has the session, after its confine call and before any other work, run `git merge --ff-only

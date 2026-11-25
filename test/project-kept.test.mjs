@@ -342,11 +342,15 @@ test('kept commits that change a host, policy, or workflow file are not taken, a
   const guards = (file) => isGuarded(file) || isPolicyPath(file, ['settings/team/config.json']);
   const files = [
     'AGENTS.md', '.aidrian/knowledge/docs.json', '.aidrian/config.json', 'settings/team/config.json', '.github/workflows/ci.yml',
-    '.github', 'tools/skill/SKILL.md', '.claude/settings.json',
+    '.github', 'tools/skill/SKILL.md', '.claude/settings.json', '.mcp.json', '.MCP.json/below',
   ];
+  const git = inClone(fx, 1);
   for (const file of files) {
     fresh();
-    const head = commit(fx, 1, { [file]: 'a session wrote this\n' });
+    // Through the index alone: a disk that folds case, or holds a placeholder there, would write another name.
+    git('update-index', '--add', '--cacheinfo', `100644,${git('rev-parse', 'HEAD:src.js')},${file}`);
+    git('commit', '-q', '-m', 'a session wrote this');
+    const head = git('rev-parse', 'HEAD');
     const ledger = { ...fx.run(), rows: fx.rows().map((row) => (row.event === 'kept' ? { ...row, head } : row)) };
     const room = prepare({ found: ledger, guards });
     notTaken(setting, room, /^its commits change 1 host config, instruction, policy, or workflow file$/u, file);

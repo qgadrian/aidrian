@@ -957,7 +957,11 @@ const EXTRA_HEADING = '**Extra rounds:**';
 // The decisions after which the cap stands.
 const STOPS = new Set(['stopped', 'denied']);
 
-// Every check at the round cap, and who decided it: the signals, the judge, the Human, or the ceiling. A blank line,
+// Who decided a check, in words, where its `by` is not already one.
+const BY_WORDS = { mechanical: 'signals', catch_up: 'catch-up with the base branch', unattended: 'unattended rule' };
+
+// Every check at the round cap, and who decided it: the signals, the judge, the Human, the ceiling, or the unattended
+// rule (a red flag under github.extraRounds "auto" and the unattended waiver). A blank line,
 // the heading, and one line per check; nothing when there is none. Its reasons and the Human's name show only where the
 // copy holds them.
 function extensionLines(copy) {
@@ -965,7 +969,7 @@ function extensionLines(copy) {
   if (!extensions.length) return [];
   const lines = ['', EXTRA_HEADING];
   for (const entry of extensions) {
-    const who = entry.by === 'human' ? `the Human (${typeof entry.human?.by === 'string' ? `${entry.human.by}; ` : ''}an audit entry, not proof)` : entry.by ? `the ${entry.by === 'mechanical' ? 'signals' : entry.by === 'catch_up' ? 'catch-up with the base branch' : entry.by}` : null;
+    const who = entry.by === 'human' ? `the Human (${typeof entry.human?.by === 'string' ? `${entry.human.by}; ` : ''}an audit entry, not proof)` : entry.by ? `the ${BY_WORDS[entry.by] ?? entry.by}` : null;
     const reasons = (Array.isArray(entry.reasons) ? entry.reasons : []).slice(0, 3).map(clip);
     const at = entry.head ? ` on \`${String(entry.head).slice(0, 7)}\`` : '';
     const round = `${entry.source === 'bot' ? 'bot round' : 'round'} ${entry.round}`;

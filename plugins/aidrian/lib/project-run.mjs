@@ -9,7 +9,8 @@
 //                  No title, body, or other tracker text, ever: validateSnapshot copies only these fields, each checked,
 //                  and drops every other one. The branch is the one tracker-derived text kept. Init adds `resumed`, the
 //                  started issues an earlier run parked (resumedIssues), which no driver's input can give.
-//   ledger.jsonl   append-only, each row written under the file's lock (lib/jsonl.mjs withLocks). Its first row, `init`,
+//   ledger.jsonl   append-only, each row written under the file's lock (lib/jsonl.mjs withLocks) but a `recorded` row
+//                  (lib/project-report.mjs recordedCommand), which appends with none. Its first row, `init`,
 //                  pins the repository, records the driver's session id, and ties the run to snapshot.json by its
 //                  sha256 and issue count; later rows record what happened to an issue, and the rows of the start gate
 //                  (lib/project-run-gate.mjs): each start, result, end, and move of the driver's custody. It holds no
@@ -381,9 +382,11 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // other run still active. Each issue's text is the tracker's own answer the session's reads recorded
 // (project-issue-text.mjs recordedTexts), never a file a session wrote. Throws jsonl.mjs's LOCKED when another process
 // holds the runs lock. `pullHead` reads an old ledger's pull request head (resumedIssues), none by default, and `landed`
-// whether a pull request an earlier run named merged since (project-result.mjs landedPull), none by default. `home`
-// is for a test.
-export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now(), pullHead, landed: mergedSince }) {
+// whether a pull request an earlier run named merged since (project-result.mjs landedPull), none by default.
+// `humanMerges({ resumed, startable, texts })` gives the lines that name each merge the run leaves to the Human that init
+// can see already (project-human-merges.mjs humanMergeLines), printed after the resumed and landed lines, none by
+// default. `home` is for a test.
+export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now(), pullHead, landed: mergedSince, humanMerges = () => [] }) {
   // Recorded issue reads past their age go first, on every host, whatever init then answers.
   sweepIssueReads({ env, now });
   if (typeof run !== 'string' || !RUN_ID.test(run)) return refuse(`the run id ${quote(run)} is not lower-case letters, digits, and dashes, up to 64, starting with a letter or digit`);
@@ -405,6 +408,8 @@ export function initRun({ project, config, run, file, session, input = {}, env =
   const clash = [...problems, ...resumedProblems(read.snapshot, resumed)];
   if (clash.length) return { exitCode: 1, out: [], err: ['aidrian project init: the snapshot input has problems; fix them and run init again', ...clash.slice(0, 20).map((problem) => `  ${problem}`)] };
   const snapshot = resumed.length ? { ...read.snapshot, resumed } : read.snapshot;
+  // Read through the forge before the runs lock too, and printed in init's first output, before any issue starts.
+  const merges = humanMerges({ resumed, startable: mayStart(planRun(snapshot, landedStates(landed))), texts });
 
   mkdirSync(runsFolder(state), { recursive: true, mode: 0o700 });
   return withLocks([runsLock(state)], () => {
@@ -442,6 +447,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
         ...(read.dropped ? [`dropped: ${read.dropped} fields the snapshot never keeps, such as titles and bodies`] : []),
         ...(resumed.length ? [resumedLine(resumed)] : []),
         ...(landed.length ? [landedLine(landed)] : []),
+        ...merges,
         ...(teams ? [`teams: ${teams}`] : []),
         `folder: ${runFolder(state, run)}`,
       ],
@@ -693,6 +699,14 @@ export function splitLanded(entries) {
 // merged since, which the run records done.
 export const landedLine = (landed) => `landed: ${landed.length} started ${landed.length === 1 ? 'issue' : 'issues'} whose pull request an earlier run named merged since, which this run records done: ${landed.map(({ key, pr }) => `${key} (#${pr})`).join(', ')}`;
 
+// The issue states planRun reads before the run's first row, for the issues `landed` (splitLanded): each done, as the
+// issue row init writes for it makes it.
+export const landedStates = (landed) => new Map(landed.map(({ key }) => [key, { state: 'done', decision: null }]));
+
+// The keys of the issues a plan (planRun) may still start: ready now, or once their blockers are done; never a done,
+// canceled, parked, or skipped one, a cycled one, or one whose status a run does not start from.
+export const mayStart = (plan) => new Set([...plan.ready, ...plan.blocked.filter(({ reason }) => reason === 'waiting').map(({ key }) => key)]);
+
 // The ledger rows init writes after its init row for the issues `landed` (splitLanded), at `at`: for each, a `landed`
 // row naming the earlier run, its attempt, the pull request, the snapshot branch whose work it checked, and the label
 // that run's report set, when its ledger names it, then the issue done, which owes the report that moves it to done in
@@ -757,12 +771,13 @@ export function latestHalt(found) {
 // Appends to the ledger of run `run`, under its lock, the rows `build(found)` returns for the run as readRun reads it under
 // that lock: { rows } appended in order, in one write, or { problem } appending none, which is what it returns. The run's folder must
 // hold snapshot.json before the lock is taken, so a missing run gets no folder or lock file. Throws jsonl.mjs's LOCKED when another holds the lock
-// past `waitMs`, jsonl.mjs's wait by default.
-export function appendToRun(state, run, build, { waitMs } = {}) {
+// past `waitMs`, jsonl.mjs's wait by default. With `lock: false` it reads and appends with no lock, for a row no other
+// writer's rows depend on, so it never meets a ledger another process holds.
+export function appendToRun(state, run, build, { waitMs, lock = true } = {}) {
   if (typeof run !== 'string' || !RUN_ID.test(run)) return { problem: `${quote(run)} is not a run id` };
   if (!entryAt(runFolder(state, run))?.isDirectory() || !entryAt(snapshotFile(state, run))?.isFile()) return { problem: `no run ${run} in ${runsFolder(state)}` };
   const file = ledgerFile(state, run);
-  return withLocks([file], () => {
+  const append = () => {
     const found = readRun(state, run);
     if (found.problem) return { problem: found.problem };
     const built = build(found);
@@ -770,7 +785,8 @@ export function appendToRun(state, run, build, { waitMs } = {}) {
     // One write for every row, so a transition's rows land together (an issue's result and its state).
     appendRowsAtOnce(file, built.rows);
     return built;
-  }, waitMs === undefined ? {} : { waitMs });
+  };
+  return lock ? withLocks([file], append, waitMs === undefined ? {} : { waitMs }) : append();
 }
 
 // The runs in `state` other than `except` that are still active, as [{ run }]: a run whose files cannot be read counts,
@@ -975,8 +991,9 @@ function topological(issues, byId, cycles, isDone) {
 // running`, or `done`; then a line for each issue that runs, each session that runs on after its issue settled
 // (`lingering`, [{ key, attempt }], lib/project-linger.mjs), which `wait N` counts too, and each issue that waits or is
 // skipped. A halted run's cause comes first, and then the end of a pause on a usage or rate limit (lib/project-limit.mjs
-// pauseOf), until which no start runs.
-export function nextLines(plan, { halt = null, pause = null, lingering = [] } = {}) {
+// pauseOf), until which no start runs. An `owed KEY` line for each issue whose settle report the driver has not
+// recorded (`owed`, its keys, lib/project-report.mjs owedKeys) comes last.
+export function nextLines(plan, { halt = null, pause = null, lingering = [], owed = [] } = {}) {
   return [
     ...(halt ? [`halted ${halt}`] : []),
     ...(pause ? [`paused until ${pause.until}`] : []),
@@ -985,6 +1002,7 @@ export function nextLines(plan, { halt = null, pause = null, lingering = [] } = 
     ...lingering.map(({ key, attempt }) => `lingering ${key} attempt ${attempt}`),
     ...plan.blocked.map(({ key, reason, on }) => `blocked ${key} ${reason} ${on.join(',')}`),
     ...plan.skipped.map(({ key, skipped_blocked_by: by }) => `skipped ${key} blocked_by ${by.join(',')}`),
+    ...owed.map((key) => `owed ${key}`),
   ];
 }
 

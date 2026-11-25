@@ -89,6 +89,9 @@ started outside the run, a `blocker texts:` line for each issue that may still s
 `projectRun.mcpServers` holds no tracker server its session could read it through, the `next` lines for turn 1, as
 many as `projectRun.maxParallel` starts at once, and a
 `note teams` line when the snapshot names no `teams`: read the team list again and add them before init.
+It also prints a `needs your merge` line for each merge the run leaves to the Human that it can see already:
+a resumed issue's open pull request that changes a path auto-merge never merges, and, as `maybe`, an issue whose text
+names a policy file. These block nothing; init prints them again.
 
 While the forge and the local ref both set `projectRun.recordedDecisions`, it prints a `recorded-decision` line for
 each issue that may still start with a decision the Human recorded in this machine's store before the run. On `blocker recorded-decision`, read
@@ -99,13 +102,13 @@ line: that issue's session runs without the recorded answer, and parks on that d
 ## 4. Tell the Human
 
 One message, with every blocker of steps 2 and 3, each with its fix.
-It also gives every `note human:` line of step 2, word for word, as the complete list of what the run leaves to the
-Human, so the Human can clear what they choose before leaving.
+It also gives every `note human:` line of step 2 and every `needs your merge` line of step 3, word for word, as the
+complete list of what the run leaves to the Human, so the Human can clear what they choose before leaving.
 
 - With blockers: ask the Human to fix them and say when. Then run steps 2 and 3 again, and start nothing until both
   are clean.
 - With none: run `aidrian project init <run> --file <snapshot file>`, then tell the Human the issue count, how many can
-  start now, and that nothing is needed until the report. When init printed a `landed:` line, write the reports
+  start now, each `needs your merge` line init printed, word for word, and that nothing else is needed until the report. When init printed a `landed:` line, write the reports
   `aidrian project report <run> --json` owes first, as [tracker-writes.md](tracker-writes.md) says.
   Start the loop of [loop.md](loop.md) in this same turn:
   the Human may leave. A later preflight names the run, `aidrian project preflight <run>`, so the run it made is no blocker.

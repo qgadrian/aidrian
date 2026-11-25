@@ -146,7 +146,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). The harness asks the bot with an `@codex review` comment, so turn off Automatic reviews in Codex's code review settings, for the repository and in the personal preferences of the account that connected it: with them on, the bot also reviews a pull request when it opens or is marked ready, so a draft head it already reviewed on request gets a second review, which counts as one more round against `github.maxReviewRounds`. |
 | `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there, unless `extraRounds` grants one more. They read it from the pull request's base branch, as the remote naming its repository has it ([The record](review.md#the-record)), so an edit to the working copy does not raise it; `aidrian pr await-review` without `--request` posts nothing and reads no base branch. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, and runs at exactly that count; a higher cap an earlier bot request recorded in its comment carries over only to a run with the variable set and no `--max-rounds`. The Human sets it in their own shell, or an agent sets it inline on the exact raise the Human approved by an answer or a typed grant ([review.md](review.md#unattended-rulings)); a Bash rule refuses it on any other ground, and any bot request made outside `aidrian pr`. |
-| `github.extraRounds` | What happens at that cap: [Extra rounds](review.md#extra-rounds). `"ask"`, the default: a read-only judge decides whether one more round is worth it, with any red flag of the round history (not converging, looping, drifting, bloating) as evidence, and the Human approves it. `"auto"`: the judge's word grants it, unless a red flag stands, when the Human approves it too. `"off"`: the cap stops, as `round_limit`. Read from the base branch, like the cap. |
+| `github.extraRounds` | What happens at that cap: [Extra rounds](review.md#extra-rounds). `"ask"`, the default: a read-only judge decides whether one more round is worth it, with any red flag of the round history (not converging, looping, drifting, bloating) as evidence, and the Human approves it. `"auto"`: the judge's word grants it, unless a red flag stands, when the Human approves it too, or, with the [unattended waiver](#unattended-waiver)'s switches on, the cap stands with no question. `"off"`: the cap stops, as `round_limit`. Read from the base branch, like the cap. |
 | `github.maxExtraRounds` | The most extra rounds `extraRounds` may grant one pull request, 2 by default; a hard ceiling, read from the base branch. `0` grants none. |
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. [Auto-merge](#auto-merge) stays off until the default branch names one. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
@@ -168,7 +168,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge.unreviewedPaths` | The files a pull request whose review was `none_needed` may change and still auto-merge, as globs or `re:` entries in the syntax of the review's lists, from the project root. Each entry matches the whole path: `README.md` is the top-level file only, not `prompts/README.md`, and a `re:` entry is anchored at both ends. `[]`, the default, keeps every such pull request for the Human. It counts only when the repository's default branch and the pull request's base both list the file, read from GitHub as `allow` is, never from the checkout, so a branch cannot list its own files. A bad entry, such as a `re:` that does not compile or an empty `re:`, is a config error, and the gate refuses on it. The gate cannot know how a file is read, so list only files that no AI session reads as instructions, through an import, a link, a command, or a plugin, and that no build, docs site, or test reads as code or as an expected result. Common cases that do not qualify: Markdown a docs site parses as MDX, such as Docusaurus, or as pages with script, such as VitePress; a README whose code blocks run as doctests, such as cargo's or pytest's `--doctest-glob`; and an end-to-end test's expected files. A top-level `README.md` that nothing builds or runs is the usual case. The rest of the `review` row under [When it is on](#when-it-is-on) still applies to a listed file. An older plugin rejects the key as unknown, so set [`requires.aidrian`](#plugin-version) to the release that ships it. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
 | `review.unattendedSignoff.allow` | `true` lets a machine opt in to [unattended rulings](review.md#unattended-rulings): a judge's `aidrian pr settle` closes an unverified or disputed invariant in place of the Human. `false`, the default, keeps it off. Read from the base branch. The machine's switch is `"unattendedSignoff": "on"` in `.aidrian.local.json`; unset follows [`solo`](#solo). |
-| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard, and any `aidrian pr auto-merge` under these switches, may take a judge's recorded verdict in place of the Human's answer to the merge guard's question, at the round cap, once the review bot passed the head. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
+| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard, and any `aidrian pr auto-merge` under these switches, may take a judge's recorded verdict in place of the Human's answer to the merge guard's question, at the round cap, once the review bot passed the head. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. With it counting under `github.extraRounds` `"auto"`, a red flag at the cap stops with no question ([A red flag at the cap](#a-red-flag-at-the-cap)). |
 | `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off, unless the team runs the project [`solo`](#solo). |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. In a project run's confined issue session, `codex-local` is not ready, as when Codex is not installed, `auto` takes `self`, a flow that requires `independent-model` is `unsatisfied` unless `--with-bot` adds the bot and an agent answers the flow, and a plan with a `codex-local` pass with no result to reuse is refused ([The engine](review.md#the-engine)). |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. The record commands read it as the pull request's base branch commits it, not from the working copy; only a command the forge names no base for reads no comment, keeps this machine's record, and publishes nothing. Another machine builds on the comment's copy only on a private repository; on one that is not private it restarts from its own record, with the copy's round count and id counter as floors, so the round cap still holds, or holds and names the machine that wrote the copy while that copy has an open, blocking finding it holds no text for ([A second machine](review.md#the-posted-copy)). |
@@ -579,6 +579,19 @@ merge trust included, has passed: it counts again and writes a `waived` row for 
 once 3 are spent, so the sessions of issues that run in parallel never spend more between them. A merge the guard
 refuses spends nothing. A taken merge counts even if the merge then fails after the guard let it run; one the ledger
 lock or a read refuses is not merged.
+
+### A red flag at the cap
+
+Under `github.extraRounds` `"auto"`, as the base branch commits it on GitHub, with both switches counting for the pull
+request and the check opened under `"auto"` too, the extra-round check asks the Human nothing: a judge's `extend` over a
+red flag (not converging, looping, drifting, bloating) is recorded as a stop, `by: "unattended"`, so the review step
+reports `round_limit`. The route above follows, its judge recording `land` or `stop`, only where the gate lets it run,
+such as once the review bot passed the current head; otherwise the stop stands with no judge. The mode a check opens under is
+read from the local base ref, so a local base still on `"ask"` asks the Human even with GitHub on `"auto"`.
+A red flag already says more rounds are unlikely to help, so stopping is the safe direction.
+The switches are read as the merge guard reads them, the team's from GitHub on the default branch and the base, never
+the working copy, so a branch cannot turn the rule on; a read that fails counts as off.
+`"ask"` still asks, and with either switch off, `"auto"` asks over a red flag as before ([Extra rounds](review.md#extra-rounds)).
 
 ### What it never covers
 
@@ -2003,7 +2016,7 @@ which on a moved origin keeps the halt before any probe runs, then the state fol
 need. When every line is `ok` or a `note`, it writes a `resume` row with `via: "recheck"`, the halt's `kind`, issue,
 and attempt, and the `checks` that passed, under the ledger's lock only while the halt stands, the run has not ended,
 and custody rests where the caller read it, prints `recheck lifted the halt: <cause>; ok <checks>` and
-`lifted the <kind> halt of <issue>; start it again`, and exits 0 having launched nothing: the driver's next start of the
+`` lifted the <kind> halt of <issue>; run `next` again ``, and exits 0 having launched nothing: the driver's next start of the
 issue reads the run, its policy, and its access afresh, and launches it. A run that changed meanwhile prints `the checks
 passed, but the run changed meanwhile`; a row that could not be written prints `the checks passed, but the resume row
 could not be written: <why>`; and a ledger another process holds exits 75, to be tried again. Any other line, a blocker
@@ -2301,7 +2314,8 @@ One run per project is active at a time.
 may start and nothing runs.
 Lines for the issues that run, are blocked, or are skipped follow. An issue in a cycle of blockers is blocked.
 An issue the ledger records parked, or a canceled one, is never started, and every issue that waits on it through issues not done
-is skipped and names it. `--json` prints the whole plan, with the `maxParallel` it read.
+is skipped and names it. Last comes an `owed KEY` line for each issue whose settle report no `recorded` row closed,
+so a report owed before a driver's first `wait`, such as one an earlier driver left, is written on its first pass. `--json` prints the whole plan, with the `maxParallel` it read and `owed`.
 
 `preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
 state folder and any other active run but `RUN`, a host instruction file, such as a `CLAUDE.md`, in a folder above the
@@ -2377,6 +2391,22 @@ tabs removed, in `<state>/runs/RUN/issues/ISSUE.json`, never in `snapshot.json`,
 `issue.md`, fenced and marked as untrusted text from the tracker, which the issue's session reads instead of the tracker. The `project-autopilot` skill runs both in its
 attended first turn, and `init` last, once nothing blocks.
 
+`init` and `init --check` both name, after the `resumed:` and `landed:` lines, each merge the run leaves to the Human that they can see already.
+A resumed issue whose open pull request, from the branch it resumes on, changes a path auto-merge never merges gets
+`needs your merge: #<n> changes <path>, which auto-merge never merges`.
+The path rule is the [auto-merge gate's](#auto-merge) own, each changed file judged alone.
+It reads the config of the default branch and of the pull request's own base on the forge, and a lift counts only when both set it.
+Without `github.autoMerge.includeGuardedPaths` a guarded path counts, and without `includePolicyFiles` too a policy file counts.
+With both, the pointer file `.aidrian.json` still counts, which no pull request may change by itself.
+So do the paths no lift covers, such as a renamed file or one outside a nested project's folder.
+An issue the run may still start whose tracker text names a policy file, such as `.aidrian/config.json`, gets a `needs your merge, maybe:` warning.
+Its diff does not exist yet, so the warning reads the text alone, and only for the fixed policy file names and the config the pointer file locates.
+With both lifts on the default branch, only a text that names the pointer file gets it.
+A read the forge cannot answer gives a `needs your merge, unknown:` line that says what cannot be told.
+None of these lines blocks: they reach the Human in the run's first turn, before any issue starts, never when an issue's session reaches auto-merge.
+A run with none prints none.
+With no resumed pull request and no text of an issue it may start, it reads nothing more from the forge.
+
 `report RUN [--json]` prints, for the driver only, the report the run owes each issue that settled for good, done after
 a forge-confirmed merge or parked: a status (the adapter's done status type for a merge, `projectRun.blockedStatus` for a
 blocked issue), `projectRun.decisionLabel` for any other, and a comment body with its sha256, with `--json` adding the
@@ -2384,6 +2414,9 @@ exact tool `calls` for the base branch's tracker. Both values come from the base
 from the ledger and from `results/ISSUE.json`, read again with no symlink followed, under its size cap, matched to the
 ledger's run, issue, attempt, status, and pull request, and checked again; a file that fails gives a body from the
 ledger alone that says so. `recorded RUN ISSUE` closes one, with a `recorded` row holding its attempt and sha256.
+It appends that row with no ledger lock, so a ledger another process holds never refuses it: by then the driver made
+the report's tracker calls, and a refusal to try again would send it back through `wait`, whose next settle lists the
+report again and posts its comment twice.
 `end RUN` refuses while any issue still runs, naming them, or while a session runs on after its issue settled.
 Before it writes the `end` row it stops each attempt's session the host still holds after its `gone` row, as `wait`
 does below, and prints those lines before the sweep's; a session it cannot stop, or a host that cannot say, refuses no
@@ -2430,8 +2463,8 @@ session that runs on after its issue settled. A session whose attempt has no `go
 Codex by design holds no session after its work, so there nothing is asked, stopped, or printed.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
-A command whose ledger another process holds locked, and a `start` whose read of the team's policy the forge cannot
-answer now, exit 75 with a `retry:` line, a refusal that may pass. A policy the forge answers and refuses, such as
+A command whose ledger another process holds locked, but `recorded`, and a `start` whose read of the team's policy the
+forge cannot answer now, exit 75 with a `retry:` line, a refusal that may pass. A policy the forge answers and refuses, such as
 `projectRun.allow` turned off on the default branch while the run's sessions run, makes `start` exit 1. Neither stops
 `wait`, which starts nothing: it prints a first line and settles the run as before, exit 0, stopping each session past
 its `projectRun.issueHours`. Each start row records the hours the team confirmed for it, as `issueHours`.

@@ -23,14 +23,17 @@ export function changedFiles(root, from, to) {
   return fileList(numstat, names);
 }
 
-// The file list of one `--numstat -z` and one `--name-status -z` output of the same diff.
-function fileList(numstat, names) {
+// The file list of one `--numstat -z` and one `--name-status -z` output of the same diff. A record is
+// `<added>\t<removed>\t<path>`, and the path is git's raw bytes, which may hold a tab or start with one: only the first
+// two tabs separate.
+export function fileList(numstat, names) {
   const status = new Map();
   const words = names.split('\0');
   for (let i = 0; i + 1 < words.length; i += 2) status.set(words[i + 1], words[i]);
   const out = [];
   for (const record of numstat.split('\0').filter(Boolean)) {
-    const [added, removed, file] = record.split('\t');
+    const [added, removed, ...rest] = record.split('\t');
+    const file = rest.join('\t');
     // With renames off every record names its path: one that does not is output this parser cannot read.
     if (!file) throw new Error(`git printed a numstat record with no path: ${JSON.stringify(record)}`);
     out.push({ file, added: added === '-' ? 0 : Number(added), removed: removed === '-' ? 0 : Number(removed), status: status.get(file) ?? 'M' });

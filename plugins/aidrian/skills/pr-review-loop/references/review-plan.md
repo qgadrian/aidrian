@@ -192,7 +192,8 @@ Never cite an engine post, a finding's, the review summary, or the product feedb
   the stop, so the Human does not merge it as reviewed. With `question` and `options`, report the open findings, then ask
   the Human that question with AskUserQuestion, the options word for word, the "Approve" one first: it is the one
   question at the cap. On "Approve", run `raise` exactly as printed, as one plain command: it allows one more round,
-  and the next cap asks again. On the other option, stop. `waiver` says whether the unattended waiver may run on the
+  and the next cap asks again. On the other option, stop.
+  A `raise` printed with no `question` is the Human's command: report it, never run it. `waiver` says whether the unattended waiver may run on the
   head, and with `may` true `dispatch` names its one judge. A session the Human told to merge, and then left, and a run
   under `autopilot`, read § At the cap: a judge's waiver before reporting the stop. When the Human answers the merge
   guard's question by leaving the decision to the session, read § At the cap: the Human leaves it to the session.
@@ -284,7 +285,11 @@ no waiver: run the step again on it. The session runs no gate command: the step 
   merge only through the `pr-auto-merge` skill; `aidrian pr auto-merge` takes the verdict for that head alone.
   Otherwise merge naming the head, as the command's `next` says: `gh pr merge <n> --match-head-commit <sha>`.
   On `stop`, report the stop with the judge's evidence: the Human merges, or answers the merge guard's question with
-  "Merge with the findings filed". On `extend`, go on as § At the cap: extra rounds says.
+  "Merge with the findings filed". On `extend`, go on as § At the cap: extra rounds says. An `extend` the command
+  records as `stopped` by `unattended`, over a red flag under `"auto"`, asks no one: follow its `next`. For the review
+  step's check, run the same review command again with the options it was run with, any `--with-bot` included, and it
+  returns `round_limit`. Only with its `waiver.may` true does that name the waiver's judge, the step's own dispatch and
+  no verdict shopping; otherwise report the stop with `waiver.why`; for the bot's, report the stop.
 
 ## Owed reviews
 

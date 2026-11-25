@@ -636,3 +636,36 @@ export function claimProblem(missing, runs, { where }) {
     'is "not finished", never a result, and a CI result is quoted from the checks the forge shows. ' +
     'To get a result, run the command in the foreground to its end, or `aidrian test changed` for the test files this change touches.';
 }
+
+// The facts of the recorded run nearest to a claim no run supports at `tree`: a pass of the command there, else one of
+// the same program with other words there, else the command's last pass anywhere, else its last run. `named()` gives the
+// full id of the commit the claim names, or null, used when the run matches its tree; `commitOf(tree)` gives another
+// commit's, or null. Only a run that can support a pass claim, at a commit to name, is one to cite. It states what the record holds and composes no line: a record key drops quotes and
+// a long one is cut, so the key only names the run.
+const CITE = 'Cite one finished run: its command as written in the call that ran it, its counts, and its commit.';
+const NO_COMMIT = 'Commit the files it ran on and cite that commit, or run it at the commit you cite.';
+const NO_CITE = 'Report that outcome, or get a passing run.';
+export function claimFacts({ key }, runs, { tree, commitOf = () => null, named = () => null }) {
+  const own = runs.filter((run) => run.command === key);
+  const passed = (run) => run.status === 'passed' && run.pass !== 0;
+  const runner = key.split(' ')[0];
+  const others = runs.filter((run) => run.command !== key && run.command.split(' ')[0] === runner);
+  const passedHere = (run) => passed(run) && atTree(run, tree);
+  const nearest = own.findLast(passedHere) ?? others.findLast(passedHere) ?? own.findLast(passed) ?? own.at(-1);
+  if (!nearest) {
+    return 'the record holds no finished run of it: a run in the background, inside `sh -c` or `$( )`, or in another ' +
+      `session leaves no row. ${NO_CITE}`;
+  }
+  const commit = (atTree(nearest, tree) ? named() : null)
+    ?? commitOf(nearest.tree) ?? (nearest.untrackedCode?.length ? null : commitOf(nearest.trackedTree));
+  const held = typeof nearest.pass === 'number' || typeof nearest.fail === 'number';
+  const counts = held ? `${nearest.pass ?? 'unknown'} pass, ${nearest.fail ?? 'unknown'} fail` : 'no counts';
+  const facts = [
+    `the nearest recorded run is of \`${nearest.command}\`: ${nearest.status}, ${counts}`,
+    commit ? `at commit ${commit}` : "its files' commit not found among HEAD's last 100, or git could not list them",
+    ...(nearest.pass === 0 ? ['it recorded zero passes, which supports no pass'] : []),
+    ...(nearest.status === 'unjudged' ? ['its output showed no count and its exit status is unknown'] : []),
+  ];
+  const citable = commit ? CITE : NO_COMMIT;
+  return `${facts.join('; ')}. ${passed(nearest) ? citable : NO_CITE}`;
+}

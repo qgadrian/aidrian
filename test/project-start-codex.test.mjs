@@ -597,7 +597,7 @@ test('a start whose hooks never ran under codex exec gives its attempt back and 
   const lifting = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(lifting.exitCode, 0, lifting.out.join('\n'));
   assert.match(lifting.out[0], /^recheck lifted the halt: the start of ENG-1 attempt 1 failed its proof/u);
-  assert.equal(lifting.out[1], 'lifted the proof halt of ENG-1; start it again');
+  assert.equal(lifting.out[1], 'lifted the proof halt of ENG-1; run `next` again');
   const again = fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() });
   assert.match(again.out[0], /^halt the start of ENG-1 attempt 1 failed its proof/u, again.out.join('\n'));
   assert.deepEqual(shape(), [...proofRows, ['resume', 'recheck'], ...proofRows]);

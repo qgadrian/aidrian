@@ -85,13 +85,19 @@ crosses them.
   1. A note says a reviewer's evidence does not count: dispatch that reviewer again to cite it. This closes the invariant.
   2. The proof is one the session can take itself: gather it, and never ask the Human how. That is so when the pull
      request is a draft and the project's CI runs its end-to-end tests only once it is ready, or when the visual
-     capture shows an empty, logged-out, or data-less page, as its facts and the summary's visual line say.
-     Run locally, or against a deploy preview when one exists, the URL `review.visual.preview` prints.
+     reviewer opened the captures and reported an empty, logged-out, or data-less page; measured facts alone never say so.
+     First run `aidrian pr resolve <PR>`: with `limited` true, the pull request comes from outside the team, so run,
+     open, and sign in to nothing, and go to the next route. Otherwise run locally, or against a deploy preview when
+     one exists, the `preview_url` that command prints, and sign in only with the test accounts the project's
+     `product-access` knowledge (`personas`) names, as § A pull request link alone of docs/personas.md in the aidrian
+     repository says.
      Dispatch `e2e-runner` for the end-to-end run, and `designer` for screenshots at each width of
-     `review.visual.viewports`; each signs in or seeds data as the project's `product-access` knowledge (`personas`) says.
-     Post the run's command and result lines as a comment of the pull request. Ingest the screenshots with
-     `aidrian pr ingest`, post them through the `pr-screenshot` skill, and dispatch the visual reviewer again to cite
-     `capture:<key>`. Never post a secret or a session token from the login. When `product-access` holds no way in,
+     `review.visual.viewports`. Post the run's command and result lines as a comment of the pull request. Ingest the
+     screenshots with `aidrian pr ingest`, which keeps them local, and dispatch the visual reviewer again to cite
+     `capture:<key>`. Post them through the `pr-screenshot` skill only when `review.visual.attach` resolves to `auto`
+     and that skill's upload rule allows it. Never post a secret or a session token from the login.
+     The local run settles the invariant, never a flow's `checks`: the step still returns `checks_pending` or
+     `checks_failing` until that CI job runs once the pull request is ready. When `product-access` holds no way in,
      report that gap as a finding, and ask nothing. A sign-off the Human owes, a `signoff: "human"` flow or a
      `harness-config` change, still stops at `human_required`.
   3. An entry has `settle`, so this project allows unattended rulings: dispatch an independent read-only agent, such as

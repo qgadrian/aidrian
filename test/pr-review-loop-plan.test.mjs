@@ -56,12 +56,25 @@ test('an unverified invariant the session can prove itself is gathered, never a 
   const ask = fix.indexOf('Ask the Human with AskUserQuestion');
   assert.ok(gather !== -1 && gather < settle && settle < ask, 'the gather route comes before the judge, and both before asking the Human');
   const route = fix.slice(gather, settle);
-  for (const step of ['a draft', 'only once it is ready', 'empty, logged-out, or data-less page', 'Run locally, or against a deploy preview when one exists',
+  for (const step of ['a draft', 'only once it is ready', 'visual reviewer opened the captures and reported an empty, logged-out, or data-less page',
+    'measured facts alone never say so', 'run locally, or against a deploy preview when one exists',
     '`e2e-runner`', '`designer`', '`review.visual.viewports`', '`product-access`', 'as a comment of the pull request', '`aidrian pr ingest`',
-    '`pr-screenshot` skill', '`capture:<key>`', 'Never post a secret', 'report that gap as a finding, and ask nothing',
+    '`capture:<key>`', 'Never post a secret', 'report that gap as a finding, and ask nothing',
     '`signoff: "human"`', '`harness-config`', '`human_required`']) {
     assert.ok(route.includes(step), `gather route: ${step}`);
   }
+  // The trust gate: a pull request from outside the team gets no run, preview, or sign-in, and the preview is the
+  // validated one, before anything runs.
+  const resolve = route.indexOf('First run `aidrian pr resolve <PR>`: with `limited` true');
+  assert.ok(resolve !== -1 && resolve < route.indexOf('`e2e-runner`'), 'the trust gate comes before any dispatch');
+  for (const step of ['run, open, and sign in to nothing, and go to the next route', 'the `preview_url` that command prints',
+    'sign in only with the test accounts', '§ A pull request link alone']) {
+    assert.ok(route.includes(step), `trust gate: ${step}`);
+  }
+  // The attach policy: ingest keeps the images local; posting them follows review.visual.attach.
+  assert.ok(route.includes('Post them through the `pr-screenshot` skill only when `review.visual.attach` resolves to `auto`'), 'attach policy');
+  // A local run is no CI check.
+  assert.ok(route.includes('never a flow\'s `checks`') && route.includes('`checks_pending`'), 'a local run never clears a flow\'s checks');
   assert.ok(fix.slice(ask).includes('never how to get the proof'), 'the Human is asked to approve, never how to get the proof');
   assert.doesNotMatch(read('SKILL.md') + plan, /how should the session get/iu, 'no step offers a "how should the session get that proof" question');
 
@@ -75,7 +88,9 @@ test('an unverified invariant the session can prove itself is gathered, never a 
   assert.match(doc('Answering in the session', '####'), /never how the session should get the proof/u);
   const rulings = doc('Unattended rulings', '####');
   for (const step of ['**Proof the session gathers.**', '`e2e-runner`', '`designer`', '`product-access`', 'aidrian pr settle <PR> --flow <id> --accept',
-    'asks nothing', '`signoff: "human"` flow and a change to `harness-config` still ask the Human']) {
+    'asks nothing', '`signoff: "human"` flow and a change to `harness-config` still ask the Human',
+    '(personas.md#a-pull-request-link-alone)', '`limited` false', 'gets no local run, preview, or sign-in',
+    'only when `review.visual.attach` resolves to `auto`', 'a flow\'s `checks` still wait for the CI job']) {
     assert.ok(rulings.includes(step), `Unattended rulings: ${step}`);
   }
   assert.match(doc('Visual review', '##'), /\*\*An empty capture\*\*.*`designer`.*`product-access`.*no question to the Human/u);

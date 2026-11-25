@@ -235,7 +235,7 @@ function startsTurn({ type, isMeta, isCompactSummary, origin, message: { content
 
 const isMarker = (text) => INTERRUPTED.has(text.trim());
 // A content block as the read takes one: an object with a type, and, when it is text, a text that is a string.
-const isBlock = (block) => block !== null && typeof block === 'object' && typeof block.type === 'string' && (block.type !== 'text' || typeof block.text === 'string');
+const isBlock = (block) => block !== null && typeof block === 'object' && typeof block.type === 'string' && block.type !== '' && (block.type !== 'text' || typeof block.text === 'string');
 
 // The model an `assistant` entry names: its message's own string, other than NO_MODEL; else null.
 function entryModel({ type, message }) {

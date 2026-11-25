@@ -1625,6 +1625,7 @@ test('a turn starts at a prompt, whether or not it carries a mode, and at no oth
     ['an interruption marker of a tool call', promptEntry([text('[Request interrupted by user for tool use]')])],
     ['an interruption marker as the content, with space around it', promptEntry(` ${MARKER}\n`)],
     ['a malformed block beside the marker', promptEntry([malformed, text(MARKER)])],
+    ['a block with an empty type beside the marker', promptEntry([{ type: '' }, text(MARKER)])],
     ['a malformed block beside a tool result', promptEntry([malformed, { type: 'tool_result', tool_use_id: 't', content: 'done' }])],
     ['a text that is an object alone', promptEntry([malformed])],
     ['blocks that are no objects, and one with no type', promptEntry([null, 7, 'go on', [], { text: 'go on' }])],

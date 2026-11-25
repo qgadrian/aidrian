@@ -8,6 +8,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 
+import { checkRows } from '../plugins/aidrian/lib/check-runs.mjs';
 import { check, fileIdentity, OVERRIDE } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { appearsAfterFirstStat } from './fixtures/fs-faults.mjs';
 
@@ -530,4 +531,66 @@ test('a folder identity keeps an inode past 2^53 exact, so two folders never sha
     syncBuiltinESMExports();
   });
   assert.notEqual(fileIdentity(path.join(dir, 'a', 'x.md')), fileIdentity(path.join(dir, 'b', 'x.md')));
+});
+
+// The `## Tests run` denies the dispatch log held most in the week before issue 130, by what the record showed: a pass
+// at an older tree (73 of 176), no finished run (60), only unjudged runs (30), only failed runs (5), and a pass at HEAD
+// with another count (6). Each deny names what clears it, and the line or the run it names passes.
+test('a Tests run deny names what clears each claim, and the line or the run it names passes', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-runs-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { cwd: dir, encoding: 'utf8' }).trim();
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  writeFileSync(path.join(dir, 'a.txt'), 'a\n');
+  git('init', '-q', '-b', 'feat/x');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'first');
+  const first = git('rev-parse', 'HEAD');
+  const firstTree = git('rev-parse', 'HEAD^{tree}');
+  writeFileSync(path.join(dir, 'a.txt'), 'b\n');
+  git('commit', '-q', '-am', 'second');
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  const judge = (line, runs) => {
+    writeFileSync(path.join(dir, 'body.md'), `## Summary\n\n- x\n\n## Tests run\n\n${line}\n`);
+    return check('gh pr create --draft --title "fix: x" --body-file body.md', { cwd: dir, env: {}, listOpenPrs: () => [], readRuns: () => runs });
+  };
+  const named = (reason) => /What clears it: For `[^`]+`, [^]*?as "([^"]+)"\./u.exec(reason ?? '')?.[1];
+  const run = (fields) => ({ command: 'npm test', status: 'passed', pass: 12, fail: 0, tree, trackedTree: tree, untrackedCode: [], ...fields });
+
+  // Another count than the run printed at these files.
+  const count = judge('- `npm test`: 11 pass', [run({})]);
+  assert.match(count, /What clears it: For `npm test`, `npm test` passed at these files with 12 pass, and the line states 11: write the count it printed/u);
+  assert.equal(judge(named(count), [run({})]), null, named(count));
+
+  // A run of the same program with other words passed at these files.
+  const words = judge('- `aidrian test changed`: pass', [run({ command: 'aidrian test changed --base origin/main' })]);
+  assert.equal(named(words), '- `aidrian test changed --base origin/main`: 12 pass, 0 fail');
+  assert.equal(judge(named(words), [run({ command: 'aidrian test changed --base origin/main' })]), null);
+
+  // A pass of an earlier commit: the deny names that commit, and the line that says so passes.
+  const older = [run({ tree: firstTree, trackedTree: firstTree })];
+  const stale = judge('- `npm test`: 12 pass', older);
+  assert.match(stale, new RegExp(`its last pass was of commit ${first.slice(0, 7)}, and the files have changed since: rerun \`npm test\` in the foreground at HEAD`, 'u'));
+  assert.equal(named(stale), `- \`npm test\` at ${first.slice(0, 7)}: 12 pass, 0 fail`);
+  assert.equal(judge(named(stale), older), null);
+  assert.match(judge('- `npm test`: 12 pass', [run({ tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) })]), /its last pass was of files no commit holds/u);
+
+  // No finished run, only unjudged ones, or only failed ones: the deny names the run to make, and that run, finished in
+  // the foreground with its summary, is a row that supports the line.
+  const foreground = checkRows({ command: 'npm test', cwd: dir, output: 'ℹ pass 12\nℹ fail 0\n', exitZero: true, tree: () => ({ tree, trackedTree: tree, untrackedCode: [] }) });
+  assert.equal(foreground[0].status, 'passed');
+  for (const [runs, why] of [
+    [[], /no shell call of this session finished it, and a run in the background, inside `sh -c` or `\$\( \)`, or in another session leaves no row: run `npm test` in the foreground, as a call of its own\./u],
+    [[run({ status: 'unjudged', pass: null, fail: null })], /its runs printed no test count in the output the call returned, as when a `tail` cuts the summary or a redirect sends it to a file, and a pipe or `;` hid their exit status: rerun `npm test` in the foreground/u],
+    [[run({ status: 'failed', pass: 11, fail: 1 })], /its last run failed, and a failed run is no pass: fix what failed, then rerun `npm test` in the foreground\./u],
+  ]) {
+    const reason = judge('- `npm test`: 12 pass', runs);
+    assert.match(reason, /^Blocked: the `## Tests run` section says `npm test` passed, but no run of it/u, 'the first sentence the dispatch log keys on stays');
+    assert.match(reason, why);
+    assert.equal(judge('- `npm test`: 12 pass', [...runs, ...foreground]), null, 'the named run clears it');
+  }
+  // A run made with `| tail -3` that cut the summary is unjudged, and one with its summary in the output passes.
+  const piped = (output) => checkRows({ command: 'npm test 2>&1 | tail -3', cwd: dir, output, exitZero: true, tree: () => ({ tree, trackedTree: tree, untrackedCode: [] }) })[0].status;
+  assert.deepEqual([piped('slow.test.mjs 4.1s\ntotals 9s\n'), piped('ℹ pass 12\nℹ fail 0\n')], ['unjudged', 'passed']);
 });

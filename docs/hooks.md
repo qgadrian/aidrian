@@ -238,8 +238,17 @@ What each rule matches:
   and a `ps` format trades `args`, `command`, `cmd`, and `comm` for `ucomm`.
 - Counting grep in `&&`: such as `grep -c x log && npm test`. The deny starts with the line to run instead,
   each such count wrapped as `{ grep -c x log || true; }`, which keeps the count and the chain.
+  A count that checks the edit joined to it by `&&` right before it runs as it is, as in
+  `sed -i '' 's/days: 1/days: 30/' ci.yml && grep -c 'days: 30' ci.yml && npm test`: the edit is a `sed` in place of one file
+  with one `s` command, an optional line number before it, and no `w` or `e` flag, not itself behind `||` or `!`; the
+  grep reads that same file, with no `-v`, `-w`, `-x`, `-m`, or long option but `--count`, `--ignore-case`,
+  `--fixed-strings`, and `--extended-regexp`, and its pattern is literal text the replacement writes, outside `&` and
+  `\1`. When the substitution ran the file holds that text, so a count of zero means the edit did not apply: a real
+  failure, which the chain is right to stop on. A count of text the edit removes, where zero is the clean answer, a
+  `perl -pi` or script edit, and any word the rule cannot read stay denied.
 - Neither rule rewrites a segment that starts with a shell word (`if`, `while`, `!`), opens or closes a group or a `case`
   arm, or sits in a substitution whose text occurs twice in the line: that deny names the fixes in general.
+  A parenthesis inside quotes, as in `grep -E "a(b|c)"`, is text and closes no group.
 - Pull request body: `gh pr create` or `gh pr edit` with a body that lacks a config.json `github.requiredSections` heading,
   or that carries the "Generated with [Claude Code]" footer; `gh pr create --fill`;
   and, when sections are configured, a non-web `gh pr create` with no `--body` or `--body-file`.
@@ -2547,7 +2556,12 @@ Two checks read it:
   reads one, with a scheme and host, so `team/pull/3` is a branch name. A branch name is matched against each open pull
   request's `headRefName`, and an `owner:` one against its `headRepositoryOwner` too; when several open pull requests
   fit and nothing settles which, the edit is judged as if the body were new. An edit judges only the clauses its pull
-  request's current body does not already hold. The duplicate-body check reads the edit's target the same way.
+  request's current body does not already hold.
+  The deny ends with what clears each of its first three claims, the cheapest true line first: the count a run at those
+  files printed, as "- `npm test`: 12 pass, 0 fail"; a run of the same program with other words that passed there,
+  quoted as it ran; the commit of HEAD's last 100 its last pass was of, as "- `npm test` at 1a2b3c4: 12 pass", or a rerun
+  at HEAD when no commit holds those files; and with no pass, the run to make in the foreground, with why its runs left
+  none: no finished run, only failed ones, or only unjudged ones, whose summary a `tail` or a redirect cut. The duplicate-body check reads the edit's target the same way.
 - The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its
   own rows since its run started: a run of the session or of another agent is that one's to report. The report is
   read in one pass over its lines, with fences found as the body rule finds them. A machine handoff's JSON, a

@@ -376,3 +376,60 @@ test('asksForQuiet reads -q, a bundle with q, --quiet, and --silent', () => {
   const quiet = (line) => asksForQuiet(line.split(' ').map((text) => ({ text, dynamic: false })));
   assert.deepEqual(['-q x', '-qE x', '--quiet x', '--qui x', '--silent x', '-e -q f', '-c x'].map(quiet), [true, true, true, true, true, false, false]);
 });
+
+// The counts the dispatch log denied most in the week before issue 130: 49 of 109 counted, right after a `sed -i` of the
+// same file, text that edit writes. There zero means the edit did not apply, so the failure the chain reads is a real one.
+test('a count of the text the sed -i right before it writes into the same file runs as it is', () => {
+  const allowed = [
+    "sed -i '' 's/^          retention-days: 1$/          retention-days: 30/' ci.yml && grep -c 'retention-days: 30' ci.yml",
+    "sed -i '' \"s/'remotes', 'review-gate',/'remotes', 'resume-tokens', 'review-gate',/\" lib/project.mjs && grep -c \"'resume-tokens'\" lib/project.mjs",
+    "sed -i '' 's/state: .failed./state: \"parked\"/g' test/a.test.mjs && grep -c 'parked' test/a.test.mjs && node --test test/a.test.mjs",
+    "sed -i '' -e \"342s/\\['launch'\\]/['launch', '--kind']/\" t.mjs && grep -c \"'--kind'\" t.mjs",
+    "sed -i 's#@127.0.0.1:54329/taxyvo#@127.0.0.1:54339/taxyvo#' .env && grep -c '127.0.0.1:54339' .env",
+    "sed -i.bak -E 's/a+/new text/' f && grep -ci 'NEW TEXT' f",
+    "sed --in-place -e 's/a/x &y/' f && grep -cF 'x ' f",
+    "cd w && sed -i '' 's/a/b c/' f && grep -c 'b c' f",
+  ];
+  for (const command of allowed) {
+    assertParses(command);
+    assert.equal(decide(command), 'allow', command);
+  }
+});
+
+test('a count after an edit the rule cannot show wrote that text stays denied', () => {
+  const denied = [
+    "sed -i '' 's/a/b c/' f && grep -c 'b c' g", // another file
+    "sed -i '' 's/a/b c/' f && grep -vc 'b c' f", // counts the lines without it
+    "sed -i '' 's/a/b c/' f && grep -cw 'b' f",
+    "sed -i '' 's/a/b c/' f && grep -cx 'b c' f",
+    "sed -i '' 's/a/b c/' f && grep -c -m 1 'b c' f",
+    "sed -i '' 's/a/b c/' f && grep -c 'b.*c' f", // a pattern, not literal text
+    "sed -i '' 's/a/b c/' f && grep -c 'old' f", // text the edit removes, where zero is the clean answer
+    "sed 's/a/b c/' f && grep -c 'b c' f", // not in place
+    "sed -i '' 's/a/b/; s/c/d/' f && grep -c d f", // more than one command
+    "sed -i '' -e 's/a/b/' -e 's/c/d/' f && grep -c d f",
+    "sed -i '' '/x/d' f && grep -c y f",
+    "sed -i '' 's/a/b c/w out' f && grep -c 'b c' f",
+    "sed -i '' 's/a/&b/' f && grep -c ab f", // the match and the text join only when it ran
+    "sed -i '' 's/a/b c/' f g && grep -c 'b c' f",
+    "sed -i '' \"s/a/$X/\" f && grep -c b f",
+    "perl -pi -e 's/a/b c/' f && grep -c 'b c' f",
+    "python3 edit.py f && grep -c 'b c' f",
+    "a || sed -i '' 's/a/b c/' f && grep -c 'b c' f", // the edit may not have run
+    "! sed -i '' 's/a/b c/' f && grep -c 'b c' f",
+    "sed -i '' 's/a/b c/' f && cp f g && grep -c 'b c' g",
+    "set -o pipefail; sed -i '' 's/a/b c/' f && grep -c 'b c' f | cat && echo y",
+  ];
+  for (const command of denied) assert.equal(decide(command), 'deny', command);
+});
+
+test('a quoted pattern that ends in a parenthesis is text, so the deny still names the wrapped line, which runs', () => {
+  const command = 'grep -cE "node .*(--test|test/)" log && echo next';
+  const fixed = '{ grep -cE "node .*(--test|test/)" log || true; } && echo next';
+  const { decision, reason } = decideForCommand(command, {});
+  assert.equal(decision, 'deny');
+  assert.ok(reason.includes(`Run this instead:\n\n  ${fixed}\n`), reason);
+  assert.equal(decide(fixed), 'allow');
+  assertParses(fixed);
+  assert.match(reason, /A count of text the `sed -i` right before it writes into the same file runs as it is/u);
+});

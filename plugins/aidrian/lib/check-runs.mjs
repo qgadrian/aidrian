@@ -636,3 +636,41 @@ export function claimProblem(missing, runs, { where }) {
     'is "not finished", never a result, and a CI result is quoted from the checks the forge shows. ' +
     'To get a result, run the command in the foreground to its end, or `aidrian test changed` for the test files this change touches.';
 }
+
+// What clears one claim no run supports at `tree`, as one sentence that names the run to make or the body line that
+// passes, cheapest true line first: the count its run printed; a run of the same program with other words, quoted as it
+// ran; the commit its last pass was of, from `commitOf(tree)`, a commit id or null; or the run to make, and why its runs
+// left no pass.
+export function claimFix({ key, counts }, runs, { tree, commitOf = () => null }) {
+  const own = runs.filter((run) => run.command === key);
+  const passed = (run) => run.status === 'passed' && run.pass !== 0;
+  const passCount = (run) => (typeof run.pass === 'number' ? `${run.pass} pass` : 'pass');
+  const failCount = (run) => (typeof run.fail === 'number' ? `, ${run.fail} fail` : '');
+  const line = (command, run, at = '') => `"- \`${command}\`${at}: ${passCount(run)}${failCount(run)}"`;
+  const here = own.filter((run) => passed(run) && atTree(run, tree)).at(-1);
+  if (here) {
+    return `\`${key}\` passed at these files with ${passCount(here)}, and the line states ${counts.join(', ')}: ` +
+      `write the count it printed, as ${line(key, here)}.`;
+  }
+  const runner = key.split(' ')[0];
+  const sameRunner = (run) => run.command !== key && run.command.split(' ')[0] === runner;
+  const other = runs.filter((run) => sameRunner(run) && passed(run) && atTree(run, tree)).at(-1);
+  if (other) return `a run of \`${other.command}\` passed at these files: quote the command as it ran, as ${line(other.command, other)}.`;
+  const earlier = own.filter(passed).at(-1);
+  if (earlier) {
+    const commit = commitOf(earlier.tree) ?? (earlier.untrackedCode?.length ? null : commitOf(earlier.trackedTree));
+    if (!commit) return `its last pass was of files no commit holds, and they have changed since: rerun \`${key}\` in the foreground at HEAD.`;
+    const short = commit.slice(0, 7);
+    return `its last pass was of commit ${short}, and the files have changed since: rerun \`${key}\` in the foreground at HEAD, ` +
+      `or say which commit it ran on, as ${line(key, earlier, ` at ${short}`)}.`;
+  }
+  const last = own.at(-1);
+  if (last?.status === 'unjudged') {
+    return 'its runs printed no test count in the output the call returned, as when a `tail` cuts the summary or a redirect ' +
+      `sends it to a file, and a pipe or \`;\` hid their exit status: rerun \`${key}\` in the foreground, with its summary ` +
+      'in the output and nothing but `&&` around it.';
+  }
+  if (last?.status === 'failed') return `its last run failed, and a failed run is no pass: fix what failed, then rerun \`${key}\` in the foreground.`;
+  return 'no shell call of this session finished it, and a run in the background, inside `sh -c` or `$( )`, or in another ' +
+    `session leaves no row: run \`${key}\` in the foreground, as a call of its own.`;
+}

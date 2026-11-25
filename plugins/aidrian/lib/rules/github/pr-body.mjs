@@ -32,7 +32,7 @@ import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
 import { forgeFor } from '../../forges/index.mjs';
-import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../../check-runs.mjs';
+import { claimFix, claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../../check-runs.mjs';
 import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject, projectCheckouts, stateDir } from '../../project.mjs';
@@ -603,15 +603,39 @@ function judgeEvidence(body, call, { config, project, folder, readRuns, listOpen
     return trees.get(commit);
   };
   // Digits alone git cannot read are a number, such as "at 1234567 ms", and leave the line to HEAD's tree.
+  const claimTree = (claim) => treeAt(claim.commits.filter((id) => /[a-f]/u.test(id) || treeAt(id) !== null).at(-1) ?? 'HEAD');
   const missing = claims.filter((claim) => {
-    const named = claim.commits.filter((id) => /[a-f]/u.test(id) || treeAt(id) !== null).at(-1);
-    const tree = treeAt(named ?? 'HEAD');
+    const tree = claimTree(claim);
     return tree !== null && unsupportedClaims([claim], runs, { tree }).length > 0;
   });
   if (!missing.length) return null;
+  const commitOf = commitsByTree(folder);
+  const fixes = missing.slice(0, FIXES_SHOWN).map((claim) => `For \`${claim.key}\`, ${claimFix(claim, runs, { tree: claimTree(claim), commitOf })}`);
   return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section' })} The run must be of the files of HEAD ` +
     `(tree ${String(treeAt('HEAD') ?? 'unknown').slice(0, 12)}), or of the commit the line names, such as "at <commit id>". ` +
-    `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.`);
+    `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.\n\nWhat clears it: ${fixes.join(' ')}`);
+}
+
+// How many unsupported claims the deny names a fix for, and how many of HEAD's commits it searches for a run's tree.
+const FIXES_SHOWN = 3;
+const COMMITS_SEARCHED = 100;
+
+// A function from a git tree to the newest of HEAD's last COMMITS_SEARCHED commits that has it, or null. It reads the
+// log once, on the first tree it is asked for, so a deny that needs no commit makes no git call for it.
+function commitsByTree(folder) {
+  let byTree = null;
+  return (tree) => {
+    if (!tree) return null;
+    if (byTree === null) {
+      byTree = new Map();
+      const read = runGit(['log', `-${COMMITS_SEARCHED}`, '--format=%H %T', 'HEAD'], folder);
+      for (const row of read.status === 0 ? read.stdout.split('\n') : []) {
+        const [commit, commitTree] = row.split(' ');
+        if (commit && commitTree && !byTree.has(commitTree)) byTree.set(commitTree, commit);
+      }
+    }
+    return byTree.get(tree) ?? null;
+  };
 }
 
 // Whether the body is for the branch checked out in `folder`, as { body }: the pull request's current body on an edit

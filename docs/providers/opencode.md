@@ -301,12 +301,14 @@ pull request. None means no OpenCode hook or session read gives the field, and t
   `aidrian session snapshot --session "$OPENCODE_SESSION_ID"` shows that session's pull requests.
 - The bridge files a subagent's rows under the root session: it follows each session's `parentID` up to the root, at
   most 8 steps, and sends the root as `session_id` and the calling session as `agent_id`, as a subagent's rows land on
-  Claude Code. A read that fails, comes past the 2 s cap, or gives no session, and a walk that runs out of its 8
-  steps, as on a cycle, stop where they are: the call is sent with the last id reached as `session_id` and the calling
-  session as `agent_id`, never as the root session's own call, and that answer is not kept, so the next call reads
-  again. A kept root saves the walk alone: the calling session's folder is read on every call, and a kept root answers
-  only a call whose own read gave the session, so a call whose read fails is sent with `agent_id` even when its
-  session's root is kept. That call still carries the kept root as `session_id`, so a kept child's call keeps its root
+  Claude Code. A read counts as the session only when it gives an object whose `id` is the id asked for, as 2.4.1's
+  `Session.Info` always carries, so `{}` or an error object is no session. A read that fails, comes past the 2 s cap,
+  or gives no session, and a walk that runs out of its 8 steps, as on a cycle, stop where they are: the call is sent
+  with the last id reached as `session_id` and the calling session as `agent_id`, never as the root session's own
+  call, and that answer is not kept, so the next call reads again.
+  A kept root saves the walk alone: the calling session's folder is read on every call, and a kept root answers only a
+  call whose own read gave the session, so a call whose read fails is sent with `agent_id` even when its session's
+  root is kept. That call still carries the kept root as `session_id`, so a kept child's call keeps its root
   session's holds: a root is kept only from a walk that reached its end for that same session, and a session's
   parent never changes.
 - A subagent's own shell names the child session in `OPENCODE_SESSION_ID`, so that command run there shows none of

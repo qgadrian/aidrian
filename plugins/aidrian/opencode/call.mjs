@@ -22,6 +22,9 @@ export const READ_MS = 2000;
 
 const absolute = (value) => typeof value === 'string' && path.isAbsolute(value);
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+// A read gave the session `id` only when it is an object whose own `id` is that id, as OpenCode 2.4.1's Session.Info
+// always carries; any other object, such as {} or an error's, counts as a failed read.
+const isSession = (value, id) => isObject(value) && value.id === id;
 const isFolder = (dir) => {
   try {
     return absolute(dir) && statSync(dir).isDirectory();
@@ -71,9 +74,10 @@ export function folderOf(workdir, dir, home) {
 }
 
 // The calling session `sessionID`'s { root, agent, dir }: its own folder from a read on every call, as a session can
-// move, and its root by its parents, PARENT_STEPS reads at most. A read that fails, comes too late, or gives no object,
-// and a walk that runs out of steps, stop where they are, and the call is sent as a subagent's, with `agent` the
-// calling id, never as the root session's own; only a walk that reached its end is kept, so the next call reads again.
+// move, and its root by its parents, PARENT_STEPS reads at most. A read that fails, comes too late, or gives no
+// session of the id asked for, and a walk that runs out of steps, stop where they are, and the call is sent as a
+// subagent's, with `agent` the calling id, never as the root session's own; only a walk that reached its end is kept,
+// so the next call reads again.
 // A kept root answers only a call whose own read gave the session: one whose read failed is a subagent's, kept or not,
 // with its kept root still as `root`, so a kept child's call keeps its root's session-keyed holds. A kept answer comes
 // only from a walk that reached its end for that same id, and a session's parent never changes, so it still holds.
@@ -85,13 +89,13 @@ async function sessionOf(runner, get, sessionID) {
     current = null;
   }
   const known = runner.roots.get(sessionID);
-  if (!isObject(current)) return { root: known?.root ?? sessionID, agent: sessionID, dir: null };
+  if (!isSession(current, sessionID)) return { root: known?.root ?? sessionID, agent: sessionID, dir: null };
   const dir = current.location?.directory ?? null;
   if (known) return { ...known, dir };
   let id = sessionID;
   let ended = false;
   try {
-    for (let read = 1; isObject(current); read += 1) {
+    for (let read = 1; ; read += 1) {
       const parent = current.parentID;
       if (typeof parent !== 'string' || parent === '' || parent === id) {
         ended = true;
@@ -100,6 +104,7 @@ async function sessionOf(runner, get, sessionID) {
       id = parent;
       if (read >= PARENT_STEPS) break;
       current = await get(id);
+      if (!isSession(current, id)) break;
     }
   } catch {
     ended = false;

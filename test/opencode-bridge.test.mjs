@@ -81,9 +81,16 @@ function fakeSpawn(behave = closes()) {
   return { spawn, calls };
 }
 
+// What a fake session.get gives exactly as written, with no `id` added: `asGiven({})` is a read of an object that is no
+// session.
+const AS_GIVEN = Symbol('as given');
+const asGiven = (value) => ({ [AS_GIVEN]: value });
+
 // A fake OpenCode context: `sessions` maps an id to what session.get gives, to an Error it throws, or to a function
-// whose result it gives on each read (an id it does not hold reads as a root session in SESSION_DIR); `app` is 2.4.0's { name, version, channel }; `reads` lists the ids it was asked
-// for, and `hooks` each registration by its name.
+// whose result it gives on each read (an id it does not hold reads as a root session in SESSION_DIR). A session object
+// with no `id` of its own is given with the id asked for, as OpenCode 2.4.1's Session.Info always carries one;
+// `asGiven(value)` gives value as it is. `app` is 2.4.0's { name, version, channel }; `reads` lists the ids it was
+// asked for, and `hooks` each registration by its name.
 function fakeContext({ sessions = {}, app, location = { directory: OWN_DIR }, toolHook, shellHook, messages = {}, synthetic, subscribe } = {}) {
   const hooks = {};
   const reads = [];
@@ -110,7 +117,10 @@ function fakeContext({ sessions = {}, app, location = { directory: OWN_DIR }, to
         const entry = sessions[sessionID];
         const session = typeof entry === 'function' ? await entry() : entry;
         if (session instanceof Error) throw session;
-        return Object.hasOwn(sessions, sessionID) ? session : { location: { directory: SESSION_DIR } };
+        if (!Object.hasOwn(sessions, sessionID)) return { id: sessionID, location: { directory: SESSION_DIR } };
+        if (typeof session === 'object' && session !== null && Object.hasOwn(session, AS_GIVEN)) return session[AS_GIVEN];
+        const plain = typeof session === 'object' && session !== null && !Array.isArray(session) && !Object.hasOwn(session, 'id');
+        return plain ? { id: sessionID, ...session } : session;
       },
     },
     hooks,
@@ -476,7 +486,7 @@ test('a child session`s call carries the root as session_id and itself as agent_
   assert.deepEqual([sent(failing.calls[0]).session_id, sent(failing.calls[0]).agent_id], ['ses_top', 'ses_sub'], 'the walk stops where the read failed');
   for (const id of ['ses_main', 'ses_null', 'ses_text']) {
     await failing.fire(shellEvent({ sessionID: id }));
-    assert.deepEqual([sent(failing.calls.at(-1)).session_id, sent(failing.calls.at(-1)).agent_id], [id, id], `${id}: a first read that fails or gives no object sets agent_id`);
+    assert.deepEqual([sent(failing.calls.at(-1)).session_id, sent(failing.calls.at(-1)).agent_id], [id, id], `${id}: a first read that fails or gives no session sets agent_id`);
   }
   const before = failing.context.reads.length;
   await failing.fire(shellEvent({ sessionID: 'ses_null' }));
@@ -567,6 +577,28 @@ test('a kept child`s call whose own read fails, comes late, or gives none keeps 
     assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_top', 'ses_kid'], name);
   }
   assert.deepEqual(context.reads, ['ses_kid', 'ses_top', 'ses_kid', 'ses_kid', 'ses_kid'], 'a failed read walks no parent: the kept root answers');
+});
+
+test('a read that gives no session of the id asked for, {} or another id`s, on a child`s first call or mid-walk, sends agent_id and is not kept', async () => {
+  const NOT_SESSIONS = Object.freeze({ 'an empty object': () => asGiven({}), 'another id`s session': () => ({ id: 'ses_other' }), 'an error object': () => asGiven({ error: 'not found' }) });
+  for (const [name, misread] of Object.entries(NOT_SESSIONS)) {
+    let first = misread;
+    const context = fakeContext({ sessions: { ses_kid: () => first(), ses_top: {} } });
+    const { calls, fire } = await bridge({ context });
+    await fire(shellEvent({ sessionID: 'ses_kid' }));
+    first = () => ({ parentID: 'ses_top' });
+    await fire(shellEvent({ sessionID: 'ses_kid' }));
+    assert.deepEqual(calls.map((call) => [sent(call).session_id, sent(call).agent_id ?? null]), [['ses_kid', 'ses_kid'], ['ses_top', 'ses_kid']], `first read, ${name}`);
+
+    let middle = misread;
+    const walk = fakeContext({ sessions: { ses_kid: { parentID: 'ses_mid' }, ses_mid: () => middle(), ses_top: {} } });
+    const walked = await bridge({ context: walk });
+    await walked.fire(shellEvent({ sessionID: 'ses_kid' }));
+    middle = () => ({ parentID: 'ses_top' });
+    await walked.fire(shellEvent({ sessionID: 'ses_kid' }));
+    assert.deepEqual(walked.calls.map((call) => [sent(call).session_id, sent(call).agent_id ?? null]), [['ses_mid', 'ses_kid'], ['ses_top', 'ses_kid']], `mid-walk, ${name}`);
+    assert.deepEqual(walk.reads, ['ses_kid', 'ses_mid', 'ses_kid', 'ses_mid', 'ses_top'], `mid-walk, ${name}: the stopped walk is not kept`);
+  }
 });
 
 test(`session reads that never settle end at their own ${READ_MS} ms cap, and the call is sent as a subagent's from the plugin's folder`, { timeout: 10_000 }, async (t) => {

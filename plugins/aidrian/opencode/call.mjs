@@ -47,15 +47,19 @@ export async function callOf(runner, { blocking, name, event, info }) {
   } finally {
     reads.end();
   }
+  // The session's folder is looked up on disk once: `base`, the cwd of a call with no workdir, and `known` all come from
+  // that one answer, so a folder that comes or goes between two looks can neither record a call under the plugin's
+  // folder nor drop one.
+  const sessionFolder = isFolder(session.dir) ? session.dir : null;
   const own = runner.context.location?.directory;
-  const base = [session.dir, own].find(isFolder) ?? process.cwd();
+  const base = sessionFolder ?? (isFolder(own) ? own : process.cwd());
   const home = absolute(runner.env?.HOME) ? runner.env.HOME : homedir();
   const workdir = isObject(event.input) ? event.input.workdir : undefined;
   const given = workdir !== undefined && workdir !== null && workdir !== '';
   const cwd = given ? folderOf(workdir, absolute(session.dir) ? session.dir : base, home) : base;
   // The call's folder is known when the session's folder is one, or when the workdir names a folder by itself: a
   // record-only route never records a call under the plugin's folder or the service's in its place.
-  const known = isFolder(session.dir) || (typeof workdir === 'string' && path.isAbsolute(expandedOf(workdir, home)));
+  const known = sessionFolder !== null || (typeof workdir === 'string' && path.isAbsolute(expandedOf(workdir, home)));
   if (!blocking && (cwd === null || !known)) return { skip: 'cwd' };
   return { base, cwd: cwd ?? base, event, root: session.root, agent: session.agent, info };
 }

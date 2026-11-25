@@ -11,7 +11,8 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -749,6 +750,35 @@ test('a record-only call whose session folder is gone or could not be read, with
   const blocking = await bridge({ context: fakeContext({ sessions }), scripts, routes: routesFile('session-gone.json', [preRoute({ script: 'hook-pre.mjs' })]), events: BLOCKING });
   for (const sessionID of ['ses_main', 'ses_unread']) await blocking.context.hooks['execute.before'](beforeEvent({ sessionID }));
   assert.deepEqual(blocking.calls.map((call) => [call.options.cwd, sent(call).cwd]), [[OWN_DIR, OWN_DIR], [OWN_DIR, OWN_DIR]], 'a blocking route still sends both, from the plugin`s folder');
+});
+
+// fs.statSync, as call.mjs's own `statSync` import sees it, with the session's folder gone on the looks `gone(n)` names:
+// the n-th look at SESSION_DIR, from 1, and every look at any other path, ask the disk.
+async function withSessionLooks(t, gone, body) {
+  const real = fs.statSync;
+  let looks = 0;
+  t.mock.method(fs, 'statSync', (file, ...rest) => {
+    if (file === SESSION_DIR && gone(++looks)) throw Object.assign(new Error(`ENOENT: ${file}`), { code: 'ENOENT' });
+    return real(file, ...rest);
+  });
+  syncBuiltinESMExports();
+  try {
+    return await body();
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+}
+
+test('a record-only call looks at its session`s folder once: one that comes back after that look is not recorded under the plugin`s folder, and one gone after it is still recorded', async (t) => {
+  const looks = async (gone) => withSessionLooks(t, gone, async () => {
+    const { calls, fire } = await bridge();
+    await fire(shellEvent({ input: { command: 'gh pr create' } }));
+    return calls.map((call) => [call.options.cwd, sent(call).cwd]);
+  });
+  assert.deepEqual(await looks((look) => look === 1), [], 'gone on the first look, back after it: skipped, never sent from the plugin`s folder');
+  assert.deepEqual(await looks((look) => look > 1), [[SESSION_DIR, SESSION_DIR]], 'there on the first look, gone after it: recorded, never dropped');
+  assert.deepEqual(await looks(() => false), [[SESSION_DIR, SESSION_DIR]], 'there on every look');
 });
 
 test('setup resolves when one registration rejects, still makes the other, and traces and keeps a notice naming the one lost', async () => {

@@ -272,12 +272,13 @@ export function isObject(value) {
 
 // The fields of the object `value`, at `at` in `file`, that `fields` names, as a new object. Each other field adds
 // `<file>: unknown key "<at>.<field>"` to `errors`, which the local settings file reads as a warning and ignores
-// (config-local.mjs splitUnknownKeys), so a field a newer release adds to a group fails no older plugin.
+// (config-local.mjs splitUnknownKeys), so a field a newer release adds to a group fails no older plugin. The path is
+// quoted as JSON, so a name with a newline or a control character cannot write a line of its own into the output.
 export function knownFields(value, fields, at, file, errors) {
   const kept = {};
   for (const [key, field] of Object.entries(value)) {
     if (fields.includes(key)) kept[key] = field;
-    else errors.push(`${file}: unknown key "${at}.${key}"`);
+    else errors.push(`${file}: unknown key ${JSON.stringify(`${at}.${key}`)}`);
   }
   return kept;
 }

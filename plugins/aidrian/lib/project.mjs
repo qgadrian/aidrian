@@ -414,7 +414,7 @@ function readLocal(checkouts, { errors, warnings }, unreadable, read) {
 function checkedLocal(raw, dir) {
   const found = [];
   for (const key of Object.keys(raw)) {
-    if (!LOCAL_KEYS.includes(key)) found.push(`${LOCAL}: unknown key "${key}"`);
+    if (!LOCAL_KEYS.includes(key)) found.push(`${LOCAL}: unknown key ${JSON.stringify(key)}`);
   }
   const sources = localSources(dir, raw, found);
   const autoMerge = localAutoMerge(raw, found);
@@ -531,7 +531,7 @@ function githubGroup(raw) {
   if (!isObject(raw.github)) return { ...none, problems: [`${LOCAL}: "github" must be an object`] };
   const problems = [];
   for (const key of Object.keys(raw.github)) {
-    if (!MACHINE_GITHUB.includes(key)) problems.push(`${LOCAL}: unknown key "github.${key}"; only "github.autoMerge" and "github.unattendedWaiver" are machine settings`);
+    if (!MACHINE_GITHUB.includes(key)) problems.push(`${LOCAL}: unknown key ${JSON.stringify(`github.${key}`)}; only "github.autoMerge" and "github.unattendedWaiver" are machine settings`);
   }
   const read = (key) => {
     if (!Object.hasOwn(raw.github, key)) return 'unset';

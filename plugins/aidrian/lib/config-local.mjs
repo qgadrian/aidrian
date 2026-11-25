@@ -37,6 +37,9 @@ export function localDecisions(team, project, errors) {
   const teamOnly = (key) => Object.hasOwn(DECISIONS_SCHEMA, key) && !Object.hasOwn(LOCAL_DECISIONS_SCHEMA, key);
   for (const key of Object.keys(local).filter(teamOnly)) errors.push(`${file}: "decisions.${key}" is the team's: set it in config.json`);
   const own = Object.fromEntries(Object.entries(local).filter(([key]) => !teamOnly(key)));
+  // A pause limit is read whole, so a field a newer release adds to it is an unknown key here, never a bad limit; config.json keeps it strict.
+  const pause = isObject(own.unreviewed) ? own.unreviewed.pauseDomainAt : undefined;
+  if (isObject(pause)) own.unreviewed = { ...own.unreviewed, pauseDomainAt: knownFields(pause, ['pending', 'oldestDays'], 'decisions.unreviewed.pauseDomainAt', file, errors) };
   const read = merge(LOCAL_DECISIONS_SCHEMA, team, own, 'decisions.', file, errors);
   // `merge` keeps the team's value for a key that is unset or refused, so `read` holds the local value only when `set` is it.
   const capped = (set, mode) => (set !== mode || mode === 'inherit' ? mode : lowerMode(mode, team.maxMode));

@@ -1156,6 +1156,20 @@ const localUnknownCases = [
   ['a field of review.visual', { review: { visual: { baseUrl: 'http://localhost:3000', viewport: 1024 } } },
     /^\.aidrian\.local\.json: unknown key "review\.visual\.viewport"$/u, (config) => config.reviewVisual, { baseUrl: 'http://localhost:3000' }],
 ];
+test('.aidrian.local.json decisions.unreviewed.pauseDomainAt warns on a field a newer release adds, and keeps its limits; config.json stays strict', (t) => {
+  const team = project(t, { version: 1 });
+  writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({ decisions: { unreviewed: { pauseDomainAt: { pending: 3, oldestDays: 2, weekdays: true } } } }));
+  const { config, errors, warnings } = loadConfig(findProject(team.root));
+  assert.deepEqual([errors, warnings], [[], ['.aidrian.local.json: unknown key "decisions.unreviewed.pauseDomainAt.weekdays"']]);
+  assert.deepEqual(config.decisions.unreviewed.pauseDomainAt, { pending: 3, oldestDays: 2 }, 'the lower limits apply');
+  writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({ decisions: { unreviewed: { pauseDomainAt: { pending: 0, oldestDays: 2, weekdays: true } } } }));
+  const bad = loadConfig(findProject(team.root));
+  assert.match(bad.errors.join('\n'), /^\.aidrian\.local\.json: "decisions\.unreviewed\.pauseDomainAt" must be null, or/u, 'a bad limit stays an error');
+  assert.deepEqual(bad.config.decisions.unreviewed.pauseDomainAt, DEFAULTS.decisions.unreviewed.pauseDomainAt);
+  const strict = project(t, { version: 1, decisions: { unreviewed: { pauseDomainAt: { pending: 3, oldestDays: 2, weekdays: true } } } });
+  assert.match(loadConfig(strict).errors.join('\n'), /^\.aidrian\/config\.json: "decisions\.unreviewed\.pauseDomainAt" must be null, or/u, 'the team file keeps it strict');
+});
+
 for (const [name, local, warning, read, kept] of localUnknownCases) {
   test(`.aidrian.local.json warns on ${name}, and keeps the rest`, (t) => {
     const team = project(t, { version: 1 });

@@ -14,6 +14,8 @@ named and go on from that output as step 2 says.
 ## Each pass
 
 1. `aidrian project next <run>`:
+   - one `owed <key>` line or more, which come last: a settle report is still owed, such as one an earlier driver
+     left, or an orphan's that `start` settled. Step 4 first, then the other lines of this answer.
    - `halted <cause>`: § Halt.
    - `paused until <time>`: § Pause.
    - one `next <key> <branch>` line or more: step 2 for each, in order.
@@ -24,7 +26,8 @@ named and go on from that output as step 2 says.
    - exit 0, `started <key> attempt <n> session <id>`: the issue runs in its own session. Set its started status once,
      as [tracker-writes.md](tracker-writes.md) § The started status says. Next `next` line, else step 3.
    - exit 0, `parked <key> unreconciled: ...`: nothing started; follow [existing-work.md](existing-work.md). Next `next` line, else step 3.
-   - an `unverified:` line is a note, not a refusal.
+   - an `unverified:` line is a note, not a refusal. An `orphan <key> ...` line settled an earlier attempt: its report
+     is written on step 1's `owed` line.
    - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: § Pause.
    - a line `halt <cause>`, exit 1: § Halt. A `recheck kept the halt:` line after it names what kept it.
    - exit 0, `recheck lifted the halt: <cause>; ok <checks>`: the start lifted the halt of this issue and launched
@@ -50,7 +53,7 @@ named and go on from that output as step 2 says.
    - `idle`: step 1.
    - exit 75, `retry: <why>`, as when another process holds the ledger: § Retry. Exit 1: § Stop.
 4. `aidrian project report <run> --json`, and write each report it owes as [tracker-writes.md](tracker-writes.md) says.
-   Exit 75: § Retry. Exit 1: § Stop. Then step 1.
+   Exit 75: § Retry. Exit 1: § Stop. Then step 1, or, when step 1's `owed` lines sent you here, that answer's other lines.
 
 ## Pause
 

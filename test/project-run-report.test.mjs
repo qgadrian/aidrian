@@ -5,9 +5,9 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -40,7 +40,6 @@ const PRE = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-t
 const POST = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-tracker-post.mjs');
 const AGENT_GATES = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 const BASH_HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-bash.mjs');
-const JSONL = path.resolve(import.meta.dirname, '../plugins/aidrian/lib/jsonl.mjs');
 // A project ready for a run: the tracker and its server, auto-merge with required checks, a handoff route, and the
 // machine's switches.
 const READY = {
@@ -1079,16 +1078,57 @@ test('the host continuing the driver under a new id strands the run, so an atten
   assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0'], { session: DRIVER }).err[0], /this session is not the driver of the run launch/u, 'the old id lost custody');
 });
 
-test('a command whose ledger another process holds locked exits 75 with a retry line', async (t) => {
+// Holds the ledger of run `launch` locked as another live process on this host would: a lock generation that names a
+// pid that runs, which no lock of this process holds (lib/jsonl.mjs withLocks).
+function holdLedger(fx) {
+  const ledger = path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl');
+  writeFileSync(`${ledger}.lock.999`, `${JSON.stringify({ pid: process.pid, host: hostname(), nonce: 'other' })}\n`);
+}
+
+test('a command whose ledger another process holds locked exits 75 with a retry line', (t) => {
   const fx = started(t);
   fx.settle({ status: 'merged', pr: 12 });
-  const ledger = path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl');
-  const holder = spawn(process.execPath, ['--input-type=module', '-e', `import { withLocks } from ${JSON.stringify(JSONL)}; withLocks([${JSON.stringify(ledger)}], () => { process.stdout.write('held\\n'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 8000); });`], { stdio: ['ignore', 'pipe', 'inherit'] });
-  t.after(() => holder.kill());
-  await new Promise((resolve) => holder.stdout.once('data', resolve));
-  const answer = fx.cmd(['recorded', 'launch', 'ENG-1']);
+  holdLedger(fx);
+  const answer = fx.cmd(['end', 'launch']);
   assert.equal(answer.exitCode, 75);
   assert.match(answer.out[0], /^retry: .*is locked by another process/u);
+});
+
+test('recorded closes a report while another process holds the ledger, so a busy acknowledgment never sends the driver to post it twice', (t) => {
+  const fx = started(t);
+  fx.settle({ status: 'merged', pr: 12 });
+  const [report] = fx.owed();
+  holdLedger(fx);
+  // The driver made the report's calls; a refusal that may pass here would send it back through wait, whose next
+  // settle lists the report again.
+  assert.deepEqual(fx.cmd(['recorded', 'launch', 'ENG-1']), { exitCode: 0, out: ['recorded ENG-1'], err: [] });
+  const row = fx.rows().at(-1);
+  assert.deepEqual([row.event, row.key, row.attempt, row.sha256], ['recorded', 'ENG-1', 1, report.sha256]);
+  assert.deepEqual(fx.report().out, ['none'], 'no tracker call is owed again');
+  assert.match(fx.cmd(['recorded', 'launch', 'ENG-1']).err[0], /the run launch owes no report on ENG-1/u);
+});
+
+test('next lists each settle report still owed, so a driver that takes the run over writes it before it starts an issue', (t) => {
+  const fx = started(t);
+  fx.settle({ status: 'merged', pr: 12 });
+  // The driver stops before it writes the report; an attended session takes the run over (loop.md § Hand off).
+  const RESCUER = 'abcd1234-0000-4000-8000-00000000f002';
+  const listing = (command, args, options) => (args[0] === 'agents'
+    ? { status: 0, stdout: JSON.stringify([{ id: DRIVER.slice(0, 8), sessionId: DRIVER, name: 'driver', kind: 'background', cwd: fx.dir, state: 'stopped' }]), stderr: '' }
+    : fx.claude.run(command, args, options));
+  assert.equal(fx.cmd(['resume', 'launch'], { session: RESCUER, spawn: listing }).exitCode, 0);
+  const next = fx.cmd(['next', 'launch'], { session: RESCUER });
+  assert.equal(next.exitCode, 0, next.err.join('\n'));
+  assert.match(next.out[0], /^next ENG-\d+ /u, 'the run would start an issue next');
+  assert.equal(next.out.at(-1), 'owed ENG-1', 'the report the first driver left is named on the first pass, before any start');
+  assert.deepEqual(JSON.parse(fx.cmd(['next', 'launch', '--json'], { session: RESCUER }).out[0]).owed, ['ENG-1']);
+  assert.deepEqual(JSON.parse(fx.report(['--json'], RESCUER).out[0]).owed.map((each) => each.key), ['ENG-1']);
+  assert.equal(fx.cmd(['recorded', 'launch', 'ENG-1'], { session: RESCUER }).exitCode, 0);
+  assert.equal(fx.cmd(['next', 'launch'], { session: RESCUER }).out.includes('owed ENG-1'), false, 'none once recorded');
+  // The loop's step 1 sends the driver to the report on that line before any other.
+  const loop = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/references/loop.md'), 'utf8').replace(/\s+/gu, ' ');
+  const first = loop.slice(loop.indexOf('1. `aidrian project next <run>`:'), loop.indexOf('2. `aidrian project start'));
+  assert.ok(first.includes('one `owed <key>` line or more, which come last') && first.includes('Step 4 first, then the other lines of this answer.'), 'the loop reads the owed line');
 });
 
 test('a driver\'s background continuation gets the driver mark at its start, and is held until custody moves', async (t) => {

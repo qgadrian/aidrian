@@ -2163,6 +2163,9 @@ The start row keeps it as `startLoaded`, `{ docs, folder }`, beside `overlay`; a
 A start on existing work is refused, too, when a path of the tip, or of the branch's head once fetched, spells another
 way a name the harness holds by its exact spelling: the pointer, the policy files, what the start hook loads, the
 forge's workflow folders, and each guarded path of the tip (`spellingRule` in `lib/project.mjs`), such as `.AIDRIAN.JSON`.
+A tree, a list of a push's paths, or a path past the guards' bounds is refused, never judged in part: a list of paths
+git gives in more than 8 MiB, a path deeper than 64 folders or longer than 4,096 bytes, and a push whose paths the push
+guard cannot judge within its time budget.
 When the tip's indexes name more than 64 always docs, or their list takes more than 16 KiB as JSON, a start on existing
 work is refused the same way, since its row keeps that list whole.
 When the tip's indexes cannot be read, as one that is malformed or a link, or the tip holds that folder in another

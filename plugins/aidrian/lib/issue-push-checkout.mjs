@@ -8,7 +8,7 @@
 // and one that fails, or does not answer in time, refuses the push.
 
 import { maskSecrets } from './clean-text.mjs';
-import { checkDeadline, remainingMs } from './deadline.mjs';
+import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { runGit, WHOLE_TREE_BUFFER } from './git.mjs';
 import { INDEX_RECIPE, PLAIN_FILE } from './index-edits.mjs';
@@ -169,10 +169,10 @@ function committedProblem(folder, { counts }, spelling) {
     if (diff.status === null) return `it pushes, and ${SLOW} which files its commits change, so they may change the forge's workflow files`;
     if (diff.status !== 0) continue;
     const paths = diff.stdout.split('\0').filter((file) => file !== '');
-    const spelled = paths.map(spelling).find(Boolean);
-    if (spelled) return `it pushes commits that change ${spelled}; take that path out of the commits`;
-    const changed = paths.filter((file) => counts(file));
-    return changed.length ? `it pushes commits that change ${changed[0].slice(0, 120)}, a workflow file the forge runs with the repository's secrets on that push, before any review; an issue that needs such a change is parked for the Human, and one the default branch made counts once \`git fetch origin\` brings it` : null;
+    const judged = judgedPaths(paths, spelling, counts);
+    if (judged.past) return `it pushes commits that change ${paths.length} paths, more than the guards can judge within their time budget, so the push is refused, never judged in part`;
+    if (judged.spelled) return `it pushes commits that change ${judged.spelled}; take that path out of the commits`;
+    return judged.counted ? `it pushes commits that change ${judged.counted.slice(0, 120)}, a workflow file the forge runs with the repository's secrets on that push, before any review; an issue that needs such a change is parked for the Human, and one the default branch made counts once \`git fetch origin\` brings it` : null;
   }
   return NO_BASE;
 }
@@ -185,13 +185,36 @@ function uncommittedProblem(folder, { counts }, spelling) {
   if (status.status !== 0) return `it pushes, and ${SLOW} whether its checkout holds a change to the forge's workflow files`;
   // A folder git lists whole, as an embedded repository, ends with a slash, which no name it may be spelled as has.
   const entries = statusEntries(status.stdout).map((entry) => ({ ...entry, paths: entry.paths.map((file) => file.replace(/\/+$/u, '')) }));
-  const spelled = entries.flatMap(({ paths }) => paths).map(spelling).find(Boolean);
+  const paths = entries.flatMap((entry) => entry.paths);
+  const judged = judgedPaths(paths, spelling, () => false);
+  if (judged.past) return `it pushes from a checkout that holds ${paths.length} uncommitted paths, more than the guards can judge within their time budget, so the push is refused, never judged in part`;
+  const spelled = judged.spelled;
   if (spelled) return `it pushes from a checkout that holds an uncommitted change to ${spelled}, which a command run beside the push could commit into it; take it out, then push again`;
   const found = entries.find(({ paths }) => paths.some((file) => counts(file)));
   if (!found) return null;
   const file = found.paths.find((each) => counts(each));
   const undo = found.untracked ? `git clean -f -- ${shellWord(file)}` : `git restore --staged --worktree -- ${shellWord(file)}`;
   return `it pushes from a checkout that holds an uncommitted change to ${file.slice(0, 120)}, a workflow file the forge runs with the repository's secrets, which a command run beside the push could commit into it; take it out with \`${undo.slice(0, 200)}\`, then push again`;
+}
+
+// The first of `paths` the rule `spelling` refuses, as { spelled }, else the first `counts` takes, as { counted }, or {};
+// { past } once the guards' time budget is spent, which checkDeadline says every 1,000 paths.
+function judgedPaths(paths, spelling, counts) {
+  let counted;
+  for (const [at, file] of paths.entries()) {
+    if (at % 1000 === 0) {
+      try {
+        checkDeadline();
+      } catch (error) {
+        if (error instanceof PastDeadline) return { past: true };
+        throw error;
+      }
+    }
+    const spelled = spelling(file);
+    if (spelled) return { spelled };
+    if (counted === undefined && counts(file)) counted = file;
+  }
+  return counted === undefined ? {} : { counted };
 }
 
 // The paths of `git diff --raw -z` output: each entry is its `:<modes> <ids> <status>` field, then one path, or two for

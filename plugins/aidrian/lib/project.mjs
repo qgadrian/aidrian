@@ -128,6 +128,9 @@ export const foldPath = (file) => file.normalize('NFD').toLowerCase().toUpperCas
 // itself (test/auto-merge-guard.test.mjs).
 export const isGuardedPath = (file) => GUARDED_PATHS.test(file) || GUARDED_PATHS.test(foldPath(file));
 
+// The most folders a path may lie below, and the most bytes it may take, for the spelling rule to judge it.
+const [PATH_DEPTH, PATH_BYTES] = [64, 4096];
+
 // The one spelling rule, for `names`, the paths the harness holds by their exact spelling, a folder's with a trailing
 // `/`: (file) => why `file` is one of them in another spelling, or null. That is when its fold (foldPath) is a name's,
 // a file's in a folder name, or a folder's that holds a name, and either its own spelling is none of them or two
@@ -147,6 +150,8 @@ export function spellingRule(names) {
     return spellings && (spellings.size > 1 || !spellings.has(spelled)) ? spellings : null;
   };
   return (file) => {
+    // A path past these bounds is refused before it is folded, never judged in part.
+    if (Buffer.byteLength(file) > PATH_BYTES || file.split('/').length > PATH_DEPTH + 1) return `${JSON.stringify(file.slice(0, 200))} is deeper than ${PATH_DEPTH} folders or longer than ${PATH_BYTES} bytes, which no guard judges`;
     const folded = foldPath(file);
     const parts = file.split('/');
     const at = other(files, folded, file) ?? other(parents, folded, file) ?? other(folders, folded, file)

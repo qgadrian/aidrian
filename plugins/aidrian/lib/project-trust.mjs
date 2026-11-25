@@ -16,7 +16,7 @@ import path from 'node:path';
 import { cleanText, maskSecrets } from './clean-text.mjs';
 import { foldCase, isWithin, resolvedPath } from './fs.mjs';
 import { repoIdentity } from './forges/index.mjs';
-import { GATE_CONFIG, gateGit } from './git.mjs';
+import { GATE_CONFIG, gateGit, WHOLE_TREE_BUFFER } from './git.mjs';
 import { instructionNames } from './hosts/index.mjs';
 import { isGuardedPath } from './project.mjs';
 
@@ -114,9 +114,9 @@ export function repositoryProblem(dirs, repository) {
 }
 
 // The paths git lists with `args`, a subcommand and its options, in the checkout `dir`, split on NUL, or null when git
-// fails. `-z` goes right after the subcommand: after a `--` it would be a path.
+// fails, or gives more than WHOLE_TREE_BUFFER, which is no list. `-z` goes right after the subcommand: after a `--` it would be a path.
 function listed(dir, [subcommand, ...args]) {
-  const read = gateGit([subcommand, '-z', ...args], dir, { timeout: 60_000 });
+  const read = gateGit([subcommand, '-z', ...args], dir, { timeout: 60_000, maxBuffer: WHOLE_TREE_BUFFER });
   return read.status === 0 ? read.stdout.split('\0').filter(Boolean) : null;
 }
 

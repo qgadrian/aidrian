@@ -5,12 +5,13 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { deflateSync } from 'node:zlib';
 
-import { gateGit } from '../plugins/aidrian/lib/git.mjs';
+import { gateGit, stubGitSpawn } from '../plugins/aidrian/lib/git.mjs';
 import { ancestorProblem, commitFiles, isGuarded, overlayGuarded, rawMismatch, repositoryProblem, reviewedMismatch, trustProblem } from '../plugins/aidrian/lib/project-trust.mjs';
 import { runFixture, testGlobalConfig } from './project-start-fixture.mjs';
 
@@ -159,6 +160,13 @@ test('trustProblem holds what the caller\'s guards take too: changed, changed wh
   }
   fx.git('update-index', '--assume-unchanged', '--', 'docs/rules.md');
   assert.match(trustProblem(fx.dir, tip, [], guards) ?? '', /differ from the base tip: docs\/rules\.md$/u, 'its bytes decide, whatever the index says');
+  // A list git cut at its buffer, with status 0 and an error, is no list: the start refuses.
+  stubGitSpawn((program, args, options) => (args.includes('ls-files') && args.includes('--others') ? { status: 0, signal: null, stdout: 'docs/a.md\0', stderr: '', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : spawnSync(program, args, options)));
+  try {
+    assert.equal(trustProblem(fx.dir, tip, [], guards), 'git cannot list the worktree\'s changed, untracked, and ignored files');
+  } finally {
+    stubGitSpawn();
+  }
 });
 
 test('the tip\'s files are read from hash-checked objects, whatever the index says', (t) => {

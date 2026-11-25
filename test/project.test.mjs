@@ -767,6 +767,10 @@ test('spellingProblem refuses a path that is a held name, a file in a held folde
   assert.match(spellingProblem('.github/in\ufb06ructions/x.md', []) ?? '', /is a guarded path in another spelling/u);
   assert.equal(spellingProblem('CLAUDE.md', ['CLAUDE.md']), null);
   assert.match(spellingProblem('CLAUDE.md', ['CLAUDE.md', 'claude.md']) ?? '', /^"CLAUDE\.md" is "claude\.md" in another spelling/u);
+  // A path past the rule's bounds is refused before it is folded, whatever names it holds.
+  const deep = `${'a/'.repeat(65)}x.md`;
+  for (const file of [deep, `docs/${'x'.repeat(4092)}`]) assert.match(spellingProblem(file, []) ?? '', /is deeper than 64 folders or longer than 4096 bytes, which no guard judges$/u, file.slice(0, 20));
+  for (const file of [`${'a/'.repeat(64)}x.md`, `docs/${'x'.repeat(4091)}`]) assert.equal(spellingProblem(file, []), null, 'at the bounds');
 });
 
 // A refusal compares folds, so a fold that told apart two paths equal in lower case would drop one.

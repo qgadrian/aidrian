@@ -14,6 +14,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkDelivery, unwrittenHandoffs } from '../plugins/aidrian/lib/delivery-check.mjs';
+import { withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { stubGitSpawn } from '../plugins/aidrian/lib/git.mjs';
 import { INDEX_RECIPE } from '../plugins/aidrian/lib/index-edits.mjs';
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
@@ -428,6 +429,24 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   assert.equal(fx.push(path.join(fx.work, '.aidrian')), null, 'an edit of both');
   // A whole list git cut at its buffer, which spawnSync answers with status 0 and an error, is no list: the push refuses.
   const plainPush = { ...fx.own(), overlay: null, policyFiles: [], startLoaded: null };
+  // More paths than the guards can judge within their time budget, which the loop asks every 1,000: refused whole.
+  let listed = false;
+  let tick = 0;
+  const clock = performance.now;
+  // Still at its start while git reads, then a step each time the loop asks.
+  const start = 1e9;
+  performance.now = () => (listed ? start + (tick += 1) : 0);
+  stubGitSpawn((program, args, options) => {
+    if (!(args.includes('--name-only') && args.some((each) => each.endsWith('...HEAD')))) return spawnSync(program, args, options);
+    listed = true;
+    return { status: 0, signal: null, stdout: Array.from({ length: 1500 }, (_, at) => `src/${at}.js\0`).join(''), stderr: '' };
+  });
+  try {
+    assert.equal(withinDeadline(start + 1, () => fx.push(fx.work, plainPush)), 'it pushes commits that change 1500 paths, more than the guards can judge within their time budget, so the push is refused, never judged in part');
+  } finally {
+    stubGitSpawn();
+    performance.now = clock;
+  }
   for (const [word, why] of [['--name-only', /^it pushes, and git could not say in time which files its commits change/u], ['status', /^it pushes, and git could not say in time whether its checkout holds a change to the forge's workflow files/u]]) {
     stubGitSpawn((program, args, options) => (args.includes(word) && (word !== '--name-only' || args.some((each) => each.endsWith('...HEAD'))) ? { status: 0, signal: null, stdout: 'src/a.js\0', stderr: '', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : spawnSync(program, args, options)));
     try {

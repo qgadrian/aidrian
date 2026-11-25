@@ -53,8 +53,9 @@ export const GATE_CONFIG = Object.freeze(HARDENED_PAIRS.flatMap(([key, value]) =
 // status reads a submodule, or lets a submodule's own `ignore` setting, as `.gitmodules` holds one, hide its entry.
 const GATE_ARGS = Object.freeze({ diff: ['--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty'], status: ['--ignore-submodules=dirty'] });
 // How long a gate's git call may take unless it says otherwise: a fetch or a clone may take a while.
-// The output a read of a whole tree's paths, or of every path a push changes, may give: a large repository's.
-export const WHOLE_TREE_BUFFER = 256 * 1024 * 1024;
+// The output a read of a whole tree's paths, or of every path a push changes, may give. A read past it refuses, never
+// judged in part, so a guard answers inside the host's hook timeout whatever a session pushes.
+export const WHOLE_TREE_BUFFER = 8 * 1024 * 1024;
 const GATE_TIMEOUT_MS = 120_000;
 
 // `args` as the plugin runs them: GATE_CONFIG first, and, when the first argument is the subcommand, its GATE_ARGS after

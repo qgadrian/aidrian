@@ -500,7 +500,7 @@ function baseCopyMarks({ work, gitFolder, tip, overlay, git }) {
     return { problem: `their ignore lines could not be written (${error.code ?? 'no code'})` };
   }
   // Exit 0 lists the ignored ones, 1 none; any other answer is no answer.
-  const checked = git(['check-ignore', '-z', '--stdin'], work, { input: `${deleted.join('\0')}\0` });
+  const checked = git(['check-ignore', '-z', '--stdin'], work, { input: `${deleted.join('\0')}\0`, maxBuffer: WHOLE_TREE_BUFFER });
   if (checked.status !== 0 && checked.status !== 1) return { problem: `git cannot say whether it ignores them (${said(checked)})` };
   const ignored = new Set(checked.stdout.split('\0').filter(Boolean));
   const stageable = deleted.find((file) => !ignored.has(file));

@@ -1764,7 +1764,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     rule (`spellingRule`): another spelling of a workflow folder, of the row's policy files, or of what the start hook
     loads, which a start row with an `overlay` keeps, or a guarded path by its fold alone, refuses the push. A folder git
     lists whole, as an embedded repository, is judged without its trailing slash, and a read whose output outgrows its
-    256 MiB buffer refuses.
+    8 MiB buffer refuses, as does a list it cannot judge within its time budget, checked every 1,000 paths.
     The other exception is an exact path of the row's `indexFiles`, the knowledge index files the attempt may edit in
     git's index ([Project run](config.md#project-run)). One that differs from `<overlay>`, and from git's clean merge of a
     newer base, must be a plain file (`git ls-tree -z HEAD`, `100644 blob`) that is not the base's blob the row names. A

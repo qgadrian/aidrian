@@ -10,8 +10,8 @@
 // untracked files git does not ignore included, and `trackedTree` the same of the tracked files alone (workingTree), each
 // null when git cannot say; and `status` `passed`, `failed`, or `unjudged`. A run whose folder the command does not tell,
 // as `env -C "$W"` or a `cd` after `;`, has `folder: 'unknown'` too, which no other row has: its trees are null, never
-// those of the session's own checkout, and it supports no claim (unplaced). On a host whose PostToolUse comes only for a
-// call that exited 0, as Claude Code's, a run whose status is the line's own (only `&&` before and after it) passed unless
+// those of the session's own checkout, so it supports no claim held to a tree (unplaced).
+// On a host whose PostToolUse comes only for a call that exited 0, as Claude Code's, a run whose status is the line's own (only `&&` before and after it) passed unless
 // its counts show a failure. Any other run, and every run on a host that sends the hook failed calls too, as Codex, is
 // judged by its counts alone: passed with a pass count above 0 and a fail count of 0, failed with a fail count above 0,
 // and `unjudged` when it printed no count, since its exit status is unknown. A call whose output the host kept in a file,
@@ -612,9 +612,9 @@ function units(lines) {
 // Whether a row supports a claim at `tree`: the same command, passed with more than 0 passes when it printed a count
 // (a run of no tests proves nothing), at that tree when one is given, and with each count the claim states. The tree is
 // the row's full one, or its tracked one only while no untracked code or test file sat beside the run, which it may
-// have loaded and the commit lacks. A run whose folder is unknown is at no tree, not even when any will do.
-const atTree = (run, tree) => !unplaced(run)
-  && (tree === null || run.tree === tree || (run.trackedTree === tree && !run.untrackedCode?.length));
+// have loaded and the commit lacks. A run whose folder is unknown has null trees, so it is at none that is given, and
+// still supports a claim read at any tree, as a subagent's report's: it finished in this session with that count.
+const atTree = (run, tree) => tree === null || run.tree === tree || (run.trackedTree === tree && !run.untrackedCode?.length);
 const supports = (run, { key, counts }, tree) => run.command === key && run.status === 'passed' && run.pass !== 0
   && atTree(run, tree) && (run.pass === null || run.pass === undefined || counts.every((count) => count === run.pass));
 
@@ -623,8 +623,9 @@ export function unsupportedClaims(claims, runs, { tree = null } = {}) {
   return claims.filter((claim) => !runs.some((run) => supports(run, claim, tree)));
 }
 
-// What a report is told about `missing` claims: what was looked for and what the record holds.
-export function claimProblem(missing, runs, { where }) {
+// What a report is told about `missing` claims: what was looked for and what the record holds. `byTree` says the claims
+// are held to a tree, so a run whose folder is unknown is one to run again.
+export function claimProblem(missing, runs, { where, byTree = false }) {
   const named = [...new Set(missing.map(({ key }) => `\`${key}\``))].join(', ');
   const held = runs.filter((run) => missing.some(({ key }) => run.command === key));
   const counted = (run) => (run.pass === null && run.fail === null ? '' : ` (pass ${run.pass ?? 'unknown'}, fail ${run.fail ?? 'unknown'})`);
@@ -644,8 +645,8 @@ export function claimProblem(missing, runs, { where }) {
   const untracked = beside.length
     ? ` Untracked code beside the run, which the commit lacks: ${beside.map((file) => `\`${file}\``).join(', ')}; \`git add\` it, or remove it, and rerun.`
     : '';
-  const unknown = held.some(unplaced)
-    ? ` A run's folder could not be told from its command, as with one a variable holds, so that run supports no claim. ${RUN_PLACED}`
+  const unknown = byTree && held.some(unplaced)
+    ? ` A run's folder could not be told from its command, as with one a variable holds, so that run supports no claim here. ${RUN_PLACED}`
     : '';
   return `${where} says ${named} passed, but no run of it that a shell call finished with a pass, ${stated}` +
     `is on this session's record. ${record}${untracked}${unknown} Quote only output a tool returned in this session; a run stopped or still running ` +

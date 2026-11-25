@@ -2496,8 +2496,9 @@ The folder a run ran in is the call's own when nothing on its line moves it, els
 Any other move leaves the folder unknown, since no variable's value is read: `env -C "$W"`, `cd "$W" &&`, `cd ~/x &&`,
 and every `cd` that does not open the line or that `&&` does not join, such as `cd <path>; node --test`.
 Such a run's row has `folder: "unknown"`, null trees, and no untracked files, so it never holds the session's own
-checkout's, and it supports no claim, a subagent's report included, which is otherwise read at any tree.
-Both checks below then say the run's folder could not be told from its command, and to run it again with a literal path.
+checkout's. It supports no pull request body line, which is held to a tree: that refusal says the run's folder could not
+be told from its command, and to run it again with a literal path.
+It still supports a subagent's report, which is read at any tree, since it finished in the session with that count.
 A row with no `folder` field ran in a known folder, or is from a version before the field, and reads by its trees.
 The row goes to the session folder of the project the call's folder is in, one whose folder is unknown too, so a refusal
 can name it. When that folder holds none, as when another

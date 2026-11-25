@@ -304,12 +304,13 @@ test('a run whose folder the command does not tell records no tree, and any othe
   assert.deepEqual(runsOf('env -C "$W" node --test && env -C /x npm test', { keep: (folder) => folder !== null }).map(({ command }) => command), ['npm test'], '`keep` is told the folder is unknown');
 });
 
-test('a run in an unknown folder supports no claim, and what says so asks for a literal path', () => {
+test('a run in an unknown folder supports no claim held to a tree, whose refusal asks for a literal path, and still a report', () => {
   const claim = { clause: 'c', key: 'node --test', counts: [12], commits: [] };
   const [unknown] = runsOf('env -C "$W" node --test');
   const [placed] = runsOf('env -C /x node --test');
   assert.equal(unsupportedClaims([claim], [unknown], { tree: 'tree of /w' }).length, 1, 'at no tree');
-  assert.equal(unsupportedClaims([claim], [unknown]).length, 1, 'nor for a report, which any tree will do for');
+  assert.deepEqual(unsupportedClaims([claim], [unknown]), [], 'a report, which is read at any tree, keeps it');
+  assert.equal(unsupportedClaims([{ ...claim, counts: [13] }], [unknown]).length, 1, 'with the count it states');
   assert.deepEqual(unsupportedClaims([claim], [unknown, placed], { tree: 'tree of /x' }), [], 'and takes nothing from another run');
   // A row from before the field: its trees say what it supports, as they did.
   const older = { ...unknown, tree: 't1', trackedTree: 't1' };
@@ -317,10 +318,12 @@ test('a run in an unknown folder supports no claim, and what says so asks for a 
   assert.deepEqual(unsupportedClaims([claim], [older], { tree: 't1' }), []);
   assert.deepEqual(unsupportedClaims([claim], [{ ...older, tree: null, trackedTree: null }]), [], 'a tree git could not read, for a report');
 
-  const said = claimProblem([claim], [unknown], { where: 'the body' });
-  assert.match(said, /The record holds passed \(pass 12, fail 0\) in a folder its command does not tell\. A run's folder could not be told from its command, as with one a variable holds, so that run supports no claim\. Run it again with a literal path, `env -C <path> \.\.\.`\. Quote only/u);
+  const said = claimProblem([claim], [unknown], { where: 'the body', byTree: true });
+  assert.match(said, /The record holds passed \(pass 12, fail 0\) in a folder its command does not tell\. A run's folder could not be told from its command, as with one a variable holds, so that run supports no claim here\. Run it again with a literal path, `env -C <path> \.\.\.`\. Quote only/u);
   assert.doesNotMatch(said, /Untracked code|git could not read/u);
-  const other = claimProblem([claim], [older, { ...older, tree: null }], { where: 'the body' });
+  const report = claimProblem([{ ...claim, counts: [13] }], [unknown], { where: 'the report' });
+  assert.match(report, /The record holds passed \(pass 12, fail 0\) in a folder its command does not tell\. Quote only/u, 'a report is not told to run it again for its folder');
+  const other = claimProblem([claim], [older, { ...older, tree: null }], { where: 'the body', byTree: true });
   assert.match(other, /at tree t1; passed \(pass 12, fail 0\) at a tree git could not read\./u);
   assert.doesNotMatch(other, /could not be told/u, 'an older row reads as before');
   assert.match(claimProblem([claim], [{ ...placed, command: 'npm test' }], { where: 'the body' }), /holds no finished run of it/u);

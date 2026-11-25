@@ -69,8 +69,8 @@ export async function handle(input) {
 if (isMain(import.meta.url)) await runHook(handle);
 
 // The check-run rows of a finished call, appended to the session's record: all of them in the project of the call's
-// folder, one whose folder is unknown too, so a refusal can name it, though it supports no claim; with none there, each
-// run in the project of the folder it runs in, as that project's config reads the line, and one whose folder is unknown
+// folder, one whose folder is unknown too, so a refusal can name it, though it supports no claim held to a tree; with
+// none there, each run in the project of the folder it runs in, as that project's config reads the line, and one whose folder is unknown
 // nowhere, since no project is known to hold it.
 async function recordCheckRuns(input, command) {
   const run = detectHost({ input }).shellRun?.(input.tool_response);

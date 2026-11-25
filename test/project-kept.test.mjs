@@ -342,7 +342,7 @@ test('kept commits that change a host, policy, or workflow file are not taken, a
   const guards = (file) => isGuarded(file) || isPolicyPath(file, ['settings/team/config.json']);
   const files = [
     'AGENTS.md', '.aidrian/knowledge/docs.json', '.aidrian/config.json', 'settings/team/config.json', '.github/workflows/ci.yml',
-    '.github', 'tools/skill/SKILL.md', '.claude/settings.json', '.mcp.json', '.MCP.json/below',
+    '.github', 'tools/skill/SKILL.md', '.claude/settings.json', '.mcp.json', '.MCP.j\u017fon/below',
   ];
   const git = inClone(fx, 1);
   for (const file of files) {

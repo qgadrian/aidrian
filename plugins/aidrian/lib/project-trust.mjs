@@ -18,7 +18,7 @@ import { foldCase, isWithin, resolvedPath } from './fs.mjs';
 import { repoIdentity } from './forges/index.mjs';
 import { GATE_CONFIG, gateGit } from './git.mjs';
 import { instructionNames } from './hosts/index.mjs';
-import { GUARDED_PATHS } from './project.mjs';
+import { isGuardedPath } from './project.mjs';
 
 // How far down the default branch's first-parent chain a main checkout's HEAD may lag the tip.
 export const LAG_CAP = 500;
@@ -274,9 +274,9 @@ export function namedFiles(files) {
   return `${names.join(', ')}${files.length > 3 ? `, and ${files.length - 3} more` : ''}`;
 }
 
-// Whether the path `file`, from the repository root, is a host config or instruction file (GUARDED_PATHS), a folder
+// Whether the path `file`, from the repository root, is a host config or instruction file (project.mjs isGuardedPath), a folder
 // listed with its trailing slash counting as itself.
-export const isGuarded = (file) => GUARDED_PATHS.test(file) || GUARDED_PATHS.test(file.replace(/\/$/u, ''));
+export const isGuarded = (file) => isGuardedPath(file) || isGuardedPath(file.replace(/\/$/u, ''));
 
 // Whether nothing is at `file`, read without following a link.
 function absent(file) {

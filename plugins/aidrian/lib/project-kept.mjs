@@ -18,6 +18,7 @@ import { inflateSync } from 'node:zlib';
 
 import { protectedPaths } from './hosts/index.mjs';
 import { workflowPaths } from './issue-push-checkout.mjs';
+import { foldPath } from './project.mjs';
 import { startsOf } from './project-run-guard.mjs';
 
 const FULL_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
@@ -146,8 +147,8 @@ function judgeKept({ head, forgeHead, from, guards, git }) {
   const log = git(['-c', 'log.diffMerges=separate', '-c', 'log.showRoot=true', 'log', '-m', '--format=', '--name-only', '--no-renames', '--no-relative', '-z', `${forgeHead}..${head}`, '--']);
   if (log.status !== 0) return { why: 'git cannot say which files its commits change' };
   const workflows = workflowPaths();
-  // Every host's own root files too, in any case: one the start puts a placeholder at would stop the fast-forward.
-  const hostFile = (file) => protectedPaths().some((each) => `${file}/`.toLowerCase().startsWith(`${each}/`.toLowerCase()));
+  // Every host's own root files too, by their fold (foldPath): one the start puts a placeholder at would stop the fast-forward.
+  const hostFile = (file) => protectedPaths().some((each) => foldPath(`${file}/`).startsWith(foldPath(`${each}/`)));
   // A count alone: no file name a session chose reaches the driver.
   const held = [...new Set(log.stdout.split('\0'))].filter((file) => file !== '' && (guards(file) || workflows.counts(file) || hostFile(file))).length;
   if (held) return { why: `its commits change ${held} host config, instruction, policy, or workflow ${held === 1 ? 'file' : 'files'}` };

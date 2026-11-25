@@ -16,7 +16,7 @@ import test from 'node:test';
 import { checkDelivery, unwrittenHandoffs } from '../plugins/aidrian/lib/delivery-check.mjs';
 import { INDEX_RECIPE } from '../plugins/aidrian/lib/index-edits.mjs';
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
-import { pushCheckoutProblem, rawPaths, statusEntries } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
+import { pushCheckoutProblem, rawPaths, statusEntries, workflowPaths } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { findingsFile, sessionIssue } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { keptPrompt } from '../plugins/aidrian/lib/project-kept.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
@@ -472,8 +472,9 @@ test('an edit of a knowledge index lifts the push guard for no other file: an in
   }
   // So is what the start hook loads: an always doc, in any case, and a path that stands where one lies, as a link would.
   fx.reset();
-  fx.commit([ALWAYS, '100644', 'edited\n'], ['docs/RULES.md', '100644', 'edited\n'], ['docs/rule\u017f.md', '100644', 'edited\n'], ['.aidrian/\u212anowledge/x.json', '100644', '{}\n'], ['harness/STRASSE.json', '100644', '{}\n'], [OWN_ALWAYS, '100644', NINE.join('')]);
-  assert.match(fx.push(), /^it pushes commits that change 6 host config or instruction files, /u, 'an edit, other spellings of it, of the folder, and of a policy file, and the base copy');
+  fx.commit([ALWAYS, '100644', 'edited\n'], ['docs/RULES.md', '100644', 'edited\n'], ['docs/rule\u017f.md', '100644', 'edited\n'], ['.aidrian/\u212anowledge/x.json', '100644', '{}\n'], ['harness/STRASSE.json', '100644', '{}\n'], ['.github/work\ufb02ows/ci.yml', '100644', 'on: push\n'], [OWN_ALWAYS, '100644', NINE.join('')]);
+  assert.match(fx.push(), /^it pushes commits that change 7 host config or instruction files, /u, 'an edit, other spellings of it, of the folder, of a policy file, and of a workflow, and the base copy');
+  assert.deepEqual(['.github/work\ufb02ows/ci.yml', '.GitHub', '.github/workflows', '.github/other.yml', 'x/.github/workflows/ci.yml'].map(workflowPaths().counts), [true, true, true, false, false], 'the forge\'s workflow folder, by its fold');
   // A link in their folder's place, and a submodule, whose own `ignore` setting hides no entry of it from the guard.
   fx.reset();
   fx.commit([ALWAYS, null], [OWN_ALWAYS, null], ['docs', '120000', 'elsewhere'], ['.gitmodules', '100644', '[submodule "x"]\n\tpath = .claude/x\n\turl = ./x\n\tignore = all\n'], ['.claude/x', '160000', fx.head]);

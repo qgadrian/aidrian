@@ -5,7 +5,7 @@
 // (lib/issue-push-checkout.mjs) holds the attempt's commits to them.
 
 import { cleanText } from './clean-text.mjs';
-import { GUARDED_PATHS, knowledgeIn } from './project.mjs';
+import { isGuardedPath, knowledgeIn } from './project.mjs';
 
 // The most index files one start gives.
 const INDEX_CAP = 20;
@@ -28,7 +28,7 @@ export function indexFilesOf({ policy, policyFiles, files, head, tip }) {
   const config = policyFiles?.[1];
   if (policy?.includePolicyFiles !== true || typeof config !== 'string' || !head || !tip) return [];
   const folder = `${knowledgeIn(config)}/`;
-  const named = (name) => INDEX_NAME.test(name) && !GUARDED_PATHS.test(name);
+  const named = (name) => INDEX_NAME.test(name) && !isGuardedPath(name);
   const editable = (file) => file.startsWith(folder) && named(file.slice(folder.length)) && head.get(file)?.mode === PLAIN_FILE && shownPath(file) === file;
   return files.filter(editable).slice(0, INDEX_CAP).map((file) => ({ path: file, base: tip.get(file)?.id ?? null }));
 }

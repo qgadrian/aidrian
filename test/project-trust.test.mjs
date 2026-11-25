@@ -11,7 +11,7 @@ import test from 'node:test';
 import { deflateSync } from 'node:zlib';
 
 import { gateGit } from '../plugins/aidrian/lib/git.mjs';
-import { ancestorProblem, commitFiles, overlayGuarded, rawMismatch, repositoryProblem, reviewedMismatch, trustProblem } from '../plugins/aidrian/lib/project-trust.mjs';
+import { ancestorProblem, commitFiles, isGuarded, overlayGuarded, rawMismatch, repositoryProblem, reviewedMismatch, trustProblem } from '../plugins/aidrian/lib/project-trust.mjs';
 import { runFixture, testGlobalConfig } from './project-start-fixture.mjs';
 
 const LIB = path.resolve(import.meta.dirname, '../plugins/aidrian/lib');
@@ -142,6 +142,8 @@ test('trustProblem holds the overlaid paths to the tip\'s bytes on disk, and eve
 test('trustProblem holds what the caller\'s guards take too: changed, changed where git is told not to look, untracked, or ignored', (t) => {
   const fx = runFixture(t, { init: false, local: null, ignore: ['docs/ignored.md'], files: { 'docs/rules.md': 'Review everything.\n' } });
   const tip = fx.git('rev-parse', 'HEAD').trim();
+  // The default takes a guarded path by its fold too, a folder listed with its slash included.
+  assert.deepEqual(['.github/work\ufb02ows/ci.yml', '.github/work\ufb02ows/', 'docs/rules.md'].map(isGuarded), [true, true, false]);
   const guards = (file) => /^docs\//u.test(file);
   const cases = { 'docs/new.md': /git does not track, which no review saw: docs\/new\.md$/u, 'docs/ignored.md': /git does not track, which no review saw: docs\/ignored\.md$/u, 'docs/rules.md': /differ from the base tip: docs\/rules\.md$/u };
   assert.equal(trustProblem(fx.dir, tip, [], guards), null);

@@ -13,7 +13,7 @@
 
 import path from 'node:path';
 
-import { foldPath, GUARDED_PATHS, PLUGIN_REPOSITORY_PATHS } from './project.mjs';
+import { foldPath, isGuardedPath, PLUGIN_REPOSITORY_PATHS } from './project.mjs';
 import { QUIET_TEST_FILES } from './review/diff.mjs';
 import { globPattern } from './fs.mjs';
 import { classify, ONLY_NON_BEHAVIOUR, pathPattern } from './review/plan.mjs';
@@ -153,7 +153,7 @@ function pathProblem({ path: file, changeType }, own, loaded, pluginRepository) 
   const named = JSON.stringify(file);
   const changed = changeProblem(named, changeType);
   if (changed) return changed;
-  if (GUARDED_PATHS.test(file) || GUARDED_PATHS.test(own)) return `it changes ${named}, which instructs AI sessions`;
+  if (isGuardedPath(file) || isGuardedPath(own)) return `it changes ${named}, which instructs AI sessions`;
   if (pluginRepository && PLUGIN_REPOSITORY_PATHS.test(file)) return `it changes ${named}, ${RELEASE_SCRIPT}`;
   const started = startLoadProblem(file, loaded);
   if (started) return started;

@@ -119,8 +119,14 @@ export const knowledgeIn = (configFile) => `${path.posix.dirname(configFile)}/kn
 export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|\.aidrian\.local\.json|\.aidrian)$/iu;
 
 // A path as a disk that ignores case and Unicode form names it, such as macOS's: two spellings with one fold may be one
-// file there. It may fold two a disk keeps apart, so a guard that compares folds only holds more.
-export const foldPath = (file) => file.normalize('NFD').toUpperCase().toLowerCase();
+// file there. It may fold two a disk keeps apart, so a guard that refuses equal folds only holds more; a check that lets
+// equal paths through never compares folds. Lower case first, so two paths equal in lower case have one fold, the capital
+// sharp s among them, whose upper case is itself.
+export const foldPath = (file) => file.normalize('NFD').toLowerCase().toUpperCase().toLowerCase();
+
+// Whether `file` is a guarded path (GUARDED_PATHS), as it is or by its fold. Every guard asks this, never the pattern
+// itself (test/auto-merge-guard.test.mjs).
+export const isGuardedPath = (file) => GUARDED_PATHS.test(file) || GUARDED_PATHS.test(foldPath(file));
 
 // Whether `file`, from the top of the repository, is a policy file: a POLICY_PATHS name, or one of `policyFiles`, the
 // paths pr-auto-merge.mjs branchPolicies read the gate's policy from, as a config.json a pointer file relocates, each by

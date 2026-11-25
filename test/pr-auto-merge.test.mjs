@@ -8,7 +8,7 @@ import test from 'node:test';
 
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
-import { headPolicyProblem, pathsProblem, reviewProblem, runAutoMerge, runAutoMergeCommand } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { headPolicyProblem, movedPointer, pathsProblem, reviewProblem, runAutoMerge, runAutoMergeCommand } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { markOnce } from '../plugins/aidrian/lib/closing-words.mjs';
 import { configFromText, loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { isPolicyPath, projectAt } from '../plugins/aidrian/lib/project.mjs';
@@ -763,6 +763,7 @@ test('reviewProblem: a none_needed is judged on the forge\'s files from the proj
   assert.match(judged(['apps/web/src/a.md']) ?? '', /it changes "apps\/web\/src\/a\.md", which the default branch's review\.nonBehaviour does not list/u);
   assert.match(judged(['apps/web/docs/.github/a.md']) ?? '', /starts with "\."/u, 'a dot folder below the project root');
   assert.match(judged(['apps/web/docs/AGENTS.override.md']) ?? '', /which instructs AI sessions/u, 'a host name below the project root');
+  assert.match(judged(['apps/web/.github/in\ufb06ructions/a.md']) ?? '', /which instructs AI sessions/u, 'a guarded folder by its fold');
   assert.match(judged(['apps/web/docs/rules.md']) ?? '', /a knowledge doc the start hook loads into every session/u, 'an always doc');
   assert.match(judged(['apps/web/docs/a.md'], { startDocs: 'x.json: invalid JSON' }) ?? '', /the default branch's knowledge cannot say which docs the start hook loads into every session \(x\.json: invalid JSON\)/u);
   assert.match(judged(['apps/web/docs/a.md'], { startDocs: undefined }) ?? '', /has not read what the start hook loads/u, 'no start docs: off');
@@ -1586,6 +1587,14 @@ test('the knowledge folder a pointer file names is guarded whole, and a project 
   }
   for (const file of ['docs/strase.md', 'docs/cafe.md', 'docs/g.md']) assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: spelled }), null, file);
   for (const file of ['.AIDRIAN.json', 'x/.aidrian/con\ufb01g.json', 'harne\u017f\u017f/CON\ufb01G.json', 'harne\u00df/config.json']) assert.equal(isPolicyPath(file, ['harness/config.json']), true, file);
+  const one = (file, options) => pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', options);
+  assert.match(one('.github/work\ufb02ows/ci.yml') ?? '', /which instructs AI sessions, or decides CI's verdict/u, 'a ligature in the workflow folder');
+  for (const [file, policy] of [['harne\u00df/config.json', 'harness/config.json'], ['STRA\u1e9eE/config.json', 'stra\u00dfe/config.json']]) {
+    for (const includeGuardedPaths of [false, true]) assert.equal(one(file, { policyFiles: [policy], includeGuardedPaths }), `it changes ${JSON.stringify(file)}, a file the gate reads its policy from`, file);
+  }
+  assert.match(one('x/.aidrian/con\ufb01g.json', { includeGuardedPaths: true }) ?? '', /a policy file of aidrian/u, 'a policy name, with the key on');
+  assert.equal(movedPointer([{ path: 'harne\u00df/.aidrian.json' }], 'harness/')?.path, 'harne\u00df/.aidrian.json');
+  assert.equal(movedPointer([{ path: 'other/.aidrian.json' }], 'harness/'), undefined);
   for (const file of ['harness/config.jso', 'x/harness/config.json']) assert.equal(isPolicyPath(file, ['harness/config.json']), false, file);
   for (const file of ['harness/know', 'app', 'apps/web/docs/rules.md.bak']) assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: loaded }), null, file);
 

@@ -9,7 +9,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { DEFAULTS, loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { findProject, GUARDED_PATHS, knowledgeIn, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
+import { findProject, foldPath, GUARDED_PATHS, isGuardedPath, knowledgeIn, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -746,11 +746,30 @@ test('GUARDED_PATHS holds every host\'s instruction files, by name at any depth,
     'Claude Code\'s folder, at any depth': ['.claude', '.claude/settings.json', 'apps/web/.claude/settings.json', 'a/b/.claude/agents/x.md', 'pkg/.claude'],
   };
   for (const [family, files] of Object.entries(families)) {
-    for (const file of files) assert.ok(GUARDED_PATHS.test(file), `${family}: ${file}`);
+    for (const file of files) assert.ok(GUARDED_PATHS.test(file) && isGuardedPath(file), `${family}: ${file}`);
   }
   for (const file of ['docs/agents.mdx', 'docs/agent-sources.md', 'docs/claude-notes.md', 'NOTSKILL.md', '.claude.md', 'pkg/.claude.md', 'pkg/.claudex/a.md', 'src/.cursorrules.js', '.github/instructions-old.md', 'docs/cursor/a.md', 'windsurf.md', '.github/dependabot.yml', 'README.md']) {
-    assert.equal(GUARDED_PATHS.test(file), false, file);
+    assert.deepEqual([GUARDED_PATHS.test(file), isGuardedPath(file)], [false, false], file);
   }
+  // Another spelling a disk that folds names reads as the same path, which the pattern alone does not take.
+  for (const file of ['.github/in\ufb06ructions/x.md', '.github/copilot-in\ufb05ructions.md', '.github/work\ufb02ows/ci.yml', '.GITHUB/WORK\ufb02OWS/ci.yml']) {
+    assert.deepEqual([GUARDED_PATHS.test(file), isGuardedPath(file)], [false, true], file);
+  }
+});
+
+// A refusal compares folds, so a fold that told apart two paths equal in lower case would drop one.
+test('foldPath gives one fold to every two spellings that are equal in lower case, in upper case, or in a Unicode form', () => {
+  const differ = [];
+  for (let code = 1; code <= 0x10ffff; code += 1) {
+    if (code >= 0xd800 && code <= 0xdfff) continue;
+    const letter = String.fromCodePoint(code);
+    // Between letters, so no word-final form is picked.
+    const others = [letter.toLowerCase(), letter.toUpperCase(), letter.normalize('NFC'), letter.normalize('NFD')].filter((each) => each !== letter);
+    if (others.some((each) => foldPath(`a${each}a`) !== foldPath(`a${letter}a`))) differ.push(code.toString(16));
+  }
+  assert.deepEqual(differ, []);
+  assert.equal(foldPath('STRA\u1e9eE/x'), foldPath('stra\u00dfe/x'));
+  assert.notEqual(foldPath('docs/a.md'), foldPath('docs/b.md'));
 });
 
 test('knowledgeIn: the knowledge index folder beside a located config.json, with its repository prefix', () => {

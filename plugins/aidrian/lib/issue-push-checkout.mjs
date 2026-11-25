@@ -13,7 +13,7 @@ import { forgeWorkflowFolders } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { INDEX_RECIPE, PLAIN_FILE } from './index-edits.mjs';
 import { startLoadProblem } from './pr-auto-merge-docs.mjs';
-import { GUARDED_PATHS, isPolicyPath } from './project.mjs';
+import { foldPath, isGuardedPath, isPolicyPath } from './project.mjs';
 import { namedFiles } from './project-trust.mjs';
 
 // The refs a push's commits are compared with, the first that git resolves: origin's default branch, as config-committed.mjs
@@ -62,7 +62,7 @@ function ownCloneProblem(folder, root, pushUrl, fold) {
 function overlayProblem(folder, overlay, { policyFiles, startLoaded, indexFiles }) {
   if (!overlay) return null;
   const editable = new Set(indexFiles.map((each) => each.path));
-  const held = (file) => file !== '' && (GUARDED_PATHS.test(file) || isPolicyPath(file, policyFiles) || (startLoaded !== null && startLoadProblem(file, startLoaded) !== null));
+  const held = (file) => file !== '' && (isGuardedPath(file) || isPolicyPath(file, policyFiles) || (startLoaded !== null && startLoadProblem(file, startLoaded) !== null));
   const guarded = (file) => held(file) && !editable.has(file);
   const diff = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', overlay, 'HEAD', '--'], folder);
   if (diff.status !== 0) return `it pushes, and ${SLOW} which files its commits change from ${overlay.slice(0, 7)}, the head its attempt started from on the base branch's copies of the host config and instruction files`;
@@ -142,11 +142,15 @@ function mergedProblem(folder, overlay, { held, guarded }, changed) {
 
 // The forge's workflow folders and every folder that holds one, as `:(top,literal)` pathspecs: a holding folder, as
 // `.github`, counts only when its own entry changes, as when it becomes a link to a folder of other files: { pathspecs,
-// counts }, `counts(file)` whether a changed path is one. lib/project-kept.mjs holds an attempt's kept commits to it too.
+// counts }, `counts(file)` whether a changed path is one, by its fold (foldPath); git's pathspecs give exact names alone. lib/project-kept.mjs holds an attempt's kept commits to it too.
 export function workflowPaths() {
   const folders = forgeWorkflowFolders();
   const holders = [...new Set(folders.flatMap((each) => each.split('/').slice(0, -1).map((_, at, parts) => parts.slice(0, at + 1).join('/'))))];
-  const counts = (file) => holders.includes(file) || folders.some((each) => file === each || file.startsWith(`${each}/`));
+  const [foldedHolders, foldedFolders] = [holders, folders].map((paths) => paths.map(foldPath));
+  const counts = (file) => {
+    const folded = foldPath(file);
+    return foldedHolders.includes(folded) || foldedFolders.some((each) => folded === each || folded.startsWith(`${each}/`));
+  };
   return { pathspecs: [...folders, ...holders].map((each) => `:(top,literal)${each}`), counts };
 }
 

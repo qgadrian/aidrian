@@ -22,7 +22,7 @@ test('quotes, escapes, and substitutions: text without quotes, and dynamic when 
 test('quotedScalar takes a quoted expansion for one word, never a list expansion in any spelling, nor an unquoted one', () => {
   const word = (line) => quotedScalar(readInvocation(lexCommand(`echo ${line}`)[0]).args[0]);
   for (const one of ['"$B"', '"${B}"', '"a$B"', '"${B:-x}"', '"$(cat f)"']) assert.equal(word(one), true, one);
-  for (const list of ['"$@"', '"${@}"', '"${@:2}"', '"$*"', '"${*}"', '"${A[@]}"', '"${A[*]}"', '"${A[@]:1}"', '$B', '"$B"*', 'plain']) {
+  for (const list of ['"$@"', '"${@}"', '"${@:2}"', '"$*"', '"${*}"', '"${A[@]}"', '"${A[*]}"', '"${A[@]:1}"', '"${!A@}"', '"${!A*}"', '"${!A[@]}"', '$B', '"$B"*', 'plain']) {
     assert.equal(word(list), false, list);
   }
 });

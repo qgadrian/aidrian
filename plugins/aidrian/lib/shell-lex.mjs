@@ -1008,9 +1008,10 @@ function folderAfter(here, { program, args, environment = [] }) {
 export const shellPlain = (text) => text.replaceAll('\\\n', '').replace(/["'\\]/gu, '');
 
 // Whether a dynamic token stays one word whatever it holds: quoted, and no glob or list expansion in any spelling, as
-// `"$@"`, `"${@}"`, `"${@:2}"`, `"${a[@]}"`, or their `*` forms, which a rule never takes for one word.
+// `"$@"`, `"${@}"`, `"${@:2}"`, `"${a[@]}"`, their `*` forms, or a name list such as `"${!a@}"` or `"${!a[@]}"`, which a rule
+// never takes for one word.
 export const quotedScalar = ({ text, dynamic, splits, expands }) =>
-  dynamic && !splits && !expands && /[$`]/u.test(text) && !/\$\{?[@*]|\[[@*]\]/u.test(text);
+  dynamic && !splits && !expands && /[$`]/u.test(text) && !/\$\{?[@*]|\[[@*]\]|\$\{![^}]*[@*]\}/u.test(text);
 
 // A token written back as a shell word that reads as the same word, for a deny reason that hands back a command to run:
 // bare when it is plain, in double quotes when it expands a variable, in single quotes otherwise. null when the lexer

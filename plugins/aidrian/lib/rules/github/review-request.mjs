@@ -13,7 +13,7 @@ import path from 'node:path';
 import { loadConfig } from '../../config.mjs';
 import { findProject } from '../../project.mjs';
 import { asksForReview, judgeRequests, markersIn, prNumber, repoName } from '../../review-gate.mjs';
-import { commandLines, lexCommand, quotedScalar, readInvocation, readShortOptions } from '../../shell-lex.mjs';
+import { commandLines, lexCommand, readInvocation, readShortOptions } from '../../shell-lex.mjs';
 
 export { OVERRIDE } from '../../review-gate.mjs';
 
@@ -158,35 +158,15 @@ export function readWords(args, values) {
   return { words, flags };
 }
 
-// Whether the words of a gh command line `args` are known, as gh will read them: every word static, but a quoted
-// single-word expansion (shell-lex quotedScalar) as the value of an option in `values`, the next word or after `=`
-// (`--body "$B"`, `--body="$B"`). Any other word the shell fills in or expands, anywhere, may be any option or eat one.
-const fixed = (token) => !token.dynamic && !token.expands && !token.splits;
-export function wordsKnown(args, values) {
-  for (let i = 0; i < args.length; i += 1) {
-    const token = args[i];
-    if (fixed(token)) {
-      if (!values.has(token.text)) continue;
-      const value = args[i + 1];
-      if (value && !fixed(value) && !quotedScalar(value)) return false;
-      i += 1;
-      continue;
-    }
-    const at = token.text.indexOf('=');
-    const name = at === -1 ? '' : token.text.slice(0, at);
-    if (!(quotedScalar(token) && name.startsWith('--') && values.has(name))) return false;
-  }
-  return true;
-}
-
-// The last `name` switch of a gh command line `args`, read with readWords and `values`, as gh reads a bool (Go's
+// The last `name` switch of a gh command line `args`, from its readWords `flags`, as gh reads a bool (Go's
 // strconv.ParseBool), where the last one given wins: true when given with no value or a literal true word, false when
-// absent or given a false one, and null when its words are not known (wordsKnown). A caller takes null the way that
-// refuses more: no exemption, or the switch on when on is what is held.
+// absent or given a false one, and null when any word of `args` is one the shell fills in or expands, a quoted one
+// included: it may be any option, a cluster or a value that eats one, so gh's reading of every switch is unknown. A
+// caller takes null the way that refuses more: no exemption, or the switch on when on is what is held.
 const TRUE_WORDS = new Set(['1', 't', 'T', 'TRUE', 'true', 'True']);
-export function switchValue(args, values, name) {
-  if (!wordsKnown(args, values)) return null;
-  const flag = readWords(args, values).flags.filter((each) => each.name === name).at(-1);
+export function switchValue(args, flags, name) {
+  if (args.some((token) => token.dynamic || token.expands || token.splits)) return null;
+  const flag = flags.filter((each) => each.name === name).at(-1);
   if (!flag) return false;
   return flag.value === null || TRUE_WORDS.has(flag.value.text);
 }

@@ -97,7 +97,6 @@ const VIEW_TIMEOUT_MS = 3000;
 const SHA = /^[0-9a-f]{7,40}$/iu;
 // The options of `gh pr merge` and `gh api` that take a value, from each command's `--help`.
 const MERGE_VALUES = ['-b', '--body', '-F', '--body-file', '-t', '--subject', '-A', '--author-email', '--match-head-commit', '-R', '--repo'];
-const MERGE_VALUE_SET = new Set(MERGE_VALUES);
 const API_VALUES = ['-f', '--raw-field', '-F', '--field', '-X', '--method', '-H', '--header', '-q', '--jq', '-t', '--template', '--input',
   '-p', '--preview', '--hostname', '--cache'];
 
@@ -159,11 +158,11 @@ function readGh(args, environment, env, cwd) {
     return { pr: Number(match[2]), head: sha && SHA.test(sha) ? sha : null, target: null, repo, text: apiMergeText(fields, flags) };
   }
   if (command[0] !== 'pr' || command[1] !== 'merge') return null;
-  const { words, flags } = readWords(args, MERGE_VALUE_SET);
+  const { words, flags } = readWords(args, new Set(MERGE_VALUES));
   // `--help` prints the command's options and merges nothing, so a read of them is never held; nor is `--disable-auto`.
-  // Each exempts only as gh reads it, and only when every word is known (switchValue): `-h` anywhere, and a last `--help`
-  // or `--disable-auto` that is on, so `gh pr merge 7 --help=false`, which merges, is judged as `gh pr merge 7`.
-  const value = (name) => switchValue(args, MERGE_VALUE_SET, name);
+  // Each exempts only as gh reads it, and only when every word is written out (switchValue): `-h` anywhere, and a last
+  // `--help` or `--disable-auto` that is on, so `gh pr merge 7 --help=false`, which merges, is judged as `gh pr merge 7`.
+  const value = (name) => switchValue(args, flags, name);
   if (['-h', '--help', '--disable-auto'].some((name) => value(name) === true)) return null;
   const last = (...names) => flags.filter((flag) => names.includes(flag.name)).at(-1)?.value ?? null;
   const target = words[2] ? literal(words[2]) : null;
@@ -180,8 +179,8 @@ function readGh(args, environment, env, cwd) {
     unreadable: (Boolean(words[2]) && target === null) || selectorsDisagree(target, urlRepo, flagRepo),
     text: mergeText(last('-t', '--subject'), last('-b', '--body'), last('-F', '--body-file')),
     // `--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then. gh reads its last
-    // value: `--auto=false` merges at once. With words that are not known (switchValue), any of which may be an `--auto`,
-    // it counts as on, which a session no Human attends is refused.
+    // value: `--auto=false` merges at once. With a word the shell fills in (switchValue), which may be an `--auto`, it
+    // counts as on, which a session no Human attends is refused.
     ...(value('--auto') !== false ? { auto: true } : {}),
   };
 }

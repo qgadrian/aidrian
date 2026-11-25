@@ -2,7 +2,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { aidrianArgs, assignsVariable, changesVariable, commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { aidrianArgs, assignsVariable, changesVariable, commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, quotedScalar, readGit, readInvocation, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const texts = (line) => lexCommand(line).map((segment) => segment.map((token) => token.text));
 const programOf = (line) => readInvocation(lexCommand(line)[0]).program;
@@ -17,6 +17,14 @@ test('quotes, escapes, and substitutions: text without quotes, and dynamic when 
   ]]);
   assert.deepEqual(lexCommand('echo "$HOME" $(pwd) `id` *.md').flat().map((token) => token.dynamic), [false, true, true, true, true]);
   assert.deepEqual(texts('python3 -c "print(f\\"{x:>9}\\")"'), [['python3', '-c', 'print(f"{x:>9}")']], 'an escaped quote does not close');
+});
+
+test('quotedScalar takes a quoted expansion for one word, never a list expansion in any spelling, nor an unquoted one', () => {
+  const word = (line) => quotedScalar(readInvocation(lexCommand(`echo ${line}`)[0]).args[0]);
+  for (const one of ['"$B"', '"${B}"', '"a$B"', '"${B:-x}"', '"$(cat f)"']) assert.equal(word(one), true, one);
+  for (const list of ['"$@"', '"${@}"', '"${@:2}"', '"$*"', '"${*}"', '"${A[@]}"', '"${A[*]}"', '"${A[@]:1}"', '$B', '"$B"*', 'plain']) {
+    assert.equal(word(list), false, list);
+  }
 });
 
 test('lexPipeline records the operator that ended each segment, and a newline never eats a pending one', () => {

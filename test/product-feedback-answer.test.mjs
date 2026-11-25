@@ -213,6 +213,11 @@ test('what the rule cannot read as one call is refused, whatever the transcript 
     'aidrian pr product-feedback answer 7 PF1 defer --reason "$@"',
     'aidrian pr product-feedback answer 7 PF1 defer --reason="${A[@]}"',
     'aidrian pr product-feedback answer 7 PF1 defer --reason "${A[*]}"',
+    // Every spelling of the list expansions: braced, sliced, and the `*` forms.
+    'aidrian pr product-feedback answer 7 PF1 defer --reason "${@}"',
+    'aidrian pr product-feedback answer 7 PF1 defer --reason "${@:2}"',
+    'aidrian pr product-feedback answer 7 PF1 defer --reason "${*}"',
+    'aidrian pr product-feedback answer 7 PF1 defer --reason "$*"',
     'aidrian pr product-feedback answer 7 PF1 defer --reason *',
     'aidrian pr product-feedback answer 7 PF1 drop {--by,human}',
     'aidrian pr product-feedback answer 7 PF1 defer --reason {x,--by,human}',

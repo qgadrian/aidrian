@@ -328,8 +328,8 @@ test('an unattended merge names its number and full head, in the repository the 
   assert.equal(merge(r, `gh api -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`), null, 'the API merge naming its head');
   // A last `--auto` that is off merges at once, at the head it names: judged as that merge, never as auto-merge.
   assert.equal(merge(r, `gh pr merge 7 --auto --auto=false --match-head-commit ${HEAD}`), null, 'auto-merge turned off is a merge');
-  assert.doesNotMatch(merge(r, `gh pr merge 7 --auto=false --body "$BODY" --match-head-commit ${HEAD}`) ?? '', /`--auto`/u,
-    'a quoted body is a value the rule knows: the merge is judged as one, never as auto-merge');
+  // Any word the shell fills in, a quoted body included, makes the switches unknown: refused as a possible auto-merge.
+  assert.match(merge(r, `gh pr merge 7 --auto=false --body "$BODY" --match-head-commit ${HEAD}`) ?? '', /`--auto` leaves the merge to GitHub/u);
   // The GitHub MCP server's own merge tool names the head as expectedHeadSha, which GitHub's merge enforces.
   assert.equal(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, expectedHeadSha: HEAD }), null);
   const failing = merge(r, MERGE, { trail: () => { throw new Error('gh: Bad credentials (HTTP 401)'); } });
@@ -352,10 +352,12 @@ test('an unattended merge naming another host, in any spelling gh takes, is refu
   ]) assert.match(merge(r, command) ?? '', /^Blocked: no Human attends this session, and this merges pull request #7, but it names the host ghe\.example\.com, and this session works in acme\/notes on github\.com\./u, command);
   // curl is no merge the guard reads: a write to a merge URL is refused, on any host.
   assert.match(merge(r, `curl -X PUT https://api.github.com/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`) ?? '', /^Blocked: this curl call names a pull request's merge URL/u);
-  for (const command of [`gh pr merge 7 -R "$R" ${named}`, `GH_HOST=$H gh pr merge 7 ${named}`, `GH_REPO="$R" gh pr merge 7 ${named}`,
+  for (const command of [`GH_HOST=$H gh pr merge 7 ${named}`, `GH_REPO="$R" gh pr merge 7 ${named}`,
     `gh api --hostname "$H" -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`]) {
     assert.match(merge(r, command) ?? '', /but it names its repository or its host in a word the shell builds/u, command);
   }
+  // A word the shell fills in among gh's own words may be an `--auto`: refused as a possible auto-merge before the host read.
+  assert.match(merge(r, `gh pr merge 7 -R "$R" ${named}`) ?? '', /holds a word the shell fills in that may be it/u);
   for (const command of [
     MERGE,
     `gh pr merge https://github.com/acme/notes/pull/7 ${named}`,

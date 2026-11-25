@@ -167,13 +167,13 @@ test('a head the guard cannot read refuses the merge, and --match-head-commit ne
   assert.deepEqual(r.views, [], 'a help read asks gh nothing');
   assert.equal(r.run('gh pr merge 5 --help=true', { head: null }), null, 'a help gh reads as on');
   assert.equal(r.run('gh pr merge 5 --help=false -h', { head: null }), null, 'gh prints the help for a `-h` anywhere');
-  assert.equal(r.run('gh pr merge 5 --help --body "$B" --subject="$S"', { head: null }), null, 'a quoted value of a value option is known');
   // A switch gh reads as off merges: `--help=false` and `--disable-auto=false` run the merge, and are judged as one.
-  // So does any switch of a command whose words are not all known: a word the shell fills in or expands, before or after
-  // the switch, may be another, false, one, or eat it as a value. Only a quoted one as a value option's value is known.
+  // So does any switch of a command with a word the shell fills in or expands, quoted or not, before or after the switch:
+  // it may be another, false, one, a cluster, or a value that eats it.
   for (const command of ['gh pr merge 5 --help=false', 'gh pr merge 5 --help --help=0', 'gh pr merge 5 --disable-auto=false', 'gh pr merge 5 --help="$H"',
     'gh pr merge 5 --help "$X"', 'gh pr merge 5 --disable-auto $X', 'gh pr merge 5 --help *.md', 'gh pr merge 5 "$X" --help', 'gh pr merge 5 -h "$X"',
-    'gh pr merge 5 --body "$@" --help', 'gh pr merge 5 -t $T --help']) {
+    'gh pr merge 5 --body "$@" --help', 'gh pr merge 5 -t $T --help', 'gh pr merge 5 --help --body "$B"', 'gh pr merge 5 -sb"$B" --help',
+    'gh pr merge 5 --body "${@}" -h']) {
     assert.match(r.run(command, { head: null }) ?? '', /could not read its head commit/u, command);
   }
   // A backslash and a line break inside a word, which the shell drops: `gh pr merge 5`.

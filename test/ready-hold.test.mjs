@@ -154,9 +154,10 @@ test('with nothing recorded, every way of marking ready is held, and the deny na
     'gh pr ready 7 --undo=false',
     'gh pr ready 7 --undo=0',
     'gh pr ready --undo --undo=false 7',
-    // A word the shell fills in after `--undo` may be another, false, `--undo`.
+    // Any word the shell fills in, quoted or not, a repository's included, may be another, false, `--undo`.
     'gh pr ready 7 --undo "$U"',
     'gh pr ready 7 --undo=$U',
+    'gh pr ready 7 --undo -R "$REPO"',
     // The graphql endpoint in any spelling, and a legacy node id.
     graphql('/graphql', 'PR_kwDOabc123'),
     graphql('https://api.github.com/graphql', 'PR_kwDOabc123'),
@@ -175,8 +176,7 @@ test('with nothing recorded, every way of marking ready is held, and the deny na
   }
   const { reason: inEnv } = owedNow(dir);
   assert.match(check('gh pr ready 7', { now: FROZEN, cwd: dir, env: { GH_REPO: 'acme/notes' }, forge: forgeOver(seam({ head: HEAD }).exec) }) ?? '', /#7 ready/u);
-  // A quoted repository is a value the rule knows, so the words are known and the undo runs.
-  for (const command of ['gh pr ready 7 --undo', 'gh pr ready 7 --undo=true', 'gh pr ready 7 --undo=1', 'gh pr ready 7 --undo=false --undo', 'gh pr ready 7 --undo -R "$R"']) assert.equal(inEnv(command), null, command);
+  for (const command of ['gh pr ready 7 --undo', 'gh pr ready 7 --undo=true', 'gh pr ready 7 --undo=1', 'gh pr ready 7 --undo=false --undo', 'gh pr ready 7 --undo -R acme/notes']) assert.equal(inEnv(command), null, command);
 });
 
 test('what the hold cannot read runs with no gh call; only text fed to a shell that names a ready is refused, where git says on', (t) => {

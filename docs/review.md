@@ -1260,7 +1260,7 @@ The stop changes neither the cap nor the rules below: an extra round over a red 
    for the bot's, the stop is reported as it stands.
    The switches are read as the merge guard reads them: the team's `github.unattendedWaiver.allow` from GitHub on the
    default branch and the base, never the working copy, and this machine's switch. The base's `github.extraRounds` comes
-   from that same read, so a stale local ref decides nothing. A read that fails counts as off.
+   from that same read, so a stale local ref never turns the rule on. A read that fails counts as off.
    The record keeps the judge's reason and one naming the red flags, and the summary comment lists the check as
    `stopped by the unattended rule (over red flags: ...)`. `"ask"` always asks, and with either switch off, so does `"auto"`.
 

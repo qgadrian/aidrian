@@ -384,10 +384,14 @@ answer as `asked` and reads nothing again:
   on, and a fallback model or a skill's own model in the middle of the turn is not.
 - A prompt is a `user` entry of the session's own, no sidechain entry, whose `message.content` is a string, or a list
   with a block and no `tool_result` block. The host's own bookkeeping is none: an entry with `isMeta` or
-  `isCompactSummary` true, one whose `origin.kind` is `task-notification`, and an interruption marker, a text block
-  that starts with `[Request interrupted`. A message of any other origin, such as a peer's, starts a turn, unless the
-  host marks it `isMeta`, as a peer's was on 2.1.330 ([above](#prompts-the-human-typed)). No `permissionMode` takes
-  part: in a transcript of 2.1.332, 23 of 32 prompts, such as messages from other sessions, carried none.
+  `isCompactSummary` true, one whose `origin.kind` is `task-notification`, and an interruption marker, an entry whose
+  whole text, a string or its only block, is `[Request interrupted by user]` or
+  `[Request interrupted by user for tool use]`, with or without space around it. A prompt that quotes the marker, or
+  holds it beside another block, is a prompt. A block that is no object, has no type, or is text with a `text` that is
+  no string counts for nothing: the entry is what its other blocks say. A message of any other origin, such as a
+  peer's, starts a turn, unless the host marks it `isMeta`, as a peer's was on 2.1.330
+  ([above](#prompts-the-human-typed)); in a transcript of 2.1.332, a peer's carried neither `isMeta` nor `origin`. No
+  `permissionMode` takes part: in that transcript, 23 of 32 prompts, such as messages from other sessions, carried none.
 - That one entry is then held to `claude-<family>-<version>`, the family one of `sonnet`, `opus`, `haiku`, and `fable`,
   the version one or two numbers of at most two digits and at most one date. Any other name, such as one with a
   context-window suffix, gives none, and no other entry is searched for one that passes. A line over 32 MB that holds

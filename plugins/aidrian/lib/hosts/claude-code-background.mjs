@@ -16,7 +16,6 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { pauseSync } from '../fs.mjs';
-import { isPrompt } from '../names.mjs';
 import { recordTrust } from './claude-code-trust.mjs';
 import { configDir, MODEL_CHOICES } from './claude-code-config.mjs';
 import { configFolder, mcpConfig, npmGlobalConfigs, sandboxSettings, secretVars } from './claude-code-sandbox.mjs';
@@ -58,6 +57,9 @@ const MODEL_KEY = Buffer.from('"model"');
 const USER_WORD = Buffer.from('"user"');
 const KEYS = [MODE_KEY, MODEL_KEY, USER_WORD];
 const KEY_TAIL = Math.max(...KEYS.map((key) => key.length)) - 1;
+// What the host writes as a `user` entry, as its whole text, when the Human interrupts the session. lib/names.mjs isPrompt
+// lists their common start alone, `[Request interrupted`, and reads it as a marker at the start of any text block.
+const INTERRUPTED = new Set(['[Request interrupted by user]', '[Request interrupted by user for tool use]']);
 // The model of an entry the host wrote itself, with no request to a model.
 const NO_MODEL = '<synthetic>';
 // A full model name as a transcript gives it: `claude-<family>-<version>`, with the families MODEL_CHOICES names and a
@@ -217,12 +219,23 @@ function lineTurn(line, session) {
   return { prompt: startsTurn(entry), model: entryModel(entry) };
 }
 
-// Whether an entry is a prompt, which starts a turn: a `user` entry names.mjs reads as a prompt, and not the host's own
-// bookkeeping: one marked isMeta, a compaction summary, or a task notification. The marks are those of transcript.mjs
-// humanPrompt, copied since that file's imports lead back here; unlike it, this counts a message from any other origin.
-function startsTurn({ type, isMeta, isCompactSummary, origin, message }) {
-  return type === 'user' && isMeta !== true && isCompactSummary !== true && origin?.kind !== 'task-notification' && isPrompt(message.content);
+// Whether an entry is a prompt, which starts a turn: a `user` entry whose content is text, or a list that holds a block
+// and no tool result, and not the host's own bookkeeping: one marked isMeta, a compaction summary, a task notification,
+// or an interruption marker as the whole text. The marks are those of transcript.mjs humanPrompt, copied since that
+// file's imports lead back here; unlike it, this counts a message from any other origin. A block that is not well formed
+// counts for nothing.
+function startsTurn({ type, isMeta, isCompactSummary, origin, message: { content } }) {
+  if (type !== 'user' || isMeta === true || isCompactSummary === true || origin?.kind === 'task-notification') return false;
+  if (typeof content === 'string') return !isMarker(content);
+  if (!Array.isArray(content)) return false;
+  const blocks = content.filter(isBlock);
+  if (blocks.length === 0 || blocks.some((block) => block.type === 'tool_result')) return false;
+  return blocks.length > 1 || blocks[0].type !== 'text' || !isMarker(blocks[0].text);
 }
+
+const isMarker = (text) => INTERRUPTED.has(text.trim());
+// A content block as the read takes one: an object with a type, and, when it is text, a text that is a string.
+const isBlock = (block) => block !== null && typeof block === 'object' && typeof block.type === 'string' && (block.type !== 'text' || typeof block.text === 'string');
 
 // The model an `assistant` entry names: its message's own string, other than NO_MODEL; else null.
 function entryModel({ type, message }) {

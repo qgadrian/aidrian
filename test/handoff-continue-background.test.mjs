@@ -1595,7 +1595,18 @@ test('a turn starts at a prompt, whether or not it carries a mode, and at no oth
   // A message from a peer, say, carries no mode: the turn it starts is answered by the model the Human switched to.
   const peer = modelRun(t, [userEntry('auto'), modelEntry(OPUS), promptEntry('a message'), modelEntry(FABLE)]);
   assert.deepEqual(peer.args, flags('--model', FABLE), 'the mode is the last named one, and the model the turn\'s own');
+  const MARKER = '[Request interrupted by user]';
+  const text = (value) => ({ type: 'text', text: value });
+  // A text whose conversion to a string throws.
+  const malformed = text({ toString: null });
   for (const [why, entry] of [
+    ['a prompt that begins with the marker', promptEntry(`${MARKER} is what the log says: why?`)],
+    ['a text block that begins with the marker', promptEntry([text(`${MARKER} is what the log says: why?`)])],
+    ['a prompt that quotes the marker', promptEntry(`The log says ${MARKER}`)],
+    ['a text of another form of the marker', promptEntry('[Request interrupted by user for a nap]')],
+    ['the marker and an image block', promptEntry([text(MARKER), { type: 'image', source: {} }])],
+    ['the marker and more text', promptEntry([text(MARKER), text('go on')])],
+    ['a malformed block beside text', promptEntry([malformed, text('go on')])],
     ['text', promptEntry()],
     ['a text block', promptEntry([{ type: 'text', text: 'go on' }])],
     ['an image block', promptEntry([{ type: 'image', source: {} }])],
@@ -1610,8 +1621,14 @@ test('a turn starts at a prompt, whether or not it carries a mode, and at no oth
     ['an entry the host wrote itself', promptEntry('the skill\'s text', { isMeta: true })],
     ['a compaction summary', promptEntry('This session is being continued from a previous conversation.', { isCompactSummary: true })],
     ['a task notification', promptEntry('<task-notification>done</task-notification>', { origin: { kind: 'task-notification' } })],
-    ['an interruption marker', promptEntry([{ type: 'text', text: '[Request interrupted by user]' }])],
-    ['an interruption marker of a tool call', promptEntry([{ type: 'text', text: '[Request interrupted by user for tool use]' }])],
+    ['an interruption marker', promptEntry([text(MARKER)])],
+    ['an interruption marker of a tool call', promptEntry([text('[Request interrupted by user for tool use]')])],
+    ['an interruption marker as the content, with space around it', promptEntry(` ${MARKER}\n`)],
+    ['a malformed block beside the marker', promptEntry([malformed, text(MARKER)])],
+    ['a malformed block beside a tool result', promptEntry([malformed, { type: 'tool_result', tool_use_id: 't', content: 'done' }])],
+    ['a text that is an object alone', promptEntry([malformed])],
+    ['blocks that are no objects, and one with no type', promptEntry([null, 7, 'go on', [], { text: 'go on' }])],
+    ['an empty list', promptEntry([])],
     ['a mode entry', { type: 'permission-mode', permissionMode: 'auto', sessionId: SESSION }],
     ['a subagent\'s prompt', promptEntry('go on', { isSidechain: true })],
     ['another session\'s prompt', promptEntry('go on', { sessionId: 'someone-else' })],

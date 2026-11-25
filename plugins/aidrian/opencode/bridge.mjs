@@ -301,6 +301,7 @@ function listen(runner) {
   const drop = settle(async (event) => {
     if (event?.type !== DELETED_EVENT) return;
     const sessionID = event.data?.sessionID;
+    // A start still reading its session is not here yet, so it is not waited for: what it saves waits for the 30-day sweep.
     await runner.starts.get(sessionID);
     await end(event);
     runner.stops.delete(sessionID);

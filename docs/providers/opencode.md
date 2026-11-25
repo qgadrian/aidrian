@@ -699,6 +699,8 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
   children stop: a child's call that settles later can leave records under the root's id, and those wait for the
   30-day sweep.
   This is owed before any route runs before a tool call ([Adding a host](adding-a-host.md#before-a-bridge-host-routes-a-blocking-event)).
+  A start still reading its session when that session's delete event comes is not waited for, so the records it saves
+  wait for the sweep too.
 - A session read that fails puts the session's start off to its next callback, so a model step can run without the
   start lines.
 - If OpenCode's event stream fails or is absent, `SessionEnd` stops running for that setup, with no notice.

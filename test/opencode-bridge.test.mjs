@@ -550,6 +550,19 @@ test('the root cache forgets every answer once it holds 256, so the 257th sessio
   assert.deepEqual([sent(calls.at(-1)).session_id, sent(calls.at(-1)).agent_id], ['ses_top', 'ses_kid0']);
 });
 
+test('a child whose walk meets the 256-answer bound keeps its own answer and its root`s: its next call makes one read', async () => {
+  const sessions = { ses_top: {}, ses_other: {}, ses_new: { parentID: 'ses_other' } };
+  for (let n = 0; n < 254; n += 1) sessions[`ses_kid${n}`] = { parentID: 'ses_top' };
+  const context = fakeContext({ sessions });
+  const { fire } = await bridge({ context });
+  // 254 children and the root their walks reach: 255 answers, and room for one more.
+  for (let n = 0; n < 254; n += 1) await fire(shellEvent({ sessionID: `ses_kid${n}` }));
+  await fire(shellEvent({ sessionID: 'ses_new' }));
+  const reads = context.reads.length;
+  await fire(shellEvent({ sessionID: 'ses_new' }));
+  assert.deepEqual(context.reads.slice(reads), ['ses_new']);
+});
+
 test('a failed parent read is not kept: the next call of that session reads again and finds its root', async () => {
   let failures = 1;
   const parent = () => {

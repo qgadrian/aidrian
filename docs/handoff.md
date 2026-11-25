@@ -439,14 +439,21 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    Before the host starts anything, the gate files a pending mark that names the sessions the host lists then, so the
    hooks hold the new session from its first call, in any folder, before the host lists its id (Limits, below); with
    no pending mark, nothing starts. The new
-   session takes the handing-off session's name with ` · <continuation>` after it, within 100 characters, and its agent,
-   effort, and permission mode when the host tells them; with no usable name, the brief's slug. A handing-off session
+   session takes the handing-off session's name with ` · <continuation>` after it, within 100 characters, and its agent
+   and permission mode when the host tells them; with no usable name, the brief's slug. The start asks for a model and
+   an effort too, each on its own: the handing-off session's when the host adapter can tell it, else the one
+   [`session.handoff.models`](config.md#handoff-models) of the base branch names for this host, else none, so the
+   host's default. The model is the one the session's turn started in, so a fallback the host took in the middle of the
+   turn is never handed on. The adapter answers the choice once (`startChoice`), before the first message is built, and
+   the start takes that answer. No gate option, marker, or text of the brief picks either, and a session no Human attends
+   may set no variable on the gate's command ([agent gates](hooks.md#agent-gates)). A handing-off session
    that runs with permission checks bypassed starts none, and the handoff goes on by the clear route: a session no
    Human attends never runs that way. When the host cannot tell the mode, none starts either, since the host's default
    may bypass permission checks, and the `fallback:` line says the mode could not be read.
-4. Its first message is the continuation: the brief's path, the kept copy to read and its sha256, its slug, and the
-   continuation's number, never the brief's text. It first runs `aidrian handoff verify <copy> <sha256>`, which exits 0
-   only when the copy is a regular file of the session's user, named for that sha256, whose bytes still hash to it, and
+4. Its first message is the continuation: the brief's path, the kept copy to read and its sha256, its slug, the
+   continuation's number, and the model and effort the start asked for, never the brief's text.
+   It first runs `aidrian handoff verify <copy> <sha256>`, which exits 0 only when the copy is a regular file of the
+   session's user, named for that sha256, whose bytes still hash to it, and
    1 with the reason otherwise; on 1 it follows none of the copy, prints none of it, and reports it. On 0 it prints
    one line that says so, then the bytes it hashed, from that same read, and the session follows the `session-continue`
    skill on that output alone, never on a read of the copy or the brief's file, which may change after the check.
@@ -500,7 +507,11 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
 6. It records the start for this session, which stops the session from starting another until the host lists the
    started one as ended, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
-   host's command to open it. Unless this terminal switches to the new session, it then names
+   host's command to open it. It then says what the start asked for, never what the session runs in, such as
+   `The start asked for the model claude-opus-5-5 (the handing-off session's) and no effort (the host's default).`
+   The record keeps that answer as `asked`, which the host adapter alone reads (`readAsked`): a value it does not take is
+   never printed, and none of it decides whether the record holds.
+   Unless this terminal switches to the new session, it then names
    `aidrian handoff owner <id>`, run in that folder, for when the new session hands off in turn: the line still names
    the first, which then stops, and the command follows each later start the store records, from the session `<id>`
    to the last. It prints `owner: <id>` and a `say:` line that names that session and how to open it, exit 0, or
@@ -539,8 +550,14 @@ Limits:
   A turn that starts in an open one after the gate, such as a background agent's report, runs beside the new session
   in the same worktree, so the skill settles every agent first, as on the clear route, and the prompt hook names the
   session that owns the work.
-- The new session starts in the host's default model for that folder; a model the old session switched to in the
-  session does not carry over. Its permission mode is the old session's, as step 3 says.
+- The model and effort a start asks for are cost, never a permission: the new session may do no more with them, and any
+  session may already dispatch a subagent on another model. A dear model is handed on at every hop of the chain until a
+  person changes it, and the caps on a chain count hops, not money. A model the account or the host refuses ends the
+  start as any failed start does, with no second try, so an uncertain one holds the chain for up to 24 hours. Only the
+  background route does this: a [project run](#a-project-run)'s start asks for no model, since its caps count starts and
+  hours, and it passes on the driver's effort as before.
+- Which host passes what: Claude Code passes both. Codex and OpenCode list no route, so they pass nothing, and nothing
+  reads their `session.handoff.models` yet. Checked on fixtures with `node --test`; no live start has run with a model.
 - No Human attends the new session, so the [agent gates](hooks.md#agent-gates) hook refuses it the machine's switches
   in `.aidrian.local.json`, as it refuses a subagent: `github.autoMerge`, `github.unattendedWaiver`, `reviewApprovals`,
   `unattendedSignoff`, `handoff.background`, and `review.productFeedback`. The hook knows such a session by its
@@ -1343,7 +1360,7 @@ host with no transcripts records none and uses the config value or 44,000.
 
 ```json
 "session": {
-  "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3, "resumeTokens": null }
+  "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3, "resumeTokens": null, "models": {} }
 }
 ```
 
@@ -1355,6 +1372,7 @@ host with no transcripts records none and uses the config value or 44,000.
 | `session.handoff.continue` | How the session goes on after its handoff: `"none"`, `"clear"`, `"compact"`, or `"background"`. The default follows `mode`: `"background"` with `mode: "auto"`, else `"none"`; a value set here wins. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
 | `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0, or `"unlimited"`; `3` by default. `"unlimited"` leaves the background route's [progress check](#the-progress-check), and the 10,000 continuations a chain floor records, to stop a chain. |
 | `session.handoff.resumeTokens` | `B` of the cost model, a whole number above 0, which wins over the measured value; `null`, the default, measures it ([Resume tokens](#resume-tokens)). |
+| `session.handoff.models` | The model and effort, per host, a background continuation asks for when the handing-off session tells none; `{}` by default ([Handoff models](config.md#handoff-models)). |
 
 Most projects set only `mode`. A config written before these settings became a group still loads, with an error from
 `aidrian check` and every `aidrian` command:

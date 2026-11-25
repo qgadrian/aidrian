@@ -78,7 +78,8 @@ export const DEFAULTS = deepFreeze({
   // what it would in a fresh session; `maxTokens` is an optional ceiling on the context, 0 for off. `continue` is how the
   // session goes on after its handoff, and `maxChain` how many handoffs in a row it may continue before a person looks.
   // `resumeTokens` sets the cost model's B, what a fresh session reads to resume; null measures it (lib/resume-tokens.mjs).
-  session: { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3, resumeTokens: null } },
+  // `models` is the model and effort, per host, a background continuation asks for when the handing-off session tells none.
+  session: { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3, resumeTokens: null, models: {} } },
   lessons: { auto: true, maxOpen: 20, maxAgeDays: 14 },
   models: Object.fromEntries(Object.keys(MODEL_CHOICES).map((key) => [key, { agents: {} }])),
   names: { human: 'the Human', ai: null },

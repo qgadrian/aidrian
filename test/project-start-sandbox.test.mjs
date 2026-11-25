@@ -356,6 +356,30 @@ test('a start the host refuses for an untrusted folder names the trust step: the
   assert.match(result.problem, new RegExp(`Workspace not trusted; trust the project's runs folder, ${escaped(path.join(root, 'runs'))}, once by running \`claude\` there`, 'u'));
 });
 
+test('a project start passes no model: neither the driver\'s transcript, nor the base branch\'s handoff models, nor an argument names one', (t) => {
+  const fx = runFixture(t, { config: { session: { handoff: { models: { claude: { model: 'opus' } } } } } });
+  const transcripts = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'));
+  writeFileSync(path.join(transcripts, `${DRIVER}.jsonl`), [
+    { type: 'user', permissionMode: 'acceptEdits', sessionId: DRIVER },
+    { type: 'assistant', message: { role: 'assistant', model: 'claude-fable-5-2' }, sessionId: DRIVER },
+  ].map((each) => `${JSON.stringify(each)}\n`).join(''));
+  const result = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  const [gated] = fx.claude.starts();
+  assert.equal(gated.args[gated.args.indexOf('--permission-mode') + 1], 'acceptEdits', 'the transcript was read');
+  assert.ok(!gated.args.includes('--model'), 'the gate');
+
+  const { cwd, git } = folders(t, fx);
+  const claude = fakeClaude({ dir: fx.dir });
+  const asked = { model: 'opus', modelFrom: 'team', effort: 'max', effortFrom: 'team' };
+  const started = startProject({
+    session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => true, model: 'opus', asked,
+    sandbox: { git, grants: [git], domains: ['github.com'] }, home: fx.home, platform: 'linux', run: claude.run, wait: () => {}, resolve: () => '/bin/claude', readMode: () => 'acceptEdits',
+  });
+  assert.equal(started.problem, undefined, started.problem);
+  assert.ok(!claude.starts()[0].args.includes('--model'), 'the adapter');
+});
+
 test('the handoff\'s background start passes no sandbox, setting sources, or MCP flags', (t) => {
   const fx = runFixture(t, { init: false });
   const claude = fakeClaude({ dir: fx.dir });

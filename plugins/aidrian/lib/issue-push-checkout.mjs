@@ -102,8 +102,9 @@ function mergedProblem(folder, overlay, guarded, changed) {
 }
 
 // The forge's workflow folders and every folder that holds one, as `:(top,literal)` pathspecs: a holding folder, as
-// `.github`, counts only when its own entry changes, as when it becomes a link to a folder of other files.
-function workflowPaths() {
+// `.github`, counts only when its own entry changes, as when it becomes a link to a folder of other files: { pathspecs,
+// counts }, `counts(file)` whether a changed path is one. lib/project-kept.mjs holds an attempt's kept commits to it too.
+export function workflowPaths() {
   const folders = forgeWorkflowFolders();
   const holders = [...new Set(folders.flatMap((each) => each.split('/').slice(0, -1).map((_, at, parts) => parts.slice(0, at + 1).join('/'))))];
   const counts = (file) => holders.includes(file) || folders.some((each) => file === each || file.startsWith(`${each}/`));

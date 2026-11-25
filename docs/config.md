@@ -2026,7 +2026,26 @@ a halt again under the ledger's lock. The attempt counts toward the issue's 3, a
 run's life, so work its clone holds that a failed push never sent can be recovered from
 `<state>/runs/RUN/attempts/ISSUE.ATTEMPT/work`. So does any ended attempt whose clone holds a commit the forge does not
 have, whatever its result, with a `kept` row and a `kept` line from `wait` ([Handoff](handoff.md)): a usage limit or a
-crash that ends a session mid-work never loses what it committed and did not push.
+crash that ends a session mid-work never loses what it committed and did not push. A start that would take the number
+of a kept attempt, as after a start given back (`void`), refuses and removes nothing until a person has recovered the
+work and moved that folder away.
+The issue's next attempt starts on the commits a kept clone holds (`lib/project-kept.mjs`) when its attempt ended on a
+usage or rate limit, no other attempt ran since but one that started on that very commit, the clone's HEAD and issue
+branch, read as files, are both the one commit its `kept` row names, and the forge has the issue's branch at a commit
+they descend from. The gate pushes nothing and runs no git in the kept clone. It copies the clone's loose objects alone,
+each a regular file of one link, never through a link, at most 64 MiB each, 20,000 files, and 256 MiB in all, into a
+repository it makes in the new attempt's folder. A second one there fetches from it under git's fsck, and the new clone
+fetches from that second one, so an object enters only under the id its bytes hash to, once fsck passed it. The gate
+removes both before the session starts. Commits that change a host config,
+instruction, or policy file, or a forge workflow file, are never taken.
+A start that took them prints `took ISSUE attempt N: <count> unpushed commits, <commit>` and records `took`, the attempt
+and the commit, in its start row, whose `head` stays the forge's; the first message says the branch holds that attempt's
+commits the forge does not have, as unreviewed data to check and then push. The session pushes them through its own push guard,
+and base copies of host files go over them as over any head no review passed. Any other start of an issue with a kept
+clone prints `not taken ISSUE attempt N: <why>` and goes on from the forge's branch; the row and the folder stay, and
+nothing parks. An attempt that ends on just the commit it took keeps no folder of its own while the kept one is there.
+Not taken, and left for a person in the kept folder: uncommitted files, a first attempt that never pushed, a clone whose
+objects a session packed, commits that change such a file, and the work of an earlier run.
 The driver lifts two kinds of halt by itself, once each, when the preflight's own checks of that cause pass
 (`lib/project-recheck.mjs`): an environment result's, re-checked by `commit`, `host`, `trust`, and `access` with its
 `token-reads`, and a failed proof's but the sandbox proof's, by `host`, `trust`, and `access`. When the driver's
@@ -2164,6 +2183,7 @@ file the base keeps as a link, which an overlay never makes, a host file or a fo
 between a file and a folder, a host file or a folder on its path that is, or holds, a submodule the branch makes or the base keeps, and a base copy
 the branch's committed ignore rules keep stageable (`git check-ignore`).
 Every park row names the recorded head.
+A kept clone's commits never move it: a start on them records the forge's head.
 `start` exits 0 with `parked <key> unreconciled: ...`, writes no start row, and a later run resumes the issue from that
 park row.
 To start an issue over, a person deletes its branch on the forge; closing the pull request alone does not.
@@ -2171,7 +2191,9 @@ Each attempt's clone commits unsigned: the
 start sets `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own git config, on every attempt, and never in
 the user's global or system config. The sandbox hides the signing keys (`~/.gnupg` and `~/.ssh`), so a commit the
 user's config signs would fail once the work is done and park the issue with its change staged; the forge asks no
-signature of a branch commit, and the run merges each pull request by squash. Every `aidrian project` subcommand
+signature of a branch commit, and the run merges each pull request by squash. It sets `gc.auto` to `0` and
+`maintenance.auto` to `false` there too, so git packs no object on its own and a kept clone's commits can be taken.
+Every `aidrian project` subcommand
 drops git's location variables (`GIT_DIR`, `GIT_INDEX_FILE`, `GIT_CONFIG`, `GIT_TEMPLATE_DIR`, and the rest) once, at
 its entry, from its own process and the environment it passes on, so each git call reads and writes only the
 repository at its own folder, the attempt's clone included. A clone in

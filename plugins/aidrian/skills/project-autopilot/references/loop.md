@@ -26,7 +26,7 @@ named and go on from that output as step 2 says.
    - exit 0, `started <key> attempt <n> session <id>`: the issue runs in its own session. Set its started status once,
      as [tracker-writes.md](tracker-writes.md) § The started status says. Then step 1.
    - exit 0, `parked <key> unreconciled: ...`: nothing started; follow [existing-work.md](existing-work.md), then step 1.
-   - an `unverified:` line is a note, not a refusal.
+   - an `unverified:` line is a note, not a refusal. So is a `took` or `not taken` line: [existing-work.md](existing-work.md).
    - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: step 1, whose `next` says so.
    - exit 0, `lifted the pause until <time>: <cause>`: the start ended the pause early and launched nothing. Then step 1.
    - a line `halt <cause>`, exit 1: § Halt. A `recheck kept the halt:` line after it names what kept it.

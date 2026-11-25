@@ -10,7 +10,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { forgetEnvFiles, sessionEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
-import { attemptFolder, cloneHeads, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
+import { attemptFolder, cloneHeads, sweepAttempts, unpushedHead } from '../plugins/aidrian/lib/project-start.mjs';
 import { recordTokenFile, TOKEN_FILES, tokenRecordThere } from '../plugins/aidrian/lib/project-token.mjs';
 import { DRIVER, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -110,6 +110,31 @@ test('the clone\'s refs are read as files: a detached HEAD, a packed branch, and
   mkdirSync(path.join(dir, 'refs'));
   symlinkSync(elsewhere, path.join(dir, 'refs', 'heads'));
   assert.deepEqual(cloneHeads(dir, BRANCH), { problem: `refs/heads/${BRANCH} lies below refs/heads, a link` });
+});
+
+test('the commit an attempt started on from another\'s kept clone is no work of its own, while that clone\'s folder is there', (t) => {
+  const state = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-sweep-took-')));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const [taken, own] = ['a'.repeat(40), 'b'.repeat(40)];
+  const folder = attemptFolder(state, 'launch', 'ENG-1', 2);
+  const refs = (id) => {
+    mkdirSync(path.join(folder, 'git', 'refs', 'heads', 'feat'), { recursive: true });
+    writeFileSync(path.join(folder, 'git', 'HEAD'), `ref: refs/heads/${BRANCH}\n`);
+    writeFileSync(path.join(folder, 'git', 'refs', 'heads', BRANCH), `${id}\n`);
+  };
+  const row = { key: 'ENG-1', attempt: 2, branch: BRANCH, took: { attempt: 1, head: taken } };
+  const unpushed = (given = row) => unpushedHead({ folder, row: given, repository: { host: 'github.com', owner: 'acme', name: 'widgets' }, forge: { hasCommit: () => false } });
+  const from = attemptFolder(state, 'launch', 'ENG-1', 1);
+  mkdirSync(from, { recursive: true });
+  refs(taken);
+  assert.equal(unpushed(), null);
+  assert.equal(unpushed({ ...row, took: undefined })?.head, taken, 'a row that took nothing counts it');
+  assert.equal(unpushed({ ...row, took: { attempt: 1, head: own } })?.head, taken, 'as does one that took another');
+  refs(own);
+  assert.equal(unpushed()?.head, own, 'a commit of its own counts');
+  refs(taken);
+  rmSync(from, { recursive: true });
+  assert.equal(unpushed()?.head, taken, 'the folder it came from is gone, so this clone holds the only copy');
 });
 
 test('a clone whose refs cannot be read keeps its folder, with a kept row', (t) => {

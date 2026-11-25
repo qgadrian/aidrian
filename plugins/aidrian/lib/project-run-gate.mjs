@@ -80,6 +80,7 @@ import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, vali
 import { decisionStoreFolder, decisionStoreFolders, readRecordedDecision } from './project-decision-store.mjs';
 import { DECISION_SCOPE, recordedDecision, writeDecisionFile } from './project-decision.mjs';
 import { fenceFor, writeIssueFile } from './project-issue-text.mjs';
+import { keptLines, keptPrompt } from './project-kept.mjs';
 import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, recordedHead, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
@@ -239,12 +240,14 @@ function machineProblem(project, policy) {
 // copies of the host files its branch changed (`baseCopies`, the file that names them, confinedRoom) says so, and that
 // a push changing one is refused but as git merges the base. An attempt that goes on on an existing branch, a later one
 // or a resumed one, runs stop-action's catch-up first, which names the one way it merges a base that moved (catchUpLine).
-export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL, note = null, afterLimit = false, issueFile = null, decisionFile = null, baseCopies = null, confine = false, resumed = null, includePolicyFiles = false }) {
+// An attempt that starts on an ended attempt's kept commits (`kept`, project-kept.mjs) says so, as unreviewed data.
+export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL, note = null, afterLimit = false, issueFile = null, decisionFile = null, baseCopies = null, confine = false, resumed = null, includePolicyFiles = false, kept = null }) {
   return [
     `Project run ${run}, issue ${key}, attempt ${attempt}: this session works one issue of a project run, started in the background by the run's driver session, with no Human attending.`,
     ...(confine ? [`Before anything else, as this session's first tool call, run exactly \`aidrian project confine ${run} ${key}\` with the Bash tool, alone: it proves this session's sandbox holds, and every other call is refused until the start has confirmed it, a few seconds after it passes.`] : []),
     ...(resumed?.head && attempt === 1 ? [`An earlier run of this project, ${resumed.run}, started this issue and parked it: the branch ${branch} on the forge holds the work it pushed, and an open pull request from that branch is this issue's own; go on from there, and open no second one.`] : []),
     ...(afterLimit ? [`Attempt ${attempt - 1} stopped when the host met a usage or rate limit: the branch ${branch} on the forge holds the work it pushed, and a pull request from that branch is this issue's own; go on from there.`] : []),
+    ...keptPrompt(branch, kept),
     ...(attempt > 1 || resumed?.head ? [catchUpLine(run, key)] : []),
     `Read the autopilot skill at ${skill} and follow it on the task ${key}, in the attempt's clone ${clone} on the branch ${branch}, which this session starts in.`,
     `Merge only through the pr-auto-merge skill, when \`aidrian pr auto-merge <number> --check\` exits 0. Push only with a full refspec, in a call of its own once the commit is made: \`git push origin HEAD:refs/heads/${branch}\`.`,
@@ -648,12 +651,13 @@ export function policyFilesAt(root, tip, prefix) {
 const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event === 'ended' && row.key === key && row.attempt === attempt && row.reason === 'limit');
 
 // The attempt's fresh clone, checked, and the folders it may write: { folder, cwd, git, grants, drop, cache, vars, main,
-// mainGit, issueFile, decision, pushUrl, branch, overlay, baseCopies, resumed }, `decision` the recorded decision
+// mainGit, issueFile, decision, pushUrl, branch, overlay, baseCopies, resumed, kept }, `decision` the recorded decision
 // (decisionFor), `pushUrl` the URL its origin pushes to, which the
 // start row pins for the session's push (lib/issue-push-checkout.mjs), `branch` the one checked out, `overlay` the
 // branch's head when the clone holds the base branch's copies of the host files it changed (prepareAttempt), which the
 // start row records for the push guard, with `baseCopies` the file that names them (writeBaseCopies), else null, and
-// `resumed` the earlier run's entry only when the attempt goes on on its branch as the forge has it, or { halt },
+// `resumed` the earlier run's entry only when the attempt goes on on its branch as the forge has it, `kept` the take of
+// an ended attempt's kept commits (prepareAttempt), or { halt },
 // { retry }, { park }, or { problem }. The clone's host files are held to the base tip's, or to the head the review
 // passed (`reviewed`, reviewedProblem). A clone the host says would run a command outside its sandbox (`cloneProblem`) halts, and so
 // does one whose origin pushes to another URL than `pushUrl`, the one the host's access check read, as a pushInsteadOf
@@ -665,7 +669,7 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
-  const clone = prepareAttempt({ project, state, run, key, attempt, branch, recorded, tip, reviewed, guards, env });
+  const clone = prepareAttempt({ project, state, run, found, key, attempt, branch, recorded, tip, reviewed, guards, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.retry) return { retry: clone.retry };
   if (clone.park) return { park: clone.park };
@@ -722,7 +726,7 @@ function confinedRoom({ project, state, run, key, branch, resumed, recorded, rev
   return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, decision, pushUrl: url || null, claim, branch: clone.branch,
     head: clone.head, overlay: clone.overlay?.sha ?? null, baseCopies: baseCopies?.file ?? null, policyFiles,
     // The earlier run's work goes on only on its branch as the forge has it: a branch deleted since starts afresh.
-    resumed: clone.onForge ? resumed : null, onForge: clone.onForge };
+    resumed: clone.onForge ? resumed : null, onForge: clone.onForge, kept: clone.kept };
 }
 
 // The file in an attempt's folder that names the host files its clone holds the base branch's copies of.
@@ -812,7 +816,7 @@ function decisionLines(decision) {
 function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
   // `policy`: the one the start read once the base was pinned (startPlace), which the launch takes every value from.
-  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, decision, pushUrl, claim, head, overlay, baseCopies, policyFiles, resumed, policy } = place;
+  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, decision, pushUrl, claim, head, overlay, baseCopies, policyFiles, resumed, policy, kept } = place;
   const localBinding = policy.localBinding === true;
   // Whether the team's switch reaches this machine's loopback on this host and platform, as the host declares it: one
   // that keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
@@ -853,18 +857,19 @@ function launchStart(context, place) {
     return filed ? true : { problem: 'the start could not file the passed proof in the session\'s mark' };
   } : undefined;
   const name = sessionName(run, key, attempt);
-  const prompt = projectPrompt({ run, key, attempt, branch, clone: cwd, afterLimit, issueFile, decisionFile: decision?.file ?? null, baseCopies, resumed, includePolicyFiles: policy.includePolicyFiles === true, confine: proving, note: safely(() => cap.sessionNote?.({ work: cwd, branch })) });
+  const prompt = projectPrompt({ run, key, attempt, branch, clone: cwd, afterLimit, issueFile, decisionFile: decision?.file ?? null, baseCopies, resumed, includePolicyFiles: policy.includePolicyFiles === true, kept, confine: proving, note: safely(() => cap.sessionNote?.({ work: cwd, branch })) });
   // The hours the team confirmed for this start, which a wait the forge cannot answer holds the session to (settlePolicy).
   // `head`: the commit the branch was at, which the next attempt's branch must hold (recordedHead). `overlay`: the branch
   // head the attempt started from on the base branch's copies of its host files, with the policy files the pinned base
-  // tip names (`policyFiles`, policyFilesAt), both for the push guard. A recorded decision that stood is in the row for
+  // tip names (`policyFiles`, policyFilesAt), both for the push guard. `took`: the attempt whose kept commits it starts
+  // on, and the commit taken, which the sweep and the next take read (project-kept.mjs). A recorded decision that stood is in the row for
   // the audit alone: nothing reads it back.
   const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20) } : {};
   // `machine`: this machine's auto-merge switch as the main checkout reads it, which a confined session, denied that
   // checkout, reads in its place (attempt-clone.mjs confinedMachine): "unset" only for an untracked local file.
   const local = context.project.localAutoMerge;
   const machine = { autoMerge: local === 'unset' && !mayFollowTeamDefault(context.project) ? 'off' : local };
-  const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: policy.issueHours, machine, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}), ...(head ? { head } : {}), ...overlaid, ...(decision?.sha256 ? { decision: decision.sha256 } : {}) };
+  const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: policy.issueHours, machine, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}), ...(head ? { head } : {}), ...(kept?.took ? { took: kept.took } : {}), ...overlaid, ...(decision?.sha256 ? { decision: decision.sha256 } : {}) };
   let proof = null;
   // Why the write-ahead row was refused under the ledger's lock, when the order or the cap moved since the start read it.
   const ahead = {};
@@ -917,7 +922,7 @@ function launchStart(context, place) {
     return noted(ahead.retry ? retryAnswer('start', ahead.why, place.orphans) : { exitCode: 1, out: place.orphans, err: [`aidrian project start: ${ahead.why}`] });
   }
   const lines = noted(startLines({ result, state, run, key, attempt, session, base, proof, proofKind: sandboxFailed ? 'sandbox' : 'proof', cap, orphans: place.orphans, now: context.now }));
-  return lines.exitCode === 0 ? { ...lines, out: [...lines.out, ...decisionLines(decision)] } : lines;
+  return lines.exitCode === 0 ? { ...lines, out: [...lines.out, ...decisionLines(decision), ...keptLines(key, kept)] } : lines;
 }
 
 // Writes the start of `base` ahead, before the host starts anything: a start row with `outcome: 'uncertain'` and

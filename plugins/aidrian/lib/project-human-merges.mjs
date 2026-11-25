@@ -41,7 +41,7 @@ function textLines({ forge, pinned, folder, keys, texts }) {
     ? (file) => movedPointer([{ path: file }], folder) !== undefined
     : (file) => isPolicyPath(file, policies.policyFiles);
   // A leading slash names the top of the repository, so only a relative word is read from the project folder too.
-  const isNamed = (word) => (word.startsWith('/') ? [word.replace(/^\/+/u, '')] : [word, `${folder}${word}`]).some((file) => isHeld(path.posix.normalize(file)));
+  const isNamed = (word) => (word.startsWith('/') ? [word] : [word, `${folder}${word}`]).some((file) => isHeld(path.posix.normalize(`/${file}`).slice(1)));
   return keys.flatMap((key) => {
     const named = words(textOf(texts, key)).find(isNamed);
     return named ? [`${NEEDS_MERGE}, maybe: ${key}'s text names ${JSON.stringify(named)}, a policy file auto-merge never merges, so a pull request that changes it waits for your merge`] : [];

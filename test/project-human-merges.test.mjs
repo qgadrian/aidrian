@@ -141,7 +141,7 @@ test('an open pull request whose branch the forge does not say is told as unknow
 test('under both lifts a text is warned of only when it names the pointer file', () => {
   const warned = (named, folder = '') => lines(stubForge({ autoMerge: LIFTED, folder }), { prefix: () => folder, startable: ['ENG-1'], texts: { 'ENG-1': { description: `Edit ${named}` } } }).length;
   for (const named of ['.aidrian.json', './.aidrian.json', '.AIDRIAN.json']) assert.equal(warned(named), 1, named);
-  for (const named of ['.aidrian.json', 'apps/web/.aidrian.json', '/apps/web/.aidrian.json']) assert.equal(warned(named, 'apps/web/'), 1, named);
+  for (const named of ['.aidrian.json', 'apps/web/.aidrian.json', '/apps/web/.aidrian.json', '/../apps/web/.aidrian.json', '//apps/web/.aidrian.json']) assert.equal(warned(named, 'apps/web/'), 1, named);
   // A path from the top of the repository is never read from the nested project's folder.
   assert.equal(warned('/.aidrian.json', 'apps/web/'), 0);
   for (const named of ['.aidrian/config.json', 'other/.aidrian.json']) assert.equal(warned(named), 0, named);

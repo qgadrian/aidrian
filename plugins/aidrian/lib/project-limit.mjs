@@ -72,9 +72,10 @@ export function pauses(found) {
 }
 
 // The pause on the run `found` at `now`: { until, key, kind, wait } of the pause that lasts longest, while it lasts, or
-// null.
+// null. A lifted pause never lasts, even read at a `now` before its lift, so no limit joins it.
 export function pauseOf(found, now) {
-  const longest = pauses(found).filter((each) => each.end > now).sort((a, b) => b.end - a.end)[0];
+  const lifts = liftTimes(found);
+  const longest = pauses(found).filter((each) => each.end > now && !lifts.has(each.wait)).sort((a, b) => b.end - a.end)[0];
   return longest ? { until: iso(longest.end), key: longest.key, kind: longest.kind, wait: longest.wait } : null;
 }
 
@@ -143,19 +144,23 @@ export function recordedPauseRuns(found, key, attempt, limit, now) {
 // at }, `key`, `attempt`, and `record` those of the pause's first limit. `read(row)` answers the limit the session of the
 // `limit` row `row` last met, as the host's record shows it now (checkedLimit), or null. A pause lifts only when, for
 // every row that set, extended, or joined it, the host's own entry says the signed-in account changed after that limit
-// and no later than now: one that joined shows a limit too, and may be the new account's own. A row with no `record`, a
-// record whose pause was lifted before, and a read that shows no limit, or one with no time, lift nothing.
+// and no later than now: one that joined shows a limit too, and may be the new account's own. The limit a session shows
+// now must be one the pause holds: a newer one waits until `wait` has recorded it, so no lift spends a limit still to be
+// recorded. A row with no `record`, a record whose pause was lifted before, and a read that shows no limit, or one with
+// no time, lift nothing.
 export function liftRow({ found, now, read }) {
   const lasting = pauseOf(found, now);
   if (!lasting) return null;
   const lifts = liftTimes(found);
   const rows = limitRows(found).filter((row) => row.wait === lasting.wait);
   const spent = limitRows(found).filter((row) => lifts.has(row.wait));
+  const holds = (list, row, record) => list.some((each) => each.key === row.key && each.attempt === row.attempt && each.record === record);
   const liftable = (row) => {
-    if (spent.some((each) => each.key === row.key && each.attempt === row.attempt && each.record === row.record)) return false;
+    if (holds(spent, row, row.record)) return false;
     const limit = read(row);
-    // Neither a row with no record, whose time is NaN, nor a limit that shows no change, null, passes the comparison.
-    return limit !== null && limit.at !== null && limit.changed > Math.max(timeOf(row.record), limit.at) && limit.changed <= now;
+    // A row with no record, whose time is NaN, and a limit that shows no change, null, pass no comparison, and a limit
+    // with no time of its own is no record such a pause holds.
+    return limit !== null && holds(rows, row, recordOf(limit)) && limit.changed > Math.max(timeOf(row.record), limit.at) && limit.changed <= now;
   };
   if (!rows.every(liftable)) return null;
   const [{ key, attempt, record }] = rows;

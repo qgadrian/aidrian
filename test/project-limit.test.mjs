@@ -631,8 +631,15 @@ test('a pause lifts only when every limit it holds shows an account change after
   assert.deepEqual(lifted, { event: 'lifted', wait: 1, key: 'ENG-1', attempt: 1, record: iso(met), cause: 'the host\'s record shows the signed-in account changed after the limit met by ENG-1', at: iso(NOW) });
   assert.equal(lift([limitRow()], () => shows({ changed: null })), null, 'no change shown');
   assert.equal(lift([limitRow()], () => null), null, 'no limit read, as when the session answered or the read failed');
-  assert.equal(lift([limitRow()], () => shows({ changed: met - MINUTE, at: met - HOUR })), null, 'a change before the row\'s record');
-  assert.equal(lift([limitRow()], () => shows({ at: NOW - MINUTE })), null, 'a change before the limit the session met since');
+  const older = limitRow({ record: iso(met - HOUR) });
+  assert.equal(lift([limitRow(), older], () => shows({ changed: met - MINUTE, at: met - HOUR })), null, 'a change before the row\'s record');
+  const newer = limitRow({ record: iso(NOW - MINUTE), joined: true });
+  assert.equal(lift([limitRow(), newer], () => shows({ at: NOW - MINUTE })), null, 'a change before the limit the session met since');
+  assert.equal(lift([limitRow()], () => shows({ at: NOW - MINUTE, changed: NOW })), null, 'a newer limit the pause does not hold yet');
+  for (const other of [{ key: 'ENG-4' }, { attempt: 2 }]) {
+    assert.equal(lift([limitRow(), { ...newer, ...other }], () => shows({ at: NOW - MINUTE, changed: NOW })), null, 'one of another issue or attempt is not it');
+  }
+  assert.notEqual(lift([limitRow(), newer], () => shows({ at: NOW - MINUTE, changed: NOW })), null, 'a newer limit the pause holds');
   assert.equal(lift([limitRow()], () => shows({ at: null })), null, 'a limit with no time');
   assert.equal(lift([limitRow()], () => shows({ changed: NOW + MINUTE })), null, 'a change dated ahead');
   assert.equal(lift([limitRow({ record: null })]), null, 'a row with no record');
@@ -652,6 +659,14 @@ test('a pause lifts only when every limit it holds shows an account change after
   const held = (now) => recordedPauseRuns({ rows }, 'ENG-1', 1, shows(), now);
   assert.deepEqual([held(NOW + RESUME_GRACE - 1), held(NOW + RESUME_GRACE)], [true, false], 'the idle session is held the grace past the lift');
   assert.equal(lift(rows), null, 'nothing lasts to lift');
+  // A pass whose `now` is from before the lift: its limit opens a pause of its own, whichever path records it.
+  const stale = { found: { rows }, key: 'ENG-4', attempt: 1, limit: checkedLimit({ kind: 'usage', until: FAR, at: NOW - MINUTE }), now: NOW - 1000 };
+  const opened = [pauseRow(stale).row, limitEndRows(stale).rows.at(-1)];
+  const own = ['limit', 2, undefined, iso(NOW - MINUTE + PAUSE_CEILING)];
+  assert.deepEqual(opened.map((row) => [row.event, row.wait, row.joined, row.until]), [own, own]);
+  for (const row of opened) assert.equal(pauseOf({ rows: [...rows, row] }, NOW + MINUTE).wait, 2, 'it holds the run');
+  assert.equal(pauseOf({ rows }, stale.now), null, 'a lifted pause never lasts');
+  assert.equal(pausedTime({ rows }, met, NOW), NOW - met - MINUTE, 'the lifted pause still counts as paused time');
   assert.equal(lift([...rows, limitRow({ wait: 2, at: iso(NOW) })]), null, 'a record whose pause was lifted lifts no other');
 
   // An account still limited: a new record is a new pause, with a number of its own, and the 24 still end in a halt.
@@ -695,6 +710,23 @@ test('the driver\'s start and wait lift a pause once the account changed, and a 
   assert.deepEqual(lifts().map((row) => row.wait), [1, 2]);
   assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: second + 9 * MINUTE }).out[0], /^limit ENG-1 usage until \S+ -> open$/u, 'an idle session is stopped once the grace past the lift is over');
   assert.equal(fx.rows().filter((row) => row.event === 'limit').length, 2, 'its record pauses nothing again');
+});
+
+test('a limit not recorded yet holds the lift until wait records it, and one lift then ends the one pause both hold', (t) => {
+  const fx = started(t);
+  const lifts = () => fx.rows().filter((row) => row.event === 'lifted');
+  const met = Date.now() - 2 * HOUR;
+  fx.limit([weekly(met)]);
+  fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: met + MINUTE });
+  fx.limit([weekly(met), weekly(met + HOUR), accountChanged(met + HOUR + MINUTE)]);
+  const now = met + HOUR + 2 * MINUTE;
+  assert.deepEqual(fx.cmd(['start', 'launch', 'ENG-4'], { now }).out, [`paused until ${iso(met + 6 * HOUR)}`]);
+  assert.deepEqual(lifts(), []);
+  const out = fx.cmd(['wait', 'launch', '--max-wait', '0'], { now }).out;
+  assert.match(out.join('\n'), /^paused ENG-1 usage until \S+: .*\nlifted the pause until \S+: .*\nrunning ENG-1$/u);
+  assert.deepEqual(lifts().map((row) => [row.wait, row.record]), [[1, iso(met)]]);
+  assert.deepEqual(fx.rows().filter((row) => row.event === 'limit').map((row) => [row.wait, row.record]), [[1, iso(met)], [1, iso(met + HOUR)]], 'one pause of the 24');
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: now + MINUTE }).out, ['running ENG-1'], 'nothing pauses the run again');
 });
 
 test('a pause stays when the read fails, when custody moved meanwhile, and when the run ended meanwhile', (t) => {

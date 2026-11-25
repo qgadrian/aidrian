@@ -2182,17 +2182,18 @@ over, `start` of any issue exits 1 with `paused until <time>`, `next` prints tha
 `pause`, and an idle `wait` waits with it, up to `--max-wait`. Time paused counts toward no issue's `issueHours`.
 
 A pause ends early only when the host's own record shows the limit may be gone: the account signed in on the machine
-changed after the limit. While a pause lasts, the driver's `wait` and `start` read, with the adapter, the last limit of
-each session whose `limit` row set, extended, or joined the pause. When every one of them shows the change, dated after
-its limit and no later than now, the gate writes one `lifted` row with the pause's `wait` number, the `key`, `attempt`,
-and `record` of its first limit, the `cause` in words, and `at`, and prints `lifted the pause until <time>: <cause>`;
-that `start` launches nothing, and the next one does. The pause is over at that time for everything that reads it: the
-paused time counted, and the 5 minutes an idle session stays held past a pause's end. Nothing a session wrote lifts a
-pause, and no answer of one does, the driver's included: an answer shows nothing of a limit on another model. A limit
-record with no time of its own lifts nothing, nor does a read that fails. A record's pause lifts once, so an account
-that is still limited pauses the run again, as a new pause that counts toward its 24. Claude Code's record shows the
-change only where Remote Control was on in the limited session; elsewhere, on Codex, and once the limited session
-answered again or its process ended before the change, the pause runs to its end.
+changed after the limit. While a pause lasts, the driver's `wait` and `start` read, with the adapter, the last limit
+of each session whose `limit` row set, extended, or joined the pause. When every one of them shows the change, dated
+after its limit and no later than now, and that limit is one the pause holds, since a newer one must first be recorded
+by `wait`, the gate writes one `lifted` row with the pause's `wait` number, the `key`, `attempt`, and `record` of its
+first limit, the `cause` in words, and `at`, and prints `lifted the pause until <time>: <cause>`; that `start`
+launches nothing, and the next one does. The pause is over at that time for everything that reads it: the paused time
+counted, and the 5 minutes an idle session stays held past a pause's end. Nothing a session wrote lifts a pause, and
+no answer of one does, the driver's included: an answer shows nothing of a limit on another model. A limit record with
+no time of its own lifts nothing, nor does a read that fails. A record's pause lifts once, so an account that is still
+limited pauses the run again, as a new pause that counts toward its 24. Claude Code's record shows the change only
+where Remote Control was on in the limited session; elsewhere, on Codex, and once the limited session answered again
+or its process ended before the change, the pause runs to its end.
 
 A session the host still lists running, on a host that continues its own session at the reset (Claude Code, started
 with `autoContinueAtUsageLimit`), keeps running for a usage limit while its pause runs, and 5 minutes past the later

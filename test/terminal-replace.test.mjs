@@ -432,7 +432,7 @@ function typedStop(t, { lift = true, prompt } = {}) {
   utimesSync(file, new Date(at), new Date(at));
   const prompts = { file: transcript, isHuman: (entry) => entry.human === true, timeOf: claudeCode.entryTime, still: () => true };
   const started = [];
-  const stop = (options = {}) => endsTerminal(claudeCode, project, config, { session_id: BG_SESSION, transcript_path: transcript }, { env, start: (each) => started.push(each), prompts, ...options });
+  const stop = (options = {}) => endsTerminal(claudeCode, project, config, { session_id: BG_SESSION, transcript_path: transcript }, { env, home: TEST_HOME, start: (each) => started.push(each), prompts, ...options });
   return { at, file, started, stop };
 }
 const OWN_STOP = [{ host: 'claude-code', own: BG_SESSION, session: BG_SESSION, delay: END_DELAY }];

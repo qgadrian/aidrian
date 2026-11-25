@@ -170,9 +170,9 @@ function marked(text) {
 
 // Whether this stop ends the session of the payload `input` so its terminal opens the background session it handed off
 // to, or so a background session that handed off stops. The modules load only on a host that can replace a terminal.
-// `env`, `start`, the helper's launch, and `prompts`, the reader of the session's own transcript, are the tests'
-// (lib/terminal-replace.mjs endAfterTurn).
-export async function endsTerminal(host, project, config, input, { env = process.env, start, prompts } = {}) {
+// `env`, `home`, the account home whose marks it reads, `start`, the helper's launch, and `prompts`, the reader of the
+// session's own transcript, are the tests' (lib/terminal-replace.mjs endAfterTurn).
+export async function endsTerminal(host, project, config, input, { env = process.env, home, start, prompts } = {}) {
   const id = input.session_id;
   const replace = host.capabilities.handoffContinue?.replaceTerminal;
   if (!replace) return false;
@@ -189,7 +189,7 @@ export async function endsTerminal(host, project, config, input, { env = process
     host,
     session: id,
     take: () => takeEnding(store, id),
-    unattended: () => unattendedHere(id, { store, env, now: Date.now() }),
+    unattended: () => unattendedHere(id, { store, env, home, now: Date.now() }),
     // A background session the Human typed into ends itself too, once it handed off, at the end of that turn alone: a
     // Human prompt after the request means this stop ends a later turn (docs/handoff.md#replacing-the-terminal).
     background: () => startedInBackground(store, id),

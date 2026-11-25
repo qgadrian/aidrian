@@ -118,7 +118,7 @@ test('a merge with a resolved conflict is no clean merge, and its remerge diff h
   const scope = remergeDiff(r.dir, merge);
   // The conflict markers and both sides' lines are what the resolution removed; src/lib.js merged cleanly.
   assert.deepEqual(scope.changes, files.map((file) => ({ file, added: 1, removed: 5, status: 'M' })));
-  assert.deepEqual(scope.addedLines, each(['export const app = 29;']));
+  assert.deepEqual(scope.addedLines, { __proto__: null, ...each(['export const app = 29;']) });
   assert.deepEqual([...scope.removedFiles], files);
   assert.deepEqual(baseMergeOf(r.dir, merge, { priorHead: r.first, base: 'main' }), { clean: false, scope });
   assert.equal(remergeDiff(r.dir, r.first), null, 'a commit that is not a merge has no remerge diff');

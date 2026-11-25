@@ -67,13 +67,14 @@ export function headerName(text) {
 }
 
 function parseUnified(text) {
-  const addedLines = {};
+  // Keyed by file name, so with no prototype: a file may be named `constructor` or `__proto__`.
+  const addedLines = Object.create(null);
   const removedFiles = new Set();
-  const removedLines = {};
+  const removedLines = Object.create(null);
   // `{ [file]: [{ added, removed }] }`: unchanged code lies between two hunks, so a comment that opens in one and closes
   // in the next can hide it (quietDelta).
-  const hunks = {};
-  const addedAt = {};
+  const hunks = Object.create(null);
+  const addedAt = Object.create(null);
   let file = null;
   // The `to` side's number of the next added line, from the hunk header `@@ -a,b +c,d @@`.
   let next = null;

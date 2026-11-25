@@ -464,7 +464,7 @@ test('an importer whose name git would quote, such as src/café.ts, is still tra
 test('diffLines names a file git would quote by its real path', async (t) => {
   const { diffLines } = await import('../plugins/aidrian/lib/review/diff.mjs');
   const { root, base, head } = fixture(t, { 'src/café.ts': 'a\n' }, { 'src/café.ts': 'a\nb\n' });
-  assert.deepEqual(diffLines(root, base, head).addedLines, { 'src/café.ts': ['b'] });
+  assert.deepEqual(diffLines(root, base, head).addedLines, { __proto__: null, 'src/café.ts': ['b'] });
 });
 
 test('headerName undoes git\'s trailing tab and quoting, and leaves every other name as it is', () => {
@@ -492,7 +492,9 @@ test('headerPaths reads a `diff --git` header with a space, a quoted name, or a 
 
 test('the lines of a file whose name git marks with a tab or quotes are filed under the name the file list holds', (t) => {
   const kept = ['plain.ts', 'a b.ts', 'ends in a space ', 'x b/y.ts', 't\tb.ts', 'a b\tc.ts', 'q"q.ts', 'back\\slash.ts', 'nl\nx.ts', 'café.ts', 'caf é".ts', 'a b.test.ts'].map((name) => `src/${name}`);
-  const deleted = ['src/gone b.ts', 'src/gone\tb.ts'];
+  // Names every plain object inherits.
+  kept.push('constructor', '__proto__');
+  const deleted = ['src/gone b.ts', 'src/gone\tb.ts', 'toString'];
   const all = [...kept, ...deleted].sort();
   // The removed line `-- note` reads `--- note` in the diff, and the added `++ note` reads `+++ note`.
   const { root, base, head, git } = fixture(t, Object.fromEntries(all.map((file) => [file, 'same\n-- note\n'])),

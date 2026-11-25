@@ -23,6 +23,7 @@ import { recordsFolder, stateDir } from '../project.mjs';
 import { pathPattern } from './plan.mjs';
 import { clip, INGEST_NOTE, REVIEWED_WITHOUT } from './state.mjs';
 import { VISUAL_PER_RUN } from './config.mjs';
+import { routeOf } from './visual-route.mjs';
 
 export const VISUAL_MARKER = '<!-- aidrian-visual-captures -->';
 const ADAPTERS = Object.freeze({ web: fileURLToPath(new URL('./visual-web.mjs', import.meta.url)) });
@@ -58,40 +59,63 @@ function targetPairs(visual, target) {
   return variants.flatMap((variant) => locales.map((locale) => `${variant}\0${locale}`));
 }
 
+// Why `file` gets no capture, for a result that may be posted: the file name is the pull request's, so it shows as a
+// short code span of printable characters, with none that could close it or open markup.
+const refusal = (file, problem) => `routeFrom on ${codeSpan(shortened(file.replace(/[^\x20-\x7e]|[<>|`]/gu, '?')))} ${problem}`;
+
 // The routes a change touches, as [{ route, base, pairs? }]: every route of a target whose files match a changed file,
-// deleted files included, since removing a component changes the screen too. `base` is the target's named base, or null
-// for the variant's own. `pairs` ([[variant, locale|null]]) is present when the touched targets narrow the route: a
-// route two targets list gets the union of the captures each asks for, never a combination neither asked for.
+// deleted files included, since removing a component changes the screen too, and the route `routeFrom` yields for each
+// matching file that is still there. One that yields no path on the base is { route, base, file, error } instead, with
+// its template as the route. `base` is the target's named base, or null for the variant's own. `pairs`
+// ([[variant, locale|null]]) is present when the touched targets narrow the route: a route two targets list gets the
+// union of the captures each asks for, never a combination neither asked for.
 export function visualRoutes(visual, changes) {
   if (!visual) return [];
   const routes = new Map();
+  const refused = new Map();
   const full = targetPairs(visual, {});
   for (const target of visual.targets) {
     const patterns = target.files.map(pathPattern);
-    if (!changes.some((change) => patterns.some((pattern) => pattern.test(change.file)))) continue;
-    for (const route of target.routes) {
+    const touched = changes.filter((change) => patterns.some((pattern) => pattern.test(change.file)));
+    if (!touched.length) continue;
+    const listed = [...(target.routes ?? [])];
+    for (const { file } of target.routeFrom ? touched.filter((change) => change.status !== 'D') : []) {
+      const yielded = routeOf(target.routeFrom, file);
+      if (yielded?.route) listed.push(yielded.route);
+      else if (yielded) {
+        const { route } = target.routeFrom;
+        refused.set(`${target.base ?? ''}\0${route}\0${file}`, { route, base: target.base ?? null, file, error: refusal(file, yielded.problem) });
+      }
+    }
+    for (const route of listed) {
       const key = `${target.base ?? ''}\0${route}`;
       const known = routes.get(key) ?? { route, base: target.base ?? null, pairs: new Set() };
       for (const pair of targetPairs(visual, target)) known.pairs.add(pair);
       routes.set(key, known);
     }
   }
-  return [...routes.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, { route, base, pairs }]) => {
+  const sorted = (map) => [...map.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, value]) => value);
+  return [...sorted(routes).map(({ route, base, pairs }) => {
     const everything = pairs.size === full.length && full.every((pair) => pairs.has(pair));
     return { route, base, ...(everything ? {} : { pairs: [...pairs].map((pair) => pair.split('\0')).map(([variant, locale]) => [variant, locale || null]) }) };
-  });
+  }), ...sorted(refused)];
 }
 
 // One entry per route, width, locale, and variant, or per the route's `pairs` and width. A route may hold `{locale}`,
-// filled per locale. Throws past VISUAL_PER_RUN images, naming the routes, so the review stops loudly rather than
-// capture part of the matrix.
+// filled per locale. A route with an `error` is one entry that carries it, and is never captured. Throws past
+// VISUAL_PER_RUN images, naming the routes, so the review stops loudly rather than capture part of the matrix.
 export function visualMatrix(visual, routes) {
   const locales = visual.locales.length ? visual.locales : [null];
   const variants = visual.variants.length ? visual.variants.map((variant) => variant.id) : ['default'];
   const order = [null, ...visual.locales];
   const entries = [];
-  for (const { route, base, pairs } of routes) {
-    const id = base ? routeId(`${base}:${route}`) : routeId(route);
+  for (const { route, base, pairs, file, error } of routes) {
+    const name = base ? `${base}:${route}` : route;
+    if (error) {
+      entries.push({ key: `${routeId(`${name} ${file}`)}--no-route`, route, ...(base ? { base } : {}), error });
+      continue;
+    }
+    const id = routeId(name);
     const wanted = pairs
       ? variants.flatMap((variant) => order.filter((locale) => pairs.some(([v, l]) => v === variant && l === locale)).map((locale) => [variant, locale]))
       : variants.flatMap((variant) => locales.map((locale) => [variant, locale]));
@@ -304,7 +328,17 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
   };
   const base = { version: 1, head, platform: visual.platform, at: new Date().toISOString() };
   const authFiles = [];
+  // The manifest of a run whose every entry has its image or its error. Captured only when every image is: a matrix with
+  // a failed entry (a server that was down) runs again next time, and its good images still reach the reviewers and the
+  // upload.
+  const finish = (captured, extra = {}) => {
+    const good = captured.filter((entry) => entry.sha256).length;
+    const status = good === captured.length ? 'captured' : good ? 'partial' : 'failed';
+    return write({ ...base, status, ...(status === 'captured' ? {} : { reason: `${captured.length - good} of ${captured.length} captures failed: ${captured.find((entry) => entry.error)?.error}` }), ...extra, entries: captured });
+  };
   try {
+    // With no route to capture, nothing signs in and no browser starts.
+    if (entries.length && entries.every((entry) => entry.error)) return finish(entries);
     const prepared = await withBase(async (hook) => {
       let url = baseUrl;
       if (!url && visual.preview) url = urlFrom(await hook(visual.preview, { pr, head }), 'review.visual.preview');
@@ -362,9 +396,13 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       return profile ? profile.locales[entry.locale] ?? profile : { url: prepared.fallback, bases: {}, auth: null };
     };
     const prefix = (entry) => (entry.base ? profileOf(entry).bases[entry.base] : profileOf(entry).url);
-    // An entry whose named base this variant's login did not print is reported, never captured on another host.
-    const missingBase = new Map(entries.filter((entry) => !prefix(entry)).map((entry) => [entry.key, `review.visual.login printed no base "${entry.base}" for ${entry.variant}`]));
-    const jobs = entries.filter((entry) => !missingBase.has(entry.key)).map((entry) => ({
+    // An entry with no route, or whose named base this variant's login did not print, is reported, never captured on
+    // another host.
+    const refused = new Map(entries.flatMap((entry) => {
+      const error = entry.error ?? (prefix(entry) ? null : `review.visual.login printed no base "${entry.base}" for ${entry.variant}`);
+      return error ? [[entry.key, error]] : [];
+    }));
+    const jobs = entries.filter((entry) => !refused.has(entry.key)).map((entry) => ({
       key: entry.key,
       url: `${prefix(entry)}${entry.locale ? entry.route.replaceAll('{locale}', entry.locale) : entry.route.replaceAll('/{locale}', '').replaceAll('{locale}', '')}`,
       width: entry.width,
@@ -380,7 +418,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
     if (run.status !== 0 || run.error) return write({ ...base, status: 'failed', reason: failureReason(run, jobs, dir), entries: [] });
     const results = new Map((JSON.parse(run.stdout).results ?? []).map((result) => [result.key, result]));
     const captured = entries.map((entry) => {
-      if (missingBase.has(entry.key)) return { ...entry, error: missingBase.get(entry.key) };
+      if (refused.has(entry.key)) return { ...entry, error: refused.get(entry.key) };
       const result = results.get(entry.key);
       const file = path.join(dir, `${entry.key}.png`);
       if (!result || result.error || !existsSync(file)) return { ...entry, error: result?.error ?? 'no image' };
@@ -388,11 +426,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       if (!bytes.subarray(0, PNG.length).equals(PNG)) return { ...entry, error: 'not a PNG' };
       return { ...entry, file, sha256: createHash('sha256').update(bytes).digest('hex'), facts: result.facts ?? {} };
     });
-    // Captured only when every image is: a matrix with a failed entry (a server that was down) runs again next time,
-    // and its good images still reach the reviewers and the upload.
-    const good = captured.filter((entry) => entry.sha256).length;
-    const status = good === captured.length ? 'captured' : good ? 'partial' : 'failed';
-    return write({ ...base, status, ...(status === 'captured' ? {} : { reason: `${captured.length - good} of ${captured.length} captures failed: ${captured.find((entry) => entry.error)?.error}` }), baseUrl: prepared.fallback, entries: captured });
+    return finish(captured, { baseUrl: prepared.fallback });
   } catch (error) {
     return write({ ...base, status: 'failed', reason: error.message.split('\n')[0], entries: [] });
   } finally {
@@ -470,7 +504,8 @@ export function capturesBody(manifest, uploaded, { mode, visibility, error, revi
     for (const entry of list) {
       const url = entry.sha256 ? uploaded[entry.sha256] : null;
       const facts = entry.error ? `error: ${entry.error}` : factsLine(entry.facts);
-      lines.push(`| \`${entry.width}px ${entry.locale ?? ''} ${entry.variant}\` | ${url ? `![${entry.key}](${url})` : mode === 'auto' ? 'not uploaded' : 'kept local'} | ${facts.replaceAll('|', '\\|')} |`);
+      const label = entry.width ? `${entry.width}px ${entry.locale ?? ''} ${entry.variant}` : 'no route';
+      lines.push(`| \`${label}\` | ${url ? `![${entry.key}](${url})` : mode === 'auto' ? 'not uploaded' : 'kept local'} | ${facts.replaceAll('|', '\\|')} |`);
     }
   }
   if (ingested.length) {

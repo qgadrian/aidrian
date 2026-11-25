@@ -531,7 +531,7 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
 | Key | |
 | --- | --- |
 | `platform` | `web`: Playwright, loaded from the project's own dependencies (`playwright` or `@playwright/test`) |
-| `targets` | which changed files capture which routes; a route may hold `{locale}`, and `base` names a base the login prints, for screens on another host or path. `locales` and `variants` narrow the target to a subset of the lists below; `"locales": []` is one capture in the default locale |
+| `targets` | which changed files capture which routes; a route may hold `{locale}`, and `base` names a base the login prints, for screens on another host or path. `locales` and `variants` narrow the target to a subset of the lists below; `"locales": []` is one capture in the default locale. `routeFrom` derives routes from the changed files, with or without `routes` |
 | `viewports`, `locales` | the widths and locale tags; each image is taken at one of each |
 | `variants` | the product modes to capture, each with the name of a demo account to sign in as, or none for a public page |
 | `login` | a command, run from the base branch, that reads `{ account, variant, baseUrl, locales }` on stdin and prints `{ "storageState": {...}, "baseUrl"?, "bases"?, "locales"? }`; the account's secret comes from its environment, never config |
@@ -554,6 +554,25 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   variant, as before.
 - **Per target**: a screen that does not change with the mode or the language narrows its target, such as
   `"variants": ["hospitality"]` or `"locales": ["en"]`. A route two touched targets list gets both targets' captures.
+- **Routes from the changed files**: with `routeFrom`, a new screen is captured with no change to the config, which is a policy file.
+  A target gives a `re:` pattern over the changed file's path and a route template, whose `$1`, `$2`, and so on are the pattern's captures:
+
+  ```json
+  { "files": ["src/screens/**"], "routeFrom": { "pattern": "re:^src/screens/(?:(.*)/)?view\\.\\w+$", "route": "/$1" } }
+  ```
+
+  Here `src/screens/staff/floor/view.html` is captured at `/staff/floor`, and `src/screens/view.html` at `/`.
+  A changed file yields a route when it matches both the target's `files` and the pattern; a deleted file yields none.
+  Listed `routes` are captured as before, and a route that is both listed and yielded is captured once.
+  The target's `base`, `locales`, and `variants`, and the limits below, hold for a yielded route too.
+  The template is a path that starts with `/`, and `{locale}` may be a whole segment of it, as in `/{locale}/$1`.
+  File names come from the pull request, so a filled route is held to one rule, and nothing is ever encoded to pass it.
+  It is at most 150 characters, and each segment holds only letters, digits, and `. _ ~ -`, and is not `.` or `..`.
+  So a scheme, a host, a leading `//`, a backslash, an encoded `..`, a query, or a control character is refused, and so is a segment such as `[id]`.
+  A refused route is an error entry in the capture's result that names the file, never a capture of another page or host.
+  A screen that needs a value in its path, such as an id, goes in `routes` with a value the app serves.
+  A `pattern` that is not a `re:` pattern or does not compile, and a template that names a capture the pattern lacks, are config errors.
+  An older plugin rejects the key as unknown, so set [`requires.aidrian`](config.md#plugin-version) to the release that ships it.
 - **Limits**: a route may ask for at most 60 images (viewports x locales x variants, per target), a config error past it. One
   review captures at most 200; past that it stops as `too_large` and names the routes to narrow.
 - **Once per head**: the capture runs when a visual reviewer is dispatched, and its manifest (each image's key, file,

@@ -249,3 +249,89 @@ test('the login gets the locales, and may print a persona per locale that replac
   assert.equal(unknown.status, 'failed');
   assert.match(unknown.reason, /locale fr: not in review\.visual\.locales/u);
 });
+
+const FROM = { pattern: 're:^src/screens/(?:(.*)/)?view\\.html$', route: '/$1' };
+const fromConfig = (target = {}, over = {}) => checkReview({ visual: { platform: 'web', viewports: [360], targets: [{ files: ['src/**'], routeFrom: FROM, ...target }], ...over } }, 'config.json', []).visual;
+const touched = (...files) => files.map((file) => ({ file, status: 'A' }));
+
+test('routeFrom captures the route a touched file yields, with none listed, and a listed one it repeats only once', () => {
+  const visual = fromConfig();
+  assert.deepEqual(visualRoutes(visual, touched('src/screens/staff/floor/view.html')), R('/staff/floor'));
+  assert.deepEqual(visualRoutes(visual, touched('src/screens/view.html')), R('/'), 'a capture that took no part fills as nothing');
+  assert.deepEqual(visualRoutes(visual, touched('src/screens/staff/helper.js')), [], 'a file the pattern does not match yields no route');
+  assert.deepEqual(visualRoutes(fromConfig({ files: ['src/other/**'] }), touched('src/screens/staff/view.html')), [], 'only a file of the target yields one');
+  const both = fromConfig({ routes: ['/home', '/staff'] });
+  assert.deepEqual(visualRoutes(both, touched('src/screens/staff/view.html', 'src/screens/new/view.html')), R('/home', '/new', '/staff'));
+  assert.deepEqual(visualRoutes(both, [{ file: 'src/screens/gone/view.html', status: 'D' }]), R('/home', '/staff'), 'a deleted file yields no route, and still touches the listed ones');
+  assert.deepEqual(visualRoutes(visual, [{ file: 'src/screens/gone/view.html', status: 'D' }]), []);
+  const two = fromConfig({}, { targets: [{ files: ['src/**'], routeFrom: FROM }, { files: ['src/**'], routes: ['/staff'] }] });
+  assert.deepEqual(visualRoutes(two, touched('src/screens/staff/view.html')), R('/staff'));
+});
+
+test('routeFrom keeps the target\'s base, locales, and variants, and the capture limit', () => {
+  const visual = visualConfig({ targets: [{ files: ['src/**'], routeFrom: { pattern: FROM.pattern, route: '/{locale}/$1' }, base: 'guest', locales: ['de'], variants: ['appointments'] }], viewports: [360] });
+  const routes = visualRoutes(visual, touched('src/screens/book/view.html'));
+  assert.deepEqual(routes, [{ route: '/{locale}/book', base: 'guest', pairs: [['appointments', 'de']] }]);
+  assert.deepEqual(visualMatrix(visual, routes).map(({ route, base, locale, variant }) => [route, base, locale, variant]), [['/{locale}/book', 'guest', 'de', 'appointments']]);
+  const many = Array.from({ length: 201 }, (_, i) => `src/screens/s${i}/view.html`);
+  assert.throws(() => visualMatrix(fromConfig(), visualRoutes(fromConfig(), touched(...many))), /201 images, past 200/u);
+  assert.throws(() => visualMatrix(fromConfig(), visualRoutes(fromConfig(), touched(...many.map((file) => file.replace('screens/', 'screens/ '))))), /201 images, past 200/u);
+});
+
+test('a route that is no path on the base is an error in the result, never a capture of another host', async (t) => {
+  const p = project(t);
+  const visual = fromConfig({ files: ['re:^src/'], routeFrom: { pattern: 're:^src/screens/([^]*)/view\\.html$', route: '/$1' } });
+  const hostile = [
+    'https://evil.example', 'https:/evil.example', 'javascript:x', '/evil.example', '\\evil.example', 'a\\..\\b', '..', '../b', 'a/..', 'a/../b', '.', 'a/./b',
+    '%2e%2e', 'a/%2E./b', '%252e%252e/b', '%2f%2fevil.example', 'a%20b', 'a b', 'a//b', 'a\nb', 'a\tb', 'a\u0000b', 'a\u007fb', 'user@evil.example', 'a?b', 'a#b',
+    'café', '．．', '[id]', '{locale}', '$1', '`<!-- x', 'x|y', 'x'.repeat(151),
+  ];
+  const files = hostile.map((name) => `src/screens/${name}/view.html`);
+  const routes = visualRoutes(visual, touched(...files, 'src/screens/ok_1.~-/.x/...y/view.html'));
+  assert.deepEqual(routes.filter((each) => !each.error), R('/ok_1.~-/.x/...y'));
+  assert.deepEqual(routes.filter((each) => each.error).map((each) => each.file).sort(), [...files].sort());
+  const seen = [];
+  const entries = visualMatrix(visual, routes);
+  const manifest = await captureVisual({ project: p, pr: 9, head: 'a'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => ''), spawn: fakeAdapter(undefined, seen) });
+  assert.deepEqual(seen[0].entries.map((job) => job.url), ['http://localhost:3000/ok_1.~-/.x/...y']);
+  assert.equal(manifest.status, 'partial');
+  assert.match(manifest.reason, /^34 of 35 captures failed: routeFrom on `src\/screens\//u);
+  assert.equal(captureKeys(manifest).size, 1);
+  for (const entry of manifest.entries.filter((each) => each.route === '/$1')) {
+    assert.match(entry.error, /^routeFrom on (`+)[^`]{1,80}\1 yields no path on the target's base: /u, 'the file name is the pull request\'s, so it shows as one code span');
+    assert.doesNotMatch(entry.error, /[<>|]|[^\x20-\x7e…]/u);
+    assert.ok(entry.error.length < 260, 'the reason fits the review summary\'s clip');
+  }
+  const body = capturesBody(manifest, {}, { mode: 'local', visibility: 'PRIVATE', error: null });
+  assert.match(body, /\| `no route` \| kept local \| error: routeFrom on `src\/screens\/\?\?!-- x\/view\.html` yields no path/u);
+  // With nothing to capture, no hook runs and no browser starts, and the result still says why.
+  const none = await captureVisual({ project: p, pr: 9, head: 'b'.repeat(40), visual, entries: visualMatrix(visual, visualRoutes(visual, touched('src/screens/[id]/view.html'))), baseUrl: null, env: {}, withBase: () => assert.fail('a hook ran'), spawn: () => assert.fail('a browser started') });
+  assert.equal(none.status, 'failed');
+  assert.match(none.reason, /^1 of 1 captures failed: routeFrom on `src\/screens\/\[id\]\/view\.html` yields no path/u);
+});
+
+test('checkReview: routeFrom stands with or without routes, and a bad pattern or template is an error', () => {
+  const problems = (target) => {
+    const errors = [];
+    const { visual } = checkReview({ visual: { platform: 'web', viewports: [360], targets: [{ files: ['src/**'], ...target }] } }, 'config.json', errors);
+    assert.equal(visual === null, errors.length > 0, 'a bad entry drops the group');
+    return errors.join('\n');
+  };
+  assert.equal(problems({ routeFrom: FROM }), '');
+  assert.equal(problems({ routeFrom: FROM, routes: ['/'] }), '');
+  assert.equal(problems({ routeFrom: { pattern: 're:^(a)/(b)', route: '/{locale}/$2/$1.x/' } }), '');
+  assert.match(problems({}), /targets\[0\]\.routes" must be a non-empty list of paths/u);
+  assert.match(problems({ routeFrom: FROM, routes: [] }), /targets\[0\]\.routes" must be/u);
+  assert.match(problems({ routeFrom: '/$1' }), /routeFrom" must be \{ "pattern", "route" \}/u);
+  assert.match(problems({ routeFrom: null }), /routeFrom" must be \{ "pattern", "route" \}/u);
+  assert.match(problems({ routeFrom: { ...FROM, host: 'x' } }), /unknown key "review\.visual\.targets\[0\]\.routeFrom\.host"/u);
+  for (const pattern of [undefined, 5, 'src/*.html']) assert.match(problems({ routeFrom: { ...FROM, pattern } }), /routeFrom\.pattern" must be a re: pattern/u);
+  assert.match(problems({ routeFrom: { ...FROM, pattern: 're:' } }), /routeFrom\.pattern" has re: with no expression/u);
+  assert.match(problems({ routeFrom: { ...FROM, pattern: 're:(' } }), /routeFrom\.pattern" has re:\(: /u);
+  for (const route of [undefined, '', 5]) assert.match(problems({ routeFrom: { ...FROM, route } }), /routeFrom\.route" must be a route template/u);
+  for (const [route, named] of [['/$2', '$2'], ['/$0', '$0'], ['/$12', '$12']]) assert.ok(problems({ routeFrom: { ...FROM, route } }).includes(`routeFrom.route" names ${named}, and the pattern has 1 capture`), route);
+  assert.match(problems({ routeFrom: { pattern: 're:a|b', route: '/$1' } }), /names \$1, and the pattern has 0 captures/u);
+  for (const route of ['$1', 'https://x/$1', '//$1', '/a//$1', '/\\$1', '/../$1', '/%2e/$1', '/$1?a=b', '/$1#a', '/a $1', '/{locale}$1', '/x{locale}/$1', '/{$1}', '/$<name>', '/$']) {
+    assert.match(problems({ routeFrom: { ...FROM, route } }), /routeFrom\.route" must be a path starting with \//u, route);
+  }
+});

@@ -283,6 +283,18 @@ The target, `{ "files": ["src/app/**"], "routes": ["/"] }`, is a placeholder, as
 project's screen files and the routes that show them, one target per group of screens. The `harness-setup` skill does
 this when it applies the recipe. [Screens checked on every device](review.md#screens-checked-on-every-device) has a
 fuller config, with a flow whose invariants block the review, and what each key does.
+
+Where a screen's file path says its route, the target can derive the routes, so a new screen needs no edit to this policy file:
+
+```json
+{ "files": ["src/screens/**"], "routeFrom": { "pattern": "re:^src/screens/(?:(.*)/)?view\\.\\w+$", "route": "/$1" } }
+```
+
+Each changed file of the target that the pattern matches is then captured at the route the template gives, alongside any listed `routes`.
+That matters most where merges run alone: auto-merge refuses a policy file by default, so a pull request that lists its route there waits.
+[Visual review](review.md#visual-review) has the rules, and what a file name that yields no path on the app does.
+An older plugin rejects `routeFrom`, so [`requires.aidrian`](config.md#plugin-version) moves with it.
+
 `platform` takes only `"web"` today: the capture opens routes in Playwright, and no adapter captures a native app.
 
 Set `review.productFeedback.files` too, to the project's whole UI surface: every screen component, the hooks and

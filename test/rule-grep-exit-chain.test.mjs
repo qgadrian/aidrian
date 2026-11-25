@@ -376,3 +376,17 @@ test('asksForQuiet reads -q, a bundle with q, --quiet, and --silent', () => {
   const quiet = (line) => asksForQuiet(line.split(' ').map((text) => ({ text, dynamic: false })));
   assert.deepEqual(['-q x', '-qE x', '--quiet x', '--qui x', '--silent x', '-e -q f', '-c x'].map(quiet), [true, true, true, true, true, false, false]);
 });
+
+test('each top denied shape of issue 130 is denied with a wrapped line that passes', () => {
+  for (const [command, fixed] of [
+    ["sed -i '' 's/a/b c/' f && grep -c 'b c' f && npm test", "sed -i '' 's/a/b c/' f && { grep -c 'b c' f || true; } && npm test"],
+    ["sed -i '' 's/a/b c/' f && grep -c 'b c' f", "sed -i '' 's/a/b c/' f && { grep -c 'b c' f || true; }"],
+    ['cp a f && grep -c b f', 'cp a f && { grep -c b f || true; }'],
+    ['git log -1 && grep -c b f && git status', 'git log -1 && { grep -c b f || true; } && git status'],
+  ]) {
+    const { decision, reason } = decideForCommand(command, {});
+    assert.equal(decision, 'deny', command);
+    assert.ok(reason.includes(`Run this instead:\n\n  ${fixed}\n`), `${command}\n${reason}`);
+    assert.equal(decide(fixed), 'allow', fixed);
+  }
+});

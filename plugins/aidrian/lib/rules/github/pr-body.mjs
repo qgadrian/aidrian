@@ -32,7 +32,7 @@ import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
 import { forgeFor } from '../../forges/index.mjs';
-import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../../check-runs.mjs';
+import { claimFacts, claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../../check-runs.mjs';
 import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject, projectCheckouts, stateDir } from '../../project.mjs';
@@ -594,24 +594,59 @@ function judgeEvidence(body, call, { config, project, folder, readRuns, listOpen
     const old = new Set(passClaims(own.body, { testing: config.testing }).map(({ clause, key }) => `${key}\n${clause}`));
     claims = claims.filter(({ clause, key }) => !old.has(`${key}\n${clause}`));
   }
+  const revision = (spec) => {
+    const read = runGit(['rev-parse', '--verify', '--quiet', spec], folder);
+    return read.status === 0 ? read.stdout.trim() : null;
+  };
+  // A named commit is resolved to its full id once, and its tree is read from that id, so the tree that picks a run and
+  // the id the deny states are of one commit. A named tree id is no commit, and is read as it is.
+  const ids = new Map();
+  const fullId = (id) => {
+    if (!ids.has(id)) ids.set(id, revision(`${id}^{commit}`));
+    return ids.get(id);
+  };
   const trees = new Map();
   const treeAt = (commit) => {
-    if (!trees.has(commit)) {
-      const read = runGit(['rev-parse', '--verify', '--quiet', `${commit}^{tree}`], folder);
-      trees.set(commit, read.status === 0 ? read.stdout.trim() : null);
-    }
+    if (!trees.has(commit)) trees.set(commit, revision(`${commit === 'HEAD' ? commit : fullId(commit) ?? commit}^{tree}`));
     return trees.get(commit);
   };
   // Digits alone git cannot read are a number, such as "at 1234567 ms", and leave the line to HEAD's tree.
+  const namedCommit = (claim) => claim.commits.filter((id) => /[a-f]/u.test(id) || treeAt(id) !== null).at(-1) ?? null;
+  const claimTree = (claim) => treeAt(namedCommit(claim) ?? 'HEAD');
   const missing = claims.filter((claim) => {
-    const named = claim.commits.filter((id) => /[a-f]/u.test(id) || treeAt(id) !== null).at(-1);
-    const tree = treeAt(named ?? 'HEAD');
+    const tree = claimTree(claim);
     return tree !== null && unsupportedClaims([claim], runs, { tree }).length > 0;
   });
   if (!missing.length) return null;
+  const commitOf = commitsByTree(folder);
+  const namedId = (claim) => (namedCommit(claim) === null ? null : fullId(namedCommit(claim)));
+  const facts = missing.slice(0, FACTS_SHOWN)
+    .map((claim) => `For \`${claim.key}\`, ${claimFacts(claim, runs, { tree: claimTree(claim), commitOf, named: () => namedId(claim) })}`);
   return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section' })} The run must be of the files of HEAD ` +
     `(tree ${String(treeAt('HEAD') ?? 'unknown').slice(0, 12)}), or of the commit the line names, such as "at <commit id>". ` +
-    `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.`);
+    `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.\n\nWhat the record shows: ${facts.join(' ')}`);
+}
+
+// How many unsupported claims the deny gives the record's facts for, and how many of HEAD's commits it searches for a run's tree.
+const FACTS_SHOWN = 3;
+const COMMITS_SEARCHED = 100;
+
+// A function from a git tree to the newest of HEAD's last COMMITS_SEARCHED commits that has it, or null. It reads the
+// log once, on the first tree it is asked for, so a deny that needs no commit makes no git call for it.
+function commitsByTree(folder) {
+  let byTree = null;
+  return (tree) => {
+    if (!tree) return null;
+    if (byTree === null) {
+      byTree = new Map();
+      const read = runGit(['log', `-${COMMITS_SEARCHED}`, '--format=%H %T', 'HEAD'], folder);
+      for (const row of read.status === 0 ? read.stdout.split('\n') : []) {
+        const [commit, commitTree] = row.split(' ');
+        if (commit && commitTree && !byTree.has(commitTree)) byTree.set(commitTree, commit);
+      }
+    }
+    return byTree.get(tree) ?? null;
+  };
 }
 
 // Whether the body is for the branch checked out in `folder`, as { body }: the pull request's current body on an edit

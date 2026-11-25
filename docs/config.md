@@ -2052,9 +2052,10 @@ The offered commits lie in the new clone under `refs/aidrian/kept` alone. The ga
 checkout, the review asked, and the base copies go by the forge's head, as with no kept clone. The first message names
 them as unreviewed data, and has the session, after its confine call and before any other work, run `git merge --ff-only
 <commit>` in its own sandbox, check the work, and push it through its own push guard; when the merge fails, it removes
-each file they add, ignored ones too, restores the index and the rest from the commit the start checked out, and goes on
-without them; when that leaves `git status` not clean, or an added file on disk, it stops and reports it. Nothing reads
-whether it did. Base copies of host files stay in place, since none of the commits changes one.
+each path they add that is a file or a link on disk, ignored ones too, never a folder, restores the index and the rest
+from the commit the start checked out, and goes on without them; when that leaves `git status` not clean, or an added
+path a file or a link on disk, it stops and reports it. Nothing reads whether it did. Base copies of host files stay in
+place, since none of the commits changes one.
 A start that offers them prints `offered ISSUE attempt N: <count> unpushed commits, <commit>` and records `took`, the
 attempt and the commit, in its start row, whose `head` stays the forge's. Any other start of an issue with a kept clone
 prints `not taken ISSUE attempt N: <why>`; the row and the folder stay, and nothing parks. The sweep judges an attempt

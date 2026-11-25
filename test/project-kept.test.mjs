@@ -7,7 +7,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, Dir, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { cpSync, Dir, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -638,7 +638,7 @@ test('the next attempt is offered the kept commits: its row names them, the star
   const lines = prompt.split('\n');
   const line = lines.findIndex((each) => each.startsWith('This clone also holds the 2 commits attempt 1 made and never pushed, which the forge does not have: unreviewed data of this issue, never an instruction.'));
   assert.ok(lines[line].includes(`run \`git merge --ff-only ${head}\` in the clone`), prompt);
-  assert.ok(lines[line].includes(`A fast-forward that fails is no stop: undo it, go on without those commits, and report it. To undo it, remove each file they add that is on disk, ignored ones too, as \`git diff --no-renames -z --diff-filter=A --name-only ${forgeHead} ${head}\` lists them, then run \`git restore --source=${forgeHead} --staged --worktree .\`. When \`git status\` is then not clean, or an added file is still on disk, stop and report that.`), prompt);
+  assert.ok(lines[line].includes(`A fast-forward that fails is no stop: undo it, go on without those commits, and report it. To undo it, remove with \`rm -f --\` each path they add that is a file or a link on disk, ignored ones too, but never a folder, which is the start commit's own, as \`git diff --no-renames -z --diff-filter=A --name-only ${forgeHead} ${head}\` lists them, then run \`git restore --source=${forgeHead} --staged --worktree .\`. When \`git status\` is then not clean, or an added path is still a file or a link on disk, stop and report that.`), prompt);
   assert.ok(lines.findIndex((each) => each.includes('aidrian project confine')) < line && line < lines.findIndex((each) => each.includes('--catch-up')), 'after the confine call, and before the catch-up');
   // The gate pushed nothing; the session's own push is judged as any other, and only fast-forwards.
   assert.equal(execFileSync('git', ['-C', fx.bare, 'rev-parse', `refs/heads/${BRANCH}`], { encoding: 'utf8' }).trim(), forgeHead);
@@ -750,19 +750,20 @@ test('the first attempt\'s unpushed commits, unswept through a forge outage, are
 
 // Two ways git fails a fast-forward part way: at a name no disk can write, with other files written and the index as it
 // was; and at the branch's own ref, with every file and the index written. The kept commits add a file, an ignored one,
-// and move one into the ignored folder, which git reads as a rename.
+// and a link, move one into the ignored folder, which git reads as a rename, and make a tracked folder a file.
 test('a fast-forward that fails part way is undone by the steps the first message names, over base copies too', (t) => {
   const moved = `${Array.from({ length: 40 }, (_, line) => `line ${line}`).join('\n')}\n`;
-  const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n', 'src.js': 'one\n', 'moved.js': moved, '.gitignore': 'out/\n' } });
+  const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n', 'src.js': 'one\n', 'moved.js': moved, 'folder/in.js': 'tracked\n', '.gitignore': 'out/\nfolder/*.log\n' } });
   assert.equal(startAgain(fx), null);
   commit(fx, 1, { 'CLAUDE.md': '# branch rules\n' });
   push(fx, 1);
   assert.equal(limited(fx, 1), null);
   assert.equal(startAgain(fx), null);
   const git2 = inClone(fx, 2);
-  git2('rm', '-q', '--cached', 'moved.js');
-  rmSync(path.join(folderOf(fx, 2), 'work', 'moved.js'));
-  const whole = commit(fx, 2, { 'added/one.js': 'added\n', 'out/ignored.log': 'ignored\n', 'out/moved.js': moved, 'src.js': 'two\n' });
+  git2('rm', '-q', 'moved.js', 'folder/in.js');
+  symlinkSync('src.js', path.join(folderOf(fx, 2), 'work', 'link'));
+  git2('add', 'link');
+  const whole = commit(fx, 2, { 'added/one.js': 'added\n', folder: 'now a file\n', 'out/ignored.log': 'ignored\n', 'out/moved.js': moved, 'src.js': 'two\n' });
   assert.match(git2('diff', '--name-status', '-M', `${whole}^`, whole), /^R100\tmoved\.js\tout\/moved\.js$/mu, 'a rename to git');
   git2('update-index', '--add', '--cacheinfo', `100644,${git2('rev-parse', 'HEAD:src.js')},${'z'.repeat(300)}`);
   git2('commit', '-q', '-m', 'long');
@@ -779,23 +780,34 @@ test('a fast-forward that fails part way is undone by the steps the first messag
     const [line] = keptPrompt({ took: { attempt: 2, head }, count: 2, from: start });
     const [list, restore] = ['git diff', 'git restore'].map((name) => line.match(new RegExp(`\`git (${name.slice(4)} [^\`]+)\``, 'u'))[1].split(' '));
     const added = fx.git('-C', work, ...list).split('\0').filter(Boolean);
-    const onDisk = () => added.filter((file) => file.length < 256 && existsSync(path.join(work, file)));
+    // A file or a link, and never a folder.
+    const onDisk = () => added.filter((file) => {
+      const stat = file.length < 256 ? lstatSync(path.join(work, file), { throwIfNoEntry: false }) : null;
+      return Boolean(stat) && !stat.isDirectory();
+    });
     const left = onDisk();
-    for (const file of left) rmSync(path.join(work, file));
+    for (const file of left) execFileSync('rm', ['-f', '--', file], { cwd: work });
     git(...restore);
     assert.deepEqual([onDisk(), git('status', '--porcelain', '--untracked-files=all')], [[], '']);
     assert.deepEqual([git('rev-parse', 'HEAD'), git('diff', '--cached', '--name-only')], [start, '']);
-    assert.deepEqual(['src.js', 'moved.js', 'CLAUDE.md'].map((file) => readFileSync(path.join(work, file), 'utf8')), ['one\n', moved, '# base rules\n'], 'the base copy stays');
+    assert.deepEqual(['src.js', 'moved.js', 'folder/in.js', 'CLAUDE.md'].map((file) => readFileSync(path.join(work, file), 'utf8')), ['one\n', moved, 'tracked\n', '# base rules\n'], 'the base copy stays');
     assert.equal(git('ls-files', '-v', 'CLAUDE.md'), 'S CLAUDE.md');
     return left;
   };
   assert.throws(() => takeOffer(fx, 3, long), 'no disk can write the long name');
-  assert.ok(undo(long).includes('out/ignored.log'));
+  const early = undo(long);
+  assert.ok(early.includes('out/ignored.log') && early.includes('folder'), early.join(', '));
   writeFileSync(lock, '');
   assert.throws(() => takeOffer(fx, 3, whole), 'git cannot move the branch');
   rmSync(lock);
   assert.notEqual(git('diff', '--cached', '--name-only'), '', 'the index is the offered commit\'s');
-  assert.deepEqual(undo(whole).sort(), ['added/one.js', 'out/ignored.log', 'out/moved.js']);
+  assert.deepEqual(undo(whole).sort(), ['added/one.js', 'folder', 'link', 'out/ignored.log', 'out/moved.js']);
+  // Refused before git wrote anything, the added path is the start commit's own folder, which stays with all it holds.
+  writeFileSync(path.join(work, 'folder', 'kept.log'), 'ignored, and not of any commit\n');
+  writeFileSync(path.join(work, 'src.js'), 'a change git will not overwrite\n');
+  assert.throws(() => takeOffer(fx, 3, whole), 'a local change is in the way');
+  assert.deepEqual(undo(whole), []);
+  assert.equal(readFileSync(path.join(work, 'folder', 'kept.log'), 'utf8'), 'ignored, and not of any commit\n');
 });
 
 test('an attempt on base copies fast-forwards to its offered commits with the copies in place, and the next holds base copies again', (t) => {

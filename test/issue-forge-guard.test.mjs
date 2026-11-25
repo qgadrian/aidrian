@@ -181,6 +181,7 @@ test('every command a first message names for an ended attempt\'s kept commits p
   // Each command the line names, and the removal it asks for.
   const commands = [...line.matchAll(/`(git [^`]+)`/gu)].map((match) => match[1]);
   assert.deepEqual(commands, [`git merge --ff-only ${'a'.repeat(40)}`, `git diff --no-renames -z --diff-filter=A --name-only ${'b'.repeat(40)} ${'a'.repeat(40)}`, `git restore --source=${'b'.repeat(40)} --staged --worktree .`, 'git status']);
+  assert.match(line, /remove with `rm -f --` each path they add that is a file or a link on disk/u);
   for (const command of [...commands, 'rm -f -- added/one.js out/ignored.log']) {
     assert.equal(fx.ask(bash(command)), null, command);
     for (const script of ['hook-agent-gates.mjs', 'hook-bash.mjs']) {

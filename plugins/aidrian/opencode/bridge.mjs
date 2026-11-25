@@ -1,30 +1,32 @@
-// The OpenCode bridge: a server plugin that runs the plugin's hook scripts on OpenCode's tool events, as hooks.json runs
-// them on a host that reads it. At setup it reads routes.generated.json, every hooks.json hook as `npm run build` writes
-// it, through route-select.mjs, and registers one callback for each OpenCode tool hook that EVENTS (routes.mjs) maps a standard event to. On each
-// call it reads the tool's standard name through lib/hosts/opencode-names.mjs, the one table the adapter reads too, and
-// runs every route of that event whose matcher fires on the name, in parallel, as Claude Code runs matching hooks. It
-// sends each script the standard hook envelope on stdin, with OpenCode's own tool name, input, and result inside and a
-// top-level `opencode` object, { version?, info }, that marks it as OpenCode's and holds the part of the tool's `info`
-// the leaf read, so lib/hosts/opencode.mjs maps the payload to the name the bridge picked. call.mjs finds the call's
-// folders and who made it. It also prepends the plugin's bin/ to every shell's PATH, so the `aidrian` that reads a
-// record is the copy whose hook wrote it.
+// The OpenCode bridge: a server plugin that runs the plugin's hook scripts on OpenCode's hooks, as hooks.json runs them
+// on a host that reads it. At setup it reads routes.generated.json, every hooks.json hook as `npm run build` writes it,
+// through route-select.mjs, and registers one callback for each OpenCode hook that EVENTS (routes.mjs) maps a standard
+// event to. On each tool call it reads the tool's standard name through lib/hosts/opencode-names.mjs, the one table the
+// adapter reads too, and runs every route of that event whose matcher fires on the name, in parallel, as Claude Code
+// runs matching hooks. It sends each script the standard hook envelope on stdin, with OpenCode's own tool name, input,
+// and result inside and a top-level `opencode` object, { version?, info }, that marks it as OpenCode's and holds the
+// part of the tool's `info` the leaf read, so lib/hosts/opencode.mjs maps the payload to the name the bridge picked.
+// call.mjs finds the call's folders and who made it, and output.mjs turns the scripts' answers into OpenCode's. It also
+// prepends the plugin's bin/ to every shell's PATH, so the `aidrian` that reads a record is the copy whose hook wrote it.
 //
-// The payload holds text a model wrote, so the spawn is pinned: the program is Node, resolved to an absolute file at
-// setup, the arguments the script's absolute path and the route's literal flags, the options `cwd`, the session's
-// folder, `env` as the process has it, and `stdio`, with no shell, and the payload reaches the child on stdin alone. No
-// callback rejects, `setup` never throws, and the tool's result is never changed: a hook that cannot run leaves the call
-// as it would be without the plugin. EVENTS names PostToolUse alone, since a blocking route needs this file to turn the
-// script's exit 2 into a throw that keeps its stderr first, which it does not yet do; tests reach the blocking
-// (execute.before) path through the `events` seam.
+// output.mjs spawns each script, pinned to Node resolved to an absolute file at setup, and reads its bounded answer.
+// `setup` never throws. Only an execute.before callback rejects, for a refusal (output.mjs); every
+// other callback resolves, and a hook that cannot run leaves the call as it would be without the plugin. EVENTS names
+// PostToolUse alone, whose answer changes nothing of the call; tests reach the blocking (execute.before) path and the
+// stop path (experimental.idle) through the `events` seam.
+//
+// The stop path keeps `stop_hook_active` for each session: true once a Stop route sent that session back with a
+// `session.synthetic` message the session admitted, and dropped at the session's next idle, which reads it, and on its
+// `session.deleted` event, which the bridge listens for once it registered the idle hook.
 //
 // With AIDRIAN_OPENCODE_TRACE naming an absolute file, it appends one JSON line a step, { at, step, script?, status?,
 // count? }: `setup` once, `off` once at setup when it found no Node, `unregistered` for a hook OpenCode refused and for a
-// route whose script is not on disk, `run` for each script it ran, and `skip` for a call it sent nothing for. A call
-// whose tool name the leaf cannot read, such as an MCP tool's, runs nothing and is a `skip` with status `unguarded`,
-// whose `count` is how many such calls this process has met. Each value is a script's file name, a word, or a number;
-// no command, path, payload, or output is ever written there. What the session should be told, that no hook runs, that
-// one did not register, or that a route file or script is missing, is kept in `notices`, which no hook reads in this
-// version.
+// route whose script is not on disk, `run` for each script it ran, `skip` for a call it sent nothing for, `refuse` for
+// a call it refused, and `send-back` for a session it sent back. A call whose tool name the leaf cannot read, such as an
+// MCP tool's, runs nothing and is a `skip` with status `unguarded`, whose `count` is how many such calls this process
+// has met. Each value is a script's file name, a word, or a number; no command, path, payload, or output is ever written
+// there. What the session should be told, that no hook runs, that one did not register, or that a route file or script
+// is missing, is kept in `notices`, which no hook reads in this version.
 //
 // It imports node: built-ins, its own folder, the leaf, which imports nothing, and lib/deadline.mjs, which imports
 // nothing, so it loads in OpenCode's Bun and under `node --test` alike.
@@ -36,12 +38,13 @@ import { fileURLToPath } from 'node:url';
 
 import { HELD_BUDGET_MS } from '../lib/deadline.mjs';
 import { infoRead, standardToolName } from '../lib/hosts/opencode-names.mjs';
-import { callOf } from './call.mjs';
+import { callOf, lastAssistantText } from './call.mjs';
+import { BLOCKING_HOOK, run, settle, transform } from './output.mjs';
 import { readRoutes, selectRoutes } from './route-select.mjs';
 import { EVENTS } from './routes.mjs';
 
-// The OpenCode tool hook whose callback runs before a call, where a route's exit 2 is meant to block it.
-const BLOCKING_HOOK = 'execute.before';
+// The OpenCode session hook that runs before a session goes idle, where a Stop route can send it back.
+const IDLE_HOOK = 'experimental.idle';
 // A blocking route's script is killed no sooner than this long after its spawn: 1 s past the longest guard budget a
 // script gives itself from its start (lib/deadline.mjs), so its own "could not finish in time" refusal comes first.
 export const BLOCKING_KILL_MS = HELD_BUDGET_MS + 1000;
@@ -117,9 +120,9 @@ export function nodeOf(env, execPath = process.execPath) {
   return dirs.map((dir) => path.join(dir, 'node')).find(isProgram) ?? null;
 }
 
-// Registers one callback for each OpenCode tool hook of `events` that a route with its script on disk runs on, then the
-// PATH hook. The `setup` trace line counts the tool hooks registered. With no Node it registers no tool hook, and says
-// so once.
+// Registers one callback for each OpenCode hook of `events` that a route with its script on disk runs on, the idle hook
+// on `context.session` and the tool hooks on `context.tool`, then the PATH hook. The `setup` trace line counts the hooks
+// registered. With no Node it registers no hook of a route, and says so once.
 async function registerAll(context, seams) {
   const { spawn = nodeSpawn, env = process.env, scripts = fileURLToPath(new URL('../scripts', import.meta.url)),
     bin = fileURLToPath(new URL('../bin', import.meta.url)), node = nodeOf(env),
@@ -127,15 +130,21 @@ async function registerAll(context, seams) {
   const trace = tracer(env);
   const routes = routesOf(routesFile, scripts, events, trace, notices);
   // `notices`: what the session's context should be told, kept in notices, which no hook reads in this version.
-  const runner = { context, env, node, spawn, trace, routes, events, notices, unguarded: 0, roots: new Map() };
+  const runner = { context, env, node, spawn, trace, routes, events, notices, unguarded: 0, roots: new Map(), stops: new Map() };
   let registered = 0;
   if (!absolute(node)) {
     trace('off', { status: 'node' });
     notices.push('aidrian found no Node program (Node 22 on the PATH of the OpenCode service, or AIDRIAN_NODE as an absolute path), so no aidrian hook runs in this session.');
   } else {
     for (const hook of new Set(routes.map((route) => events[route.event]))) {
-      if (await register(() => context.tool.hook(hook, (event) => onCall(runner, hook, event)))) registered += 1;
-      else lost(trace, notices, hook, [...new Set(routes.filter((route) => events[route.event] === hook).map((route) => route.script))]);
+      const domain = hook === IDLE_HOOK ? context.session : context.tool;
+      const steps = hook === IDLE_HOOK ? idleSteps(runner, hook) : toolSteps(runner, hook);
+      if (await register(() => domain.hook(hook, transform(hook, steps)))) {
+        registered += 1;
+        if (hook === IDLE_HOOK) listen(runner);
+      } else {
+        lost(trace, notices, hook, [...new Set(routes.filter((route) => events[route.event] === hook).map((route) => route.script))]);
+      }
     }
   }
   if (!await register(() => context.shell.hook('create.before', (event) => addBin(event, bin)))) lost(trace, notices, 'create.before', []);
@@ -166,101 +175,113 @@ function lost(trace, notices, hook, scripts) {
   notices.push(`OpenCode did not register aidrian's ${hook} hook, so ${what} in this session.`);
 }
 
-// The callback of the OpenCode tool hook `hook`, for one tool event: runs the script of every route it selects, and
-// resolves. OpenCode waits for the callback before it hands the call back. The session reads happen once, before any
-// spawn, under their own cap (call.mjs); each script then has its own time from its own spawn.
-async function onCall(runner, hook, event) {
-  try {
-    // One read of info, which picks the routes and reaches the scripts, so the adapter reads the name the bridge picked.
-    const info = infoRead(event?.info);
-    const name = standardToolName(event?.tool, info);
-    if (name === null) {
-      runner.unguarded += 1;
-      runner.trace('skip', { status: 'unguarded', count: runner.unguarded });
-      return;
-    }
-    const selected = selectRoutes(runner.routes, runner.events, hook, name);
-    if (selected.length === 0) return;
-    const blocking = hook === BLOCKING_HOOK;
-    const call = await callOf(runner, { blocking, name, event, info });
-    if (call.skip) {
-      for (const route of selected) runner.trace('skip', { script: route.script, status: call.skip });
-      return;
-    }
-    await Promise.all(selected.map((route) => run(runner, route, call, blocking ? Math.max(route.timeoutMs, BLOCKING_KILL_MS) : route.timeoutMs)));
-  } catch {
-    // A call the bridge cannot send runs on as it would without the plugin.
-  }
+// The steps (output.mjs transform) of the OpenCode tool hook `hook`, for one tool event: the routes it selects for the
+// leaf's name, the call they are sent, read once before any spawn under its own cap (call.mjs), and each script under
+// its own time from its own spawn. A PostToolUse answer changes nothing of the call: its result stays as it was.
+function toolSteps(runner, hook) {
+  const blocking = hook === BLOCKING_HOOK;
+  return {
+    select(event) {
+      // One read of info, which picks the routes and reaches the scripts, so the adapter reads the name the bridge picked.
+      const info = infoRead(event?.info);
+      const name = standardToolName(event?.tool, info);
+      if (name === null) {
+        runner.unguarded += 1;
+        runner.trace('skip', { status: 'unguarded', count: runner.unguarded });
+        return null;
+      }
+      return { routes: selectRoutes(runner.routes, runner.events, hook, name), name, info };
+    },
+    async call(event, { routes, name, info }) {
+      const call = await callOf(runner, { blocking, name, event, info });
+      if (call.skip) return skipped(runner, routes, call);
+      return { ...call, payload: (route) => toolPayload(runner.context, route, call) };
+    },
+    run: (route, call) => run(runner, route, call, blocking ? Math.max(route.timeoutMs, BLOCKING_KILL_MS) : route.timeoutMs),
+    apply: () => {},
+    trace: runner.trace,
+  };
+}
+
+// The steps of the idle hook `hook`, for one session about to go idle: its Stop routes, sent the root session's folder,
+// whether the bridge sent this session back since its last idle, which this idle reads and drops, and the session's last
+// assistant message, from one capped read. A child session's idle runs no Stop route. A Stop route's block sends the
+// session back with its reason, and only a send-back the session admitted marks it.
+function idleSteps(runner, hook) {
+  return {
+    select: () => ({ routes: runner.routes.filter((route) => route.event === 'Stop' && runner.events[route.event] === hook) }),
+    async call(event, { routes }) {
+      const sessionID = event?.sessionID;
+      const active = typeof sessionID === 'string' && runner.stops.delete(sessionID);
+      // A session event names no tool and has no input, so the call never skips for one.
+      const [call, message] = await Promise.all([
+        callOf(runner, { blocking: true, name: null, event: { sessionID }, info: {} }),
+        lastAssistantText(runner.context, sessionID),
+      ]);
+      if (call.skip) return skipped(runner, routes, call);
+      if (call.agent !== null) return skipped(runner, routes, { skip: 'subagent' });
+      const background = Array.isArray(event?.background) ? event.background : [];
+      return { ...call, payload: (route) => stopPayload(runner.context, route, call, { active, message, background }) };
+    },
+    run: (route, call) => run(runner, route, call, route.timeoutMs),
+    async apply(event, verdict) {
+      if (!verdict.block) return;
+      await runner.context.session.synthetic({ sessionID: event.sessionID, text: verdict.reason });
+      runner.stops.set(event.sessionID, true);
+      runner.trace('send-back', { status: 'stop' });
+    },
+    trace: runner.trace,
+  };
+}
+
+// Traces a `skip` for each route of a call sent nothing, and gives that call.
+function skipped(runner, routes, call) {
+  for (const route of routes) runner.trace('skip', { script: route.script, status: call.skip });
+  return call;
+}
+
+// Drops a session's `stop_hook_active` on its `session.deleted` event, for as long as OpenCode's event stream runs. A
+// stream that fails ends the listening and nothing else.
+function listen(runner) {
+  const drop = settle((event) => {
+    if (event?.type === 'session.deleted') runner.stops.delete(event.data?.sessionID);
+  });
+  (async () => {
+    for await (const event of runner.context.event.subscribe({ types: ['session.deleted'] })) await drop(event);
+  })().catch(() => {});
+}
+
+// The `opencode` mark of a payload: the plugin context's `app.version` when it is text, as OpenCode 2.4.0's plugin
+// context names it, and `fields`.
+function markOf(context, fields) {
+  const version = context.app?.version;
+  return typeof version === 'string' ? { version, ...fields } : { ...fields };
 }
 
 // The standard envelope of the call for `route`: a subagent's call carries its root as session_id and its own id as
 // agent_id, so its records land in the root session's folder, as a subagent's do on a host that reads hooks.json.
 // `tool_name` is OpenCode's own, which the adapter maps through the same leaf, reading `opencode.info`.
-function payloadOf(context, route, { cwd, event, root, agent, info }) {
-  // OpenCode 2.4.0's plugin context names its version under `app`: { name, version, channel }.
-  const version = context.app?.version;
-  const mark = typeof version === 'string' ? { version, info } : { info };
+function toolPayload(context, route, { cwd, event, root, agent, info }) {
   const callId = typeof event.id === 'string' ? { tool_use_id: event.id } : {};
   return {
-    hook_event_name: route.event, opencode: mark, session_id: root, ...(agent ? { agent_id: agent } : {}), cwd,
+    hook_event_name: route.event, opencode: markOf(context, { info }), session_id: root, ...(agent ? { agent_id: agent } : {}), cwd,
     tool_name: event.tool, tool_input: event.input, tool_response: event.result, ...callId,
   };
 }
 
-// Runs `route`'s script on the call, in the session's folder, and resolves when it closes, fails to start, or is killed
-// once `ms`, counted from its spawn, ends. A start that fails, Node gone since setup included, ends this call alone.
-function run(runner, route, call, ms) {
-  return new Promise((resolve) => {
-    let timer = null;
-    let settled = false;
-    const done = (status) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      runner.trace('run', { script: route.script, status });
-      resolve();
-    };
-    let text;
-    let child;
-    try {
-      text = JSON.stringify(payloadOf(runner.context, route, call));
-      child = runner.spawn(runner.node, [route.file, ...route.args], { cwd: call.base, env: runner.env, stdio: ['pipe', 'ignore', 'ignore'] });
-    } catch {
-      done('error');
-      return;
-    }
-    child.on('error', (error) => done(error?.code ?? 'error'));
-    child.on('exit', (code, signal) => done(code ?? signal));
-    child.on('close', (code, signal) => done(code ?? signal));
-    timer = setTimeout(() => {
-      if (settled) return;
-      kill(child);
-      done('timeout');
-    }, ms);
-    feed(child, text);
-  });
+// The standard envelope of a root session's stop: `stop_hook_active` the bridge's own state, the last assistant
+// message when the read gave one, and the idle hook's `background` under the mark, as OpenCode gives it, for the
+// adapter to map to `background_tasks`.
+function stopPayload(context, route, { cwd, root }, { active, message, background }) {
+  return {
+    hook_event_name: route.event, opencode: markOf(context, { background }), session_id: root, cwd, stop_hook_active: active,
+    ...(message === null ? {} : { last_assistant_message: message }),
+  };
 }
 
-// Writes the payload to the child's stdin, where a child that exits first gives an EPIPE that changes nothing.
-function feed(child, text) {
-  try {
-    child.stdin?.on('error', () => {});
-    child.stdin?.end(text);
-  } catch {
-    // A child that cannot read its payload ends as it would without one.
-  }
-}
-
-function kill(child) {
-  try {
-    child.kill('SIGKILL');
-  } catch {
-    // A child that already ended needs no signal.
-  }
-}
-
-// The PATH hook: prepends `bin` to a shell's PATH unless the PATH holds it. A `bin` that is not absolute, or that holds
-// the delimiter, would add a relative entry or more than one, so it changes nothing.
+// The PATH hook: prepends `bin` to a shell's PATH unless the PATH holds it, and returns normally whatever fails inside
+// it. A `bin` that is not absolute, or that holds the delimiter, would add a relative entry or more than one, so it
+// changes nothing.
 function addBin(event, bin) {
   try {
     if (!absolute(bin) || bin.includes(path.delimiter)) return;

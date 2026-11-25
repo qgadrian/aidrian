@@ -104,6 +104,28 @@ async function sessionOf(runner, get, sessionID) {
   return { ...answer, dir };
 }
 
+// The text of the session `sessionID`'s last assistant message, its text parts joined, or null when there is none or the
+// read fails or takes longer than `ms`. OpenCode 2.4.1's `session.context` gives every message since the latest
+// compaction, with no cap of its own, so the bridge's cap is the read's only bound.
+export async function lastAssistantText(context, sessionID, ms = READ_MS) {
+  let timer = null;
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  try {
+    const messages = await Promise.race([Promise.resolve().then(() => context.session.context({ sessionID })), late]);
+    if (!Array.isArray(messages)) return null;
+    const last = messages.findLast((message) => isObject(message) && message.type === 'assistant');
+    const content = Array.isArray(last?.content) ? last.content : [];
+    const texts = content.filter((part) => isObject(part) && part.type === 'text' && typeof part.text === 'string').map((part) => part.text);
+    return texts.length > 0 ? texts.join('\n\n') : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // The session reads of one call under one timer of `ms`: `get(id)` gives what `context.session.get` gives, and throws,
 // as a failed read does, for a read that throws or rejects and for one not settled by then. `end` stops the timer.
 function readsOf(context, ms) {

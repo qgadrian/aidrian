@@ -151,15 +151,46 @@ once a call, before any script starts, under their own 2 s cap (`READ_MS` in `pl
 a read that fails or comes later is no reason to skip the call, which is sent with what was read
 ([Session ids](#session-ids)). Each script then has its own route's timeout from its own start, and is killed when it
 ends. The program is Node, its arguments the script's path and the route's literal flags, with no shell, and it runs
-in the session's folder. No route changes a call's result, and a hook that cannot run, by a bridge timeout or crash,
-leaves the call as it would be without the plugin, as a hook error does on Claude Code.
+in the session's folder.
+
+The bridge reads each script's answer, its exit and what it wrote, as Claude Code reads it
+(`plugins/aidrian/lib/hook-result.mjs`), merges the answers of one call, and applies the result in
+`plugins/aidrian/opencode/output.mjs`. It keeps at most 256 KiB of each script's stdout and of its stderr
+(`CAPTURE_BYTES`): far above the longest answer a hook script gives, a refusal's few lines or the context of a start
+hook, so every such answer fits, while a script that writes without end costs the OpenCode service a bounded amount of
+memory. Past the bound the bridge keeps reading, keeps no more, and still waits
+for the script's exit; it never kills a script for writing, since a killed script reads as no answer. An answer past
+the bound carries no text: an exit 2 on a blocking route still refuses, with
+`A hook refused this call, and its message was too long to show.`, and any other answer is read as empty.
+A `PostToolUse` answer gives no block, and the call's result stays as it was. Only an `execute.before` callback ever
+rejects, and only for a refusal; every other callback resolves whatever fails inside it. A hook that cannot run, by a
+bridge timeout or crash, lets the call run, as a hook error does on Claude Code, with one exception: on a blocking
+route, a script that does not start refuses a subagent's call.
 
 A blocking route, on `execute.before`, which `EVENTS` does not name in this version, is built to these rules, and the
 tests reach it through the bridge's `events` seam. It never skips a call for a reason the call's input controls: a
 `workdir` that names no folder, such as another machine's, or an input of another shape still sends the call, and only
 a call with no session id, which OpenCode sets, sends nothing. Its script is killed no sooner than its route's timeout,
 nor than 1 s past the longest guard budget a script gives itself (`BLOCKING_KILL_MS` in `bridge.mjs`, from
-`lib/deadline.mjs`), so the script's own "could not finish in time" refusal comes first.
+`lib/deadline.mjs`), so the script's own "could not finish in time" refusal comes first. A script's exit 2 refuses
+the call: the callback rejects with an `Error` whose message is the script's stderr, which OpenCode 2.4.1's plugin
+adapter turns into a `Tool.Error` with that message, failing that call alone, so the bridge imports nothing of
+OpenCode's. An `updatedInput` replaces the event's `input` before the tool runs, and two hooks that rewrite the input
+differently refuse it. A subagent's call, or one whose caller could not be read ([Session ids](#session-ids)), is
+refused when a script does not start, and when it is made in code mode (`codemode` true): no recorded OpenCode session
+shows this plugin's hooks reading a code-mode call as they read a direct one.
+
+The stop route, `Stop` on OpenCode's `experimental.idle` session hook, which `EVENTS` does not name either, is built
+the same way and reached through the same seam. On a root session's idle it sends `hook-stop.mjs` the root session's
+folder, `stop_hook_active`, `last_assistant_message`, the text of the last assistant message of `session.context`,
+which gives every message since the latest compaction, read under the same 2 s cap, and the idle hook's `background`
+as it came, as `opencode.background`. A child session's idle runs no stop route, nor does the idle of a session whose
+caller could not be read ([Session ids](#session-ids)), which reads as a child's. A stop route's block sends the
+session back with a `session.synthetic` message holding the hook's reason. The bridge keeps `stop_hook_active` for
+each session: false on a turn's first idle, set once the session admitted a send-back, and dropped at that session's
+next idle, which reads it, and on its `session.deleted` event, which the bridge listens for once the idle hook
+registered. A turn interrupted after a send-back leaves it for the next turn's first idle, which then sends nothing
+back.
 
 `test/opencode-bridge.test.mjs` fails when `hooks.json` names a script this table lacks, and when its yes rows differ
 from the scripts the bridge can run, the generated routes of `EVENTS` whose matcher fires on a name the leaf returns.
@@ -187,7 +218,7 @@ embedded in the OpenCode 2.4.0 binary; no live OpenCode has sent that payload.
 | `hook-plan-exit.mjs` | no | - | Claude Code's `ExitPlanMode` tool |
 | `hook-tracker-post.mjs` | no | - | No MCP tool call reaches a hook |
 | `hook-compact.mjs` | no | - | The compaction checklist must reach the model |
-| `hook-stop.mjs` | no | - | The stop checks send a session back, which needs a way to reach the model, and some read transcripts |
+| `hook-stop.mjs` | no | - | `Stop` is not in `EVENTS`: no live OpenCode session has recorded a send-back, and some of its checks read transcripts |
 | `hook-subagent-stop.mjs` | no | - | No agent of this plugin runs on OpenCode, and the checks must reach the model |
 | `hook-session-end.mjs` | no | - | The session row reads transcripts, and OpenCode's are not read |
 
@@ -223,7 +254,8 @@ Each field a script of `hooks.json` reads from its payload, itself or through th
 takes it from on OpenCode. By the types of `@opencode/plugin@2.4.1`, a tool event carries `tool`, `sessionID`, `agent`,
 `messageID`, `id`, and `codemode`, `info` when OpenCode has the tool's, and the tool's `input`; after a call, also
 `status`, and `result` when the call completed. The idle hook, `experimental.idle`, carries `sessionID` and
-`background` alone. Today the bridge sends only the `PostToolUse` fields; a source marked later is built by a later
+`background` alone. The bridge sends the `PostToolUse` fields on its one route of `EVENTS`, and the `PreToolUse` and
+`Stop` fields on the routes its tests reach through the `events` seam; a source marked later is built by a later
 pull request. None means no OpenCode hook or session read gives the field, and the checks that need it are in
 [Limits](#limits).
 
@@ -247,9 +279,9 @@ pull request. None means no OpenCode hook or session read gives the field, and t
 | `tool_response` | `hook-bash-post.mjs` (`shellOutput`), `hook-tracker-post.mjs` (`toolResponse`), `hook-agent-post.mjs` | A completed call's `result`, read through the adapter; for an agent dispatch, none |
 | `transcript_path` | `hook-agent-gates.mjs` (the Human's typed prompts, which lift a session's unattended mark), `hook-subagent-stop.mjs` (the requests a subagent's transcript copies from its parent's), `hook-prompt.mjs`, `hook-stop.mjs`, `hook-session-end.mjs`, `hook-plan-exit.mjs`, and the rules of `hook-bash.mjs` and `hook-mcp-github.mjs` that read the Human's answers or a commit's author | None: OpenCode keeps a session in its own store, which no transcript reader of this plugin reads (`transcripts: false`) |
 | `agent_transcript_path` | `hook-subagent-stop.mjs` | None, for the same reason |
-| `stop_hook_active` | `hook-stop.mjs`, `hook-subagent-stop.mjs` | The bridge's own state for each session of whether its idle route has sent the turn back (later). With no value, neither hook sends a stop back |
-| `last_assistant_message` | `hook-stop.mjs` (the announce, merge hand-back, and hand-back checks), `hook-subagent-stop.mjs` (the delivery check and the final report) | One capped session read at idle; which session call gives it is not settled yet (later) |
-| `background_tasks` | `hook-stop.mjs` (the announce, review-loop, and merge hand-back checks), `hook-subagent-stop.mjs` (the running-children check) | The idle hook's `background`, mapped in the adapter (later). Its entries name a `kind` and no standard `id`, `type`, or `status`: a `shell` entry's id is its `shellID`, a `subagent` entry's its `childSessionID`, a `codemode` entry's its `jobID`, and an `image` or `video` entry has none. The stop checks count only an entry with a string `id`, so the mapping builds one for each kind |
+| `stop_hook_active` | `hook-stop.mjs`, `hook-subagent-stop.mjs` | The bridge's own state for each session: false on a turn's first idle, true on the idle after a send-back the session admitted ([Hooks](#hooks)). With no value, neither hook sends a stop back |
+| `last_assistant_message` | `hook-stop.mjs` (the announce, merge hand-back, and hand-back checks), `hook-subagent-stop.mjs` (the delivery check and the final report) | The text parts of the last assistant message `session.context` gives, read at idle under the 2 s cap; left out when the read fails or finds none |
+| `background_tasks` | `hook-stop.mjs` (the announce, review-loop, and merge hand-back checks), `hook-subagent-stop.mjs` (the running-children check) | The idle hook's `background`, which the bridge sends as it came, as `opencode.background`, for the adapter to map (later). Its entries name a `kind` and no standard `id`, `type`, or `status`: a `shell` entry's id is its `shellID`, a `subagent` entry's its `childSessionID`, a `codemode` entry's its `jobID`, and an `image` or `video` entry has none. The stop checks count only an entry with a string `id`, so the mapping builds one for each kind |
 | `prompt` | `hook-prompt.mjs`, for its handoff lines alone | The prompt hook's `prompt`, read only on a host with a continue route, and OpenCode declares none |
 | `source` | `hook-session-start.mjs`, for a clear alone | None: OpenCode's `session.created` event names no source such as a clear, and the value is read only on a host with a continue route |
 | `reason` | `hook-session-end.mjs`, for a clear and for the session row | None: the `session.deleted` event gives no reason, so no clear is seen there, and the session row records none |
@@ -290,11 +322,13 @@ Set it as `AIDRIAN_NODE` is set: `opencode service set env AIDRIAN_OPENCODE_TRAC
 
 | `step` | When | `status` |
 | --- | --- | --- |
-| `setup` | Once, when OpenCode loads the plugin | How many OpenCode tool hooks it registered: 1 in this version, 0 when it read no route or found no Node |
+| `setup` | Once, when OpenCode loads the plugin | How many OpenCode hooks of its routes it registered: 1 in this version, 0 when it read no route or found no Node |
 | `off` | Once, at setup, when it found no Node, before `setup` | `node` |
 | `unregistered` | At setup, for each OpenCode hook that failed to register, and each route whose script is not on disk, before `setup` | The OpenCode hook, such as `execute.after`, with `script`, one line for each script it would have run (`create.before` has no `script`), or `missing`, with the script not on disk |
-| `run` | Each time it ran a script | The exit code or signal, `timeout` when it killed the script at its time, or a start error's code, such as `ENOENT`, which ends that call alone |
-| `skip` | A call it sent nothing for, and once at setup for a route list it could not read | `status` (after a call that did not complete), `command` (after a shell call whose `command` is no text), `session` (no session id), `cwd` (after a shell call whose `workdir` names no folder here, such as one on another machine), `unguarded` (a tool whose name the leaf does not read, such as an MCP tool, with `count`, how many such calls this process has met), or `routes` (at setup: `routes.generated.json` is missing or no JSON list, so no tool hook is registered) |
+| `run` | Each time it ran a script | The exit code or signal, `timeout` when it killed the script at its time, or a start error's code, such as `ENOENT`, which ends that call alone, and on a blocking route refuses a subagent's call |
+| `skip` | A call it sent nothing for, and once at setup for a route list it could not read | `status` (after a call that did not complete), `command` (after a shell call whose `command` is no text), `session` (no session id), `cwd` (after a shell call whose `workdir` names no folder here, such as one on another machine), `unguarded` (a tool whose name the leaf does not read, such as an MCP tool, with `count`, how many such calls this process has met), `subagent` (a child session's idle, or one whose caller could not be read ([Session ids](#session-ids)), which runs no stop route), or `routes` (at setup: `routes.generated.json` is missing or no JSON list, so no tool hook is registered) |
+| `refuse` | A call a blocking route refused, after its `run` lines | `hook` (a script's exit 2), `rewrite` (two rewrites of the input that differ), `spawn` (a subagent's call whose script did not start), or `codemode` (a subagent's call in code mode) |
+| `send-back` | A session a stop route sent back, once the session admitted the message | `stop` |
 
 - No `setup` line: OpenCode did not load the plugin, or the variable is not in its plugins' environment. Check the
   entry, and that `opencode --version` prints 2.0 or later.
@@ -498,16 +532,16 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
 - The rules on OpenCode's files and commands (`.opencode`, `.agents`, `opencode.json`, `opencode.jsonc`, and
   `opencode`'s own subcommands) hold Claude Code and Codex sessions no Human attends, in the places
   [above](#rules-for-the-other-hosts-sessions) names, and hold no session that runs on OpenCode.
-- No start lines, compaction checklist, line-length feedback, or stop checks: each must reach the model, and the
-  bridge gives no hook a way to.
+- No start lines, compaction checklist, line-length feedback, or stop checks: each must reach the model, and no route
+  of `EVENTS` carries one there. The stop route's send-back is built, and runs only through the tests' `events` seam
+  ([Hooks](#hooks)).
 - Checks that need a field no OpenCode hook gives ([Payload fields](#payload-fields)), which stay off even once the
   prompt and stop hooks run there: the names reminder, which is all `hook-prompt.mjs` prints while OpenCode declares
   no continue route, and reads the last reply from the transcript; the review-loop check and the merge hand-back check,
   which read the turn from the transcript; the session-length reminder, which reads the session's cost from the
   transcript; the subagent stop's running-children check, which tells the subagent's own tasks from the others by its
   transcript; and the delivery check's handoff file, whose brief it reads from the subagent's transcript.
-  The announce, hand-back, and delivery checks read the last message from one session read at idle, which a later pull
-  request settles; if no such read exists, they join this list.
+  The announce, hand-back, and delivery checks read the last message from `session.context`, read at idle.
 - Once the Bash rules run there, a rule that needs an answer the Human gave through the question tool, such as the
   review sign-off rule, finds none in a transcript and refuses.
 - Once the agent gates run there, they never lift a session's unattended mark when the Human types, since they read

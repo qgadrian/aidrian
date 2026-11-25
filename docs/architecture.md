@@ -38,6 +38,7 @@ plugins/aidrian/
     ├── route-select.mjs            reads that list, and selects the routes whose matcher fires on a standard name
     ├── bridge.mjs                  runs the generated routes whose matcher fires on a call's standard name; bin/ on PATH
     ├── call.mjs                    what a call sends: the folder it runs in, the session's folder, and who made it
+    ├── output.mjs                  runs each script, reads its bounded answer, and applies it: a refusal or a rewritten input
     └── server.mjs                  the package's server entry, { id, setup }
 plugins/aidrian-claude-mod/         the optional Claude mod, aidrian-mod, for Claude Code alone (docs/claude-mod.md)
 ├── .claude-plugin/plugin.json      its manifest, settings, and version

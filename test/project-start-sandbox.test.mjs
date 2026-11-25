@@ -935,6 +935,12 @@ test('a clone that would push to another URL than the access check read, through
   writeFileSync(global, '[url "git@github.com:acme/"]\n\tpushInsteadOf = https://github.com/acme/\n');
   const fx = runFixture(t);
   halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /the attempt's clone pushes to git@github\.com:acme\/widgets\.git, not https:\/\/github\.com\/acme\/widgets\.git, the URL the host's access check read/u);
+  // A rewrite that puts a token in the URL prints it masked.
+  writeFileSync(global, '[url "https://bot:s3cr3t-token@github.com/acme/"]\n\tpushInsteadOf = https://github.com/acme/\n');
+  const tokened = runFixture(t);
+  const result = tokened.cmd(['start', 'launch', 'ENG-1']);
+  halted(tokened, result, /the attempt's clone pushes to https:\/\/\*\*\*@github\.com\/acme\/widgets\.git, not https:\/\/github\.com\/acme\/widgets\.git/u);
+  assert.doesNotMatch([...result.out, ...result.err].join('\n'), /s3cr3t/u);
 });
 
 test('git\'s store credential helper in the user\'s git config halts the start through the gate', (t) => {

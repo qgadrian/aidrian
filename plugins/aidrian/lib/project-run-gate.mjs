@@ -59,6 +59,7 @@ import path from 'node:path';
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
 import { DEFAULTS } from './config-defaults.mjs';
+import { maskSecrets } from './clean-text.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { changeNotFound, forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
@@ -681,9 +682,10 @@ function confinedRoom({ project, state, run, key, branch, resumed, recorded, rev
   // (lib/issue-push-checkout.mjs) lets a push through only to exactly one, the URL pinned here.
   const pushes = gateGit(['remote', 'get-url', '--push', '--all', 'origin'], clone.work, { timeout: 30_000 });
   const urls = pushes.status === 0 ? pushes.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : [];
-  if (urls.length > 1) return { halt: `the attempt's clone pushes to ${urls.length} URLs (${urls.join(', ').slice(0, 240)}), as a second remote.origin.pushurl in the user's or the system's git config makes it, and an issue session pushes to exactly one, the URL its start pins; remove the extra push URL, then start again` };
+  // A URL is printed only masked (clean-text.mjs maskSecrets), before any cut: a remote URL may carry a token.
+  if (urls.length > 1) return { halt: `the attempt's clone pushes to ${urls.length} URLs (${maskSecrets(urls.join(', ')).slice(0, 240)}), as a second remote.origin.pushurl in the user's or the system's git config makes it, and an issue session pushes to exactly one, the URL its start pins; remove the extra push URL, then start again` };
   const url = urls[0] ?? null;
-  if (typeof pushUrl === 'string' && url !== pushUrl) return { halt: `the attempt's clone pushes to ${url ?? 'no URL'}, not ${pushUrl}, the URL the host's access check read, as a pushInsteadOf in the user's git config would make it; remove the rewrite, then start again` };
+  if (typeof pushUrl === 'string' && url !== pushUrl) return { halt: `the attempt's clone pushes to ${url === null ? 'no URL' : maskSecrets(url)}, not ${maskSecrets(pushUrl)}, the URL the host's access check read, as a pushInsteadOf in the user's git config would make it; remove the rewrite, then start again` };
   // The denial names a settings file a session no Human attends must never edit: only the Human widens push trust.
   const push = pushPreflight({ cwd: clone.work, env, session, git: (args, cwd) => gateGit(args, cwd, { env }) });
   if (push.answer === 'denied') return { halt: `no session started, since ${push.message}` };

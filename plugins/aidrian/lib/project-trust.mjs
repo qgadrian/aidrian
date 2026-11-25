@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { cleanText } from './clean-text.mjs';
+import { cleanText, maskSecrets } from './clean-text.mjs';
 import { foldCase, isWithin, resolvedPath } from './fs.mjs';
 import { repoIdentity } from './forges/index.mjs';
 import { GATE_CONFIG, gateGit } from './git.mjs';
@@ -71,13 +71,18 @@ function configEntries(dir) {
 }
 
 // Why the `url.<base>.insteadof` or `.pushinsteadof` entry `entry` moves origin away from `pinned`, or null: it applies
-// to an origin URL that starts with its value, and the URL it rewrites that one to names another repository.
+// to an origin URL that starts with its value, and the URL it rewrites that one to names another repository. The answer
+// names the setting's kind and withholds its base, which may end inside a URL's user part, before the `@` that
+// maskSecrets reads a credential by; origin's URL it names masked.
 function insteadOfProblem(entry, origins, pinned) {
-  const match = /^url\.(.+)\.(?:push)?insteadof$/u.exec(entry.key);
+  const match = /^url\.(.+)\.(push)?insteadof$/u.exec(entry.key);
   if (!match) return null;
+  const kind = match[2] ? 'pushInsteadOf' : 'insteadOf';
   for (const url of origins.filter((each) => entry.value !== '' && each.startsWith(entry.value))) {
     const id = repoIdentity(`${match[1]}${url.slice(entry.value.length)}`);
-    if (!id || `${id.host}/${id.path}`.toLowerCase() !== pinned) return `git config ${entry.key} rewrites origin's URL ${url} to another repository`;
+    if (!id || `${id.host}/${id.path}`.toLowerCase() !== pinned) {
+      return `git config url.<base>.${kind} rewrites origin's URL ${maskSecrets(url)} to another repository (its base withheld, since it may hold a credential; \`git config --show-origin --get-regexp '^url\\..*\\.${kind.toLowerCase()}$'\` lists it)`;
+    }
   }
   return null;
 }

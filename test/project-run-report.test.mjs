@@ -27,13 +27,13 @@ import { commitProblem } from '../plugins/aidrian/lib/project-start.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
-import { markDriver, markPending, markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { markDriver, markPending, markUnattended, PENDING_AGE, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { signoffFolder } from '../plugins/aidrian/lib/review/signoff-store.mjs';
 import { drivesRun, droveRun } from '../plugins/aidrian/lib/run-driver.mjs';
 import { startHeld } from '../plugins/aidrian/lib/session-start-gate.mjs';
 import { gitLog } from './git-call-log.mjs';
 import { hookCall } from './hook-call.mjs';
-import { DRIVER, FIXTURE_TOKEN, ISSUES, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { DRIVER, fakeClaude, FIXTURE_TOKEN, ISSUES, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const CHILD = STARTED[0].session;
 const PRE = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-tracker-pre.mjs');
@@ -1129,9 +1129,33 @@ test('next lists each settle report still owed, so a driver that takes the run o
   const loop = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/references/loop.md'), 'utf8').replace(/\s+/gu, ' ');
   const first = loop.slice(loop.indexOf('1. `aidrian project next <run>`:'), loop.indexOf('2. `aidrian project start'));
   assert.ok(first.includes('one `owed <key>` line or more, which come last') && first.includes('Step 4 first, then the other lines of this answer, `halted` and `paused` included.'), 'the loop reads the owed line');
-  // A halt or stop reached from another step, and an orphan's settle, pass no `next`: each writes what is owed itself.
+  // A halt or stop reached from another step passes no `next`: it writes what is owed itself. After any start, and before
+  // Retry's wait, the loop asks `next`.
   assert.match(loop.slice(loop.indexOf('## Halt'), loop.indexOf('## Stop')), /2\. Run `aidrian project report <run> --json` and write what it owes/u, 'before the halt waits');
-  assert.match(loop, /an `orphan <key> \.\.\.` line, with any exit: .* then step 4 before the next start or wait/u, 'after an orphan');
+  assert.ok(loop.includes('after any start, before another `start` or a `wait`, run `aidrian project next <run>` and write the reports it lists as `owed` (step 4):'), 'after any start');
+  assert.ok(loop.includes('Run `aidrian project next <run>` and write the reports it lists as `owed`, then step 3 once, then the same command again.'), 'before the retry\'s wait');
+  // The handoff's wait keeps its routing: a withdrawn policy still stops the new driver before it asks `next`.
+  const handoff = loop.slice(loop.indexOf('## Hand off'));
+  assert.ok(handoff.includes('Its lines go where step 3 of § Each pass sends them, such as `note policy:` to § Stop; when none goes to § Stop or § Retry, step 1 next, whose `next` lists what is owed.'), 'the handoff wait');
+});
+
+test('a start of one issue that settles another\'s orphan keeps its own outcome, and the next next lists the orphan\'s report', (t) => {
+  const fx = runFixture(t, { config: { tracker: { provider: 'linear' } } });
+  const lost = fakeClaude({ dir: fx.dir, start: () => ({ status: 1, stdout: '', stderr: 'timed out', listed: false }) });
+  // Two attempts of ENG-1 settled as orphans by `wait`; its last one is left for the start of ENG-4.
+  // The clock ends at the present, which the session proof of ENG-4's start reads.
+  let now = Date.now() - 3 * (PENDING_AGE + 60_000);
+  for (const attempt of [1, 2, 3]) {
+    assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { spawn: lost.run, now }).exitCode, 1, `attempt ${attempt}`);
+    now += PENDING_AGE + 60_000;
+    if (attempt < 3) assert.ok(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: lost.run, now }).out.includes(`orphan ENG-1 attempt ${attempt} none listed`));
+  }
+  const start = fx.cmd(['start', 'launch', 'ENG-4']);
+  assert.equal(start.exitCode, 0, start.err.join('\n'));
+  assert.ok(start.out.includes('orphan ENG-1 attempt 3 none listed') && start.out.some((line) => /^started ENG-4 attempt 1 session /u.test(line)), start.out.join('\n'));
+  assert.deepEqual(runWriter({ session: DRIVER, env: fx.env, home: fx.home }).started.map((each) => each.key), ['ENG-4'], 'its started status is still to set');
+  const next = fx.cmd(['next', 'launch']).out;
+  assert.ok(next.includes('running ENG-4') && next.at(-1) === 'owed ENG-1', next.join('\n'));
 });
 
 test('a driver\'s background continuation gets the driver mark at its start, and is held until custody moves', async (t) => {

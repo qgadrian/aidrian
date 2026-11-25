@@ -492,9 +492,12 @@ How issue sessions and the driver relate to the cap of five background continuat
   limit, and only while its pause runs, with 5 minutes' grace past the later of the pause's end and the newest entry
   of the transcript after the limit record, such as the host's own entry when it continues the session, and never more
   than 30 minutes past the pause's end. Only an entry that carries the session's id and a time no later than the read
-  counts. The host continues only a claude.ai usage limit, on
-  billing that is not usage-based; anything else takes the stop path: a rate limit, a pause over with the same record
-  still the session's last, and a limit past the run's 24 pauses each stop the session and end its attempt. These
+  counts. Such an entry that is the host's own, of `type: "system"` and `subtype: "informational"`, and whose `content`
+  starts `Remote Control disconnected — signed-in claude.ai account or organization changed on this machine` gives
+  `changed`, which may lift the pause; the host writes it only where Remote Control was on. The host continues only a
+  claude.ai usage limit, on billing that is not usage-based; anything else takes the stop path: a rate limit, a pause
+  over with the same record still the session's last, and a limit past the run's 24 pauses each stop the session and
+  end its attempt. A weekly limit's entry and the account-change entry were seen live once, on 2.1.332. The other
   shapes and the setting's effect come from the host's issue reports, changelog, and binary, not a live run (live check
   19): until one shows them, a limit the reader misses ends the session with no result, or past `issueHours`
   ([Project run](../config.md#project-run)).

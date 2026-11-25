@@ -264,6 +264,45 @@ test('a resolved send-back lesson is reopened only by send-backs of its own caus
   assert.deepEqual(sentBack(window('background', 'background'), 'idle-with-children:aidrian:fixer').since_resolution, { n: 6, status: 'problem' });
 });
 
+test('a resolved send-back lesson is judged by its own cause, whichever cause leads since', () => {
+  // A handoff marker fix, resolved five days ago. Before it, ten days ago: 6 runs sent back for a marker. After it: of
+  // 10 runs, 2 still for a marker and 3 for a test claim, which leads; 20% for a marker is over the 10% threshold.
+  const before = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'].flatMap((task) => run('aidrian:fixer', 'o1', task, { sentBack: true, cause: 'marker' }))
+    .map((row) => ({ ...row, ts: at(24 * 10) }));
+  const after = (causes) => causes.flatMap((cause, i) => run('aidrian:fixer', 'n1', `r${i}`, { sentBack: cause !== null, cause: cause ?? 'missing_file' }));
+  const key = 'health:sent-back:marker:aidrian:fixer';
+  const pluginLessons = fold([
+    { event: 'add', id: 'dddd0001', at: at(24 * 20), tier: 'P2', note: 'marker', key },
+    { event: 'resolve', id: 'dddd0001', at: at(24 * 5), outcome: 'rule', link: 'abc1234' },
+  ]).lessons;
+  const judged = (rows) => summarizeHealth({ rows: [...before, ...rows], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, lessons: [], pluginLessons, config: configWith() })
+    .problems.find((item) => item.kind === 'sent-back');
+  const still = judged(after(['marker', 'marker', 'evidence', 'evidence', 'evidence', null, null, null, null, null]));
+  assert.deepEqual([still.lesson.key, still.resolved?.id, still.since_resolution], [key, 'dddd0001', { n: 10, status: 'problem' }], 'the marker fix did not hold');
+  // One marker run in 10 is within the threshold, while test claims lead at 40%: the marker fix held.
+  const held = judged(after(['marker', 'evidence', 'evidence', 'evidence', 'evidence', null, null, null, null, null]));
+  assert.deepEqual(held.since_resolution, { n: 10, status: 'ok' });
+});
+
+test('the session cost trend compares only sessions priced at today`s tables, and counts those that kept their logged price', () => {
+  // Ten older sessions, each $0.10 of Opus 5.5 at today's price. Six newer ones are Haiku 5.5 rows written before the
+  // split's cutoff was kept: they keep the $0.50 they logged. With the same use, mixing them in reads as a rise.
+  const opus = { input: 25_000, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };
+  const session = (i, fields) => ({ event: 'session', ts: at(300 - i * 10), session_id: `t${i}`, docs_read: [], ...fields });
+  const rows = [
+    ...Array.from({ length: 10 }, (_, i) => session(i, { models: ['claude-opus-5-5'], tokens_by_model: { 'claude-opus-5-5': opus }, cost_usd: 0.1 })),
+    ...Array.from({ length: 6 }, (_, i) => session(10 + i, { models: ['claude-haiku-5-5'], tokens_by_model: { 'claude-haiku-5-5': { ...opus, input: 1_000_000 } }, cost_usd: 0.5 })),
+  ];
+  const health = summarizeHealth({ rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith() });
+  const { cost } = health.signals;
+  assert.deepEqual([cost.status, cost.sample.n, cost.sessions, cost.kept_logged, cost.change_percent], ['ok', 10, 16, 6, 0]);
+  assert.deepEqual([cost.older, cost.newer], [{ n: 5, avg_usd: 0.1 }, { n: 5, avg_usd: 0.1 }]);
+  assert.equal(cost.top.cost_usd, 0.1, 'the most costly session is one priced today');
+  assert.deepEqual(health.problems.filter((item) => item.kind === 'cost-rise'), []);
+  assert.match(formatHealth(health, { file: 'f', since: '30d' }),
+    /\n {2}Session cost: ok \(n=5 sessions a half\); 16 sessions, \$4\.00, 6 of them at the price they logged and left out of the halves; /u);
+});
+
 // Every number a view prints as dollars, by its key, with the cost the rows logged left out.
 function dollarsOf(value, key = '') {
   if (Array.isArray(value)) return value.flatMap((item) => dollarsOf(item, key));

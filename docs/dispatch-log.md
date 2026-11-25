@@ -473,7 +473,9 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
   The line also counts the decisions made alone and escalated. Fix: `decision-authority`.
 - **Session cost**, over each half of the window's sessions, in the order they ended, each [at today's list prices](#prices-at-report-time),
   so a price change between the halves is no rise: a problem when the newer half costs over `costRisePercent` more a
-  session than the older half. Fix: `cost`.
+  session than the older half. Only the sessions priced at today's tables compare: one that keeps the price it logged
+  is left out of the halves, the sample, and the most costly session, and the line counts it, as `--json` does in
+  `kept_logged`; the session count and total still cover every session. Fix: `cost`.
 - **Model prices**, over the models the window's `session` and `stop` rows ran, priced by the tables as they are now:
   a problem when a model has no [price row](#model-prices) of its own, so a family's fallback row priced it or none did.
   A table that holds a row read over 60 days ago is a problem only in a checkout of the plugin's own repository,
@@ -502,8 +504,10 @@ or `null` when the problem is a lesson already), `resolved`, and `since_resoluti
 (`ok`, `problem`, `not_enough_data`, or `unavailable`) and its numbers; `thresholds`; and `coverage`, as the other views print it.
 When a resolved lesson holds the problem's `lesson.key`, in the [plugin's inbox](lessons.md#the-plugins-inbox) when its
 `lesson.target` is `plugin` and in the project's otherwise, `resolved` names it (`id`, `at`, `outcome`) and `since_resolution`
-judges the same problem, with the same lesson key, on the rows dated after that resolution alone, as `n` and `status`;
-a sent-back problem led by another cause since, which another lesson holds, reads `ok` for this one: the window can hold the failures
+judges the same problem on the rows dated after that resolution alone, as `n` and `status`. A sent-back lesson is
+judged by its own causes, whichever cause leads since: the share of the agent's runs sent back for them, against
+`sentBackPercent` and `minSample`. `delivery-check:<agent>`, the delivery check's own lesson and every sent-back
+problem's key before rows named causes, stands for a missing file, a handoff file, and a cause not recorded together: the window can hold the failures
 that led to the fix, which say nothing about whether it held. A resolution before the window leaves the problem as judged,
 and the reviews cannot be split by time, so after a resolution inside the window they are `unavailable`. Both are `null`
 when no resolved lesson holds the key.

@@ -28,7 +28,6 @@ import { boundedSearch, timeBudget } from '../bounded-regexp.mjs';
 import { loadTable } from '../finding-disposition.mjs';
 import { isObject } from '../fs.mjs';
 import { runGit } from '../git.mjs';
-import { FAILURE_ID_PATTERN } from './bot-card.mjs';
 import { NAME } from './config.mjs';
 import { fileAt } from './diff.mjs';
 import { blocks, FINDING_STATES, isClosed, isFindingId, isMint, MAX_PATH, recordedFindings, securitySeverity, severityOf, twinClosure } from './findings.mjs';
@@ -419,7 +418,7 @@ const FIXED_KEYS = new Set([
   'invariant', 'verdict', 'evidence', 'reason', 'contracts', 'cross_notes', 'dropped', 'signoffs', 'by', 'overrides', 'overrulings',
   'acceptances', 'outside', 'approvals', 'login', 'url', 'failures', 'outcome', 'status', 'depth', 'carried_from', 'carried_base',
   'reasons', 'pending', 'id', 'sent', 'answered', 'dispatched', 'stage', 'security', 'planNote', 'pairs', 'halved', 'botRequest',
-  'failedRuns', 'remerge', 'signoffable', 'flows', 'disputes', 'items', 'invariants', 'state', 'captured', 'captures', 'visual', 'mode',
+  'remerge', 'signoffable', 'flows', 'disputes', 'items', 'invariants', 'state', 'captured', 'captures', 'visual', 'mode',
   'visibility', 'of', 'quotaStops', 'chosen_at', 'choice', 'signoff', 'waivers', 'judge', 'extensions', 'source', 'max',
   'granted_before', 'decided_at', 'signals', 'converging', 'looping', 'drifting', 'bloating', 'unknown', 'previous_round',
   'previous_open', 'fix_added', 'fix_added_all', 'original_added', 'limit', 'earlier_round', 'match', 'red_flags', 'stale_judge',
@@ -797,7 +796,6 @@ function allowlisted(state, post, counter) {
     }),
     halved: keyed(check((value) => value === true), name(names.passes)),
     botRequest: (value) => object(value, { head: sha, at: date }),
-    failedRuns: list(check((value) => typeof value === 'string' && FAILURE_ID_PATTERN.test(value))),
     remerge: (value) => object(value, { head: sha, from: sha }),
     signoffable: (value) => object(value, { head: sha, flows: list(flowName) }),
     disputes: (value) => object(value, { head: sha, items: list(pairEntry({})) }),

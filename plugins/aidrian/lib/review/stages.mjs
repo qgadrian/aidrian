@@ -20,8 +20,6 @@ import { captureAndAttach, closingRange, dispatchFor, listedFor, passInput, plan
 import { refusedAtHead } from './in-force.mjs';
 
 export const MAX_ATTEMPTS = 3;
-// The bot's runs on one head that may fail on its side: the first is asked about again, the second stops the step.
-export const BOT_ATTEMPTS = 2;
 
 // The check runs of one commit as `gh pr checks` rows: the evidence must be for the head under review.
 const checkRows = (runs) => runs.map((run) => ({ name: run.name, state: run.status === 'completed' ? String(run.conclusion ?? 'unknown').toUpperCase() : 'PENDING' }));
@@ -134,7 +132,7 @@ export async function runStages(s) {
     return { marker: markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings, fixed: findings - open }) };
   };
   const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
-  const botWait = (extra) => wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: keepsRecordedCap(env, opts.maxRounds !== undefined), validHead: head, grantFloor, countedFailures: state.failedRuns ?? [], ...extra }, { gate });
+  const botWait = (extra) => wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: keepsRecordedCap(env, opts.maxRounds !== undefined), validHead: head, grantFloor, ...extra }, { gate });
   const headMoved = (bot) => finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} before the request on an extra round: run the step again, which reads the grant on the new head`, retry_recommended: true });
   // The bot's answer for this head, recorded as its pass's result. A 👍, or the clean comment it answers a draft with
   // (pr-await-review.mjs latestBotSignal `clean`), leaves nothing open; any other answer holds at least one finding.
@@ -150,23 +148,6 @@ export async function runStages(s) {
     const floor = !clean && !(bot.signal?.line_comments >= 1);
     state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, ...(floor ? { floor: true } : {}), bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null, ...(holds ? { holds_finding: true } : {}) } };
     recorded = true;
-  };
-  // A run the bot reported failed on its side (pr-await-review.mjs `bot_failed`) is no answer and records no finding,
-  // so no round history reads it as open work. It counts on the head's failures, as a local reviewer's does, in the
-  // round it was asked in: the first is `incomplete` and the next step asks the bot again, the second is `stuck`.
-  // The run's id goes on the record (`failedRuns`, the last ten), so no later wait counts the same run twice.
-  const botFailed = (pass, bot) => {
-    const id = bot.signal?.failure_id;
-    if (typeof id === 'string') state.failedRuns = [...(state.failedRuns ?? []).filter((each) => each !== id), id].slice(-10);
-    const key = `${head}:${pass.id}`;
-    state.failures[key] = (state.failures[key] ?? 0) + 1;
-    const attempts = state.failures[key];
-    if (!bot.requested) undoRound();
-    if (attempts < BOT_ATTEMPTS) {
-      delete state.botRequest;
-      return finish('incomplete', { reason: `the review bot's run failed on its side at ${head.slice(0, 7)}: the next step asks it again`, attempts, retry_recommended: true });
-    }
-    return finish('stuck', { reason: `the review bot's run failed on its side ${attempts} times at ${head.slice(0, 7)}: ask it again with \`aidrian pr await-review ${n} --request${repoArg}\`, or push a new head`, attempts, retry_recommended: false });
   };
   // A request a wait posted, from either call, is on record for the head it asked about (`requested_head`), never
   // the last head the wait saw: the pull request may have moved past either since. Returns whether it asked about
@@ -287,15 +268,13 @@ export async function runStages(s) {
           undoRound();
           return finish('incomplete', { reason: bot.reason, retry_recommended: false });
         }
-        // A failed run is judged after the head check below, so a failure of a newer head counts nothing here.
-        if ((bot.status === 'timed_out' && bot.bot_failed !== true) || bot.status === 'blocked_quota' || bot.status === 'round_limit') {
+        if (bot.status === 'timed_out' || bot.status === 'blocked_quota' || bot.status === 'round_limit') {
           if (!bot.requested) undoRound();
           if (bot.status === 'blocked_quota') return quotaStop(remote, stage, bot.reason ?? 'the review bot posted a usage-limit notice', { bot });
           return bot.status === 'round_limit' ? capReached({ bot }) : finish(bot.status, { bot });
         }
         // A push during the wait: the bot's answer is for another commit, so it counts for nothing here.
         if (bot.head_sha && bot.head_sha !== head) return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} during the wait: run the step again`, retry_recommended: true });
-        if (bot.bot_failed === true) return botFailed(remote, bot);
         recordBot(remote, bot);
       }
       const agents = pending.filter((pass) => map[pass.reviewer]?.kind === 'agent' || pass.kind === 'agent');

@@ -163,8 +163,8 @@ Never cite an engine post, a finding's, the review summary, or the product feedb
   `review-signoff` rule blocks it with no such answer. A flow's sign-off holds across later pushes that
   touch nothing of the flow; a stage's holds for its head only.
 - `unsatisfied`: the plan needs a reviewer this machine cannot run, such as `independent-model` with no Codex login.
-- `stuck`: a reviewer failed 3 times on this head, or the review bot's run failed on its side twice.
-  `too_large`: the change is past what one review covers, or its visual capture is past 200 images; `reason` names the routes.
+- `stuck`: a reviewer failed 3 times on this head. `too_large`: the change is past what one review covers, or its
+  visual capture is past 200 images; `reason` names the routes.
 - `round_limit`: the round cap, `github.maxReviewRounds` as the base branch commits it. Its last round always runs
   the final stage. `extension` says why no extra round: `off`, the ceiling, the judge, or the Human. A red flag
   never stops it alone: it goes to the judge. With `unreviewed_head: true`, the head is a fix no round reviewed: say so when reporting

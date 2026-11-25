@@ -287,12 +287,6 @@ test('a private copy never posts this machine`s adopted mark', () => {
   assert.deepEqual(copy.passes.p.list[0], { id: 'R1-1', mint: '0000000a', title: 'x' });
 });
 
-test('the record posts the review bot`s counted failed runs, and drops any value that is no failed run`s id', () => {
-  const failedRuns = ['comment:6863267738', 'card:3@2026-11-13T19:50:54Z', 'note: something else'];
-  const { copy } = postedCopy({ ...emptyState(7, 'o/r'), revision: 2, failedRuns }, { reading: { visibility: 'PUBLIC', inside: true }, checker: { allows: () => true } });
-  assert.deepEqual(copy.failedRuns, failedRuns.slice(0, 2));
-});
-
 test('on a public repository every posted string meets the configured patterns and private words: a reason, a path, and a name', (t) => {
   const root = checkout(t, ['bluebird']);
   mkdirSync(path.join(root, 'src'));

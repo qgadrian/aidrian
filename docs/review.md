@@ -949,22 +949,10 @@ receipt. A comment the status card vouches for answers the card's full commit, c
 that gives fewer than 40 hex vouches for nothing. The newest answer is the one judged: a later review of an older
 head hides an earlier answer for this one, so the wait asks again or times out, and never records a pass for it. The
 receipt's footer quotes "@codex review", and like the status card it is never a request, nor is a 👀 on it an
-acknowledgement. A run the bot reports failed on its side is no answer and holds no finding: its notice, matched on
-its lead "Codex Review: Something went wrong" (it quotes "@codex review" in its help text and is never a request), or
-a status card last updated at or after the request whose code review is `failed`. Only signals for the head the wait
-awaits take part in this: a usage-limit notice or a failed run counts when it covers that head, as a stale answer's
-rules read it, so a failed card of another commit hides nothing. Among them any usage-limit notice since the request
-wins, whatever failed after it: that run stays `blocked_quota`. Each failed run has an id, the notice's comment id or
-the card's id and the instant of its edit to `failed`. Once the step counts a run, its id goes in the record's
-`failedRuns` (the last ten), and each later wait gets them: a counted run, even one in the same second as the retry
-that answers it, ends no wait and only shows the bot must be asked again, while a fresh failure in that second counts.
-With `--request`, a failure for the head is asked about once more, as a stale answer is; a failure after the wait's
-own request, or one found without `--request`, ends the wait as `timed_out` with `bot_failed: true` and
-`retry_recommended: true`, exit 2. A failure the wait saw for a newer head counts nothing: the step ends `incomplete`
-for the move, and the newer head's request stays on record. The step counts a failure of its own head on the head's
-failures in the round it was asked in, so it uses no round and no round history reads it as open work: the first is
-`incomplete` with `retry_recommended: true`, and the next step asks the bot again; the second on that head is `stuck`,
-with the `aidrian pr await-review <n> --request` that asks again by hand.
+acknowledgement. A run the bot reports failed on its side is no answer: its notice, which opens with "Codex Review:
+Something went wrong", and a status card whose code review is `failed` are neither a finding nor a request, though the
+notice quotes "@codex review" in its help text. The wait goes on as if the bot had not answered and ends `timed_out`,
+which the loop retries once, so the failure uses no round and records no finding.
 Any other answer holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
 at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the
 bot's stage, after the earlier stages, as before. An answer for a commit other than the one under review counts for

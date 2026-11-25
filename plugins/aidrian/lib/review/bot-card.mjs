@@ -19,12 +19,3 @@ export const cardState = (body) => {
     return null;
   }
 };
-
-// A failed run's identity, which the review record keeps once a step counted it (stages.mjs `failedRuns`, which
-// publish.mjs checks against this pattern): a notice's comment id, or the status card's id and the instant of its edit
-// to `failed`. Null when the forge gave no id.
-export const FAILURE_ID_PATTERN = /^(?:comment:\d+|card:\d+@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)$/u;
-export const failureId = ({ comment = null, card = null }) => {
-  const id = comment ? `comment:${comment.id}` : card ? `card:${card.id}@${card.updated_at ?? card.created_at}` : null;
-  return id && FAILURE_ID_PATTERN.test(id) ? id : null;
-};

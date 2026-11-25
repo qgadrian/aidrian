@@ -606,18 +606,22 @@ const cellsOf = (line) => line.trim().replace(/^\|/u, '').replace(/(?<!\\)\|$/u,
   .replace(/(\\.|`[^`]*`)|\|/gu, (_, kept) => kept ?? '\n').split('\n').map((cell) => cell.replaceAll('\\|', '|').trim());
 const isDelimiterRow = (line = '') => line.includes('|') && cellsOf(line).every((cell) => /^:?-+:?$/u.test(cell));
 
-// A table row's cells, each before its header cell, as "`npm test` Command, 35 Passed": this order reads a count under
-// "Passed", and 35/0 under "Pass/fail" as no failure. A cell's closing `.` or `;` goes, so no clause ends at its label.
+// A table row's cells, each before its header cell and no more than the header has, as "`npm test` Command, 35 Passed":
+// this order reads a count under "Passed", and 35/0 under "Pass/fail" as no failure. A cell's closing `.` or `;` goes,
+// and one in a label becomes a comma, so no clause ends at or in a label. An id under "Commit" reads as "commit <id>".
 function rowText(cells, labels) {
-  const width = Math.max(cells.length, labels.length);
-  return Array.from({ length: width }, (_, at) => `${(cells[at] ?? '').replace(/(?<![.;])[.;]+$/u, '')} ${labels[at] ?? ''}`.trim())
-    .filter(Boolean).join(', ');
+  return labels.map((label, at) => {
+    const cell = (cells[at] ?? '').replace(/(?<![.;])[.;]+$/u, '');
+    const value = cell && /^commit$/iu.test(label) ? `commit ${cell}` : cell;
+    return `${value} ${label.replace(/[;.](?=\s|$)/gu, ',')}`.trim();
+  }).filter(Boolean).join(', ');
 }
 
 // The list items, paragraphs, and table rows of `lines`, each one string: a list marker starts one, a blank line or a
 // heading ends it, and any other line continues it, as a wrapped line does. A line with a `|` and a delimiter row after
-// it opens a table: each line from there to a blank line, a heading, or a list marker is a row, and one string with what
-// the table stands under, its header and the paragraph it continues, but not with the other rows.
+// it opens a table: each line with a `|` from there to a blank line, a heading, or a list marker is a row, and one string
+// with what the table stands under, its header and the paragraph it continues, but not with the other rows. A line with
+// no `|` ends the table and starts a new string.
 function units(lines) {
   const out = [];
   let open = null;
@@ -630,10 +634,11 @@ function units(lines) {
       continue;
     }
     const item = LIST_MARKER.test(line);
-    if (labels && !item) {
+    if (labels && !item && line.includes('|')) {
       out.push(`${out[open]}, ${rowText(cellsOf(line), labels)}`);
       continue;
     }
+    if (labels) open = null;
     labels = null;
     if (open === null || item) {
       out.push(line.trim());

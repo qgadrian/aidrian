@@ -434,6 +434,29 @@ test('a table under a list item or a paragraph line reads with it, and a row wit
   assert.deepEqual(claimPairs([rows[0], ...rows.slice(2)]), [['npm test', [35, 34]], ['vitest run', [35, 34]]], 'no delimiter row');
 });
 
+test('a `;` or a sentence end in a table header cuts no row', () => {
+  for (const label of ['Result; notes', 'Result. Notes']) {
+    assert.deepEqual(claimPairs([`| ${label} | Command |`, '| --- | --- |', '| 35 passed | `npm test` |']), [['npm test', [35]]], label);
+  }
+});
+
+test('a table row reads only as many cells as its header has', () => {
+  assert.deepEqual(claimPairs(['| Command | Result |', '| --- | --- |', '| `npm test` | 35 passed | 99 passed |']), [['npm test', [35]]]);
+});
+
+test('a line with no pipe ends a table and starts an item of its own', () => {
+  const table = ['| Command | Passed |', '| --- | --- |', '| `npm test` | 35 |'];
+  assert.deepEqual(claimPairs([...table, '`vitest run` ran here:', '34 passed']), [['npm test', [35]], ['vitest run', [34]]], 'a wrapped paragraph');
+  assert.deepEqual(claimPairs([...table, '---', '`vitest run` was not run']), [['npm test', [35]]], 'a thematic break, then text under no header');
+});
+
+test('an id of only digits under a Commit header is a commit id', () => {
+  for (const [label, id] of [['Commit', '3854814'], ['commit', '`3854814`']]) {
+    const [claim] = passClaims(BODY([`| Command | ${label} | Passed |`, '| --- | --- | --- |', `| \`npm test\` | ${id} | 35 |`]));
+    assert.deepEqual([claim.counts, claim.commits], [[35], ['3854814']], label);
+  }
+});
+
 test('a report\'s own claims leave out what it quotes from another source', () => {
   const report = [
     'Read the pull request.',

@@ -144,7 +144,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     // A pull request an earlier run left open that merged since takes its issue in as done (project-run.mjs resumedIssues).
     const landed = ({ pr, branch, repository, since }) => landedPull({ forge: forge ?? forgeFor(project.root), repository, pr, branch, since });
     // Each merge the run leaves to the Human that init can see already, named before any issue starts (lib/project-human-merges.mjs).
-    const humanMerges = ({ resumed, issues, texts }) => humanMergeLines({ forge: forge ?? forgeFor(project.root), repository: pinnedRepository(project), prefix: () => knownPrefix(project.root), pluginRepository: isPluginRepository(project), resumed, issues, texts });
+    const humanMerges = ({ resumed, startable, texts }) => humanMergeLines({ forge: forge ?? forgeFor(project.root), repository: pinnedRepository(project), prefix: () => knownPrefix(project.root), pluginRepository: isPluginRepository(project), resumed, startable, texts });
     return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, pullHead, landed, humanMerges });
   }
   if (action === 'decision') {

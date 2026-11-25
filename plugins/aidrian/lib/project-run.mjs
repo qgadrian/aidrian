@@ -382,7 +382,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // (project-issue-text.mjs recordedTexts), never a file a session wrote. Throws jsonl.mjs's LOCKED when another process
 // holds the runs lock. `pullHead` reads an old ledger's pull request head (resumedIssues), none by default, and `landed`
 // whether a pull request an earlier run named merged since (project-result.mjs landedPull), none by default.
-// `humanMerges({ resumed, issues, texts })` gives the lines that name each merge the run leaves to the Human that init
+// `humanMerges({ resumed, startable, texts })` gives the lines that name each merge the run leaves to the Human that init
 // can see already (project-human-merges.mjs humanMergeLines), printed after the resumed and landed lines, none by
 // default. `home` is for a test.
 export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now(), pullHead, landed: mergedSince, humanMerges = () => [] }) {
@@ -408,7 +408,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
   if (clash.length) return { exitCode: 1, out: [], err: ['aidrian project init: the snapshot input has problems; fix them and run init again', ...clash.slice(0, 20).map((problem) => `  ${problem}`)] };
   const snapshot = resumed.length ? { ...read.snapshot, resumed } : read.snapshot;
   // Read through the forge before the runs lock too, and printed in init's first output, before any issue starts.
-  const merges = humanMerges({ resumed, issues: read.snapshot.issues, texts });
+  const merges = humanMerges({ resumed, startable: mayStart(planRun(snapshot, landedStates(landed))), texts });
 
   mkdirSync(runsFolder(state), { recursive: true, mode: 0o700 });
   return withLocks([runsLock(state)], () => {
@@ -697,6 +697,14 @@ export function splitLanded(entries) {
 // The line init and its check print for the issues `landed` (splitLanded) whose pull request an earlier run named
 // merged since, which the run records done.
 export const landedLine = (landed) => `landed: ${landed.length} started ${landed.length === 1 ? 'issue' : 'issues'} whose pull request an earlier run named merged since, which this run records done: ${landed.map(({ key, pr }) => `${key} (#${pr})`).join(', ')}`;
+
+// The issue states planRun reads before the run's first row, for the issues `landed` (splitLanded): each done, as the
+// issue row init writes for it makes it.
+export const landedStates = (landed) => new Map(landed.map(({ key }) => [key, { state: 'done', decision: null }]));
+
+// The keys of the issues a plan (planRun) may still start: ready now, or once their blockers are done; never a done,
+// canceled, parked, or skipped one, a cycled one, or one whose status a run does not start from.
+export const mayStart = (plan) => new Set([...plan.ready, ...plan.blocked.filter(({ reason }) => reason === 'waiting').map(({ key }) => key)]);
 
 // The ledger rows init writes after its init row for the issues `landed` (splitLanded), at `at`: for each, a `landed`
 // row naming the earlier run, its attempt, the pull request, the snapshot branch whose work it checked, and the label

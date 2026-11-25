@@ -309,25 +309,38 @@ const noteOf = (state) => (isObject(state?.planNote) && isObject(state.planNote.
 // The findings of `state` read as security findings (G6, K1), as a Set of the finding objects: one with the mark, a
 // critical or high severity, its reviewer's flag (stored as the mark), no id yet, or a pass the plan note flags as
 // requiring the security reviewer, unless its reviewer wrote `security: false`, or does not hold, with no note a pass of
-// any kind; then every twin of one, to a fixed
-// point, over every finding the record holds. The posted copy and the residual rows take the reading from here.
+// any kind; then every twin of one, to a fixed point, over every finding the record holds. A carried ruling its pass
+// alone marks is read as one, and spreads to no twin. The posted copy and the residual rows take the reading from here.
 export function securityReading(state) {
   const note = noteOf(state);
   const passOf = new Map();
+  const carried = new Set();
   for (const [id, result] of Object.entries(isObject(state?.passes) ? state.passes : {})) {
     if (!isObject(result)) continue;
-    for (const key of ['list', 'ruled', 'carried']) for (const finding of Array.isArray(result[key]) ? result[key] : []) if (isObject(finding)) passOf.set(finding, id);
+    for (const key of ['list', 'ruled', 'carried']) for (const finding of Array.isArray(result[key]) ? result[key] : []) {
+      if (!isObject(finding)) continue;
+      passOf.set(finding, id);
+      if (key === 'carried') carried.add(finding);
+    }
   }
   const all = recordedFindings(state);
+  // A carried ruling a known security pass alone marks, or its index entry (`carried`), is withheld itself and spreads to
+  // no twin: the engine stores no mark on it (findings.mjs recordResult), so the finding it names keeps its own false.
+  const quiet = new Set();
   const seed = (finding) => {
     if (finding.security === true || securitySeverity(finding.severity) || !isFindingId(finding.id)) return true;
     const pass = passOf.get(finding) ?? finding.pass;
     const entry = typeof pass === 'string' ? note?.passes?.[pass] : null;
     if (!isObject(entry)) return true;
     // A reviewer that wrote `security: false` keeps a known pass's mark off its finding (findings.mjs recordResult).
-    return finding.security !== false && entry.security === true;
+    const byPass = finding.security !== false && entry.security === true;
+    const ruling = carried.has(finding) || finding.carried === true;
+    if (byPass && ruling) quiet.add(finding);
+    return byPass && !ruling;
   };
-  return twinClosure(all, seed);
+  const out = twinClosure(all, seed);
+  for (const finding of quiet) out.add(finding);
+  return out;
 }
 
 // The ids of the findings securityReading reads as security.

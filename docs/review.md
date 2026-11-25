@@ -822,7 +822,10 @@ A project adds its own in `review.reviewers`:
 value but `false` counts as true), or when the head's plan requires `agent:security-engineer` and the pass is in its
 `local` or `independent` stage, unless its reviewer wrote `"security": false`, which the finding, its index entry, the
 round's list, a ruling, and the `pr review` output keep. A pass's input shows no reviewer a mark, so a ruling carried to
-a later head takes the mark of the finding its `ruled_id` names, and with none there, its pass's default. Such a finding still comes from a security pass, which its cap
+a later head arrives with none and inherits none. Its pass's default is not stored on it: the posted record withholds
+it, and its index entry, marked `carried`, as a security finding, but neither spreads that default to a twin, so the
+finding it names keeps its own `false`. A real mark, a `critical` or `high` severity, or a reviewer's own `true`, still
+spreads through it. Such a finding still comes from a security pass, which its cap
 item says as `security_pass`: no waiver or delegation takes it, and the posted record withholds its place unless the plan
 note holds its pass. The engine stores that mark on the finding, and a finding that keeps its id keeps it.
 The mark covers a twin: a finding at the same place (the same file and lines within 3), under the same title words

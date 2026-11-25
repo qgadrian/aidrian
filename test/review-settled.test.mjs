@@ -147,7 +147,10 @@ test('a ruling keeps the reviewer`s security mark as it was: true, false, or lef
   assert.deepEqual(out.ruled.map((each) => [each.title, each.security]), [['Quiet', false], ['Marked', true], ['Unsaid', undefined]]);
 });
 
-test('a ruling recorded false and carried into the next round by a security pass reads false, as does the finding it names', () => {
+// The ids the security reading withholds.
+const withheld = (state) => new Set([...securityReading(state)].map((each) => each.id));
+
+test('a ruling carried into the next round by a security pass is withheld, and the finding it names keeps its false', () => {
   const map = { 'codex-local': { kind: 'exec' }, 'code-reviewer': { kind: 'agent' } };
   const pass = { id: 'engine:codex-local', reviewer: 'codex-local', files: null };
   const stage = { name: 'independent', passes: [pass] };
@@ -168,13 +171,14 @@ test('a ruling recorded false and carried into the next round by a security pass
   assert.ok(!('security' in carried[0]), 'the input shows the reviewer no mark');
   recordFindings(state, pass.id, { head: 'h2', list: [], ruled: [], carried }, { mint: true, securityPass: true, paths });
   const [kept] = state.passes[pass.id].carried;
-  assert.equal(kept.security, false, 'the carried ruling keeps the false');
-  assert.equal(state.index[named.id].security, false, 'the finding it names stays false');
-  const reading = new Set([...securityReading(state)].map((each) => each.id));
-  assert.ok(!reading.has(named.id) && !reading.has(kept.id));
+  assert.equal(kept.ruled_id, named.id);
+  assert.equal(kept.security, undefined, 'the pass`s default is not stored on the carried ruling');
+  assert.ok(withheld(state).has(kept.id), 'the carried ruling reads as a security finding: withheld');
+  assert.equal(state.index[named.id].security, false, 'the finding it names keeps its false');
+  assert.ok(!withheld(state).has(named.id), 'and the reading does not spread the carried ruling`s default to it');
 });
 
-test('a carried ruling takes its mark only from the finding its ruled_id names: a stale same-title ruling marked false never carries', () => {
+test('a carried ruling takes no mark from a stale same-title ruling, for a prior ruling and a residual anchor, nor spreads one to a same-result source', () => {
   const pass = 'engine:codex-local';
   const paths = { tracked: () => true, lines: () => 80 };
   // The code-reviewer is no security pass, so its finding holds no mark; codex-local is one. An earlier codex-local
@@ -187,23 +191,25 @@ test('a carried ruling takes its mark only from the finding its ruled_id names: 
     state.rounds.push({ head: 'b'.repeat(40) });
     return { state, named: state.passes['agent:code-reviewer'].list[0] };
   };
-  for (const [name, offered] of [
-    ['a prior ruling', { title: 'Accepted', file: 'a.js', line: 50, severity: 'low', state: 'accepted', already_ruled: 'Accepted', carried: true }],
-    ['a residual anchor', { title: 'Accepted', file: 'a.js', line: 50, severity: 'low', state: 'accepted', already_ruled: 'Accepted', carried: true, residual: 'Accepted wording stays' }],
-  ]) {
+  const prior = { title: 'Accepted', file: 'a.js', line: 50, severity: 'low', state: 'accepted', already_ruled: 'Accepted', carried: true };
+  for (const [name, offered] of [['a prior ruling', prior], ['a residual anchor', { ...prior, residual: 'Accepted wording stays' }]]) {
     const { state, named } = setup();
     assert.equal(state.passes[pass].ruled[0].security, false, `${name}: the stale ruling wrote false`);
-    const carried = offeredCarried({ priorFindings: [offered] });
-    recordFindings(state, pass, { head: 'h2', list: [], ruled: [], carried }, { mint: true, securityPass: true, paths });
+    recordFindings(state, pass, { head: 'h2', list: [], ruled: [], carried: offeredCarried({ priorFindings: [offered] }) }, { mint: true, securityPass: true, paths });
     const [kept] = state.passes[pass].carried;
     assert.equal(kept.ruled_id, named.id, name);
-    assert.equal(kept.security, true, `${name}: the named finding holds no mark, so the security pass marks it`);
+    assert.notEqual(kept.security, false, `${name}: the stale false does not carry`);
+    assert.ok(withheld(state).has(kept.id), `${name}: the security pass's default withholds it`);
+    assert.ok(!withheld(state).has(named.id), `${name}: the finding it names, of no security pass, is not withheld`);
   }
-  // The named finding's own false is what carries.
-  const { state, named } = setup();
-  state.index[named.id].security = false;
-  recordFindings(state, pass, { head: 'h2', list: [], ruled: [], carried: offeredCarried({ priorFindings: [{ title: 'Accepted', file: 'a.js', line: 50, severity: 'low', state: 'accepted', already_ruled: 'Accepted', carried: true }] }) }, { mint: true, securityPass: true, paths });
-  assert.equal(state.passes[pass].carried[0].security, false);
+  // The source in the same result: the pass lists the finding with an explicit false and carries a ruling on it.
+  const { state } = setup();
+  recordFindings(state, pass, { head: 'h2', list: [{ title: 'Accepted', file: 'a.js', line: 50, severity: 'low', likelihood: 'routine', affects: 'users', state: 'accepted', disposition: 'drop_unless_cited', security: false }], ruled: [], carried: offeredCarried({ priorFindings: [prior] }) }, { mint: true, securityPass: true, paths });
+  const [source] = state.passes[pass].list;
+  const [kept] = state.passes[pass].carried;
+  assert.equal(source.security, false, 'the same-result source keeps its false');
+  assert.equal(state.index[source.id].security, false);
+  assert.ok(withheld(state).has(kept.id) && !withheld(state).has(source.id));
 });
 
 test('a carried ruling is dropped once any pass holds its source as fixed or open, or blocking', () => {

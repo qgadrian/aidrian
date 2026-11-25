@@ -1329,6 +1329,9 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
   Only a passing check replaces the snapshot, by a temporary file renamed over its name, so a link planted there is
   replaced, never written through. A check that passes while a `snapshot` runs can still replace what that `snapshot`
   just kept or wrote; both write only a brief the session holds.
+  The promise to keep the prior holds for one `snapshot` of a brief at a time. A `snapshot` with no brief to supersede
+  still clears a stale snapshot, as before, so it can remove one that another `snapshot --prior` of that brief wrote
+  at the same moment.
   Every snapshot file is 0600, and a `.prior/` the command creates is 0700; one that exists keeps its mode.
   A `.prior` that is itself a link is refused: nothing is written or removed through it.
 - `session-continue`, the first step of the fresh session, reads the newest brief in full, enters its worktree,

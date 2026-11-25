@@ -131,11 +131,11 @@ test('a snapshot that is the brief\'s own file, or cannot be read, is kept and e
   assert.equal(statSync(snapshotPath(file)).ino, statSync(file).ino, 'the link is left for the session to remove');
 
   rmSync(snapshotPath(file));
-  writeFileSync(snapshotPath(file), brief(), { mode: 0o000 });
+  writeFileSync(snapshotPath(file), 'an earlier brief of another length\n', { mode: 0o000 });
   if (process.getuid?.() === 0) return t.diagnostic('root reads a 0000 file: the unreadable case cannot be made here');
   assert.match(takeSnapshot(file).problem, /^cannot be compared with the snapshot .*, which cannot be read \(EACCES\), so it is kept: restore read access to it, or run aidrian handoff check with --prior naming a known-good readable brief$/u);
   chmodSync(snapshotPath(file), 0o600);
-  assert.equal(readFileSync(snapshotPath(file), 'utf8'), brief(), 'the unreadable snapshot was kept');
+  assert.equal(readFileSync(snapshotPath(file), 'utf8'), 'an earlier brief of another length\n', 'the unreadable snapshot was kept');
 });
 
 test('the handoff command says it holds the sections a resume needs', () => {

@@ -185,23 +185,35 @@ export function takeSnapshot(briefPath, explicitPrior) {
 // What a snapshot run says of the entry at the snapshot's name, which it keeps; null when the name is vacant.
 function keptSnapshot(briefPath, source, bytes) {
   const snapshot = snapshotPath(briefPath);
-  let entry;
+  const notRegular = { source, problem: `cannot be saved: ${snapshot} is not a regular file, and a snapshot replaces nothing: remove it and run snapshot again` };
   try {
-    entry = lstatSync(snapshot);
+    if (!lstatSync(snapshot).isFile()) return notRegular;
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     return { source, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` };
   }
-  if (!entry.isFile()) return { source, problem: `cannot be saved: ${snapshot} is not a regular file, and a snapshot replaces nothing: remove it and run snapshot again` };
   if (samePath(briefPath, snapshot)) return { source, problem: `cannot be saved: ${snapshot} is the brief's own file, a hard link, not a copy a refresh leaves alone: remove that link and run snapshot again` };
-  let held;
-  try {
-    held = entry.size === bytes.length ? readFileSync(snapshot, { flag: constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) }) : null;
-  } catch (error) {
-    return { source, problem: `cannot be compared with the snapshot ${snapshot}, which cannot be read (${error.code ?? error.message}), so it is kept: restore read access to it, or run aidrian handoff check with --prior naming a known-good readable brief` };
-  }
-  if (held?.equals(bytes)) return { source, snapshot, unchanged: true };
+  const held = readHeld(snapshot, bytes.length + 1);
+  if (held.code) return { source, problem: `cannot be compared with the snapshot ${snapshot}, which cannot be read (${held.code}), so it is kept: restore read access to it, or run aidrian handoff check with --prior naming a known-good readable brief` };
+  if (!held.bytes) return notRegular;
+  if (held.bytes.equals(bytes)) return { source, snapshot, unchanged: true };
   return { source, problem: `differs from the snapshot ${snapshot}, the prior a refresh is checked against, so it is kept: write the brief and run aidrian handoff check, which compares with it; remove the snapshot only when that prior is known to be wrong` };
+}
+
+// At most `cap` bytes of `file`, opened with no link followed and no wait on a pipe: { bytes }, { bytes: null } when
+// what was opened is not a regular file, or { code } when it cannot be opened or read.
+function readHeld(file, cap) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    if (!fstatSync(fd).isFile()) return { bytes: null };
+    const buffer = Buffer.alloc(cap);
+    return { bytes: buffer.subarray(0, readSync(fd, buffer, 0, cap, 0)) };
+  } catch (error) {
+    return { code: error.code ?? error.message };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 // Why a path cannot be read as a brief, or null.

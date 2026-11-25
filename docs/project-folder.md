@@ -537,7 +537,7 @@ A decision that changes what any slice must do is content, so it never goes in a
   The command asks nothing about who runs it. On a host with the guards, the [write guard](hooks.md#agent-gates) reads the file as a path the call writes,
   so a session no Human attends marks only the plans it may write, and writes `plan`, the action,
   and the file out in full, with no variable, glob, or `~`. The hold has that guard's limits: what a script or another program runs is not read,
-  and a host with no guard holds nothing.
+  nor what a program or script built at run time runs, and a host with no guard holds nothing.
 - `--by` is the caller's word: no record and no note is a gate's approval, whatever handoff file it names.
 - Exit 2 says why it refused, and wrote nothing. Besides the rules above: a slice the plan lacks or holds twice, one with no fenced block of its own
   or no `status:` line it can read, a notes field whose end it cannot tell, `--plan complete` with a slice not complete or with no slice, an empty record,

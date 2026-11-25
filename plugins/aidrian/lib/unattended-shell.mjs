@@ -13,7 +13,7 @@ import { configCommands } from './hosts/index.mjs';
 import { readings } from './package-runner.mjs';
 import { isFolderIn } from './rules/main-checkout/bash-writes.mjs';
 import { WRITERS, written } from './rules/main-checkout/writers.mjs';
-import { aidrianArgs, interpreterOf, readGit, walkCommands } from './shell-lex.mjs';
+import { aidrianArgs, readGit, walkCommands } from './shell-lex.mjs';
 
 // Programs, besides each host's own (hosts/index.mjs configCommands) and the forge CLI's (forges/index.mjs
 // forgeConfigCommands), whose subcommands write the user's config, login, or jobs. `valueOptions` are the global options
@@ -201,29 +201,19 @@ const asWritten = (token) => Boolean(token) && !token.dynamic && !/^[~=]|[*?[\]{
 // One rule: a call that may be one of the two is refused unless its subcommand, its action, and its file are each one word
 // as written (asWritten), and the file no option, since a word the shell builds may be, or split into, any of them.
 function planTarget(invocation, folder, shown) {
-  return planCalls(invocation).flatMap(({ words: [subcommand, action, file], named }) => {
-    const edits = asWritten(action) && PLAN_EDITS.includes(action.text);
-    if (asWritten(subcommand)) {
-      if (subcommand.text !== 'plan' || !action || (asWritten(action) && !edits)) return [];
-      if (edits && asWritten(file) && !file.text.startsWith('-')) return [{ file: file.text, folder, text: shown, literal: true }];
-    } else if (!subcommand || !(named || edits)) return [];
+  const other = (token, names) => !token || (asWritten(token) && !names.includes(token.text));
+  return planCalls(invocation).flatMap(([subcommand, action, file]) => {
+    if (other(subcommand, ['plan']) || (asWritten(subcommand) && other(action, PLAN_EDITS))) return [];
+    if ([subcommand, action, file].every(asWritten) && !file.text.startsWith('-')) return [{ file: file.text, folder, text: shown, literal: true }];
     return [{ what: 'what may be a local plan `aidrian plan` edits, whose subcommand, action, and file are not each one word written out, the file right after the action, with no variable, glob, brace, parenthesis, or `~`, so which plan it edits cannot be told', text: shown }];
   });
 }
 
-// The words of each call to aidrian that `invocation` may be, { words, named }, with `named` true when it names aidrian. A
-// program word built at run time may be aidrian, or run one of its words, and node may run any of its words that is
-// aidrian's script or is built at run time: such a call counts by what its words name (planTarget).
-function planCalls(invocation) {
-  const { program, dynamic, args } = invocation;
-  const own = aidrianArgs(invocation);
-  if (program === 'aidrian') return [{ words: own, named: true }];
-  if (!dynamic && interpreterOf(program)?.name !== 'node') return [];
-  const runs = (token) => token.dynamic || aidrianArgs({ program: 'node', args: [token] }) !== null;
-  const calls = args.flatMap((token, at) => (runs(token) ? [{ words: args.slice(at + 1), named: false }] : []));
-  if (dynamic) calls.unshift({ words: args, named: /aidrian/iu.test(program) });
-  else if (own) calls.unshift({ words: own, named: true });
-  return calls;
+// The first three words of each call to aidrian that `invocation` names: run as `aidrian` by any path, or by node, whose
+// options may take a value, with a word that is aidrian's script. What a program or script built at run time runs is not read.
+function planCalls({ program, args }) {
+  if (program === 'aidrian') return [args.slice(0, 3)];
+  return args.flatMap((token, at) => (aidrianArgs({ program, args: [token] }) ? [args.slice(at + 1, at + 4)] : []));
 }
 
 // The config one program call with the arguments `words` writes, as programWrites reads it, shown as `shown`.

@@ -1641,8 +1641,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     ([Marking a plan](project-folder.md#marking-a-plan)), the word right after the action, read as the path it is written as,
     whatever `--project` or environment the call names, when outside the places; a call that may be one of the two, when its
     subcommand, its action, and its file are not each one word written out, so when one is missing, an option, built at run
-    time, or a glob, or holds a brace, a parenthesis, or a leading `~` or `=`, quoted or not; a program word or a script of
-    node's built at run time counts as aidrian when its words are such a call's; the forge CLI's, which its adapter declares
+    time, or a glob, or holds a brace, a parenthesis, or a leading `~` or `=`, quoted or not, each in a call that names
+    aidrian, or aidrian's script for node to run, in plain words: what a program or script built at run time runs is not
+    read; the forge CLI's, which its adapter declares
     (`gh auth setup-git`, `login`, `logout`, `switch`, and `refresh`, `gh config set`, and `gh extension install` on
     GitHub); each host's own config subcommands, which its adapter declares (`configCommands`: `claude mcp add`,
     `claude config set`, `claude plugin install`, and `claude plugin marketplace add` for Claude Code, `codex mcp add`,

@@ -2620,7 +2620,7 @@ The store is `<state root>/recorded-decisions/<project key>/<ISSUE>.json`, `{ he
 the state root is `$XDG_STATE_HOME/aidrian` or `~/.local/state/aidrian` and the project key names the project's state
 folder under `projects/`.
 It sits under the state root the environment names, as the [sign-off store](review.md#merge-trust) does, for its
-writer and its readers alike, and is kept apart from the state folder's `decisions/`, the decision-review records.
+writer and its readers alike, and is kept apart from the state folder's `decisions/`, the residual verdicts.
 Each folder is the user's alone, mode 0700, each file 0600, written whole and moved into place, as the sign-off store's.
 Both stores are checked from the real path of the state root's parent down: a link from the state root on, a folder
 another user owns or may write, or such a file voids the grant, and nothing is made, by a write or by a start's sandbox

@@ -52,6 +52,7 @@ scripts/build.mjs                   generates the flat agents/ and codex/agents 
                                     and opencode/routes.generated.json from hooks/hooks.json
 scripts/version.mjs                 checks a branch keeps each plugin's version, and raises and tags each on release
 scripts/code-shape.mjs              warns about long files, long functions, and nested ternaries in lib/
+scripts/report-flow-reruns.mjs      reports why a project's critical-flow passes ran again, from its review records, read only
 scripts/run-tests.mjs               runs the tests for npm test and npm run check, then prints each slow file's time and child processes
 scripts/test-state.mjs              the preload every test process runs: its own state, temporary folder, and git config
 .github/workflows/release.yml       releases each plugin after each merge to main

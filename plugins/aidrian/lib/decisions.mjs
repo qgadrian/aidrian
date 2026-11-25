@@ -577,7 +577,7 @@ const excerpt = (text) => (text.length > 60 ? `${text.slice(0, 60)}…` : text);
 // evidence, place }, and each invalid row as a reason. Residuals and `contradicts` compare trimmed. An item the body holds twice is invalid: one row per residual cannot tell the two apart.
 export function judgeResiduals(paired, rows) {
   const pairs = paired.residuals;
-  if (!Array.isArray(rows)) return { contradictions: [], invalid: ['the judged file is not a JSON array of rows'] };
+  if (!Array.isArray(rows)) return { contradictions: [], invalid: ['the judged file holds no rows: write { "record": ..., "rows": [...] }'] };
   const contradictions = [];
   const invalid = [];
   const named = (each) => (each !== null && typeof each === 'object' && typeof each.residual === 'string' ? each.residual.trim() : null);

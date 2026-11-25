@@ -1332,10 +1332,12 @@ test('plan-review gates stop re-running on minor findings, cap their runs, and c
   const section = (text, from, to) => text.slice(text.indexOf(from), text.indexOf(to, text.indexOf(from) + from.length));
   const skill = read('skills/plan-review/SKILL.md');
   const gates = section(skill, '## 3. Gates', '## 3b. Quorum');
-  assert.match(gates, /A re-run with no blocking finding, and every finding `low` or narrower than the last run's, approves; \[steps\/reruns\.md\]\(steps\/reruns\.md\) carries them as implementation notes\./);
+  assert.match(gates, /A re-run with no blocking finding, and every finding `low` or narrower than the last run's, approves, its findings carried as implementation notes\./);
+  // Counting needs the first run's findings, so the file is read before the first dispatch, never from the second run on.
+  assert.match(gates, /Read \[steps\/reruns\.md\]\(steps\/reruns\.md\) before the first gate or quorum dispatch\./);
   assert.match(section(skill, '## 3b. Quorum', '## 4. Critique'), /its reruns under step 3's stop rule and cap/);
   assert.match(section(skill, '## 5. Apply', '## 6. Cap'), /follow its steps 5\.1 to 5\.5\./);
-  assert.match(section(skill, '## 6. Cap', '## Close'), /A gate or the quorum runs at most 3 times in this review, the first included, across restarts; past that, non-blocking findings are carried, and a blocking one escalates\./);
+  assert.match(section(skill, '## 6. Cap', '## Close'), /A gate or the quorum runs at most 3 times a review, the first included, across restarts; past that, non-blocking findings are carried, and a blocking one escalates\./);
   const reruns = read('skills/plan-review/steps/reruns.md');
   assert.match(reruns, /\*\*Narrower\*\*: it names a smaller surface than, or a sub-case of, a finding the previous run raised, and it adds no new required invariant\./);
   assert.match(reruns, /\*\*Blocking\*\*: severity `critical` or `high`, a quorum objection of severity `blocking`, or any finding that adds a required invariant\. A blocking finding is never narrower/);
@@ -1346,7 +1348,8 @@ test('plan-review gates stop re-running on minor findings, cap their runs, and c
   // A count written into the plan changed the hash the Human's apply is held to, so the session keeps it and writes nothing.
   assert.match(reruns, /Count the runs this review made, each gate's and the quorum's\. The session keeps the counts and each run's findings itself, and writes neither to the plan\./);
   assert.doesNotMatch(reruns, /revision.history/i);
-  assert.match(reruns, /A new `plan-review` run counts from one\./);
+  assert.match(reruns, /A new `plan-review` run counts from one\. A reused quorum ledger is not a run, and it is the previous run the next one is compared with\./);
+  assert.match(reruns, /in the `plan-review` skill's step 3, before the first gate or quorum dispatch\./);
   assert.match(reruns, /A plan changed after it, which a gate would have to judge again, escalates to the Human too: no gate is skipped\./);
   assert.match(reruns, /no authority covers that sign-off, and no stop rule clears it/);
   assert.match(reruns, /A restart from step 5\.1 keeps the counts;/);
@@ -1354,11 +1357,13 @@ test('plan-review gates stop re-running on minor findings, cap their runs, and c
   assert.match(reruns, /under the line `Implementation notes from plan review:`/);
   // The carry-forward holds only when the applied plan records the notes and the slice reviewers read them.
   const apply = read('skills/plan-review/steps/apply.md');
-  assert.match(apply, /5\. Check the carried findings, .* recorded as an implementation note in the plan's `## Risks`, under the line `Implementation notes from plan review:`\. .* The report names each carried finding/);
-  assert.match(apply, /proposes a patch against the current plan that adds only the missing notes, never the original diff again\. The patch goes through step 5's approval like any diff, then this step checks the saved plan holds the notes\./);
+  assert.match(apply, /5\. When step 3 or 3b carried findings .* check whether the saved plan holds each one as an implementation note in its `## Risks`, under the line `Implementation notes from plan review:`\./);
+  // A repair loop would put back a note the Human edited out of the diff, so the step only reports.
+  assert.match(apply, /The report names each carried finding, .* says `not recorded in the plan` for one the plan does not hold: a note the Human edited out is the Human's decision\./);
+  assert.doesNotMatch(apply, /\bpatch\b/i);
   assert.match(read('skills/quorum/references/ledger.md'), /narrower than one the immediately preceding run accepted/);
   assert.match(read('skills/quorum/references/ledger.md'), /Such a rerun follows the stop rule and cap of `plan-review`'s `steps\/reruns\.md`, as its gates do\./);
-  assert.match(read('skills/quorum/references/ledger.md'), /The quorum runs at most 3 times in one `plan-review` run, the first included, as that run counts them\./);
+  assert.match(read('skills/quorum/references/ledger.md'), /The quorum runs at most 3 times in one `plan-review` run, the first included, as that run counts them\. A reused ledger is not a run, and it is the previous run the next one is compared with\./);
   assert.match(read('skills/issue-implement/steps/phases-1-4-implement.md'), /When the plan's `## Risks` holds `Implementation notes from plan review:`, each reviewer's brief carries that list/);
 });
 

@@ -2064,10 +2064,12 @@ new revision of the plan, so the skill holds each re-run to a stop rule, in its 
   invariant is blocking, so it goes into the critique, as on a first run, even at severity `low`.
 - **Cap.** Each gate, and the quorum, runs at most 3 times in one plan review, the first run included, across its
   restarts. The session counts the runs it made itself: nothing is written to the plan for the count, and a new plan
-  review counts from one again. Past the cap, the findings that are not blocking are carried, and a blocking one
-  escalates to the Human, as does a plan changed after the last run.
+  review counts from one again. A reused quorum ledger is not a run, and it is the previous run the next one is compared
+  with. Past the cap, the findings that are not blocking are carried, and a blocking one escalates to the Human, as
+  does a plan changed after the last run.
 - **Carry-forward.** A carried finding is never revised for. The approved diff records it under
-  `Implementation notes from plan review:` in the plan's `## Risks`, and the report names it. The `issue-implement`
+  `Implementation notes from plan review:` in the plan's `## Risks`. The report names it, and says
+  `not recorded in the plan` when the saved plan does not hold it, such as a note the Human edited out. The `issue-implement`
   skill, which `plan-implement` runs, gives that list to each slice's `code-reviewer` and `security-engineer`.
 
 The stop rule never drops a required invariant: the rule that a gate's required invariants bind the critique holds

@@ -5,7 +5,7 @@ description: Review a local plan before anyone implements it. Use when asked to 
 
 # plan-review
 
-One critique-and-refine pass before anyone implements a plan. This session runs the gates and has `planning-agent`
+One critique-and-refine pass before a plan is implemented. This session runs the gates and has `planning-agent`
 critique the plan, propose a diff, and apply it on the Human's approval. It never commits the plan.
 
 Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the critical flows
@@ -54,6 +54,7 @@ or `issue-plan` for an issue. Never build a plan from the conversation.
 Both run before the critique; their verdicts go into its brief as authoritative.
 A gate's brief carries the plan path, the trigger (the plan lines and the flow or surface they touch), and the knowledge
 docs to check against. It carries nothing of your own: no suspected findings, risks, or hints.
+Read [steps/reruns.md](steps/reruns.md) before the first gate or quorum dispatch.
 
 - **Critical flow.** The plan's goal, scope, approach, affected surfaces, or slice files touch a flow the project's
   `product_sensitive` knowledge declares critical (the whole text, for a free-form plan): `product-manager` first.
@@ -61,8 +62,8 @@ docs to check against. It carries nothing of your own: no suspected findings, ri
 - **Security.** The plan touches auth, sessions, tokens, tenancy, permissions, payments, webhooks, uploads, redirects, secrets,
   untrusted content, privileged access, or a surface the project's `security` knowledge lists: `security-engineer` first.
   Its verdict and required invariants bind the critique; no critique finding drops them.
-- **Re-runs.** A re-run with no blocking finding, and every finding `low` or narrower than the last run's, approves;
-  [steps/reruns.md](steps/reruns.md) carries them as implementation notes.
+- **Re-runs.** A re-run with no blocking finding, and every finding `low` or narrower than the last run's, approves,
+  its findings carried as implementation notes.
 
 ## 3b. Quorum
 
@@ -92,22 +93,22 @@ Then report, in this order, and stop:
 
 ## 5. Apply
 
-Only on the Human's explicit `apply` after step 4 in this same session: it needs step 2's hash and step 4's diff.
-`--apply` without both: refuse, and say to rerun without `--apply`.
+Only on the Human's explicit `apply` after step 4 in this session: it needs step 2's hash and step 4's diff.
+`--apply` without both: refuse, and say to rerun without it.
 Then read [steps/apply.md](steps/apply.md) and follow its steps 5.1 to 5.5.
 
 ## 6. Cap
 
 One critique, one apply, and one more critique only when step 5.4 finds a new blocking flaw.
 `--extended` adds one refinement pass, never more. Past the cap, escalate to the Human.
-A restart from step 5.1 starts this count again and waits on the Human's next `apply` like the first.
-A gate or the quorum runs at most 3 times in this review, the first included, across restarts; past that,
+A restart from step 5.1 starts this count again and waits on the next `apply` like the first.
+A gate or the quorum runs at most 3 times a review, the first included, across restarts; past that,
 non-blocking findings are carried, and a blocking one escalates.
 A consult that returns a dispute stops the run: escalate both positions and the missing evidence; never settle on a compromise.
 
 ## Close
 
-The run is done only when each gate is cleared or not applicable, the Human answered step 4, an applied plan passed steps 5.4 and 5.5,
+The run is done only when each gate is cleared or not applicable, the Human answered step 4, an applied plan passed step 5.4,
 and no dispute or blocked consult was dropped. Otherwise report `blocked` or `needs_input` with the step to resume from.
 
 End with the next step: the `issue-implement` skill for an issue-anchored plan, and the `plan-implement` skill for any other,

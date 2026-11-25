@@ -9,10 +9,7 @@ Its items are steps 5.1 to 5.5, the numbers the skill's step 6 and Close name.
    and the revision-history line. It writes the same file.
 3. It keeps `issue_id`, `issue_ref`, and `workspace_decision` unless an approved finding changes them; report any such change first.
 4. Read the plan again: a schema plan passes the schema checks of `references/review-lens.md`, and `status` matches reality.
-5. Check the carried findings, when step 3 or 3b carried any under `steps/reruns.md`: each one is recorded as an
-   implementation note in the plan's `## Risks`, under the line `Implementation notes from plan review:`.
-   For a missing one, `planning-agent` proposes a patch against the current plan that adds only the missing notes,
-   never the original diff again.
-   The patch goes through step 5's approval like any diff, then this step checks the saved plan holds the notes.
-   The report names each carried finding, with its gate or the quorum and its run,
-   so the Human sees what goes to the per-slice code and security review instead of a revision.
+5. When step 3 or 3b carried findings under `steps/reruns.md`, check whether the saved plan holds each one as an
+   implementation note in its `## Risks`, under the line `Implementation notes from plan review:`.
+   The report names each carried finding, with its gate or the quorum and its run, and says `not recorded in the plan`
+   for one the plan does not hold: a note the Human edited out is the Human's decision.

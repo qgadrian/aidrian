@@ -66,7 +66,7 @@ const DEVICE = /^\/dev\/(?:null|stdout|stderr|tty|fd\/\d+)$/u;
 // (lib/review-gate.mjs readRecordFile), whose old name, pr-<n>.json, is the manifest's; and, in a text that does not
 // parse, a quoted key with an escape in it, which may spell that key.
 const ATTEST_KEY = /["']reviewer["']\s*:/u;
-const ESCAPED_KEY = /["'][^"'\n]*\\[^"'\n]*["']\s*:/u;
+const ESCAPED_KEY = /["'][^"'\n\\]*\\[^"'\n]*["']\s*:/u;
 // A text that names a git folder through git itself, as `$(git rev-parse --git-common-dir)` does.
 const GIT_FOLDER_WORD = /--(?:git-common-dir|git-dir|absolute-git-dir|git-path)\b|\$\{?GIT_(?:DIR|COMMON_DIR)\b/u;
 // A text that names a git folder or pointer by its own name, `.git`, as a word or a path's part.
@@ -679,12 +679,13 @@ function placed(spelled, places, options) {
   return placeOf(real(spelled), spelled, places, options);
 }
 
-// The text a file edit tool writes to each file it names, { file, texts }, for the manifest check.
+// The text a file edit tool writes to each file it names, { file, texts, whole }, for the manifest check: the lines a patch
+// adds, `whole` when it adds the file, as the text a Write of them would hold, and not when it updates it.
 function editedTexts(input) {
   const edit = fileEditOf(input);
   if (!edit) return [];
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  if (edit.shape === 'patch') return (edit.files ?? []).map(({ file, added }) => ({ file: path.resolve(cwd, file), texts: [String(added ?? '')] }));
+  if (edit.shape === 'patch') return (edit.files ?? []).map(({ kind, file, added }) => ({ file: path.resolve(cwd, file), texts: [(added ?? []).join('\n')], whole: kind === 'add' }));
   const texts = [edit.content, edit.newText, ...(Array.isArray(edit.edits) ? edit.edits.flatMap((each) => Object.values(each ?? {})) : [])];
   return [{ file: path.resolve(cwd, edit.file ?? ''), texts: texts.filter((each) => typeof each === 'string') }];
 }
@@ -705,53 +706,101 @@ function fileText(file) {
   }
 }
 
+// The review manifest itself, pr-<n>.json, that the file edit `edit` (fileEditOf) writes other than whole, as the path
+// the call names, or null: a file edit tool writes one only whole, by a Write or by a patch's Add of it, each judged
+// whole (editedTexts), so the text judged is the file it leaves. An Edit of it, a patch section that updates or deletes
+// it, a move onto it, and any other shape are refused. `kind(file)` is manifestKind's answer for a path the call names,
+// from its folder `cwd`.
+function partialManifest(edit, cwd, kind) {
+  const resolved = (file) => (typeof file === 'string' && file !== '' ? path.resolve(cwd, file) : null);
+  const itself = (file) => file !== null && kind(file) === 'manifest';
+  if (edit.shape !== 'patch') return edit.shape !== 'write' && itself(resolved(edit.file)) ? resolved(edit.file) : null;
+  for (const { kind: section, file, move } of edit.operations ?? []) {
+    checkDeadline();
+    if (itself(resolved(move))) return resolved(move);
+    if (section !== 'add' && itself(resolved(file))) return resolved(file);
+  }
+  return null;
+}
+
+// The review manifest itself a call names in an interpreter's code, input, or words, or in a word of a shell the lexer
+// cannot read (config-guard.mjs writeTargets), by an absolute or home path there (PATH_IN_TEXT), or null: such code may
+// write it other than whole. A path the code builds at run time is not seen. `home` is the user's home folder.
+function namedManifest(input, kind, home) {
+  const { files, names, code = [] } = writeTargets(input);
+  const opaque = opaqueShellCommand(input) !== null;
+  const texts = names.filter((_, i) => opaque || code[i] === true);
+  const spelled = texts.flatMap((text) => [...text.matchAll(PATH_IN_TEXT)].map(([word]) => (word.startsWith('~') ? `${home}${word.slice(1)}` : word)));
+  return [...(opaque ? files : []), ...spelled].find((each) => kind(each) === 'manifest') ?? null;
+}
+
+// Whether a text holds a `reviewer` key (ATTEST_KEY), or a quoted key with an escape in it (ESCAPED_KEY).
+const holdsKey = (text) => ATTEST_KEY.test(text) || ESCAPED_KEY.test(text);
+
 // Whether a manifest's text may make it an attest record: parsed as JSON, an object with a top-level `reviewer` key,
-// as the review gate reads it; a text that does not parse, such as an edit's fragment, holds such a key (ATTEST_KEY) or
-// a quoted key with an escape in it (ESCAPED_KEY).
+// as the review gate reads it; a text that does not parse, such as an edit's fragment, by the keys in it (holdsKey).
 function attestShaped(text) {
   try {
     const value = JSON.parse(text);
     return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.hasOwn(value, 'reviewer');
   } catch {
-    return ATTEST_KEY.test(text) || ESCAPED_KEY.test(text);
+    return holdsKey(text);
   }
 }
 
-// Why a write to a review manifest name may make it an attest record, or null. A file edit tool's text must not be
-// attest-shaped (attestShaped). A shell write to a temporary copy must not name a `reviewer` either; one to the manifest
-// itself, pr-<n>.json, is only a delete, or a rename or copy of a file whose text is not attest-shaped and that the same
-// call does not write, read before the call runs.
+// What the path `file` is by its real path and by the name it gives in its folder's real path: 'manifest' for a review
+// manifest itself, pr-<n>.json, in a reviews folder of `places`, by either; 'copy' for a temporary copy of one
+// (finding-disposition.mjs isManifestPath); or null.
+function manifestKind(file, places) {
+  const found = [real(file), path.join(real(path.dirname(file)), foldCase(path.basename(file)))]
+    .filter((at) => isManifestPath(at) && places.reviews.some((dir) => isWithin(dir, at)));
+  if (!found.length) return null;
+  return found.some((at) => MANIFEST.test(path.basename(at))) ? 'manifest' : 'copy';
+}
+
+// Why a write to a review manifest name may make it an attest record, or null: { file, how }, `how` 'partial' when a file
+// edit tool writes the manifest itself other than whole (partialManifest), and 'named' when interpreter code names it
+// (namedManifest). Otherwise a file edit tool's text must not be attest-shaped (attestShaped), and the lines a patch's
+// update adds must hold no key of one (holdsKey). A shell write to a
+// temporary copy must not name a `reviewer` either; one to the manifest itself, pr-<n>.json, is only a delete, or a
+// rename or copy of a file whose text is not attest-shaped and that the same call does not write, read before the call
+// runs, which judges a copy a file tool wrote.
 function manifestProblem(input, shell, places) {
-  const isManifest = (file) => isManifestPath(file) && places.reviews.some((dir) => isWithin(dir, real(file)));
-  for (const { file, texts } of editedTexts(input)) {
-    if (isManifest(file) && texts.some(attestShaped)) return file;
+  const kind = (file) => manifestKind(file, places);
+  const edit = fileEditOf(input);
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const partial = edit ? partialManifest(edit, cwd, kind) : null;
+  if (partial) return { file: partial, how: 'partial' };
+  for (const { file, texts, whole = true } of editedTexts(input)) {
+    if (kind(file) && texts.some(whole ? attestShaped : holdsKey)) return { file };
   }
+  const named = namedManifest(input, kind, places.home);
+  if (named) return { file: named, how: 'named' };
   if (!shell) return null;
   const files = writeTargets(input).files.map((each) => path.resolve(each));
   for (const write of shell.manifests) {
     if (write.folder === null && !path.isAbsolute(write.text)) continue;
     const file = path.resolve(write.folder ?? '/', write.text);
-    if (!isManifest(file)) continue;
-    if (!MANIFEST.test(path.basename(file))) {
-      if (/reviewer/iu.test(shell.text)) return file;
-      continue;
-    }
-    if (renameProblem(write, file, files)) return file;
+    const found = kind(file);
+    if (found === 'copy' && /reviewer/iu.test(shell.text)) return { file };
+    if (found === 'manifest' && renameProblem(write, file, files)) return { file };
   }
   return null;
 }
 
 // Whether the shell write `write` to the manifest `file` itself may forge it (manifestProblem). `files` are every path
-// the call writes.
+// the call writes, compared with a source by real path, so another spelling of the source counts as a write of it.
 function renameProblem(write, file, files) {
   const from = (each) => path.resolve(write.folder ?? '/', each);
   const sources = (write.sources ?? []).map(from);
   if (['rm', 'unlink'].includes(write.how) || (write.how === 'mv' && sources.includes(file))) return false;
   if (!['mv', 'cp'].includes(write.how) || sources.length === 0) return true;
   const ownWrites = write.how === 'mv' ? 1 : 0;
+  const written = files.map(real);
   return sources.some((source) => {
     const text = fileText(source);
-    return text === null || attestShaped(text) || files.filter((each) => each === source).length > ownWrites;
+    const at = real(source);
+    return text === null || attestShaped(text) || written.filter((each) => each === at).length > ownWrites;
   });
 }
 
@@ -942,7 +991,8 @@ function unexpandedDenial(text, folder, found, say, texts) {
   return say.meets(placed(path.resolve(folder ?? '/', prefix), found, { holds: false }), `\`${text.slice(0, 80)}\``);
 }
 
-// Each path a link the command makes points at: refused when that path is refused or outside the places.
+// Each path a link the command makes points at: refused when that path is refused or outside the places, or is a file in
+// a reviews folder, since a write through the link would reach a review manifest by another name.
 function linkDenial(shell, found, say, texts) {
   for (const { from, to } of shell.links) {
     for (const each of to) {
@@ -950,6 +1000,10 @@ function linkDenial(shell, found, say, texts) {
         if (!found.limited) return say.deny('unattended link to a path built at run time', `it makes a link to \`${from.slice(0, 80)}\`, which cannot be told before it runs, and no Human attends this session; link a literal path instead`);
         texts.push(each);
         continue;
+      }
+      const at = real(each);
+      if (found.reviews.some((dir) => path.basename(dir) === 'reviews' && dir !== at && isWithin(dir, at))) {
+        return say.deny('unattended link to a review record', `it makes a link to ${each}, a file in a reviews folder, so a write through the link would change a review record by another name, and no Human attends this session; ${MANIFEST_ROUTE}`);
       }
       const met = placed(each, found);
       if (!met) continue;
@@ -996,11 +1050,19 @@ function globDenial(globs, found, say) {
   return null;
 }
 
+// The way a session writes a review manifest, which a refusal names: references/manifest.md of the pr-review skill.
+const MANIFEST_ROUTE = 'write the whole file with the file tool to a temporary copy in the same folder, then rename it over the manifest with mv';
+const NO_ATTEST_KEY = 'a review manifest never holds a top-level `reviewer` key, the key of an attest record';
+
 function manifestDenial(input, shell, found, say) {
   if (found.limited) return null;
-  const file = manifestProblem(input, shell, found);
-  if (!file) return null;
-  return say.deny('unattended write that may forge an attest record', `it ${say.verb} ${file}, a review manifest, in a way that may give it a \`reviewer\` key, which the review gate reads as an attest record under the manifest's own name, pr-<n>.json; write a temporary copy with the file tool, with no such key, then rename it`);
+  const problem = manifestProblem(input, shell, found);
+  if (!problem) return null;
+  const what = {
+    partial: `it ${say.verb} ${problem.file}, a review manifest, other than as a whole file, and no Human attends this session; ${NO_ATTEST_KEY}`,
+    named: `it names ${problem.file}, a review manifest, in an interpreter's code, input, or words, which may write it other than as a whole file, and no Human attends this session; ${NO_ATTEST_KEY}`,
+  }[problem.how] ?? `it ${say.verb} ${problem.file}, a review manifest, in a way that may give it a top-level \`reviewer\` key, which a review manifest never holds, the key of an attest record, and no Human attends this session`;
+  return say.deny('unattended write that may forge an attest record', `${what}; ${MANIFEST_ROUTE}`);
 }
 
 // What no path places, judged by name: a startup file or a git config (REFUSED_NAME), a home dot entry (HOME_DOT), a

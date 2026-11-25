@@ -1,4 +1,4 @@
-// PostToolUse hook for the Agent tool (Claude Code): one `dispatch` row in the dispatch log per subagent dispatch.
+// PostToolUse hook for the Agent tool: one `dispatch` row in the dispatch log per subagent dispatch.
 // Inside a project only, and only while config.json `telemetry.enabled` is on; any error lets the session go on with
 // nothing logged.
 

@@ -253,7 +253,7 @@ test('check warns of OpenCode\'s unguarded tracker route once the project\'s Ope
   writeFileSync(path.join(dir, 'opencode.json'), JSON.stringify({ plugins: ['github:acme/aidrian#main::path:plugins/aidrian'] }));
   const { status, stderr } = await run(['check'], dir);
   assert.equal(status, 0, stderr);
-  assert.match(stderr, /^warning: tracker\.enabled: on OpenCode, a write through any MCP tool passes unchecked: the bridge forwards no MCP tool call to a hook in this version$/mu);
+  assert.match(stderr, /^warning: tracker\.enabled: on OpenCode, a write through any MCP tool passes unchecked: the bridge runs no route before a tool call in this version$/mu);
   assert.match(stderr, /^warning: tracker\.enabled: nobody has verified the guard on OpenCode/mu);
 });
 

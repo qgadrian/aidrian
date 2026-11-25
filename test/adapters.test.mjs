@@ -12,13 +12,14 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
+import { gateDenial, nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
 import { CONTINUE_ROUTES } from '../plugins/aidrian/lib/config-schema.mjs';
+import { canBlock } from '../plugins/aidrian/lib/hook-result.mjs';
 import { pushPermission as claudePushPermission } from '../plugins/aidrian/lib/hosts/claude-code-push.mjs';
 import { heldSessions, listBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
-import { agentAliases, backgroundHeld, backgroundList, continueRoutes, deniedNames, detectHost, HOSTS, humanPrompts, opaqueShellCommand, PUSH_ANSWERS, pushPermission, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { agentAliases, backgroundHeld, backgroundList, continueRoutes, deniedNames, detectHost, fileEditOf, fileReadOf, HOSTS, humanPrompts, normalizeHookInput, opaqueShellCommand, PUSH_ANSWERS, pushPermission, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import { expandTracker, knownServers, readToolsOf, TRACKERS, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
@@ -56,7 +57,9 @@ const fires = (hostId, matcher, name) => {
 
 // The routes a bridge host's plugin runs: of its generated routes, plugins/aidrian/<id>/routes.generated.json, each
 // { event, matcher, script, args, timeoutMs }, those whose event its plugins/aidrian/<id>/routes.mjs EVENTS maps to a
-// hook of the host and whose matcher fires on a name its leaf, lib/hosts/<id>-names.mjs, can return (STANDARD_NAMES).
+// hook of the host and whose matcher fires on a name its leaf, lib/hosts/<id>-names.mjs, can return: its built-in
+// names (STANDARD_NAMES), and an MCP tool's, mcp__server__tool, when the leaf maps MCP tools (it exports mcpToolName).
+// A route with no matcher is a session event's, which names no tool, so its event alone says it runs.
 // Null for a host that reads hooks.json as it is, and for a bridge host that lacks one of the three, which
 // routeTableProblems fails.
 const routeFires = (matcher, name) => matcher === '*' || (typeof matcher === 'string' && new RegExp(matcher, 'u').test(name));
@@ -66,10 +69,11 @@ async function bridgeRoutes(host) {
   const [events, generated, leaf] = [path.join(dir, 'routes.mjs'), path.join(dir, 'routes.generated.json'), path.join(ROOT, 'plugins/aidrian/lib/hosts', `${host.id}-names.mjs`)];
   if (![events, generated, leaf].every((file) => existsSync(file))) return null;
   const { EVENTS } = await import(pathToFileURL(events).href);
-  const { STANDARD_NAMES } = await import(pathToFileURL(leaf).href);
+  const { STANDARD_NAMES, mcpToolName } = await import(pathToFileURL(leaf).href);
   const routes = JSON.parse(readFileSync(generated, 'utf8'));
   if (typeof EVENTS !== 'object' || EVENTS === null || !Array.isArray(STANDARD_NAMES) || !Array.isArray(routes)) return null;
-  return routes.filter((route) => Object.hasOwn(EVENTS, route.event) && STANDARD_NAMES.some((name) => routeFires(route.matcher, name)));
+  const names = [...STANDARD_NAMES, ...(typeof mcpToolName === 'function' ? ['mcp__server__tool'] : [])];
+  return routes.filter((route) => Object.hasOwn(EVENTS, route.event) && (route.matcher === null || names.some((name) => routeFires(route.matcher, name))));
 }
 const ROUTES = new Map(await Promise.all([...HOSTS, fakeHost].map(async (host) => [host.id, await bridgeRoutes(host)])));
 
@@ -85,12 +89,12 @@ function routeTableProblems(routes) {
 }
 
 // What a bridge's routes break. scripts/build.mjs writes each route from its hooks.json entry, with its matcher and
-// timeout, and `--check` fails a stale list, so what is left is what the build does not hold: until the bridge handles
-// a blocking route, turning exit 2 into a throw with stderr first, a route may only run after a call, under
-// PostToolUse; and its script is a file in scripts/, since the bridge skips one that is not.
+// timeout, and `--check` fails a stale list, so what is left is what the build does not hold: no route of an event a
+// hook can block on (lib/hook-result.mjs canBlock), until a live session records its hook refusing a call; and its
+// script is a file in scripts/, since the bridge cannot run one that is not.
 function routeProblems(routes) {
   return routes.flatMap((route) => [
-    ...(route.event === 'PostToolUse' ? [] : [`${route.script} runs under ${route.event}, and the bridge runs no blocking route`]),
+    ...(canBlock(route.event) ? [`${route.script} runs under ${route.event}, and the bridge runs no blocking route`] : []),
     ...(existsSync(path.join(ROOT, 'plugins/aidrian/scripts', route.script)) ? [] : [`${route.script} is not in scripts/`]),
   ]);
 }
@@ -280,12 +284,115 @@ test('a bridge route that blocks a call, or whose script is gone, is told apart'
   const route = { event: 'PostToolUse', matcher: '^(?:Bash)$', script: 'hook-bash-post.mjs', args: [], timeoutMs: 5000 };
   assert.deepEqual(routeProblems([route]), []);
   assert.deepEqual(routeProblems([{ ...route, event: 'PreToolUse', script: 'hook-bash.mjs' }]), ['hook-bash.mjs runs under PreToolUse, and the bridge runs no blocking route']);
+  assert.deepEqual(routeProblems([{ ...route, event: 'SessionStart', matcher: null, script: 'hook-session-start.mjs' }]), [], 'no exit of a start hook blocks');
+  for (const event of ['Stop', 'SubagentStop', 'UserPromptSubmit', 'PreCompact']) {
+    assert.deepEqual(routeProblems([{ ...route, event, matcher: null, script: 'hook-stop.mjs' }]), [`hook-stop.mjs runs under ${event}, and the bridge runs no blocking route`]);
+  }
   assert.deepEqual(routeProblems([{ ...route, script: 'hook-gone.mjs' }]), ['hook-gone.mjs is not in scripts/']);
 });
 
+test('every host says the effort a subagent starts at, or null, so the start hook never throws on one', () => {
+  for (const host of [...HOSTS, UNKNOWN_HOST]) assert.equal(typeof host.subagentEffort, 'function', host.id);
+});
+
+test('a raw_tool_name counts only where its host reads it as the call`s tool_name', () => {
+  const marked = (tool, raw, given) => ({ hook_event_name: 'PreToolUse', opencode: {}, tool_name: tool, raw_tool_name: raw, tool_input: given });
+  assert.equal(fileEditOf(marked('Bash', 'write', { command: 'ls', path: '/m/f', content: 'x' })), null, 'a shell call edits no file');
+  assert.equal(fileReadOf(marked('Bash', 'read', { command: 'ls', path: '/m/f' })), null, 'and reads none');
+  assert.deepEqual(fileEditOf(marked('Write', 'edit', { file_path: '/m/f', content: 'x', path: '/m/g' })).targets, ['/m/f'], 'edit reads as Edit, never Write');
+});
+
+// Both hosts' parsers split a patch on \n, drop one \r, and trim a line before they look for a header, but inside an Update
+// section, where an indented line is context: Codex 0.172.0's apply-patch/src/streaming_parser.rs (tag rust-v0.172.0) and
+// OpenCode 2.4.1's packages/util/src/patch.ts.
+const patchOn = {
+  codex: (text) => fileEditOf({ tool_name: 'apply_patch', tool_input: { command: text } }),
+  opencode: (text) => fileEditOf(normalizeHookInput({ hook_event_name: 'PreToolUse', opencode: {}, tool_name: 'patch', tool_input: { patchText: text } }, {})),
+};
+const patchText = (...lines) => ['*** Begin Patch', ...lines, '*** End Patch', ''].join('\n');
+for (const [id, read] of Object.entries(patchOn)) {
+  test(`${id}: every header the host's parser reads is a target, and no other line is`, () => {
+    for (const [lines, targets] of [
+      [[' *** Update File: a.md', '@@', '+x'], ['a.md']],
+      [['\t*** Add File: a.md', '+x'], ['a.md']],
+      [['\u0085*** Delete File: a.md'], ['a.md']],
+      [['\u2028*** Delete File: a.md'], ['a.md']],
+      [['*** Add File: a.md', '+x', '  *** Update File: b.md', '@@', '+y'], ['a.md', 'b.md']],
+      [['*** Delete File: a.md', ' *** Delete File: b.md', '*** Add File: c.md', '+x'], ['a.md', 'b.md', 'c.md']],
+      [['*** Update File: \u2028a.md', '@@', '+x'], ['a.md']],
+      [['*** Update File: a\u2028b.md', '@@', '+x'], ['a\u2028b.md', 'a']],
+      [['*** Update File: a\rb.md', '@@', '+x'], ['a\rb.md', 'a']],
+      [['*** Update File: a.md  ', '*** Move to: \u2028b.md ', '@@', '+x'], ['a.md', 'b.md']],
+      [['*** Update File: a.md\r', '@@\r', '+x\r', '*** Delete File: b.md\r'], ['a.md', 'b.md']],
+      // Context, added, and removed lines of an Update section, and an added line of an Add section, name no file.
+      [['*** Update File: a.md', '@@', ' *** Update File: b.md', '+*** Add File: c.md', '-*** Delete File: d.md', ' *** Move to: e.md'], ['a.md']],
+      [['*** Add File: a.md', '+*** Add File: b.md', '+ *** Add File: c.md'], ['a.md']],
+    ]) {
+      assert.deepEqual(read(patchText(...lines)).targets, targets, JSON.stringify(lines));
+    }
+    assert.ok(read(patchText('*** Update File: a.md', '@@', ' x\u2028*** Update File: kept.md')).targets.includes('kept.md'), 'each reading of a patch counts');
+  });
+
+  test(`${id}: the lines a patch adds count for the file whose header they follow, up to the next header`, () => {
+    const { files } = read(patchText(' *** Add File: a.md', '+one', ' *** Update File: b.md', '@@', ' *** Update File: c.md', '+two', '*** Delete File: d.md'));
+    const added = (file) => files.filter((each) => each.file === file).flatMap((each) => each.added);
+    assert.deepEqual([added('a.md'), added('b.md'), added('c.md'), added('d.md')], [['one'], ['two'], [], []]);
+    const mixed = read(patchText('*** Add File: a.md', '+one', ' *** Update File: b.md', '@@', '+two')).files;
+    assert.deepEqual(mixed.filter((each) => each.file === 'b.md').flatMap((each) => each.added), ['two']);
+    assert.ok(mixed.some((each) => each.file === 'a.md' && each.added.includes('two')), 'each reading of a patch counts');
+    for (const end of ['*** End of File', '*** End of File  ']) {
+      assert.deepEqual(read(patchText('*** Update File: a.md', '@@', '+one', end, '@@', '+two', '*** Delete File: b.md')).files.map((each) => [each.file, each.added]), [['a.md', ['one', 'two']]], end);
+    }
+    assert.deepEqual(read(patchText('*** Add File: a.md', '+one', '*** Update File: b.md', '*** Move to: c.md', '@@', '+two')).files, [{ kind: 'add', file: 'a.md', added: ['one'] }, { kind: 'update', file: 'c.md', added: ['two'] }], 'a plain patch reads once');
+  });
+}
+
+// The work is counted as the elements `includes` may look at, and the processor time is bounded far above what it takes,
+// so a loaded machine fails neither.
+test('reading a patch takes work in proportion to its size, on each host', () => {
+  const headers = 20_000;
+  const text = patchText(...Array.from({ length: headers }, (_, at) => `*** Delete File: f${at}.md`));
+  const { includes } = Array.prototype;
+  for (const [id, read] of Object.entries(patchOn)) {
+    let looked = 0;
+    const began = process.cpuUsage();
+    Array.prototype.includes = function counted(...args) {
+      looked += this.length;
+      return includes.apply(this, args);
+    };
+    let edit;
+    try {
+      edit = read(`${text}${id}`);
+    } finally {
+      Array.prototype.includes = includes;
+    }
+    const { user } = process.cpuUsage(began);
+    assert.deepEqual([edit.targets.length, edit.operations.length, edit.files.length], [headers, headers, 0], id);
+    assert.ok(looked < headers, `${id}: ${looked} elements looked at`);
+    assert.ok(user < 20_000_000, `${id}: ${user} microseconds`);
+  }
+});
+
+test('a raw_tool_name in a Claude Code or Codex payload never changes how its file edit is read', () => {
+  const calls = [
+    [{ CLAUDECODE: '1' }, 'Write', { file_path: '/m/f', content: 'x' }, ['/m/f']],
+    [{ CLAUDECODE: '1' }, 'Edit', { file_path: '/m/f', old_string: 'a', new_string: 'b' }, ['/m/f']],
+    [{ CODEX_THREAD_ID: 't' }, 'apply_patch', { command: '*** Begin Patch\n*** Delete File: /m/f\n*** End Patch\n' }, ['/m/f']],
+  ];
+  for (const [env, tool, given, targets] of calls) {
+    for (const raw of [undefined, '', 'shell', 'edit', 'write', 'patch', 'Read', 'Write', 'apply_patch', 'nonsense', 7]) {
+      const read = normalizeHookInput({ hook_event_name: 'PreToolUse', tool_name: tool, raw_tool_name: raw, tool_input: given }, env);
+      assert.deepEqual(fileEditOf(read)?.targets, targets, `${tool} with raw_tool_name ${raw}`);
+    }
+  }
+});
+
 test('a bridge host`s routes are its generated routes of its events that fire on a name its leaf returns', () => {
-  assert.deepEqual(ROUTES.get('opencode').map((route) => [route.event, route.script]), [['PostToolUse', 'hook-bash-post.mjs']]);
-  assert.equal(routeFires('^(?:Edit|Write)$', 'edit'), false, 'the leaf`s edit is not the standard Edit, so the markdown hook does not run');
+  assert.deepEqual(ROUTES.get('opencode').map((route) => [route.event, route.script]),
+    [['SessionStart', 'hook-session-start.mjs'], ['SubagentStart', 'hook-session-start.mjs'],
+      ['PostToolUse', 'hook-markdown-wrap.mjs'], ['PostToolUse', 'hook-agent-post.mjs'], ['PostToolUse', 'hook-tracker-post.mjs'], ['PostToolUse', 'hook-bash-post.mjs'],
+      ['SessionEnd', 'hook-session-end.mjs']]);
+  assert.equal(routeFires('^(?:Edit|Write)$', 'edit'), false, 'a matcher fires on the standard name alone, never on OpenCode`s own');
   assert.equal(routeFires(null, 'Bash'), false, 'a route of an event with no matcher fires on no tool');
   assert.equal(routeFires('*', 'Bash'), true);
 });
@@ -385,6 +492,52 @@ test('an unknown host still normalises what a known one sends, so a detection ca
   for (const host of HOSTS.filter((each) => delivers(each, 'hook-tracker-pre.mjs'))) {
     const { pre, standard } = recorded(host);
     assert.equal(UNKNOWN_HOST.hookInput(pre).tool_name, standard.write);
+  }
+});
+
+// Every tool call payload a host's fixtures record, as a PreToolUse call with no agent fields: { host, file, raw, env },
+// where `raw` is what the host sends and `env` its hook environment. A fixture's payloads are its `pre` and `post`, and
+// each entry that names a tool on top of its `pre`, as a forge fixture's calls do.
+function recordedCalls() {
+  const dir = path.join(ROOT, 'test/fixtures/hosts');
+  return readdirSync(dir).flatMap((id) => readdirSync(path.join(dir, id)).filter((file) => file.endsWith('.json')).flatMap((file) => {
+    const data = JSON.parse(readFileSync(path.join(dir, id, file), 'utf8'));
+    const calls = Object.values(data).filter((value) => typeof value?.tool_name === 'string').map((value) => ({ ...data.pre, ...value }));
+    return calls.map(({ tool_response: _response, agent_id: _id, agent_type: _type, ...call }) => {
+      const raw = { ...call, hook_event_name: 'PreToolUse' };
+      return { host: detectHost({ env: data.env, input: raw }), file: `${id}/${file}`, raw, env: data.env };
+    });
+  }));
+}
+
+test('every host\'s recorded tool calls meet the strictest-subagent rule with an agent_id and no agent_type, and their own entries otherwise', () => {
+  const settings = (agents) => ({ agents, names: { human: 'the Human' } });
+  const paths = { config: '.aidrian/config.json', local: '.aidrian.local.json' };
+  const verdict = (agents, input) => gateDenial(input, settings(agents), paths)?.match ?? null;
+  const calls = recordedCalls();
+  assert.deepEqual([...new Set(calls.map(({ host }) => host.id))].sort(), HOSTS.map((host) => host.id).sort(), 'every shipped host has a recorded call');
+  for (const { host, file, raw, env } of calls) {
+    // The identity fields go in as the host sends them, so each adapter's reading of them is what the gate judges.
+    const main = normalizeHookInput(raw, env);
+    const unnamed = normalizeHookInput({ ...raw, agent_id: 'child-1' }, env);
+    const named = normalizeHookInput({ ...raw, agent_id: 'child-1', agent_type: `${host.pluginAgentPrefix}reviewer` }, env);
+    const tool = main.tool_name;
+    const label = `${file}: ${tool}`;
+    // The caller's own entry, and `*`, which names every caller.
+    assert.equal(verdict({ reviewer: { deny: [tool] } }, named), `agents.reviewer.deny has "${tool}"`, label);
+    assert.equal(verdict({ '*': { deny: [tool] } }, unnamed), `agents.*.deny has "${tool}"`, label);
+    // Another entry's deny: main's, which a named subagent never meets.
+    const mainDeny = { main: { deny: [tool] } };
+    assert.equal(verdict(mainDeny, unnamed), `agents.main.deny has "${tool}"`, label);
+    assert.equal(verdict(mainDeny, named), null, label);
+    assert.equal(verdict(mainDeny, main), `agents.main.deny has "${tool}"`, label);
+    // Another entry's allow list that lacks the tool, beside the caller's own that has it.
+    const lists = { explorer: { allow: ['Read'] }, reviewer: { allow: [tool] } };
+    assert.equal(verdict(lists, unnamed), 'agents.explorer.allow does not list it', label);
+    assert.equal(verdict(lists, named), null, label);
+    assert.equal(verdict(lists, main), null, label);
+    // Every list allows it, and no entry denies it.
+    assert.equal(verdict({ explorer: { allow: [tool] }, reviewer: { allow: [tool] } }, unnamed), null, label);
   }
 });
 
@@ -560,7 +713,7 @@ test('a host\'s unguarded routes are told only where that host is set up, so ano
   const project = path.join(root, 'project');
   mkdirSync(config);
   mkdirSync(project);
-  const route = /on OpenCode, a write through any MCP tool passes unchecked: the bridge forwards no MCP tool call to a hook in this version/u;
+  const route = /on OpenCode, a write through any MCP tool passes unchecked: the bridge runs no route before a tool call in this version/u;
   const told = (env, ask = {}) => trackerWarnings(tracker, { env: { OPENCODE_CONFIG_DIR: config, ...env }, hosts: [opencode], root: project, ...ask });
   const there = told({ OPENCODE: '1', OPENCODE_SESSION_ID: 'ses_x' });
   assert.ok(there.some((line) => route.test(line)), 'the check runs under OpenCode');

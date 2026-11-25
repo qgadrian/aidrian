@@ -25,6 +25,10 @@ const EMPTY = Object.freeze({ block: false, reason: null, context: null, systemM
 const BLOCKS_ON_EXIT_2 = new Set(['PreToolUse', 'UserPromptSubmit', 'Stop', 'SubagentStop', 'PreCompact']);
 const PLAIN_TEXT_CONTEXT = new Set(['SessionStart', 'UserPromptSubmit', 'PreCompact']);
 
+// Whether a hook of `event` can refuse what it runs on, by this reading: an exit 2 blocks it. No decision field is read,
+// so an event no exit 2 blocks has no hook that can block. A bridge reads this to keep a blocking event apart.
+export const canBlock = (event) => BLOCKS_ON_EXIT_2.has(event);
+
 // The reason of an exit 2 block whose script wrote nothing on stderr.
 export const NO_REASON = 'A hook blocked this call and gave no reason.';
 // The reason of an exit 2 block whose output passed the bridge's byte bound: the refusal stands, its text is not shown.

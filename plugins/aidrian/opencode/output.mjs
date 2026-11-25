@@ -1,7 +1,9 @@
 // The OpenCode bridge's output half: what a hook script's answer does to OpenCode's callback. bridge.mjs runs the
 // scripts and builds each callback from its steps here. Each answer is read as Claude Code reads it
 // (lib/hook-result.mjs readHookResult), the answers of one call are merged (combineHookResults), and the merged verdict
-// is applied to the event OpenCode passes.
+// is applied to the event OpenCode passes. A context a tool call's hooks give reaches the model at the end of that
+// call's result, once it completed (appendContext): the text a script printed is never written to the trace or to a
+// request's `system`.
 //
 // Only an execute.before callback ever rejects, and only for a refusal: a hook's block, two different rewrites of the
 // input, and the two fail-closed refusals of a subagent's call, a script that did not start, one not on disk included,
@@ -12,8 +14,8 @@
 //
 // It also runs each script (run). The payload holds text a model wrote, so the spawn is pinned: the program is Node,
 // resolved to an absolute file at setup, the arguments the script's absolute path and the route's literal flags, the
-// options `cwd`, the session's folder, `env` as the process has it, and `stdio`, with no shell, and the payload reaches
-// the child on stdin alone. It reads at most CAPTURE_BYTES of each script's stdout and stderr, and waits for its exit
+// options `cwd`, the session's folder, `env` as the process has it, with the plugin's bin/ first on a start script's
+// PATH, and `stdio`, with no shell, and the payload reaches the child on stdin alone. It reads at most CAPTURE_BYTES of each script's stdout and stderr, and waits for its exit
 // whatever it writes.
 //
 // It imports node: built-ins and the hook-result leaf, which imports node: built-ins alone, so it loads in OpenCode's
@@ -181,9 +183,10 @@ export function settle(step) {
 //   call(event, selected)      what the routes are sent, { agent?, ... }, or { skip } to send nothing
 //   run(route, call)           one script's answer, { exit, signal, stdout, stderr, overflow }, or { failed: true }
 //                              when it did not start
-//   apply(event, verdict, call) the merged verdict applied, on every hook but execute.before
+//   apply(event, verdict, call) the merged verdict applied; on execute.before, only to a call no hook refused
 //   trace(step, fields)        the bridge's trace writer
-// On execute.before the verdict is applied here: a refusal rejects, and a rewrite replaces `event.input`.
+// On execute.before the refusal and the rewrite are applied here: a refusal rejects, and a rewrite replaces
+// `event.input`; then `apply` runs, and what it throws or rejects with lets the call run.
 export function transform(hook, steps) {
   if (hook !== BLOCKING_HOOK) {
     return settle(async (event) => {
@@ -200,7 +203,42 @@ export function transform(hook, steps) {
       throw new Error(refused.reason);
     }
     if (outcome.verdict.updatedInput !== null) event.input = outcome.verdict.updatedInput;
+    try {
+      await steps.apply?.(event, outcome.verdict, outcome.call);
+    } catch {
+      // A context that cannot be kept leaves the call as it would be without it.
+    }
   };
+}
+
+// Appends `texts`, the hook contexts of one completed call, each a text part, to the end of `event.result.content`,
+// the part of OpenCode 2.4.1's `Tool.Result` { output?, content?, metadata? } the model reads, and leaves `output` and
+// `metadata` as they were. The result is replaced, never changed in place, so a route's payload, built from the
+// result as it was, never holds a context. OpenCode reads a content that is text, or an empty list, from `output`
+// (`normalizeContent` in its tool runtime), so the content is first written out as OpenCode would read it, and the
+// output the model would have read stays first. A text that is no string or is empty adds nothing.
+export function appendContext(event, texts) {
+  const parts = texts.filter((text) => typeof text === 'string' && text !== '').map((text) => ({ type: 'text', text }));
+  const result = event?.result;
+  if (parts.length === 0 || typeof result !== 'object' || result === null || Array.isArray(result)) return;
+  event.result = { ...result, content: [...contentOf(result), ...parts] };
+}
+
+// The content parts OpenCode 2.4.1 gives the model for a result: a text content as one text part, a list that is not
+// empty as it is, and anything else as one text part of the output, as text or JSON (`normalizeContent`, `stringify`).
+function contentOf({ content, output }) {
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  if (Array.isArray(content) && content.length > 0) return [...content];
+  return [{ type: 'text', text: textOf(output) }];
+}
+
+function textOf(value) {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 // The outcome of one event's steps, or null when nothing ran or a step failed: { verdict, call, blocked } with
@@ -214,14 +252,21 @@ async function answer(steps, event, blocking) {
     if (!call || call.skip) return null;
     const subagent = typeof call.agent === 'string';
     if (blocking && subagent && event?.codemode === true) return { refusal: { status: 'codemode', reason: CODEMODE_REFUSAL } };
-    // A runner that throws or rejects is that script not starting, and never drops a peer's answer.
-    const results = await Promise.all(routes.map((route) => Promise.resolve().then(() => steps.run(route, call)).catch(() => ({ failed: true }))));
-    if (blocking && subagent && results.some((result) => result?.failed === true)) return { refusal: { status: 'spawn', reason: SPAWN_REFUSAL } };
-    const verdicts = results.map((result, at) => readHookResult({ ...result, event: routes[at].event }));
-    return { verdict: combineHookResults(verdicts), call, blocked: verdicts.some((one) => one.block) };
+    const { verdict, blocked, failed } = await answered(routes, (route) => steps.run(route, call));
+    if (blocking && subagent && failed) return { refusal: { status: 'spawn', reason: SPAWN_REFUSAL } };
+    return { verdict, call, blocked };
   } catch {
     return null;
   }
+}
+
+// What `routes` answer together, each run by `runRoute(route)`, in parallel: `verdict` their merged answer, `blocked`
+// whether one's own answer refused, and `failed` whether one did not start. A runner that throws or rejects is that
+// script not starting, and never drops a peer's answer.
+export async function answered(routes, runRoute) {
+  const results = await Promise.all(routes.map((route) => Promise.resolve().then(() => runRoute(route)).catch(() => ({ failed: true }))));
+  const verdicts = results.map((result, at) => readHookResult({ ...result, event: routes[at].event }));
+  return { verdict: combineHookResults(verdicts), blocked: verdicts.some((one) => one.block), failed: results.some((result) => result?.failed === true) };
 }
 
 // The refusal of a merged verdict, { status, reason }, or null: `hook` when a hook refused, `rewrite` when only two

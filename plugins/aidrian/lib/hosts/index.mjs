@@ -166,10 +166,13 @@ export const isFileEditTool = (tool) => HOSTS.some((host) => host.fileEditTools.
 //   write     { file, content }: a whole file
 //   edit      { file, edits, newText, replaceAll }: replacements in a file
 //   notebook  { file }: a cell of a notebook
-//   patch     { text, files: [{ file, added }] }: a patch naming its files, whose text is never known here
+//   patch     { text, files: [{ kind, file, added }], operations: [{ kind, file, move, text }] }: a patch naming its
+//             files, whose text is never known here
 // Every path in it is as the host's file tool resolves it (hostPath), as a leading `~` the host expands: the one resolver
-// every guard of a file tool reads it through.
-export function fileEditOf({ tool_name: tool, tool_input: given }) {
+// every guard of a file tool reads it through. The tool is the one the host sent (sentName), whose input shape this is.
+export function fileEditOf(input) {
+  const tool = sentName(input, 'fileEditTools');
+  const given = input.tool_input;
   const host = HOSTS.find((each) => each.fileEditTools.includes(tool));
   const edit = host ? host.fileEdit(tool, given ?? {}) : null;
   if (!edit) return edit;
@@ -178,8 +181,20 @@ export function fileEditOf({ tool_name: tool, tool_input: given }) {
     ...edit,
     ...(edit.file === undefined ? {} : { file: resolve(edit.file) }),
     ...(Array.isArray(edit.files) ? { files: edit.files.map((each) => ({ ...each, file: resolve(each.file) })) } : {}),
+    ...(Array.isArray(edit.operations) ? { operations: edit.operations.map((each) => ({ ...each, file: resolve(each.file), move: resolve(each.move) })) } : {}),
     targets: (edit.targets ?? []).map(resolve),
   };
+}
+
+// The name of the file tool the host sent the call `input` as: `raw_tool_name`, which an adapter's `hookInput` keeps when
+// it gives the call a standard name, else `tool_name`. The input stays in that tool's shape, so its host reads it: an
+// OpenCode `edit` call that reads as Edit holds OpenCode's fields, not Claude Code's. `raw_tool_name` counts only as a
+// file tool, one of the list `tools` (`fileEditTools` or `fileReadTools`), of the host whose mark the payload carries,
+// which that host itself reads as `tool_name`; any other value changes nothing.
+function sentName(input, tools) {
+  const { tool_name: tool, raw_tool_name: raw } = input;
+  const renamed = HOSTS.some((host) => host.payloadMark?.(input) === true && (host[tools] ?? []).includes(raw) && host.toolName(raw) === tool);
+  return renamed ? raw : tool;
 }
 
 // A path a file tool of `host` names, as the host resolves it: its `filePath`, such as Claude Code's expansion of a
@@ -189,9 +204,11 @@ const hostPath = (host, file) => (typeof file === 'string' && typeof host.filePa
 // The paths a file-tool read in a tool call names, as the tool names them, a null one standing for the call's folder,
 // or null when the tool reads no file through the host's own file tools: a host lists its read tools in
 // `fileReadTools` and names their paths with `fileRead(tool, input)`. A host whose reads all run in its shell lists none.
-export function fileReadOf({ tool_name: tool, tool_input: given }) {
+// The tool is the one the host sent (sentName), whose input shape this is.
+export function fileReadOf(input) {
+  const tool = sentName(input, 'fileReadTools');
   const host = HOSTS.find((each) => (each.fileReadTools ?? []).includes(tool));
-  return host ? host.fileRead(tool, given ?? {}).map((file) => hostPath(host, file)) : null;
+  return host ? host.fileRead(tool, input.tool_input ?? {}).map((file) => hostPath(host, file)) : null;
 }
 
 // The folders a project keeps `kind` (skills or agents) in, on every host that reads them.

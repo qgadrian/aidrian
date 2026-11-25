@@ -9,7 +9,8 @@ export default {
     any: ['linear', 'linear-server'],
     'claude-code': ['plugin_linear_linear', 'claude_ai_Linear'],
     codex: ['codex_apps_linear'],
-    // No Linear connection on OpenCode has been looked at, and the bridge forwards no MCP tool call there yet.
+    // No Linear connection on OpenCode has been looked at. An MCP call there reaches the after-hooks alone: the bridge
+    // runs no route before a tool call yet.
     opencode: [],
   },
   readTool: 'get_workspace',

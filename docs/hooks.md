@@ -2498,13 +2498,13 @@ Any other move leaves the folder unknown, since no variable's value is read and 
 `&`, `!`, or subshell between it and the run, such as `cd <path> && true; node --test` or `cd <path> && x | node --test`.
 An absolute `env -C <path>` names the folder after any of those; a relative one is unknown when the shell's folder is.
 No redirection or substitution of the line is judged for it.
-An accepted residual: a directory change the lexer does not read as one (`builtin cd`, `chdir`, or one inside `eval`,
-a sourced file, a function, or an alias) is not followed.
 Such a run's row has `folder: "unknown"`, null trees, and no untracked files, so it never holds the session's own
 checkout's. It supports no pull request body line, which is held to a tree: that refusal says the run's folder could not
 be told from its command, and to run it again with a literal absolute path.
 It still supports a subagent's report, which is read at any tree, since it finished in the session with that count.
 A row with no `folder` field ran in a known folder, or is from a version before the field, and reads by its trees.
+An accepted residual: a directory change the lexer does not read as one (`builtin cd`, `chdir`, or one inside `eval`,
+a sourced file, a function, or an alias) is not followed, so the run keeps the folder known before it.
 The row goes to the session folder of the project the call's folder is in, one whose folder is unknown too, so a refusal
 can name it. When that folder holds none, as when another
 session removed the worktree a session started in and the host sends the home folder as its cwd, each run goes to the

@@ -33,8 +33,7 @@ This repository opts into [push first](hooks.md#push-first) and the [check-run r
 `"testing": { "fullSuite": ["npm run check", "npm test", "npm run test", "node scripts/run-tests.mjs"], "pushFirstMinutes": 5 }`,
 since `npm test` and the script behind it run the whole suite here too. So a session's `npm run check`, bare `npm test`,
 or bare `node scripts/run-tests.mjs` is refused while the pushed branch lacks a commit older than 5 minutes, and a `## Tests run` line that says one of them passed needs a finished run of it.
-A run from outside its worktree names the worktree by a literal absolute path, `env -C <path> npm test -- <files>`:
-a folder in a variable, such as `env -C "$W"`, is unknown to the record, and such a run supports no line.
+With `env -C`, write a literal absolute path: a run in a variable's folder supports no line.
 `npm test -- <files>` runs only those files, and push first leaves it alone. Its `requires.aidrian` asks for 0.73.1, the first release whose
 config check knows the `testing` keys; an older installed plugin rejects them.
 

@@ -575,7 +575,7 @@ function startPlace(context) {
   const unreadable = startLoaded === null ? null : startUnreadable(startLoaded);
   if (unreadable) return refuse(unreadable, orphans);
   // No path of the tip, nor of the branch's head once the clone fetched it, spells a name the harness holds another way.
-  const spelling = startLoaded === null ? null : spellingAt(project.root, base.tip, { policyFiles, startLoaded, prefix });
+  const spelling = startLoaded === null ? null : spellingAt(project.root, base.tip, { policyFiles, startLoaded });
   if (spelling?.problem) return refuse(spelling.problem, orphans);
   const guards = startGuards(policyFiles, startLoaded);
   // An ended attempt's work may wait for a sweep that could not decide it, as through a forge outage: one more, as `wait`
@@ -703,14 +703,14 @@ export function startDocsAt(root, tip, configFile, prefix) {
 }
 
 // The names a start on existing work holds by their exact spelling (project.mjs spellingRule), from the base tip
-// `tip`, read in `root`: the pointer and config.json `policyFiles` name, what the start hook loads (`startLoaded`), the
+// `tip`, read in `root`: the pointer and config.json `policyFiles` names (policyFilesAt), what the start hook loads (`startLoaded`), the
 // forge's workflow folders, and each guarded path the tip holds. { problem } when a path of the tip spells one another
 // way, else { spelled }, which gives why a list of a head's paths does, or null.
-function spellingAt(root, tip, { policyFiles, startLoaded, prefix }) {
+function spellingAt(root, tip, { policyFiles, startLoaded }) {
   const [files, links] = [commitFiles(root, tip), commitGitlinks(root, tip)];
   if (!files || !links) return { problem: `git cannot read the files of the base tip ${tip.slice(0, 7)}` };
   const paths = [...files.keys(), ...links];
-  const names = [...new Set([`${prefix}.aidrian.json`, ...policyFiles, ...startLoaded.docs, `${startLoaded.folder}/`, ...workflowPaths().names, ...paths.filter(isGuardedPath)])];
+  const names = [...new Set([...policyFiles, ...startLoaded.docs, `${startLoaded.folder}/`, ...workflowPaths().names, ...paths.filter(isGuardedPath)])];
   const rule = spellingRule(names);
   const spelled = (list) => list.map(rule).find(Boolean) ?? null;
   const own = spelled(paths);

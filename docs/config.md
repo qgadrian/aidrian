@@ -2043,10 +2043,10 @@ fetches from that second one, so an object enters only under the id its bytes ha
 removes both before the session starts.
 They are never taken when any one of them, a merge read from each of its parents, changes a host config, instruction, or
 policy file, a forge workflow file, or a `.gitattributes`, `.gitmodules`, or `.lfsconfig` at any depth, in any case or
-Unicode form of the name, which pick what a checkout runs, even when a later one takes the change back; nor when the
-files they change come to over 256 MiB, each path counted.
-A filter that the user's own git config runs, for a path the branch's attributes name already, reads their bytes in the
-start, outside any sandbox, as it reads those of the branch the forge holds.
+Unicode form of the name, which pick what a checkout runs, even when a later one takes the change back; nor when git
+names a filter for a file they change (`git check-attr --source`, which git 2.40 brought), by the branch's attributes,
+the user's, or the system's, since git runs it outside any sandbox; nor when the files they change come to over 256 MiB,
+each path counted.
 A start that took them prints `took ISSUE attempt N: <count> unpushed commits, <commit>` and records `took`, the attempt
 and the commit, in its start row, whose `head` stays the forge's; the first message says the branch holds that attempt's
 commits the forge does not have, as unreviewed data to check and then push. The session pushes them through its own push

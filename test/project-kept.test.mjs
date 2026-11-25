@@ -447,10 +447,10 @@ test('kept commits that write more than the cap, each path counted, are not take
   const { fx, forge: forgeHead, head, prepare, kept } = keptClone(t);
   const room = prepare();
   const git = (args, cwd = room.work, options = {}) => spawnSync('git', args, { cwd, encoding: 'utf8', env: fx.env, ...options });
-  const take = (candidate, bytes) => {
+  const take = (candidate, bytes, run = git) => {
     const folder = path.join(fx.root, `take-${bytes}`);
     mkdirSync(folder);
-    return takeKept({ candidate: { attempt: 1, head: candidate, folder: kept }, folder, work: room.work, gitFolder: room.git, forgeHead, guards: () => false, git, caps: { ...KEPT_CAPS, bytes } });
+    return takeKept({ candidate: { attempt: 1, head: candidate, folder: kept }, folder, work: room.work, gitFolder: room.git, forgeHead, guards: () => false, git: run, caps: { ...KEPT_CAPS, bytes } });
   };
   // Three paths of one blob of 400 bytes, a deleted path, a link, and a submodule over the two files already there.
   const clone = inClone(fx, 1);
@@ -463,6 +463,9 @@ test('kept commits that write more than the cap, each path counted, are not take
   const top = clone('rev-parse', 'HEAD');
   const bytes = 'kept one\n'.length + 'kept two\n'.length + 3 * 400 + '12345'.length;
   assert.equal(take(top, bytes - 1).why, 'the files its commits change are too large');
+  // A git that does not know `--source` prints its usage and exits 129.
+  const old = (args, ...more) => git(args[0] === 'check-attr' ? ['check-attr', '--no-such-option'] : args, ...more);
+  assert.equal(take(top, bytes + 1, old).why, 'git cannot say whether it runs a filter on the files its commits change');
   assert.deepEqual(take(top, bytes).took, { attempt: 1, head: top });
 });
 
@@ -512,6 +515,43 @@ test('a start that takes nothing prints why once, and goes on from the forge\'s 
   assert.deepEqual([lastStart(fx).head, Object.hasOwn(lastStart(fx), 'took')], [forgeHead, false]);
   assert.doesNotMatch(fx.claude.starts()[1].args.at(-1), /never pushed/u);
   assert.ok(existsSync(folderOf(fx, 1)));
+});
+
+// A filter in the user's own config, turned on for a file a kept commit changes by an attributes file no kept commit
+// changes: a session wrote those bytes, and git would run the filter on them before any sandbox holds.
+test('kept commits that change a file git names a filter for are not taken, and no filter reads their bytes', (t) => {
+  const fx = runFixture(t, { files: { '.gitattributes': '*.dat filter=x\n*.raw -filter\n', 'a.dat': 'base\n' } });
+  const log = path.join(fx.root, 'filter.log');
+  const program = path.join(fx.root, 'filter');
+  const attributes = path.join(fx.root, 'attributes');
+  writeFileSync(program, `#!/bin/sh\necho "call $1" >> '${log}'\ntee -a '${log}'\n`, { mode: 0o755 });
+  writeFileSync(attributes, '*.own filter=x\n');
+  const global = testGlobalConfig(t);
+  writeFileSync(global, `${readFileSync(global, 'utf8')}[core]\n\tattributesFile = ${attributes}\n[filter "x"]\n\tclean = ${program} clean\n\tsmudge = ${program} smudge\n`);
+  assert.equal(startAgain(fx), null);
+  const forgeHead = commit(fx, 1, { 'src.js': 'one\n' });
+  push(fx, 1);
+  commit(fx, 1, { 'a.dat': 'KEPT BYTES\n' });
+  assert.match(limited(fx, 1), /^kept ENG-1 attempt 1: /u);
+  // Each start's whole log: what the filter read of the forge's own head, as ever, and nothing of the kept commit.
+  const starts = (attempt, expected, message) => {
+    writeFileSync(log, '');
+    assert.equal(startAgain(fx), expected, message);
+    assert.match(readFileSync(log, 'utf8'), /^call smudge\nbase\n/u, `${message}: the filter is in force`);
+    assert.doesNotMatch(readFileSync(log, 'utf8'), /KEPT BYTES/u, message);
+  };
+  const why = 'git names a filter for a file its commits change';
+  starts(2, `not taken ENG-1 attempt 1: ${why}`, 'by the branch\'s attributes');
+  assert.equal(inClone(fx, 2)('rev-parse', 'HEAD'), forgeHead);
+  // By the user's own attributes file.
+  commit(fx, 2, { 'b.own': 'KEPT BYTES\n' });
+  assert.match(limited(fx, 2), /^kept ENG-1 attempt 2: /u);
+  starts(3, `not taken ENG-1 attempt 2: ${why}`, 'by the user\'s attributes');
+  // A file with none there, or with it unset, whatever else the branch's attributes name.
+  const head = commit(fx, 3, { 'src.js': 'KEPT BYTES\n', 'c.raw': 'KEPT BYTES\n' });
+  assert.match(limited(fx, 3), /^kept ENG-1 attempt 3: /u);
+  starts(4, `took ENG-1 attempt 3: 1 unpushed commit, ${head.slice(0, 12)}`, 'no filter');
+  assert.equal(readFileSync(path.join(folderOf(fx, 4), 'work', 'c.raw'), 'utf8'), 'KEPT BYTES\n');
 });
 
 // Each starts, with the same notes and from the forge's branch, though the start on the taken commits was refused.

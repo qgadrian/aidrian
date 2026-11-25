@@ -140,12 +140,27 @@ function judgeKept({ head, forgeHead, guards, git, caps }) {
   if (log.status !== 0) return 'git cannot say which files its commits change';
   const workflows = workflowPaths();
   const protects = (file) => guards(file) || workflows.counts(file) || readByCheckout(file);
+  const files = [...new Set(log.stdout.split('\0'))].filter((file) => file !== '');
   // A count alone: no file name a session chose reaches the driver.
-  const held = [...new Set(log.stdout.split('\0'))].filter((file) => file !== '' && protects(file)).length;
+  const held = files.filter(protects).length;
   if (held) return `its commits change ${held} host config, instruction, policy, or workflow ${held === 1 ? 'file' : 'files'}`;
+  const filtered = filterProblem({ head, files, git });
+  if (filtered) return filtered;
   const bytes = writtenBytes({ head, forgeHead, git });
   if (bytes === null) return 'git cannot say how much its commits write';
   return bytes > caps.bytes ? 'the files its commits change are too large' : null;
+}
+
+// Why a checkout, or any later git call of the start, may run a filter program of the user's on one of `files`, or null:
+// git names a filter for it, by the attributes of the tree `head`, the user, and the system. It runs none to say so. The
+// forge's head gives the same answer, since no taken commit changes an attributes file. A git that cannot read a tree's
+// attributes (`--source`) fails the call, which takes none.
+function filterProblem({ head, files, git }) {
+  if (!files.length) return null;
+  const read = git(['check-attr', '--stdin', '-z', `--source=${head}`, 'filter'], undefined, { input: `${files.join('\0')}\0` });
+  const values = read.status === 0 ? read.stdout.split('\0').filter((_, at) => at % 3 === 2) : [];
+  if (values.length !== files.length) return 'git cannot say whether it runs a filter on the files its commits change';
+  return values.every((each) => each === 'unspecified' || each === 'unset') ? null : 'git names a filter for a file its commits change';
 }
 
 // The bytes a checkout of `head` writes over one of `forgeHead`, each path's blob counted, or null when git cannot say:

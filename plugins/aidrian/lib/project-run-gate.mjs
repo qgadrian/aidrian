@@ -83,7 +83,7 @@ import { fenceFor, writeIssueFile } from './project-issue-text.mjs';
 import { keptLines, keptPrompt } from './project-kept.mjs';
 import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, recordedHead, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
-import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
+import { accessProblem, attemptFolder, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { holdsProblem } from './project-forge-holds.mjs';
 import { pushPreflight } from './push-preflight.mjs';
@@ -558,7 +558,7 @@ function startPlace(context) {
   const guards = (file) => isGuarded(file) || isPolicyPath(file, policyFiles);
   const recorded = recordedHead(current, key) ?? resumed?.head ?? null;
   const where = { ...context, policy, found: current, attempt: capped.attempt, tip: base.tip, branch, resumed, recorded, reviewed, guards, policyFiles, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
-  const room = confinedRoom(where);
+  const room = startRoom(where);
   if (room.halt) return { answer: noted(haltAnswer(room.halt, { lines: orphans })) };
   if (room.retry) return { answer: noted(retryAnswer('start', room.retry, orphans)) };
   if (room.park) return { answer: noted(parkUnreconciled({ ...context, policy, key, park: room.park, pr, orphans })) };
@@ -650,6 +650,18 @@ export function policyFilesAt(root, tip, prefix) {
 // Whether attempt `attempt` of issue `key` ended on a usage or rate limit, as the run `found` records it.
 const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event === 'ended' && row.key === key && row.attempt === attempt && row.reason === 'limit');
 
+// confinedRoom, once more with no kept commits taken when a start on them ends in any refusal but a retry: a name no disk
+// can write, a link where a placeholder goes, or a path that keeps base copies from being made is theirs, and a start
+// never fails for commits it need not take. A refusal that is there without them is then given as it is. The first clone
+// goes first, which no session had.
+function startRoom(where) {
+  const take = { off: false, took: false };
+  const room = confinedRoom({ ...where, take });
+  if (!take.took || room.cwd || room.retry) return room;
+  safely(() => rmSync(attemptFolder(where.state, where.run, where.key, where.attempt), { recursive: true, force: true }));
+  return confinedRoom({ ...where, take: { off: true } });
+}
+
 // The attempt's fresh clone, checked, and the folders it may write: { folder, cwd, git, grants, drop, cache, vars, main,
 // mainGit, issueFile, decision, pushUrl, branch, overlay, baseCopies, resumed, kept }, `decision` the recorded decision
 // (decisionFor), `pushUrl` the URL its origin pushes to, which the
@@ -666,10 +678,10 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the placeholders go in (placeHolders,
 // clonePlaceholders).
-function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
+function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked, take }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
-  const clone = prepareAttempt({ project, state, run, found, key, attempt, branch, recorded, tip, reviewed, guards, env });
+  const clone = prepareAttempt({ project, state, run, found, key, attempt, branch, recorded, tip, reviewed, guards, take, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.retry) return { retry: clone.retry };
   if (clone.park) return { park: clone.park };

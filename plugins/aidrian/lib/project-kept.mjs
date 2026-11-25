@@ -30,9 +30,12 @@ const OBJECT_FILE = /^(?:[0-9a-f]{38}|[0-9a-f]{62})$/u;
 // The most one object may hold, and all of them together, as their files and as those expand, and the most entries of
 // the object folders a take reads, whatever their names.
 export const KEPT_CAPS = Object.freeze({ file: 64 * 1024 * 1024, bytes: 256 * 1024 * 1024, entries: 20_000 });
-// The files, at any depth and in any case, by which git picks the programs a checkout runs and the places it fetches
-// from: the gate checks a kept commit out before any session's sandbox holds.
+// The files, at any depth and as any disk folds a name to one, by which git picks the programs a checkout runs and the
+// places it fetches from: the gate checks a kept commit out before any session's sandbox holds.
 const CHECKOUT_FILES = new Set(['.gitattributes', '.gitmodules', '.lfsconfig']);
+const readByCheckout = (file) => CHECKOUT_FILES.has(path.posix.basename(file).normalize('NFKC').toLowerCase());
+// Why commits taken once are not: no clone made on them could start.
+export const NO_CHECKOUT = 'git cannot check its commits out';
 
 // The kept commits issue `key`'s next attempt may start on, in the run `found`, whose branch is `branch`: null when the
 // run kept no clone of the issue; { attempt, why } when its latest `kept` row names none to take; or { attempt, head,
@@ -136,7 +139,7 @@ function judgeKept({ head, forgeHead, guards, git }) {
   const log = git(['-c', 'log.diffMerges=separate', '-c', 'log.showRoot=true', 'log', '-m', '--format=', '--name-only', '--no-renames', '--no-relative', '-z', `${forgeHead}..${head}`, '--']);
   if (log.status !== 0) return 'git cannot say which files its commits change';
   const workflows = workflowPaths();
-  const protects = (file) => guards(file) || workflows.counts(file) || CHECKOUT_FILES.has(path.posix.basename(file).toLowerCase());
+  const protects = (file) => guards(file) || workflows.counts(file) || readByCheckout(file);
   // A count alone: no file name a session chose reaches the driver.
   const held = [...new Set(log.stdout.split('\0'))].filter((file) => file !== '' && protects(file)).length;
   return held ? `its commits change ${held} host config, instruction, policy, or workflow ${held === 1 ? 'file' : 'files'}` : null;

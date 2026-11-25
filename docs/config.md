@@ -2040,14 +2040,15 @@ expand, out of at most 20,000 folder entries, into a repository it makes in the 
 fetches from it under git's fsck, and the new clone fetches from that second one, so an object enters only under the id
 its bytes hash to, once fsck passed it. The gate removes both before the session starts.
 They are never taken when any one of them, a merge read from each of its parents, changes a host config, instruction, or
-policy file, a forge workflow file, or a `.gitattributes`, `.gitmodules`, or `.lfsconfig` at any depth, which pick what a
-checkout runs, even when a later one takes the change back.
+policy file, a forge workflow file, or a `.gitattributes`, `.gitmodules`, or `.lfsconfig` at any depth, in any case or
+Unicode form of the name, which pick what a checkout runs, even when a later one takes the change back.
 A start that took them prints `took ISSUE attempt N: <count> unpushed commits, <commit>` and records `took`, the attempt
 and the commit, in its start row, whose `head` stays the forge's; the first message says the branch holds that attempt's
 commits the forge does not have, as unreviewed data to check and then push. The session pushes them through its own push
 guard, and base copies of host files go over them as over any head no review passed. Any other start of an issue with a
 kept clone prints `not taken ISSUE attempt N: <why>` and goes on from the forge's branch; the row and the folder stay, and
-nothing parks. A session that started on them and pushed nothing keeps a clone of its own, as any does, and the next
+nothing parks. A start on them that ends in a refusal, as for a name no disk can write, makes its clone once more without
+them (`git cannot check its commits out`). A session that started on them and pushed nothing keeps a clone of its own, as any does, and the next
 attempt takes from that one; a start given back keeps none for them while the clone they came from still holds them.
 Not taken, and left for a person in the kept folder: uncommitted files, a first attempt that never pushed, a clone whose
 objects a session packed, commits that change such a file, a merge of a moved base that brings such a change in, and the

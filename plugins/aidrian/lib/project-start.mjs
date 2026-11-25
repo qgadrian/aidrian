@@ -36,7 +36,7 @@ import { gateGit } from './git.mjs';
 import { nestedPathspecs } from './hosts/index.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, keepTokenFiles, sessionToken, tokenDigest, tokenFiles, tokenRecordThere, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
-import { keptCandidate, takeKept } from './project-kept.mjs';
+import { keptCandidate, NO_CHECKOUT, takeKept } from './project-kept.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
@@ -286,8 +286,9 @@ export function stateWorkFolders(state, { env, home }) {
 // has it. When the forge has the branch and it holds the recorded head, the attempt starts on the commits an ended
 // attempt's kept clone holds over that head, where they may be taken (project-kept.mjs): `kept` is that take, or why the
 // latest kept clone was not taken, or null, and `head` stays the forge's. Everything after it, the review asked and the
-// base copies included, goes by the commit taken, as for any head. `env` is the environment of its network calls.
-export function prepareAttempt({ project, state, run, found, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, env }) {
+// base copies included, goes by the commit taken, as for any head. `take.took` is set to whether one was, and with
+// `take.off` none is (project-run-gate.mjs startRoom). `env` is the environment of its network calls.
+export function prepareAttempt({ project, state, run, found, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, take = {}, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
@@ -355,7 +356,8 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
       // The recorded commit, or one after it: exit 1 is another history, and 128 a commit the fetch did not bring.
       const ours = own ? git(['merge-base', '--is-ancestor', own, from]) : null;
       if (ours && ours.status !== 0) return park(own, `its head ${from.slice(0, 7)} does not hold ${own.slice(0, 7)}, the commit this project's runs recorded it at`);
-      if (kept?.head) kept = takeKept({ candidate: kept, folder, work, gitFolder, forgeHead: onHead, guards, git });
+      if (kept?.head) kept = take.off ? { attempt: kept.attempt, why: NO_CHECKOUT } : takeKept({ candidate: kept, folder, work, gitFolder, forgeHead: onHead, guards, git });
+      take.took = Boolean(kept?.took);
       if (kept?.problem) return gone(kept.problem);
       if (kept?.took) from = kept.took.head;
       const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--']);

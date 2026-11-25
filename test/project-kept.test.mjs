@@ -306,6 +306,8 @@ test('kept commits that change a host, policy, or workflow file are not taken, a
   const files = [
     'AGENTS.md', '.aidrian/knowledge/docs.json', '.aidrian/config.json', 'settings/team/config.json', '.github/workflows/ci.yml',
     '.github', 'tools/skill/SKILL.md', '.claude/settings.json', '.gitattributes', 'src/deep/.GitAttributes', '.gitmodules', 'lib/.lfsconfig',
+    // As a disk that folds them reads them: a long s, and the fi ligature.
+    '.gitattribute\u017f', '.lfscon\ufb01g',
   ];
   for (const file of files) {
     fresh();
@@ -445,6 +447,70 @@ test('a start that takes nothing prints why once, and goes on from the forge\'s 
   assert.deepEqual([lastStart(fx).head, Object.hasOwn(lastStart(fx), 'took')], [forgeHead, false]);
   assert.doesNotMatch(fx.claude.starts()[1].args.at(-1), /never pushed/u);
   assert.ok(existsSync(folderOf(fx, 1)));
+});
+
+// Each starts, with the same notes and from the forge's branch, though the start on the taken commits was refused.
+test('a start its taken commits stop goes on without them, and leaves nothing of the first clone', (t) => {
+  const { fx, forge: forgeHead, head } = keptRun(t);
+  const git = inClone(fx, 1);
+  const kept = folderOf(fx, 1);
+  const spare = path.join(fx.root, 'spare');
+  cpSync(kept, spare, { recursive: true, verbatimSymlinks: true });
+  const cases = [
+    ['a file name no disk can write', () => {
+      git('update-index', '--add', '--cacheinfo', `100644,${git('rev-parse', 'HEAD:src.js')},${'a'.repeat(300)}`);
+      git('commit', '-q', '-m', 'long');
+    }],
+    ['a link where a placeholder goes', () => {
+      rmSync(path.join(kept, 'work', '.mcp.json'));
+      symlinkSync('src.js', path.join(kept, 'work', '.mcp.json'));
+      git('add', '-f', '--', '.mcp.json');
+      git('commit', '-q', '-m', 'link');
+    }],
+  ];
+  // The clone's kept row names the commit each case makes; every start of it is given back before the next.
+  cases.forEach(([message, change], index) => {
+    rmSync(kept, { recursive: true, force: true });
+    cpSync(spare, kept, { recursive: true, verbatimSymlinks: true });
+    change();
+    const top = git('rev-parse', 'HEAD');
+    appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'kept', key: 'ENG-1', attempt: 1, head: top, why: 'its clone holds it', at: now() }] }));
+    const { exitCode, out, err } = fx.cmd(['start', 'launch', 'ENG-1']);
+    assert.equal(exitCode, 0, `${message}: ${err.join('\n')}`);
+    assert.deepEqual(out.filter((line) => /^(?:took|not taken|parked) /u.test(line)), ['not taken ENG-1 attempt 1: git cannot check its commits out'], message);
+    const clone = inClone(fx, 2);
+    assert.deepEqual([clone('rev-parse', 'HEAD'), clone('status', '--porcelain')], [forgeHead, ''], message);
+    assert.deepEqual([lastStart(fx).head, Object.hasOwn(lastStart(fx), 'took')], [forgeHead, false], message);
+    assert.throws(() => clone('cat-file', '-e', head), `${message}: no object of the first clone`);
+    assert.deepEqual(gateRepositories(folderOf(fx, 2)), [], message);
+    const { id, child, ...ahead } = lastStart(fx);
+    fx.claude.states[STARTED[index + 1].session] = 'done';
+    appendToRun(fx.state, 'launch', () => ({ rows: [{ ...ahead, outcome: 'void', at: now() }, { event: 'issue', key: 'ENG-1', state: 'open', at: now() }] }));
+  });
+});
+
+test('kept commits that keep base copies from being made are not taken, and nothing parks', (t) => {
+  const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n' } });
+  assert.equal(startAgain(fx), null);
+  // The branch on the forge deletes a host file, whose base copy git must ignore; a kept commit takes the ignore back.
+  inClone(fx, 1)('rm', '-q', 'CLAUDE.md');
+  const forgeHead = commit(fx, 1, { 'src.js': 'one\n' });
+  push(fx, 1);
+  commit(fx, 1, { 'sub.js': 'kept\n', '.gitignore': '!/CLAUDE.md\n' });
+  assert.match(limited(fx, 1), /^kept ENG-1 attempt 1: /u);
+  assert.equal(startAgain(fx), 'not taken ENG-1 attempt 1: git cannot check its commits out');
+  assert.deepEqual([lastStart(fx).head, lastStart(fx).overlay], [forgeHead, forgeHead], 'base copies over the forge\'s head');
+  assert.equal(inClone(fx, 2)('rev-parse', 'HEAD'), forgeHead);
+});
+
+test('a refusal that is there without the taken commits stays as it is', (t) => {
+  const { fx } = keptRun(t);
+  const global = testGlobalConfig(t);
+  writeFileSync(global, `${readFileSync(global, 'utf8')}[remote "origin"]\n\tpushurl = https://github.com/acme/widgets.git\n\tpushurl = https://github.com/acme/widgets.git\n`);
+  const { exitCode, out } = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(exitCode, 1);
+  assert.match(out.find((line) => line.startsWith('halt ')) ?? '', /pushes to \d URLs/u);
+  assert.equal(fx.claude.starts().length, 1, 'nothing started');
 });
 
 test('the lines of a take', () => {

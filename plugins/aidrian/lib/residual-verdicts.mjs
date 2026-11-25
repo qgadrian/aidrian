@@ -10,7 +10,7 @@ import path from 'node:path';
 
 import { writeJson } from './confine-guard.mjs';
 import { isObject, readSmallJson } from './fs.mjs';
-import { withLocks } from './jsonl.mjs';
+import { LOCKED, withLocks } from './jsonl.mjs';
 import { stateDir } from './project.mjs';
 
 export const VERDICTS_FILE = 'residual-verdicts.json';
@@ -70,7 +70,8 @@ export const withKept = (rows, residuals) => (!Array.isArray(rows) ? rows
 // kept when the run is `named`, given its record, and otherwise the verdict of each one a row says contradicts something is
 // dropped. A residual filled in from the store has no row, so a run never restores what another dropped meanwhile. Returns
 // { lost, problem }: whether a verdict the run filled in is gone, so the run judged nothing in its place, and why the store
-// was not written, or null, which changes no answer.
+// was not written, or null, which changes no answer. Throws jsonl.mjs's LOCKED, to be tried again, while another run holds
+// the store's lock: that run may be dropping a verdict this one filled in. A released or abandoned lock is taken over.
 export function saveVerdicts(file, record, { residuals, rows, clean, named = true, at = new Date().toISOString() }) {
   const own = ({ residual }) => (Array.isArray(rows) ? rowsFor(rows, residual) : []);
   const judged = residuals.filter((each) => (clean ? named && own(each).length > 0 : own(each).some(({ contradicts }) => contradicts !== null)));
@@ -89,7 +90,8 @@ export function saveVerdicts(file, record, { residuals, rows, clean, named = tru
       return { lost: false, problem: writeJson(file, { version: VERSION, kept: [...held.filter((each) => !ours(each)), ...added].slice(-MAX_KEPT) }) };
     });
   } catch (error) {
-    // No lock, as in a folder this run may not write: what the store holds still answers.
+    if (error.code === LOCKED) throw error;
+    // No lock to wait for, as in a folder this run may not write: what the store holds still answers.
     return { lost: lostFrom(readVerdicts(file)), problem: judged.length ? error.code ?? error.message : null };
   }
 }

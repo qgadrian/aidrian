@@ -29,7 +29,7 @@
 // The judged file is `{ record, rows }`, with `record` the hash the listing printed, or the rows alone. A hash of another record
 // than this run reads exits 1. A judged run that exits 0 and is given its record keeps the clean verdict of each residual it has
 // a row for (residual-verdicts.mjs), and says so when it keeps none: a later listing marks such a residual `kept`, `--judged`
-// needs no row for it, and `--rejudge` ignores it.
+// needs no row for it, and `--rejudge` ignores it. While another run holds the store's lock it exits 1, to be tried again.
 // Nothing is kept or reused under `--residual` or `--path`, with no project folder, or while a decision or an ADR could not be read.
 // `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision), and `quorum route` and `quorum provisional` add `resolve`'s;
 // docs/dispatch-log.md describes them.

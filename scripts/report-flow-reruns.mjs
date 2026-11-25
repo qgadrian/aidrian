@@ -3,14 +3,16 @@
 //
 //   node scripts/report-flow-reruns.mjs --state <state folder> --project <checkout> [--reviewer product-manager] [--json]
 //
-// A run is one the record shows: a pass's result, or a finding the pass first raised in that round. A re-run is a run in a
-// round after an earlier run. Each goes to the first group that holds (GROUPS): an open finding was owed a re-check, as the
-// dispatch listed it, or with no list as the reviewer's own findings on the pass's flows say; the base was merged, which is
-// uncertain, since the merge may have touched the pass's files or not, so it comes before what it would hide; a file of the
-// pass's recorded list changed; the recorded file list changed, as of a pass that covers other flows; none of these. What
-// the record cannot settle is not sorted: whether a round's finding was carried, whether a run the record no longer holds
-// lies between, and which files the pass covered then. So the counts are a floor, the shares are of the sorted re-runs
-// alone, without the uncertain group, and the costs are an estimate, matched by time, label, and session ledger.
+// A run is one the record shows: a pass's result, or a finding the pass first raised in that round. A re-run is a run in
+// a round after an earlier run, and is set against the last run of each flow of its pass. Each goes to the first group
+// that holds (GROUPS): an open finding was owed a re-check, as the dispatch listed it, or with no list as the reviewer's
+// own findings on the pass's flows say; the base was merged, which is uncertain, since the merge may have touched the
+// pass's files or not, so it comes before what it would hide; a file of the pass's recorded list changed; the recorded
+// file list changed, as of a pass that covers other flows; none of these. What the record cannot settle is not sorted:
+// whether a round's finding was carried, whether a run the record no longer holds lies between, which files the pass
+// covered then, a branch rewritten since, as by a force-push, whose heads' diff says nothing of what was pushed, and
+// earlier runs that point to other groups. So the counts are a floor, the shares are of the sorted re-runs alone, without
+// the uncertain group, and the costs are an estimate, matched by time, label, and session ledger.
 
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -34,7 +36,9 @@ const flowsOf = (id) => {
   const [kind, name, flows] = id.split(':');
   return kind === 'flow' ? [name] : (flows ?? '').split('+').filter(Boolean);
 };
-const overlaps = (a, b) => a === b || flowsOf(a).some((flow) => flowsOf(b).includes(flow));
+// What the pass `id` covers: its flows, or with none itself.
+const partsOf = (id) => (flowsOf(id).length ? flowsOf(id) : [id]);
+const overlaps = (a, b) => partsOf(a).some((part) => partsOf(b).includes(part));
 const listKey = (files) => JSON.stringify(Array.isArray(files) ? [...files].sort() : null);
 
 // The index of the round `head` is of, the heads a quiet push moved it from included.
@@ -56,10 +60,22 @@ function runsOf(record, id) {
   return found;
 }
 
-// The group of the run of pass `id` at `head` in the round `index`: { from, group }, or { unread } with why the record cannot
-// tell. `earlier` is the last run before it, { id, index, head }, and `checkout` readCheckout's, or a stand-in.
+// The runs the run `run` came after: of each part of its pass, every run in the last round before it that had one. `runs`
+// are in round order.
+function predecessors(runs, run) {
+  const before = runs.filter((each) => each.index < run.index);
+  const last = (part) => {
+    const covering = before.filter(({ id }) => partsOf(id).includes(part));
+    return covering.filter(({ index }) => index === covering.at(-1).index);
+  };
+  return [...new Set(partsOf(run.id).flatMap(last))];
+}
+
+// The group of the run of pass `id` at `head` in the round `index`, against the run `earlier`, { id, index, head }: { from,
+// group }, or { unread } with why the record cannot tell. `checkout` is readCheckout's, or a stand-in.
 function groupOf({ record, id, index, head, earlier, checkout, mine }) {
   const { head: from } = earlier;
+  if (!checkout.isAncestor(from, head)) return { unread: 'the branch was rewritten: the earlier head is no ancestor of this one' };
   const note = record.dispatched?.[id]?.head === head ? record.dispatched[id] : null;
   const owed = Array.isArray(note?.listed) ? note.listed : record.rounds[index - 1].findings?.filter(({ pass }) => mine(pass) && overlaps(pass, id));
   if (!owed) return { unread: 'the earlier round keeps no findings' };
@@ -74,6 +90,14 @@ function groupOf({ record, id, index, head, earlier, checkout, mine }) {
   return { from, group: listKey(other.files) === listKey(files) ? 'none of these' : 'file list changed' };
 }
 
+// The group every one of the run's `earlier` runs points to, as groupOf gives it.
+function agreedGroup({ earlier, ...run }) {
+  if (earlier.length === 0) return { unread: 'no earlier run is on record, so it may be a first run' };
+  const told = earlier.map((each) => groupOf({ ...run, earlier: each }));
+  const groups = new Set(told.map(({ group, unread }) => group ?? unread));
+  return groups.size === 1 ? told[0] : { unread: 'the earlier runs of its flows do not point to one group' };
+}
+
 // The re-runs of `reviewer`'s passes on one review record: { reruns, first }, with `reruns` one row a pass and round, { pr,
 // repo, round, pass, to, from, group } or { ..., unread }, and `first` the count of runs in the pull request's first round.
 export function sortReruns(record, checkout, reviewer = 'product-manager') {
@@ -83,10 +107,9 @@ export function sortReruns(record, checkout, reviewer = 'product-manager') {
   const out = { reruns: [], first: runs.filter(({ index }) => index === 0).length };
   const row = ({ id, index, head }) => ({ pr: record.pr, repo: record.repo, round: index + 1, pass: id, to: head });
   for (const run of runs.filter(({ index }) => index > 0)) {
-    const earlier = runs.findLast((each) => each.index < run.index && overlaps(each.id, run.id));
-    let sorted = { unread: 'no earlier run is on record, so it may be a first run' };
+    let sorted;
     try {
-      if (earlier) sorted = groupOf({ record, ...run, earlier, checkout, mine });
+      sorted = agreedGroup({ record, ...run, earlier: predecessors(runs, run), checkout, mine });
     } catch {
       sorted = { unread: 'git cannot read the change between the heads' };
     }
@@ -100,10 +123,15 @@ export function sortReruns(record, checkout, reviewer = 'product-manager') {
   return out;
 }
 
-// The checkout at `root` as sortReruns asks it: `changed(from, to)`, the files between two heads, and `merges(from, to)`,
-// how many merge commits. Either throws when git cannot say.
+// The checkout at `root` as sortReruns asks it: `isAncestor(from, to)`, `changed(from, to)`, the files between two heads,
+// and `merges(from, to)`, how many merge commits. Each throws when git cannot say.
 export function readCheckout(root) {
   return {
+    isAncestor: (from, to) => {
+      const { status } = runGit(['merge-base', '--is-ancestor', from, to], root, GIT_READ);
+      if (status !== 0 && status !== 1) throw new Error(`git cannot tell whether ${from} is an ancestor of ${to}`);
+      return status === 0;
+    },
     changed: (from, to) => changedFiles(root, from, to).map(({ file }) => file),
     merges: (from, to) => {
       const counted = runGit(['rev-list', '--merges', '--count', `${from}..${to}`], root, GIT_READ);

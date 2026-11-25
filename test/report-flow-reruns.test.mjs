@@ -1,17 +1,20 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { deflateSync } from 'node:zlib';
 
 import { addCosts, GROUPS, readCheckout, readRecords, reportLines, reviewerRuns, sortReruns, totals } from '../scripts/report-flow-reruns.mjs';
 
 const PASS = 'agent:product-manager:booking';
 const WIDER = `${PASS}+sign-in`;
 const FILES = ['src/booking/a.mjs', 'src/booking/b.mjs'];
-// A checkout whose heads differ by `changes`, with a merge commit in each range of `merged`.
-const checkout = (changes = {}, merged = []) => ({
+// A checkout whose heads differ by `changes`, with a merge commit in each range of `merged`, and none a rewrite but `rewritten`.
+const checkout = (changes = {}, merged = [], rewritten = []) => ({
+  isAncestor: (from, to) => !rewritten.includes(`${from}..${to}`),
   changed: (from, to) => changes[`${from}..${to}`] ?? [],
   merges: (from, to) => (merged.includes(`${from}..${to}`) ? 1 : 0),
 });
@@ -80,9 +83,78 @@ test('what the record or git cannot say is sorted in no group', () => {
   assert.match(unread(regrouped(FILES, { rounds: [bare, round('h2')], ...none })), /keeps no findings/u);
   assert.match(unread(record({ passes: { [PASS]: { head: 'h2' } } })), /keeps no file list/u);
   assert.match(unread(record(), checkout({ 'h1..h2': ['docs/x.md'] })), /which files the pass covered before/u);
-  const broken = { changed: () => { throw new Error('bad object'); }, merges: () => 0 };
+  const broken = { ...checkout(), changed: () => { throw new Error('bad object'); } };
   assert.match(unread(record(), broken), /git cannot read/u);
-  assert.throws(() => readCheckout(path.join(tmpdir(), 'no-such-folder')).merges('a', 'b'), /git cannot count the merges/u);
+  const nowhere = readCheckout(path.join(tmpdir(), 'no-such-folder'));
+  assert.throws(() => nowhere.merges('a', 'b'), /git cannot count the merges/u);
+  assert.throws(() => nowhere.isAncestor('a', 'b'), /git cannot tell whether/u, 'a git that cannot say is no rewritten branch');
+});
+
+test('a re-run on a rewritten branch is not sorted, whatever the two heads\' diff, merges, or findings say', () => {
+  const rewritten = (rec, changes, merged) => only(rec, checkout(changes, merged, ['h1..h2']));
+  const cases = [
+    ['a file of the pass', record(), { 'h1..h2': [FILES[0]] }],
+    ['a merge in the range', record(), {}, ['h1..h2']],
+    ['the same file list', regrouped(FILES)],
+    ['another file list', regrouped([FILES[0]])],
+    ['an open finding', record(listing(['R1-1']))],
+  ];
+  for (const [what, ...args] of cases) {
+    const { group, unread } = rewritten(...args);
+    assert.deepEqual([group, unread], [undefined, 'the branch was rewritten: the earlier head is no ancestor of this one'], what);
+  }
+});
+
+// Writes a git object into the repository `dir`, and gives its id.
+function gitObject(dir, type, text) {
+  const bytes = Buffer.from(`${type} ${Buffer.byteLength(text)}\0${text}`);
+  const id = createHash('sha1').update(bytes).digest('hex');
+  const folder = path.join(dir, '.git/objects', id.slice(0, 2));
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(path.join(folder, id.slice(2)), deflateSync(bytes));
+  return id;
+}
+
+test('readCheckout tells a rewritten head from an ancestor as git does', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-reruns-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.git/refs'), { recursive: true });
+  mkdirSync(path.join(dir, '.git/objects'));
+  writeFileSync(path.join(dir, '.git/HEAD'), 'ref: refs/heads/main\n');
+  const tree = gitObject(dir, 'tree', '');
+  const who = 'T <t@example.invalid> 1700000000 +0000';
+  const commit = (subject, parent) => gitObject(dir, 'commit', `tree ${tree}\n${parent ? `parent ${parent}\n` : ''}author ${who}\ncommitter ${who}\n\n${subject}\n`);
+  const base = commit('base');
+  const [before, after] = [commit('before', base), commit('after', base)];
+  const { isAncestor, merges } = readCheckout(dir);
+  assert.deepEqual([isAncestor(base, after), isAncestor(before, after)], [true, false]);
+  assert.equal(merges(before, after), 0, 'no merge tells the two heads apart');
+  assert.throws(() => isAncestor('f'.repeat(40), after), /git cannot tell whether/u, 'a commit this checkout does not hold');
+});
+
+test('a re-run whose earlier overlapping runs point to other groups is not sorted, in any order, and one they agree on is', () => {
+  const [SIGN_IN, OTHER] = ['agent:product-manager:sign-in', 'flow:booking:product-manager'];
+  const rounds = (count) => Array.from({ length: count }, (_, index) => round(`h${index + 1}`));
+  const passes = (earlier, id = WIDER, head = 'h2') => Object.fromEntries([[id, { head, files: FILES }], ...earlier.map(([pass, at, files]) => [pass, { head: at, files }])]);
+  const sort = (earlier, { id, head, count = 2, ...over } = {}) => {
+    const rec = record({ rounds: rounds(count), passes: passes(earlier, id, head), ...none, ...over });
+    return sortReruns(rec, checkout()).reruns.find((each) => each.to === (head ?? 'h2'));
+  };
+  const disagree = 'the earlier runs of its flows do not point to one group';
+  const split = [[PASS, 'h1', FILES], [SIGN_IN, 'h1', ['src/sign-in.mjs']]];
+  for (const earlier of [split, split.toReversed()]) assert.equal(sort(earlier).unread, disagree, 'one earlier list is the pass\'s, and one is not');
+  for (const [files, group] of [[FILES, 'none of these'], [['src/x.mjs'], 'file list changed']]) {
+    assert.equal(sort([[PASS, 'h1', files], [SIGN_IN, 'h1', files]]).group, group, 'they agree');
+  }
+  for (const earlier of [[[OTHER, 'h1', FILES], [WIDER, 'h1', ['src/x.mjs']]], [[WIDER, 'h1', ['src/x.mjs']], [OTHER, 'h1', FILES]]]) {
+    assert.equal(sort(earlier, { id: PASS }).unread, disagree, 'two earlier passes of one flow');
+  }
+  // Sign-in last ran two rounds before, so a run the record no longer holds may lie between, in either order of the two.
+  for (const earlier of [[[PASS, 'h2', FILES], [SIGN_IN, 'h1', FILES]], [[SIGN_IN, 'h1', FILES], [PASS, 'h2', FILES]]]) {
+    assert.equal(sort(earlier, { head: 'h3', count: 3 }).unread, disagree);
+  }
+  // Booking ran again since the wider pass: the later run alone came before this one.
+  assert.equal(sort([[OTHER, 'h2', FILES], [WIDER, 'h1', ['src/x.mjs']]], { id: PASS, head: 'h3', count: 3 }).group, 'none of these');
 });
 
 test('the report says what is a floor and what is an estimate, beside its counts', () => {

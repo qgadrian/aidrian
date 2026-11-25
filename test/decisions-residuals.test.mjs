@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs, { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { consequenceLines, judgeResiduals, pairResiduals, residualItems, supersededAdr } from '../plugins/aidrian/lib/decisions.mjs';
+import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
 import { markKept, recordHash, residualHash, saveVerdicts, VERDICTS_FILE, withKept } from '../plugins/aidrian/lib/residual-verdicts.mjs';
 import { cliCall } from './cli-call.mjs';
 
@@ -810,6 +811,62 @@ test('a clean run whose kept verdict another run dropped before it answered exit
   }
 });
 
+// The store's next lock, taken by process `pid` of this machine; `release` lets it go.
+function lockHeldBy(pid, store) {
+  const next = 1 + Math.max(0, ...fs.readdirSync(path.dirname(store)).map((name) => Number(/\.lock\.(\d+)$/u.exec(name)?.[1] ?? 0)));
+  const name = `${realpathSync(path.dirname(store))}/${VERDICTS_FILE}.lock.${next}`;
+  writeFileSync(name, JSON.stringify({ pid, host: hostname(), nonce: 'other' }));
+  return { name, release: () => writeFileSync(`${name}.released`, '') };
+}
+
+// Every wait for a lock ends at once: a pause moves the clock past it.
+function skipLockWaits(t) {
+  const now = Date.now;
+  let ahead = 0;
+  t.mock.method(Date, 'now', () => now() + ahead);
+  t.mock.method(Atomics, 'wait', () => {
+    ahead += 60_000;
+    return 'timed-out';
+  });
+}
+
+test('a judged run that finds the store locked by another run fails, and says to try again; a released or abandoned lock does not', async (t) => {
+  const { dir, write, store } = storeProject(t);
+  const file = write('body.md', body('Accepted residuals', THREE));
+  const { record } = await listed(file, dir);
+  const residuals = THREE.map((each, index) => ({ n: index + 1, residual: `- ${each}`, kept: true }));
+  const [first, ...others] = rowsOf(THREE);
+  const save = (rows, clean = true, named = true) => saveVerdicts(store, record, { residuals, rows, clean, named });
+  save([first, ...others]);
+  const before = readFileSync(store, 'utf8');
+  const runs = {
+    'every row from the store': [[]],
+    'some rows from the store': [[first]],
+    'rows alone, with no record': [[first], true, false],
+    'every row its own': [[first, ...others]],
+    'a contradiction to drop': [[row(first.residual, 'refund-window', RULE)], false],
+  };
+  skipLockWaits(t);
+  const other = lockHeldBy(process.pid, store);
+  for (const [what, args] of Object.entries(runs)) {
+    assert.throws(() => save(...args), { code: LOCKED }, what);
+  }
+  // The other run stalls before it drops a verdict, so the store still holds every one.
+  const out = await call(['--body', file, '--judged', write('judged.json', [])], dir);
+  assert.deepEqual([out.status, out.stdout], [1, '']);
+  assert.equal(out.stderr, `${realpathSync(store)} is locked by another process (pid ${process.pid}, ${other.name}); try again\n`);
+  assert.equal(readFileSync(store, 'utf8'), before, 'and it wrote nothing');
+  other.release();
+  assert.deepEqual(save([]), { lost: false, problem: null }, 'released');
+  const noProcess = 2 ** 31 - 1;
+  lockHeldBy(noProcess, store);
+  assert.deepEqual(save([]), { lost: false, problem: null }, 'its process no longer runs');
+  rmSync(path.dirname(store), { recursive: true });
+  mkdirSync(path.dirname(store));
+  writeFileSync(store, before);
+  assert.deepEqual(save([]), { lost: false, problem: null }, 'no lock was ever taken');
+});
+
 test('a residual the body holds twice is never kept, and with no project folder nothing is', async (t) => {
   const { dir, write } = await judgedProject(t);
   assert.deepEqual((await listed(write('twice.md', body('Accepted residuals', [CLEAN, CLEAN])), dir)).owed, [1, 2]);
@@ -842,6 +899,7 @@ test('pr-write runs the residuals check before the body ships, and the docs say 
   assert.match(step, /the owed residuals alone/u);
   assert.match(step, /another `record` than the run reads exits 1: run step 1 again, and judge again/u);
   assert.match(step, /`\{ "record": <step 1's record>, "rows": \[\.\.\.\] \}`.*`aidrian decisions residuals --body <file> --judged <that file>`, with the same `--adr <folder>` as step 1/u);
+  assert.match(step, /An exit 1 that says `is locked by another process` judged nothing: run the same command again/u);
   assert.match(step, /never reworded on this branch to make a residual pass/u);
   assert.match(step, /one line of why stays in the body/u);
   assert.match(step, /an ADR whose Status starts `Superseded` is skipped/iu);

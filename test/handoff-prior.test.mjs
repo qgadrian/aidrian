@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -102,14 +102,34 @@ test('a snapshot taken after the write keeps the prior and exits 2; the same byt
   const again = run(dir, 'snapshot', file);
   assert.deepEqual([again.status, again.stdout], [0, `${snapshotPath(file)} already holds ${file}\n`]);
   assert.equal(statSync(snapshotPath(file)).ino, ino, 'the same bytes are not written again');
+  assert.notEqual(statSync(file).ino, ino, 'the snapshot is a copy, not the brief');
 
   writeFileSync(file, brief('Supersedes: 2026-01-01-widget.md'));
+  assert.equal(readFileSync(snapshotPath(file), 'utf8'), brief(), 'a refresh of the brief leaves the snapshot alone');
   const late = run(dir, 'snapshot', file);
   assert.equal(late.status, 2);
-  assert.match(late.stderr, new RegExp(`^${file} differs from the snapshot ${snapshotPath(file)}, .*remove it to snapshot this file instead\\n$`, 'u'));
+  assert.match(late.stderr, new RegExp(`^${file} differs from the snapshot ${snapshotPath(file)}, .*run aidrian handoff check, which compares with it; remove the snapshot only when that prior is known to be wrong\\n$`, 'u'));
   assert.equal(readFileSync(snapshotPath(file), 'utf8'), brief(), 'the good prior is kept');
   assert.match(takeSnapshot(file, write(dir, 'other.md', 'other\n')).problem, /^differs from the snapshot /u);
   assert.equal(readFileSync(snapshotPath(file), 'utf8'), brief(), 'a --prior with other bytes keeps it too');
+  assert.deepEqual(readdirSync(path.join(dir, '.prior')), ['2026-01-02-widget.md'], 'no temporary file is left');
+});
+
+test('a snapshot that cannot be read whole, or is a hard link to the brief, is kept and exits 2', (t) => {
+  const dir = tempDir(t);
+  const file = write(dir, '2026-01-02-widget.md', brief());
+  mkdirSync(path.join(dir, '.prior'));
+  linkSync(file, snapshotPath(file));
+  const linked = takeSnapshot(file);
+  assert.match(linked.problem, /^is the same file as the snapshot .*: remove that link and run snapshot again$/u);
+  assert.equal(statSync(snapshotPath(file)).ino, statSync(file).ino, 'the link is left for the session to remove');
+
+  rmSync(snapshotPath(file));
+  writeFileSync(snapshotPath(file), brief(), { mode: 0o000 });
+  if (process.getuid?.() === 0) return t.diagnostic('root reads a 0000 file: the unreadable case cannot be made here');
+  assert.match(takeSnapshot(file).problem, /^differs from the snapshot /u);
+  chmodSync(snapshotPath(file), 0o600);
+  assert.equal(readFileSync(snapshotPath(file), 'utf8'), brief(), 'the unreadable snapshot was kept');
 });
 
 test('the handoff command says it holds the sections a resume needs', () => {

@@ -10,7 +10,7 @@
 // the check would ask the driver, which no sandbox holds, to carry its steps.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const BRIEF_NAME = /^(\d{4}-\d{2}-\d{2})-(.+)\.md$/;
@@ -127,51 +127,78 @@ const linkedPrior = (briefPath) => {
   }
 };
 
-// Writes `bytes` as the brief's snapshot, by a temporary file and a rename. Throws what the disk refuses. The temporary
-// name is random and created exclusively before the try, so the cleanup only ever removes this call's own file.
-export function writeSnapshot(briefPath, bytes) {
+// Writes `bytes` as the brief's snapshot, by a temporary file and a rename over whatever is at its name, as a passing
+// check replaces the snapshot. With `exclusive`, a hard link publishes the file only where nothing is at its name, and
+// an entry there throws EEXIST and stays as it is. Throws what the disk refuses. The temporary name is random and
+// created exclusively before the try, so the cleanup only ever removes this call's own file.
+export function writeSnapshot(briefPath, bytes, { exclusive = false } = {}) {
   const snapshot = snapshotPath(briefPath);
   mkdirSync(path.dirname(snapshot), { recursive: true, mode: 0o700 });
   if (linkedPrior(briefPath)) throw Object.assign(new Error('.prior is a symlink'), { code: 'ESYMLINK' });
   const temporary = path.join(path.dirname(snapshot), `.${path.basename(snapshot)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
   writeFileSync(temporary, bytes, { flag: 'wx', mode: 0o600 });
   try {
-    renameSync(temporary, snapshot);
+    if (exclusive) linkSync(temporary, snapshot);
+    else renameSync(temporary, snapshot);
   } catch (error) {
     rmSync(temporary, { force: true });
     throw error;
   }
+  if (exclusive) rmSync(temporary, { force: true });
   return snapshot;
 }
 
 // Copies what the coming write supersedes into the snapshot, or clears a stale snapshot when nothing is. A snapshot the
-// disk refuses to write or to clear, such as a folder at its name, is a problem: { source, problem }. So is a snapshot
-// file already there with other bytes: a snapshot taken after the write would copy the new text over the good prior.
-// The same bytes are kept as they are, with no write: { source, snapshot, unchanged: true }.
+// disk refuses to write or to clear, such as a folder at its name, is a problem: { source, problem }. The copy is
+// published only where nothing is at the snapshot's name, so a snapshot taken after the write never replaces the good
+// prior: a regular file there is kept, and is a problem unless it is another file with the same bytes, which is
+// { source, snapshot, unchanged: true }. A link planted at the name is the one entry removed first.
 export function takeSnapshot(briefPath, explicitPrior) {
   const snapshot = snapshotPath(briefPath);
   const source = explicitPrior ?? (existsSync(briefPath) ? briefPath : findSupersededBrief(briefPath));
+  const cannot = (error) => ({ source: source ?? briefPath, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` });
   if (!source) {
     try {
       if (!linkedPrior(briefPath)) rmSync(snapshot, { force: true });
     } catch (error) {
-      return { source: briefPath, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` };
+      return cannot(error);
     }
     return null;
   }
   const reason = unreadable(source);
   if (reason) return { source, problem: reason };
-  const bytes = readFileSync(source);
-  // Only a regular file, read with no link followed, is a kept prior: a link planted at the name is replaced below.
-  const kept = linkedPrior(briefPath) ? null : cappedRead(snapshot, BRIEF_CAP);
-  if (kept?.equals(bytes)) return { source, snapshot, unchanged: true };
-  if (kept) return { source, problem: `differs from the snapshot ${snapshot}, which check compares with: a snapshot taken after the write would replace that prior, so it is kept; remove it to snapshot this file instead` };
+  let bytes;
   try {
-    writeSnapshot(briefPath, bytes);
+    bytes = readFileSync(source);
+    if (!linkedPrior(briefPath) && isLink(snapshot)) rmSync(snapshot);
+    writeSnapshot(briefPath, bytes, { exclusive: true });
+    return { source, snapshot };
   } catch (error) {
-    return { source, problem: `cannot be saved to ${snapshot} (${error.code ?? error.message})` };
+    if (error.code !== 'EEXIST' || bytes === undefined) return cannot(error);
+    return keptSnapshot(source, snapshot, bytes) ?? cannot(error);
   }
-  return { source, snapshot };
+}
+
+// Whether `file` is itself a symlink.
+function isLink(file) {
+  try {
+    return lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+// What a snapshot run says of the regular file it found at the snapshot's name and kept, or null for any other entry.
+// A file of other bytes, or one that cannot be read whole, is the prior: the next check compares with it.
+function keptSnapshot(source, snapshot, bytes) {
+  try {
+    if (!lstatSync(snapshot).isFile()) return null;
+  } catch {
+    return null;
+  }
+  if (samePath(source, snapshot)) return { source, problem: `is the same file as the snapshot ${snapshot}, not a copy a refresh leaves alone: remove that link and run snapshot again` };
+  if (cappedRead(snapshot, bytes.length)?.equals(bytes)) return { source, snapshot, unchanged: true };
+  return { source, problem: `differs from the snapshot ${snapshot}, the prior a refresh is checked against, so it is kept: write the brief and run aidrian handoff check, which compares with it; remove the snapshot only when that prior is known to be wrong` };
 }
 
 // Why a path cannot be read as a brief, or null.

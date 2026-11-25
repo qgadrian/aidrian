@@ -952,7 +952,9 @@ receipt's footer quotes "@codex review", and like the status card it is never a 
 acknowledgement. A run the bot reports failed on its side is no answer: its notice, which opens with "Codex Review:
 Something went wrong", and a status card whose code review is `failed` are neither a finding nor a request, though the
 notice quotes "@codex review" in its help text. The wait goes on as if the bot had not answered and ends `timed_out`,
-which the loop retries once, so the failure uses no round and records no finding.
+so the failure uses no round and records no finding. That timeout carries `retry_recommended: true`, and the loop
+waits once more, only when the bot acknowledged the request for the head or a receipt still waits on its status card;
+without either, the step reports `timed_out` with `retry_recommended: false` and no follow-up wait.
 Any other answer holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
 at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the
 bot's stage, after the earlier stages, as before. An answer for a commit other than the one under review counts for

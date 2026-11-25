@@ -807,6 +807,15 @@ test('awaitReview: a failed bot run is no answer, so the wait times out with its
   }
 });
 
+test('awaitReview: a failed bot run with no acknowledgement times out with no retry recommended', async () => {
+  const trigger = { id: 1, user: { login: 'someone' }, created_at: T(5), body: requestCommentBody(B40), reactions: { eyes: 0 } };
+  const notice = { id: 2, user: BOT, created_at: T(6), body: FAILURE_BODY };
+  const forge = fakeForge([{ issueComments: [trigger, notice] }], { head: B40 });
+  const c = clock();
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { forge, now: c.now, sleep: c.sleep });
+  assert.deepEqual([r.status, r.retry_recommended, r.signal, r.acknowledged_at, forge.posts.length], ['timed_out', false, null, null, 0]);
+});
+
 test('main exits by exitCodeFor, so a blocked_quota run is distinguishable from timed_out and success', () => {
   const src = readFileSync(new URL('../plugins/aidrian/lib/pr-await-review.mjs', import.meta.url), 'utf8');
   assert.match(src, /return exitCodeFor\(result\.status\)/);

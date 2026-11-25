@@ -1127,9 +1127,9 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
 // The release lines one wait prints (project-linger.mjs releaseAttempts): `held`, those of its passes so far, with
 // `lines`, those of one more, each once. A `not released KEY attempt N: ...` line of an earlier pass stays only while the
 // latest pass that could read that attempt repeats it, so a session that runs no more is never left for the Human to stop
-// by hand: one whose `unread` names the attempt keeps it.
+// by hand: one whose `unread` names the attempt keeps it. A `note sessions:` line is the latest pass's alone.
 export function mergeRelease(held, { lines, unread }) {
-  const stands = (line) => !line.startsWith('not released ') || unread.some((attempt) => line.startsWith(`not released ${attempt}:`));
+  const stands = (line) => line.startsWith('released ') || unread.some((attempt) => line.startsWith(`not released ${attempt}:`));
   return [...held.filter((line) => !lines.includes(line) && stands(line)), ...lines];
 }
 

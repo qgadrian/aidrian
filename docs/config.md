@@ -2454,7 +2454,7 @@ prints `idle`. Within one `wait`, a `not released` line of an earlier pass stays
 read its attempt repeats it, so a session that runs no more, stopped by a later pass or by hand, is not named. A pass
 that printed a `note sessions:` line keeps the line of each attempt it could not read and prints none of: every one when
 the host cannot say which sessions it holds, else one with a held session it cannot say ended. A `released` line of any
-pass stays.
+pass stays, and a `note sessions:` line is the latest pass's alone.
 Only a session the host lists as ended is released: one that works or waits on a response again is left alone, as while
 a person's turn runs in a session they attached to, and its attempt prints no `released` line meanwhile. That holds
 only for the turn, and, as Claude Code has no conditional stop, only for a turn the host already listed when that session

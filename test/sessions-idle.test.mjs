@@ -235,6 +235,22 @@ test('a name that is not plain words, a folder or stop line with a hidden charac
   assert.equal(idleSessions({ hosts: [thrown], env, home, now: NOW }).idle[0].stop, null, 'a stop line that throws reads null');
 });
 
+// `claude stop` refuses a full session id (claude-code-background.mjs stopBackground), so the real adapter gives no line.
+test('a Claude Code row with no usable short id is listed under its full id, with no stop line', (t) => {
+  const { env, home } = place(t);
+  const bin = folder(t, 'aidrian-idle-bin-');
+  writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nexit 1\n');
+  chmodSync(path.join(bin, 'claude'), 0o755);
+  for (const session of [HANDOFF, ATTEMPT]) markUnattended(session, { root: '/work/app', env, now: NOW });
+  const row = { kind: 'background', state: 'done', status: 'idle' };
+  const run = () => ({ status: 0, stdout: JSON.stringify([{ ...row, id: 'bad id!', sessionId: HANDOFF, startedAt: NOW - 2 * MINUTE }, { ...row, id: '42cf8d0a', sessionId: ATTEMPT, startedAt: NOW - MINUTE }]) });
+  const read = idleSessions({ hosts: HOSTS.filter((host) => host.id === 'claude-code'), env: { ...env, PATH: bin }, home, now: NOW, run });
+  assert.deepEqual(plainLines(read), [
+    `idle ${HANDOFF} 2m handoff continuation: Claude Code gave no stop line it is safe to print`,
+    'idle 42cf8d0a 1m handoff continuation: `claude stop 42cf8d0a` stops it',
+  ]);
+});
+
 // A folder holds any character a path may, so one with a backtick or a colon and whitespace could make the line read as
 // two stop lines to whoever copies from it: it is left out, whether the host's listing or the mark gives it.
 test('a folder with a backtick or a colon and whitespace is left out, from the host listing and from the mark alike', (t) => {

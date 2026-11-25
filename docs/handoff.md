@@ -985,8 +985,8 @@ up to 100 characters, each an ASCII letter or digit, a space, or one of `_ . @ :
 whitespace, so the line shows one stop command alone, then `(waiting on a response)` when the host says it waits on one:
 such a session may be mid-task, and the stop ends that task undone. `<stop line>` is the host's, such as
 `` `claude stop 189eaf3d` stops it ``. An id with any character but a letter, a digit, `_`, or `-` gets none, and
-neither does a host whose line is empty or holds a hidden character: the line then ends `<host name> gave no stop line
-it is safe to print`.
+neither does a Claude Code row with no short id, as `claude stop` refuses a full one, or a host whose line is empty or
+holds a hidden character: the line then ends `<host name> gave no stop line it is safe to print`.
 
 A host whose listing failed, such as one whose program is not on PATH, prints `note <host name>: <reason>`. A host
 that by design holds no such session prints nothing. With no session listed and no host failed, the one line is

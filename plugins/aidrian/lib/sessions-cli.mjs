@@ -84,14 +84,14 @@ function idleRow({ host, name, row, mark, now }) {
     run: attempt ? mark.project : null,
     issue: attempt ? mark.issue : null,
     root: plainLine(mark.root),
-    stop: SESSION_ID.test(row.id) ? stopLineOf(host, row.id) : null,
+    stop: SESSION_ID.test(row.id) ? stopLineOf(host, row) : null,
   };
 }
 
-// The host's stop line for `id`, read through a guard, or null when it throws or gives no line of plain text.
-function stopLineOf(host, id) {
+// The host's stop line for a listed row, read through a guard, or null when it throws or gives no line of plain text.
+function stopLineOf(host, { id, session }) {
   try {
-    return plainLine(host.capabilities.backgroundSessions.stopLine({ id }));
+    return plainLine(host.capabilities.backgroundSessions.stopLine({ id, session }));
   } catch {
     return null;
   }

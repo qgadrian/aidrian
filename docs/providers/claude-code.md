@@ -1044,7 +1044,8 @@ it still holds (`heldSessions`). Each reads `claude agents --json` once, without
 sessions the supervisor keeps, while `--all` adds the completed ones it no longer holds.
 
 - A row counts when `kind` is `background` and `sessionId` has the id shape; the interactive session's own row, which
-  carries no `id`, is left out. `id` is the row's short id, which `claude stop` takes, else its `sessionId`.
+  carries no `id`, is left out. `id` is the row's short id, which `claude stop` takes, else its `sessionId`,
+  for display: `claude stop` refuses a full id, so that row gets no stop line (`listedStopLine`).
 - `idle` needs `status: "idle"` with `state` either `done` or `blocked`. A row with no `status`, or in any other
   state, is never idle. On 2.1.331, a background session whose turn ended while a task it started still ran was listed
   with `state: "working"` and `status: "idle"`. It is still at work, so it is not idle. `waiting` is `state: "blocked"`.

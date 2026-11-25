@@ -403,7 +403,8 @@ test('the release lines one wait prints: a not released line stays only while th
   assert.deepEqual(passes([stuck('a')], ['released ENG-1 attempt 1']), ['released ENG-1 attempt 1']);
   assert.deepEqual(passes(['released ENG-1 attempt 1'], []), ['released ENG-1 attempt 1'], 'a released line stays');
   assert.deepEqual(passes([stuck('a')], blind([], 'ENG-1 attempt 1')), [stuck('a'), note], 'a pass that could not read its attempt keeps it');
-  assert.deepEqual(passes([stuck('a')], blind([], 'ENG-1 attempt 1'), []), [note], 'until a later pass could');
+  assert.deepEqual(passes([stuck('a')], blind([], 'ENG-1 attempt 1'), []), [], 'until a later pass could, whose line it is: the earlier note goes too');
+  assert.deepEqual(passes(blind([]), blind([])), [note], 'a note the latest pass repeats is printed once');
   const other = stuck('c', 'ENG-1 attempt 10');
   assert.deepEqual(passes([stuck('a'), other], blind([], 'ENG-1 attempt 1', 'ENG-1 attempt 10')), [stuck('a'), other, note], 'every one when the host listed nothing');
   assert.deepEqual(passes([stuck('a'), other], blind([], 'ENG-1 attempt 10')), [other, note], 'only the attempt that was unreadable: the other one\'s stop was confirmed');

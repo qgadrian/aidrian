@@ -269,6 +269,10 @@ export function attachLine({ id, name }) {
 // How the Human stops the session `id` by hand, when stopBackground could not.
 export const stopLine = ({ id }) => `\`claude stop ${id}\` stops it`;
 
+// stopLine for a row of listBackground, or null for one whose `id` is its full id: the listing gave no short id, and
+// `claude stop` refuses a full one (stopBackground).
+export const listedStopLine = ({ id, session }) => (id === session ? null : stopLine({ id }));
+
 // The folder of the session `session` in the listing `list`, where startBackground starts the session that resumes its
 // brief: an absolute path with no control character, or null.
 function ownFolder(list, session) {

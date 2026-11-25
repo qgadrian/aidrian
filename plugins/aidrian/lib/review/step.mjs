@@ -16,7 +16,7 @@ import { botCommentsOf, BUILT_IN, confinedReason, resolveEngine, reviewerMap, sa
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
-import { repoFlag } from '../remotes.mjs';
+import { hostOf, repoFlag } from '../remotes.mjs';
 import { isFindingId, MAX_COUNTER, recordFindings } from './findings.mjs';
 import { deleteOwn, handledKeys } from './delete.mjs';
 import { mappedPosts } from './markers.mjs';
@@ -157,10 +157,15 @@ export async function prepareStep(s) {
   const harnessFiles = new Set([project.paths.config, ...reviewCommands.flatMap((command) => commandFiles(root, command, baseTip))]);
 
   // The record so far: the newer of this machine's and the pull request's. With `review.record: "local"` on the base
-  // branch the pull request is never read or written: the record is this machine's state folder only. A comment that holds
+  // branch no record is read from the pull request and nothing is written there: the record is this machine's state folder
+  // only, and the conversation is read only for the review bot's own comments (botComments below). A comment that holds
   // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
   const onPr = committed.review.record !== 'local';
-  const comments = onPr ? forge.conversationComments(repo, n) : [];
+  // Every read of the conversation names the pull request's host, from its URL, as the forge's other reads of it do:
+  // without one, the forge's CLI picks its default host.
+  const host = hostOf(info.url);
+  const conversation = () => forge.conversationComments(repo, n, host ? { host } : {});
+  const comments = onPr ? conversation() : [];
   // The members' marked posts (lib/review/inline.mjs), read once a step whose record is posted, before anything here
   // writes: the lists of the engine's posts, the counter floor, and the delete's unmapped comments come from them.
   const marked = onPr ? readMarked(forge, repo, n, comments) : null;
@@ -232,10 +237,14 @@ export async function prepareStep(s) {
   let posting = null;
   const post = (extra = {}) => (posting ??= postContext({ forge, repo, n, project, configs: [committed, config], env, reading, ...extra }));
   // The review bot's own receipt and status card, which a model reviewer leaves out (reviewers.mjs botCommentsOf), found
-  // in the conversation read above, by the base branch's bot, so a pull request cannot name another author whose comments
-  // the review then skips. With the conversation not read, as under `review.record: "local"`, it is null: none is exempt.
-  const botComments = onPr ? botCommentsOf(comments, committed.github.reviewer ?? null) : null;
-  Object.assign(s, { root, cleanEnv, info, repo, repoArg, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post, botComments });
+  // in the conversation by the base branch's bot, so a pull request cannot name another author whose comments the review
+  // then skips. Under `review.record: "local"` the step reads the conversation for this alone, and writes nothing there;
+  // a read that fails gives null, and then none is exempt.
+  let botComments = null;
+  try {
+    botComments = botCommentsOf(onPr ? comments : conversation(), committed.github.reviewer ?? null);
+  } catch {}
+  Object.assign(s, { root, cleanEnv, info, repo, repoArg, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post, botComments, host });
 
   // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
   // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried

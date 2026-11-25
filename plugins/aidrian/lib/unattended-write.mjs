@@ -679,13 +679,13 @@ function placed(spelled, places, options) {
   return placeOf(real(spelled), spelled, places, options);
 }
 
-// The text a file edit tool writes to each file it names, { file, texts }, for the manifest check: the lines a patch adds
-// as its lines, and joined, since a fragment is judged by both.
+// The text a file edit tool writes to each file it names, { file, texts }, for the manifest check: the lines a patch adds,
+// as the text a Write of them would hold.
 function editedTexts(input) {
   const edit = fileEditOf(input);
   if (!edit) return [];
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  if (edit.shape === 'patch') return (edit.files ?? []).map(({ file, added }) => ({ file: path.resolve(cwd, file), texts: [(added ?? []).join('\n'), String(added ?? '')] }));
+  if (edit.shape === 'patch') return (edit.files ?? []).map(({ file, added }) => ({ file: path.resolve(cwd, file), texts: [(added ?? []).join('\n')] }));
   const texts = [edit.content, edit.newText, ...(Array.isArray(edit.edits) ? edit.edits.flatMap((each) => Object.values(each ?? {})) : [])];
   return [{ file: path.resolve(cwd, edit.file ?? ''), texts: texts.filter((each) => typeof each === 'string') }];
 }

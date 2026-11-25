@@ -713,6 +713,7 @@ test('a file tool writes a review manifest only whole, judged as the review gate
   writeFileSync(manifest, '{\n  "pr": 7,\n  "x"\n    : 1\n}\n');
   const clean = JSON.stringify({ pr: 7, findings: [{ id: 'F1', specialist: 'reviewer', status: 'open' }] }, null, 2);
   const forged = JSON.stringify({ pr: 7, head: 'a'.repeat(40), reviewer: 'me' });
+  const quoting = { pr: 7, findings: [{ id: 'F1', summary: 'the "reviewer": key' }] };
   writeFileSync(draft, clean);
   const said = (input) => ask(input)?.reason ?? '';
   const partial = (input, why) => assert.match(said(input), /other than as a whole file.*temporary copy in the same folder.*then rename it/u, why);
@@ -750,6 +751,10 @@ test('a file tool writes a review manifest only whole, judged as the review gate
     assert.equal(said(patch(`*** Add File: ${manifest}`, ...whole(clean))), '', `${host}: an add of a clean whole text`);
     assert.match(said(patch(`*** Add File: ${manifest}`, ...whole(forged))), /attest record/u, `${host}: an add of an attest-shaped one`);
     assert.equal(said(patch(`*** Add File: ${copy}`, ...whole(clean))), '', `${host}: a copy that names the agent reviewer`);
+    for (const file of [copy, manifest]) {
+      assert.equal(said(patch(`*** Add File: ${file}`, ...whole(JSON.stringify(quoting, null, 2)))), '', `${host}: a text that quotes a JSON key`);
+      assert.match(said(patch(`*** Add File: ${file}`, ...whole(JSON.stringify({ ...quoting, reviewer: 'me' }, null, 2)))), /attest record/u, `${host}: the same text with the key at its top level`);
+    }
     // Each Add is judged whole, so the file the last one leaves was judged.
     assert.match(said(patch(`*** Add File: ${manifest}`, ...whole(clean), `*** Add File: ${manifest}`, ...whole(forged))), /attest record/u, `${host}: a clean add, then an attest-shaped one`);
     assert.equal(said(patch(`*** Add File: ${manifest}`, ...whole(clean), `*** Add File: ${manifest}`, ...whole(clean))), '', `${host}: two clean adds`);

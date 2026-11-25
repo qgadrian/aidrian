@@ -695,9 +695,9 @@ Bot, and its first line is the receipt's marker, `<!-- codex-review-receipt:v1 -
 from the base branch, so a pull request cannot rename it. The pass input lists those comments as `botComments`, each with
 its id and link, and the prompt names them: their stock text is left out of the review, and any other request in them is
 still a finding. A comment that fails a check, such as a maintainer's that quotes a marker, is only not exempt: it reads
-like any other comment, a finding only when it asks to change the review. The step reads the conversation from the pull
-request's host, the one its URL names, and under `review.record: "local"` too, for this alone: it still writes nothing
-there. When that read fails, or no review bot is set, `botComments` is null and no comment is exempt this way.
+like any other comment, a finding only when it asks to change the review. The step reads the conversation under
+`review.record: "local"` too, for this alone: it still writes nothing there. When that read fails, or no review bot is
+set, `botComments` is null and no comment is exempt this way.
 
 `codex-local`'s Codex run also serves plans: the `quorum` skill runs it as a plan's adversary, and the `plan-review`
 skill runs the quorum on high-stakes plans ([quorum ledgers](project-folder.md#local-state)).

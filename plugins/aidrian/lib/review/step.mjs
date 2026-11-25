@@ -16,7 +16,7 @@ import { botCommentsOf, BUILT_IN, confinedReason, resolveEngine, reviewerMap, sa
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
-import { hostOf, repoFlag } from '../remotes.mjs';
+import { repoFlag } from '../remotes.mjs';
 import { isFindingId, MAX_COUNTER, recordFindings } from './findings.mjs';
 import { deleteOwn, handledKeys } from './delete.mjs';
 import { mappedPosts } from './markers.mjs';
@@ -161,10 +161,7 @@ export async function prepareStep(s) {
   // only, and the conversation is read only for the review bot's own comments (botComments below). A comment that holds
   // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
   const onPr = committed.review.record !== 'local';
-  // Every read of the conversation names the pull request's host, from its URL, as the forge's other reads of it do:
-  // without one, the forge's CLI picks its default host.
-  const host = hostOf(info.url);
-  const conversation = () => forge.conversationComments(repo, n, host ? { host } : {});
+  const conversation = () => forge.conversationComments(repo, n);
   const comments = onPr ? conversation() : [];
   // The members' marked posts (lib/review/inline.mjs), read once a step whose record is posted, before anything here
   // writes: the lists of the engine's posts, the counter floor, and the delete's unmapped comments come from them.
@@ -244,7 +241,7 @@ export async function prepareStep(s) {
   try {
     botComments = botCommentsOf(onPr ? comments : conversation(), committed.github.reviewer ?? null);
   } catch {}
-  Object.assign(s, { root, cleanEnv, info, repo, repoArg, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post, botComments, host });
+  Object.assign(s, { root, cleanEnv, info, repo, repoArg, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post, botComments });
 
   // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
   // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried

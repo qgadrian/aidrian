@@ -109,20 +109,6 @@ test('the local pass reads the review bot`s own comments the step found by the b
   assert.deepEqual(seen, seen.map(() => [{ id: 101, url: 'https://github.com/o/r/pull/7#issuecomment-101' }, { id: 103 }]), 'every pass reads the base branch bot`s own comments');
 });
 
-test('the step reads the conversation from the pull request`s own host, not the forge CLI`s default', async (t) => {
-  const r = repo(t, { baseConfig: { version: 1, github: { reviewer: 'review-bot[bot]' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
-  const change = r.forge.change;
-  r.forge.change = (...args) => ({ ...change(...args), url: 'https://ghe.example.com/o/r/pull/7' });
-  r.comments.push({ id: 101, user: { login: 'review-bot[bot]', type: 'Bot' }, body: "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!", html_url: 'https://ghe.example.com/o/r/pull/7#issuecomment-101' });
-  const hosts = [];
-  r.forge.conversationComments = (_repo, _n, options) => (hosts.push(options?.host ?? null), r.comments);
-  const seen = [];
-  await r.step({ exec: async (_reviewer, input) => (seen.push(input.botComments), clean()) });
-  assert.ok(hosts.length > 0, 'the step read the conversation');
-  assert.deepEqual([...new Set(hosts)], ['ghe.example.com'], 'every read names the host of the pull request`s URL');
-  assert.deepEqual(seen.at(-1), [{ id: 101, url: 'https://ghe.example.com/o/r/pull/7#issuecomment-101' }]);
-});
-
 test('under review.record "local" the step still reads the review bot`s own comments for the pass, and a failed read leaves none exempt', async (t) => {
   const receipt = "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!";
   for (const fails of [false, true]) {

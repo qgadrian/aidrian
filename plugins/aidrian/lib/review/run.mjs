@@ -317,7 +317,7 @@ function mergePosted(s) {
   if (context.publish?.inline !== true) return;
   let comments;
   try {
-    comments = s.forge.conversationComments(s.repo, s.n, s.host ? { host: s.host } : {});
+    comments = s.forge.conversationComments(s.repo, s.n);
   } catch {
     return;
   }

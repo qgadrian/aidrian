@@ -799,6 +799,29 @@ test('a start given back records no head: the next attempt holds the branch to t
   assert.equal(fx.git('-C', work(fx, 'ENG-1', 2), 'rev-parse', 'HEAD').trim(), head);
 });
 
+// A start given back (`void`) frees its number, and a session it ran may have committed work the forge does not have.
+test('a start that takes the number of a kept attempt refuses, and removes nothing, wherever its folder is', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  fx.git('-C', work(fx), 'commit', '-q', '--allow-empty', '-m', 'work found nowhere else');
+  const head = fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim();
+  const { id, child, ...ahead } = fx.rows().findLast((row) => row.event === 'start');
+  fx.claude.states[STARTED[0].session] = 'done';
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ ...ahead, outcome: 'void', proof: true, at: at(Date.now()) }, { event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
+  assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0']).out[0], /^kept ENG-1 attempt 1: /u);
+  const before = fx.rows().length;
+  const folder = path.dirname(work(fx));
+  const refuses = (message) => {
+    const refused = fx.cmd(['start', 'launch', 'ENG-1']);
+    assert.deepEqual([refused.exitCode, refused.err], [1, [`aidrian project start: attempt 1 of ENG-1 is kept for the run's life, as the run's ledger says: its clone may hold work the forge does not have, so no start of this run takes its number; recover the work from ${work(fx)}, or where that folder was moved, and start the issue in a new run`]], message);
+    assert.deepEqual([fx.rows().length, fx.claude.starts().length], [before, 1], `${message}: nothing recorded, nothing started`);
+  };
+  refuses('its folder there');
+  assert.equal(fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim(), head, 'the work is still there');
+  renameSync(folder, path.join(fx.root, 'recovered'));
+  refuses('its folder moved away');
+});
+
 // A submodule entry is neither a file nor a folder an overlay can write over.
 test('a branch that makes a host path a submodule parks the issue', (t) => {
   const gitAt = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: 'pipe' });

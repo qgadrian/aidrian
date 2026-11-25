@@ -20,6 +20,9 @@
 //     in a clone a session had, and the driver removes an attempt's folder once its session ended (sweepAttempts).
 //     The session may also write the state work folders, plans, reviews, tmp, and dispatch, each a plain folder of the
 //     user directly in the state folder that holds no guarded folder and lies in none.
+//   - A later attempt's clone also holds the commits an attempt a limit ended made and never pushed, under a ref of their
+//     own, for its session to take (lib/project-kept.mjs); each clone packs no object on its own (UNPACKED), so its
+//     commits stay loose to read.
 //   - Each attempt's clone commits unsigned (UNSIGNED, in its own config alone): the sandbox hides the user's signing
 //     keys, so a commit the user's own config signs would fail after the work is done. commitProblem is the preflight's
 //     probe that a commit works in a clone made so.
@@ -34,6 +37,7 @@ import { gateGit } from './git.mjs';
 import { nestedPathspecs } from './hosts/index.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, keepTokenFiles, sessionToken, tokenDigest, tokenFiles, tokenRecordThere, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
+import { keptCandidate, pinnedFolders, takeKept } from './project-kept.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
@@ -253,14 +257,18 @@ export function stateWorkFolders(state, { env, home }) {
 }
 
 // The fresh clone of attempt `attempt` of issue `key` for a confined host: { folder, work, git, drop, cache, branch,
-// onForge, head, reviewed, overlay }, or { problem }, { halt }, { retry }, or { park }, each of which leaves no attempt
-// folder. `head` is the commit the forge's branch was at, or the tip it was cut from, which the start row records.
+// onForge, head, reviewed, overlay, kept }, or { problem }, { halt }, { retry }, or { park }, each of which leaves no
+// attempt folder. `head` is the commit the forge's branch was at, or the tip it was cut from, which the start row records.
 // `cache` is the owner-only folder its package managers' caches go to (project-registries.mjs cacheVars), which holds
 // only npm's empty config files (NPM_CONFIGS) at first; it and `drop` each hold a read-only keep file (attempt-clone.mjs
-// ATTEMPT_KEEP). Any folder the attempt had is removed first. The clone borrows the main checkout's objects read-only,
+// ATTEMPT_KEEP). Any folder the attempt had is removed first, as a start given back (`void`) leaves; but a number a `kept`
+// row of the run `found` names refuses the start, wherever its folder went, since the clone of one may hold work found
+// nowhere else, and a second clone of that number could never have a row of its own. The clone borrows the main
+// checkout's objects read-only,
 // takes origin's URL from the main checkout, which pushProblem checked, and checks out `branch`: from the base tip `tip`
 // on the first attempt, or on a later one from the head the forge has, fetched and named by its commit. Its own config
-// turns signing off (UNSIGNED); a clone whose commits would still sign (signingProblem) is { halt }.
+// turns signing off (UNSIGNED) and git's own packing (UNPACKED); a clone whose commits would still sign (signingProblem)
+// is { halt }.
 // A later attempt whose head differs from the tip in a file `guards` takes, the host config and instruction files
 // (project-trust.mjs isGuarded) and the policy files the gate resolved, and that the tip does not already hold, asks
 // `reviewed(head, changed)`, `changed` every path the head changes from the tip: null keeps the branch's own files
@@ -278,11 +286,17 @@ export function stateWorkFolders(state, { env, home }) {
 // branch does not hold, are { park: { branch, head, why } }, `head` the recorded one or null, as every park names it.
 // A branch the forge no longer has is cut from the tip under the same name, as a first attempt's: deleting it is how a
 // person asks for the issue to start over. `onForge` says whether the attempt goes on on the issue's branch as the forge
-// has it. `env` is the environment of its network calls.
-export function prepareAttempt({ project, state, run, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, env }) {
+// has it. When the forge has the branch and it holds the recorded head, the clone also takes in the commits an ended
+// attempt's kept clone holds over that head, under a ref alone, where its session may take them (project-kept.mjs):
+// `kept` is that offer, or why the latest kept clone's are not offered, or null. Nothing else here reads them: the
+// checkout, the review asked, and the base copies go by the forge's head. `env` is the environment of its network calls.
+export function prepareAttempt({ project, state, run, found, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
+  if (found.rows.some((row) => row.event === 'kept' && row.key === key && row.attempt === attempt)) {
+    return { problem: `attempt ${attempt} of ${key} is kept for the run's life, as the run's ledger says: its clone may hold work the forge does not have, so no start of this run takes its number; recover the work from ${work}, or where that folder was moved, and start the issue in a new run` };
+  }
   try {
     rmSync(folder, { recursive: true, force: true });
     mkdirSync(folder, { recursive: true, mode: 0o700 });
@@ -308,7 +322,7 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, reco
   if (url.status !== 0) return failed('origin', url);
   // No template: a template folder, from GIT_TEMPLATE_DIR or init.templateDir, could put a commondir or hooks in the git
   // folder. The hooks folder is made empty instead, so the sandbox's write denial has a path to hold.
-  const cloned = git(['clone', '--quiet', '--template=', '--shared', '--no-checkout', '--separate-git-dir', gitFolder, main, work], folder);
+  const cloned = git(['clone', '--quiet', ...UNPACKED.flatMap(([key, value]) => ['--config', `${key}=${value}`]), '--template=', '--shared', '--no-checkout', '--separate-git-dir', gitFolder, main, work], folder);
   if (cloned.status !== 0) return failed('clone', cloned);
   try {
     mkdirSync(path.join(gitFolder, 'hooks'), { mode: 0o700 });
@@ -324,6 +338,7 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, reco
   let onHead = null;
   let passed = null;
   let overlay = null;
+  let kept = null;
   const listed = git(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`]);
   // A first attempt cuts the branch from the base tip: one the forge has already is work this run's ledger does not
   // account for, unless an earlier run parked the issue on it at a commit the branch still holds.
@@ -332,6 +347,7 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, reco
   if (!later && listed.status === 0) return park(null, `the forge has ${branch}, and the ledger records no head of it`);
   if (!later && listed.status !== 2) return failed('ls-remote', listed);
   if (later) {
+    kept = keptCandidate({ found, key, branch, folderOf: (each) => attemptFolder(state, run, key, each), refs: cloneRefs });
     if (listed.status === 0) {
       const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
       if (fetched.status !== 0) return failed('fetch', fetched);
@@ -367,7 +383,11 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, reco
           if (unsafe) return park(own, unsafe.why);
         }
       }
+      if (kept?.head) kept = takeKept({ candidate: kept, folder, work, gitFolder, forgeHead: onHead, from, guards, git });
+      if (kept?.problem) return gone(kept.problem);
     } else if (listed.status !== 2) return failed('ls-remote', listed);
+    // A branch a person deleted on the forge starts the issue over, its kept commits included.
+    else if (kept?.head) kept = { attempt: kept.attempt, why: 'the forge has no branch of the issue' };
   }
   const checkout = git(['checkout', '--quiet', '-b', branch, from]);
   if (checkout.status !== 0) return failed('checkout', checkout);
@@ -390,7 +410,7 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, reco
   if (signing) return { halt: gone(`the attempt's clone ${work} is not started: ${signing}`).problem };
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
   // `onForge`: the attempt goes on on the issue's branch the forge has, not one the forge lacks.
-  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, branch, onForge: later && listed.status === 0, head: onHead ?? tip, reviewed: passed, overlay };
+  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, branch, onForge: later && listed.status === 0, head: onHead ?? tip, reviewed: passed, overlay, kept };
 }
 
 // Why the base tip's copies cannot be written safely over `overlay.files` in the clone `work`, read from the two
@@ -510,6 +530,10 @@ function sparseMarks({ work, gitFolder, indexed, git }) {
 // run merges each pull request by squash, so the forge writes the commit the base branch gets. A key the environment sets,
 // through GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS, still wins over the clone's own: commitProblem names it.
 export const UNSIGNED = Object.freeze([['commit.gpgsign', 'false'], ['tag.gpgsign', 'false']]);
+
+// The keys that keep git from packing objects on its own in each attempt's clone, in its own config: a kept clone's
+// commits are taken from its loose objects alone (project-kept.mjs). The clone call itself sets them, with no call more.
+const UNPACKED = Object.freeze([['gc.auto', '0'], ['maintenance.auto', 'false']]);
 
 // Sets UNSIGNED in the own config of the checkout `work`, under `env`: null, or the git call that failed.
 export function setUnsigned(work, env = process.env) {
@@ -785,6 +809,7 @@ export function unpushedHead({ folder, row, repository, forge }) {
   return null;
 }
 
+const CHANGED_FOLDER = 'lies below a folder that changed while it was read';
 const FULL_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 // A branch's ref name, as a loose ref file's path below the git folder: no part that climbs out, or that git refuses.
 const HEAD_REF = /^ref: (refs\/heads\/[^\s\0]+)$/u;
@@ -795,27 +820,44 @@ const PACKED_CAP = 32 * 1024 * 1024;
 
 // The commits of HEAD and of the branch `branch` in the git folder `gitFolder` of an attempt's clone, read as files
 // without following a link: { heads }, each a full hex id once, none for a folder with no HEAD or a branch not born yet,
-// or { problem }, for a ref the read cannot trust, which keeps the folder.
+// or { problem }, for a ref the read cannot trust, or a folder that changed under it, which keeps the folder.
 export function cloneHeads(gitFolder, branch) {
+  const refs = cloneRefs(gitFolder, branch);
+  return refs.problem ? refs : { heads: [...new Set([refs.head, refs.branch].filter(Boolean))] };
+}
+
+// The same two refs each by its name, { head, branch }, a full hex id or null for one that is missing or not born yet, or
+// { problem }: a kept clone is taken from only with both at its one commit (project-kept.mjs). Each ref file is read only
+// through the folders pinned before its open (pinnedFolders); `before(relative)` is a test's hook, called right before
+// each open.
+export function cloneRefs(gitFolder, branch, before = () => {}) {
+  const pins = pinnedFolders();
+  const walk = (relative) => [path.dirname(gitFolder), gitFolder, ...relative.split('/').slice(0, -1).map((_, at, parts) => path.join(gitFolder, ...parts.slice(0, at + 1)))];
+  const read = (relative, cap) => {
+    pins.pin(walk(relative));
+    return refFile(gitFolder, relative, cap, pins.whole, before);
+  };
+  pins.pin(walk(`refs/heads/${branch}`));
   let folder;
   try {
+    before('.');
     folder = lstatSync(gitFolder);
   } catch (error) {
-    if (error.code === 'ENOENT') return { heads: [] };
+    if (error.code === 'ENOENT') return pins.whole() ? { head: null, branch: null } : { problem: `the git folder ${CHANGED_FOLDER}` };
     return { problem: `the git folder cannot be read (${error.code ?? 'no code'})` };
   }
   if (!folder.isDirectory()) return { problem: 'the git folder is not a plain folder' };
   // A git folder whose HEAD is gone may still hold the branch's commits: it keeps the folder.
-  const head = refFile(gitFolder, 'HEAD', LOOSE_CAP);
+  const head = read('HEAD', LOOSE_CAP);
   if (head.missing) return { problem: 'HEAD is missing' };
   if (head.problem) return { problem: `HEAD ${head.problem}` };
   let packed = null;
   const resolve = (name) => {
     if (!plainRef(name)) return { problem: `${name} is not a branch's ref name` };
-    const loose = refFile(gitFolder, name, LOOSE_CAP);
+    const loose = read(name, LOOSE_CAP);
     if (loose.problem) return { problem: `${name} ${loose.problem}` };
     if (!loose.missing) return FULL_ID.test(loose.text) ? { id: loose.text } : { problem: `${name} holds no commit id` };
-    packed ??= refFile(gitFolder, 'packed-refs', PACKED_CAP);
+    packed ??= read('packed-refs', PACKED_CAP);
     if (packed.problem) return { problem: `packed-refs ${packed.problem}` };
     const line = packed.missing ? undefined : packed.text.split('\n').find((each) => each.endsWith(` ${name}`) && !each.startsWith('#') && !each.startsWith('^'));
     if (line === undefined) return { id: null };
@@ -827,25 +869,30 @@ export function cloneHeads(gitFolder, branch) {
   if (typeof branch === 'string' && branch !== '') found.push(resolve(`refs/heads/${branch}`));
   const bad = found.find((each) => each.problem);
   if (bad) return { problem: bad.problem };
-  return { heads: [...new Set(found.map((each) => each.id).filter(Boolean))] };
+  return { head: found[0].id, branch: found[1]?.id ?? null };
 }
 
 // The trimmed text of the ref file at the path `relative` below the git folder `gitFolder`, a regular file of at most
 // `cap` bytes read without following a link, at the file or at any folder on its way there, or waiting on a FIFO:
-// { text }, { missing }, or { problem }. The session wrote that folder, so a link in it could lead the read anywhere.
-function refFile(gitFolder, relative, cap) {
+// { text }, { missing }, or { problem }. The session wrote that folder, so a link in it could lead the read anywhere. With
+// the file open, and before its read, or before it counts as missing, `whole()` says whether the folders on the way are
+// still the ones pinned.
+function refFile(gitFolder, relative, cap, whole, before) {
   let fd;
   try {
     const linked = linkedPart(gitFolder, path.posix.dirname(relative) === '.' ? '' : path.posix.dirname(relative));
     if (linked) return { problem: `lies below ${linked}, a link` };
+    before(relative);
     fd = openSync(path.join(gitFolder, ...relative.split('/')), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    if (!whole()) return { problem: CHANGED_FOLDER };
     const stat = fstatSync(fd);
     if (!stat.isFile()) return { problem: 'is not a regular file' };
     if (stat.size > cap) return { problem: 'is too large to read' };
     const buffer = Buffer.alloc(stat.size);
     return { text: buffer.subarray(0, readSync(fd, buffer, 0, stat.size, 0)).toString('utf8').trim() };
   } catch (error) {
-    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return { missing: true };
+    // A file is missing only while the folders are as pinned: one that went away may have held it.
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return whole() ? { missing: true } : { problem: CHANGED_FOLDER };
     return { problem: `cannot be read (${error.code ?? 'no code'})` };
   } finally {
     if (fd !== undefined) closeSync(fd);

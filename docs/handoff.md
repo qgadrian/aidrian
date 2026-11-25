@@ -681,6 +681,9 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   run's life with a `kept` ledger row, and `wait` prints `kept ISSUE attempt N: …; recover the work from <clone>`.
   A forge that cannot answer, or whose 404 the token's read of the default branch's head commit cannot confirm, leaves
   the folder for the next `wait`.
+  After a usage or rate limit, the issue's next attempt is offered those commits where it may take them, and its own
+  session takes and pushes them: `start` prints `offered ISSUE attempt N: …`, or `not taken ISSUE attempt N: <why>`
+  ([Project run](config.md#project-run)).
   `end` sweeps a last time.
 - **A halt, or a driver that ended, waits for `aidrian project resume <run>`.** A start whose proof failed, and a
   usage limit past the run's 24 pauses, write a `halt` row, and every later start refuses. The resume runs from the

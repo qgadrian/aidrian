@@ -536,8 +536,8 @@ const COMMIT_ID = /\b(?:(?=[0-9]*[a-f])[0-9a-f]{7,40}|(?<=\b(?:[Aa]t|[Cc]ommit)\
 const PASS_COUNT = /(?<!\b(?!all\b|only\b)[A-Za-z]+\s)\b(\d+)\s*\/\s*\d+\b|(?<!\b(?!all\b|only\b)[A-Za-z]+\s)\b(\d+)\s+(?:tests?\s+)?pass(?:es|ed|ing)?\b|\bpass(?:es|ed)?\s*:?\s+(\d+)\b/giu;
 
 // The claims of a passing test run in the `## <section>` section of `body`, or in the whole of it when `section` is null,
-// outside fenced code: one a clause of a list item or paragraph, its wrapped lines joined, split at `;` and sentence
-// ends, that names a test command and a pass, and neither a failure nor CI. A command is named in backticks, or, for a
+// outside fenced code: one a clause of a list item, paragraph, or table row (units), its wrapped lines joined, split at `;`
+// and sentence ends, that names a test command and a pass, and neither a failure nor CI. A command is named in backticks, or, for a
 // `testing.fullSuite` command, also as plain words.
 // Each is { clause, key, counts, commits }: `key` the command's (commandKey), `counts` the pass counts it states, and
 // `commits` the commit ids it names, such as "at 056c3c2", which the pull request body rule reads the tree of.
@@ -599,19 +599,63 @@ function ownClause(clause, { said, ends }) {
   return kept.join('');
 }
 
-// The list items and paragraphs of `lines`, each one string: a list marker starts one, a blank line or a heading ends it,
-// and any other line continues it, as a wrapped line does.
+const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])\s/u;
+// A line that ends a table, beside a blank line and a heading: a block quote, a bullet or a `1.` with text or none after
+// it, or a thematic break. Any other number ends one only in a list item (`nested`), where it is the next item, and is a
+// row elsewhere. A table stands in a list item when its header is indented or its header's string starts at a list marker.
+const TABLE_END = /^\s*(?:>|(?:[-*+]|1[.)])(?:\s|$)|([-*_])(?:\s*\1){2,}\s*$)/u;
+const NUMBER_MARKER = /^\s*\d+[.)](?:\s|$)/u;
+const endsTable = (line, nested) => TABLE_END.test(line) || (nested && NUMBER_MARKER.test(line));
+// The cells of a Markdown table row, split at each `|` but an escaped one, which reads as a plain `|`, and one inside
+// backticks.
+const cellsOf = (line) => line.trim().replace(/^\|/u, '').replace(/(?<!\\)\|$/u, '')
+  .replace(/(\\.|`[^`]*`)|\|/gu, (_, kept) => kept ?? '\n').split('\n').map((cell) => cell.replaceAll('\\|', '|').trim());
+const isDelimiterRow = (line = '') => line.includes('|') && cellsOf(line).every((cell) => /^:?-+:?$/u.test(cell));
+
+// A table row's cells, each before its header cell and no more than the header has, as "`npm test` Command, 35 Passed":
+// this order reads a count under "Passed", and 35/0 under "Pass/fail" as no failure. A cell's closing `.` or `;` goes,
+// and one in a label becomes a comma, so no clause ends at or in a label. An id under "Commit" reads as "commit <id>".
+function rowText(cells, labels) {
+  return labels.map((label, at) => {
+    const cell = (cells[at] ?? '').replace(/(?<![.;])[.;]+$/u, '');
+    const value = cell && /^commit$/iu.test(label) ? `commit ${cell}` : cell;
+    return `${value} ${label.replace(/[;.](?=\s|$)/gu, ',')}`.trim();
+  }).filter(Boolean).join(', ');
+}
+
+// The list items, paragraphs, and table rows of `lines`, each one string: a list marker starts one, a blank line or a
+// heading ends it, and any other line continues it, as a wrapped line does. A line with a `|` and a delimiter row after
+// it opens a table, as GFM has it: each line from there, with a `|` or not, to a blank line, a heading, or a line that
+// ends it (endsTable) is a row, and one string with what the table stands under, its header and the paragraph it
+// continues, but not with the other rows. A line that ends the table starts its own string.
 function units(lines) {
   const out = [];
   let open = null;
-  for (const line of lines) {
+  let labels = null;
+  let nested = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (line.trim() === '' || /^\s{0,3}#/u.test(line)) {
       open = null;
-    } else if (open === null || /^\s*(?:[-*+]|\d+[.)])\s/u.test(line)) {
+      labels = null;
+      continue;
+    }
+    if (labels && !endsTable(line, nested)) {
+      out.push(`${out[open]}, ${rowText(cellsOf(line), labels)}`);
+      continue;
+    }
+    if (labels) open = null;
+    labels = null;
+    if (open === null || LIST_MARKER.test(line)) {
       out.push(line.trim());
       open = out.length - 1;
     } else {
       out[open] += ` ${line.trim()}`;
+    }
+    if (line.includes('|') && isDelimiterRow(lines[index + 1])) {
+      labels = cellsOf(line.replace(LIST_MARKER, ''));
+      nested = /^\s/u.test(line) || LIST_MARKER.test(out[open]);
+      index += 1;
     }
   }
   return out;

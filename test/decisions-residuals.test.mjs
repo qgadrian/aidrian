@@ -8,6 +8,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { consequenceLines, judgeResiduals, pairResiduals, residualItems, supersededAdr } from '../plugins/aidrian/lib/decisions.mjs';
+import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
 import { markKept, recordHash, residualHash, saveVerdicts, VERDICTS_FILE, withKept } from '../plugins/aidrian/lib/residual-verdicts.mjs';
 import { cliCall } from './cli-call.mjs';
 
@@ -845,54 +846,71 @@ const NO_LOCK = {
   },
 };
 
+// A store that holds a verdict of each of THREE, and `save`, which takes a judged run's rows into it.
+function heldStore() {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-verdicts-'));
+  const store = path.join(dir, 'decisions', VERDICTS_FILE);
+  const residuals = THREE.map((each, index) => ({ n: index + 1, residual: `- ${each}`, kept: true }));
+  const save = (rows, options) => saveVerdicts(store, 'a'.repeat(64), { residuals, rows, clean: true, ...options });
+  save(rowsOf(THREE));
+  const before = readFileSync(store, 'utf8');
+  return { dir, store, save, before };
+}
+
 for (const [what, unlockable] of Object.entries(NO_LOCK)) {
-  test(`with no store lock, a judged run that needs a kept verdict fails and says to try again, and one with rows of its own answers: ${what}`, what === UNWRITABLE ? asRoot : {}, async (t) => {
-    let undo = () => {};
-    // Registered first, so it runs before the project's folder is deleted.
-    t.after(() => undo());
-    const { dir, write, file, store } = await judgedProject(t);
-    const before = readFileSync(store, 'utf8');
-    const { record } = JSON.parse(before).kept[0];
-    const changed = write('changed.md', body('Accepted residuals', [...THREE, 'The list is slow: it is short.']));
-    const judged = (name, given, at = file, ...extra) => call(['--body', at, '--judged', write(name, given), ...extra], dir);
-    undo = unlockable(t, store);
-    const needs = {
-      'every row from the store': [{ record, rows: [] }],
-      'some rows from the store': [{ record, rows: rowsOf(['The list is slow: it is short.']) }, changed],
-      'rows alone, with no record': [rowsOf(THREE.slice(0, 1))],
-    };
-    for (const [rows, args] of Object.entries(needs)) {
-      const out = await judged('judged.json', ...args);
-      assert.deepEqual([out.status, out.stdout], [1, ''], rows);
-      assert.match(out.stderr, /^the kept verdicts cannot be checked, so run this again, or list and judge with --rejudge: \S.*\n$/u, rows);
+  test(`with no store lock, a run that needs a kept verdict fails, and one with rows of its own answers: ${what}`, what === UNWRITABLE ? asRoot : {}, (t) => {
+    const { dir, store, save, before } = heldStore();
+    const undo = unlockable(t, store);
+    t.after(() => {
+      undo();
+      rmSync(dir, { recursive: true, force: true });
+    });
+    const tryAgain = { code: LOCKED, message: /^the kept verdicts cannot be checked, so run this again, or list and judge with --rejudge: \S/u };
+    assert.throws(() => save([]), tryAgain, 'every row from the store');
+    assert.throws(() => save(rowsOf(THREE.slice(0, 1))), tryAgain, 'some rows from the store');
+    assert.throws(() => save(rowsOf(THREE.slice(0, 1)), { named: false }), tryAgain, 'rows alone, with no record');
+    for (const [rows, clean] of [[rowsOf(THREE), true], [[row(`- ${THREE[0]}`, 'refund-window', RULE)], false]]) {
+      const { lost, problem } = save(rows, { clean });
+      assert.deepEqual([lost, typeof problem], [false, 'string'], `its own rows, clean ${clean}`);
     }
-    // Rows of its own need nothing from the store, so the answer stands and a note says what was not written.
-    for (const extra of [[], ['--rejudge']]) {
-      const own = await judged('own.json', { record, rows: rowsOf([...THREE, 'The list is slow: it is short.']) }, changed, ...extra);
-      assert.deepEqual([own.status, own.stderr], [0, ''], extra.join());
-      assert.match(own.stdout, /^no residual contradicts a decision on record\n(?:.*\n)*note\tno verdict was kept: \S/u);
-    }
-    const against = await judged('against.json', { record, rows: [row(`- ${THREE[0]}`, 'refund-window', RULE)] });
-    assert.deepEqual([against.status, against.stderr], [1, '']);
-    assert.match(against.stdout, /^note\tan earlier verdict may still be kept, so list with --rejudge: \S/mu);
     assert.equal(readFileSync(store, 'utf8'), before, 'and no run wrote anything');
     undo();
-    assert.equal((await judged('judged.json', { record, rows: [] })).status, 0, 'the same command answers once the lock can be taken');
+    assert.deepEqual(save([]), { lost: false, problem: null }, 'the same run answers once the lock can be taken');
   });
 }
 
-test('a released lock, one whose process is gone, and none at all stop no judged run', async (t) => {
-  const { dir, write, file, store } = await judgedProject(t);
-  const before = readFileSync(store, 'utf8');
-  const answers = async (what) => assert.equal((await call(['--body', file, '--judged', write('judged.json', [])], dir)).status, 0, what);
+test('a released lock, one whose process is gone, and none at all stop no run', (t) => {
+  const { dir, store, save, before } = heldStore();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const answers = (why) => assert.deepEqual(save([]), { lost: false, problem: null }, why);
   lockHeldBy(process.pid, store).release();
-  await answers('released');
+  answers('released');
   lockHeldBy(2 ** 31 - 1, store);
-  await answers('its process no longer runs');
+  answers('its process no longer runs');
   rmSync(path.dirname(store), { recursive: true });
   mkdirSync(path.dirname(store));
   writeFileSync(store, before);
-  await answers('no lock was ever taken');
+  answers('no lock was ever taken');
+});
+
+test('a judged run in a folder it may not write prints no verdict when it needs a kept one, and else answers with a note', asRoot, async (t) => {
+  let open = () => {};
+  // Registered first, so it runs before the project's folder is deleted.
+  t.after(() => open());
+  const { dir, write, file, store } = await judgedProject(t);
+  const judged = (rows, ...extra) => call(['--body', file, '--judged', write('judged.json', rows), ...extra], dir);
+  open = () => chmodSync(path.dirname(store), 0o755);
+  chmodSync(path.dirname(store), 0o555);
+  const needs = await judged([]);
+  assert.deepEqual([needs.status, needs.stdout], [1, '']);
+  assert.match(needs.stderr, /^the kept verdicts cannot be checked, .* --rejudge: EACCES: .*\n$/u);
+  const { record } = JSON.parse(readFileSync(store, 'utf8')).kept[0];
+  const own = await judged({ record, rows: rowsOf(THREE) }, '--rejudge');
+  assert.deepEqual([own.status, own.stderr], [0, '']);
+  assert.match(own.stdout, /^no residual contradicts a decision on record\n(?:.*\n)*note\tno verdict was kept: EACCES: /u);
+  const against = await judged([row(`- ${THREE[0]}`, 'refund-window', RULE)]);
+  assert.deepEqual([against.status, against.stderr], [1, '']);
+  assert.match(against.stdout, /^note\tan earlier verdict may still be kept, so list with --rejudge: EACCES: /mu);
 });
 
 test('a residual the body holds twice is never kept, and with no project folder nothing is', async (t) => {

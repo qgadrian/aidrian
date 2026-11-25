@@ -6,15 +6,18 @@ steps 3, 3b, 5, and 6 name. It changes only what happens to a re-run's findings,
 
 ## Counting runs
 
-- A gate's runs are counted from the plan's `## Revision history`: each applied entry names the gate runs before it,
-  as `security gate run 2: medium, webhook retries`. This run takes the next number.
+- When a gate returns, this session appends one line for that run to the plan's `## Revision history`, whatever follows:
+  an apply, a skip, findings only, or an escalation. The line names the run's number, each finding's severity, and its
+  surface, as `security gate run 2: medium, webhook retries`. It is the one edit this session makes to the plan itself,
+  and it records the plan's hash again afterwards, so step 5.1 never reads that line as a change.
+- A gate's runs are counted from those lines. This run takes the next number.
 - The quorum's runs are its `complete` ledgers whose `plan` is this plan's path, which the `quorum` skill's
   `references/ledger.md` § Settled answers finds, plus this run.
 - A restart from step 5.1 keeps both counts. Only step 6's critique count starts again.
 
 ## The stop rule
 
-On a re-run, compare each finding with the previous run's findings, as its revision-history entry names them.
+On a re-run, compare each finding with the immediately preceding run's findings, as its revision-history line names them.
 
 - **Low**: severity `low` on the gate's scale. A quorum objection is never low: only the narrower test applies to it.
 - **Narrower**: it names a smaller surface than, or a sub-case of, a finding the previous run raised,
@@ -23,12 +26,13 @@ On a re-run, compare each finding with the previous run's findings, as its revis
 - **Blocking**: severity `critical` or `high`, a quorum objection of severity `blocking`, or any finding that adds
   a required invariant. A blocking finding is never narrower: it goes into the critique as step 3 says.
 
-When every finding of the re-run is low or narrower, the gate approves for this plan, and its findings are carried:
+When the re-run has no blocking finding, and every finding is low or narrower, the gate approves for this plan.
+Its findings are then carried:
 the critique proposes no plan revision for them. For the quorum, its findings are its accepted objections.
 With any other finding, the whole verdict goes into the critique as usual.
 
-The stop rule never drops a required invariant. Every invariant a gate required, on any run, still binds the critique,
-as step 3 says. The critical-flow gate's `blocked` or `needs_evidence` sign-off still stops the run as step 3 says:
+The stop rule never drops a required invariant: step 3's rule, that a gate's required invariants bind the critique,
+holds unchanged. The critical-flow gate's `blocked` or `needs_evidence` sign-off still stops the run as step 3 says:
 no authority covers that sign-off, and no stop rule clears it.
 
 ## The cap

@@ -2058,16 +2058,18 @@ The `plan-review` skill reviews a local plan before the build: its security and 
 run first, then `planning-agent` critiques the plan and proposes a diff the Human approves. A gate runs again on each
 new revision of the plan, so the skill holds each re-run to a stop rule, in its `steps/reruns.md`:
 
-- **Stop rule.** A re-run whose findings are all severity `low`, or all narrower than the previous run's, approves.
+- **Stop rule.** A re-run with no blocking finding, whose findings are all severity `low` or narrower than the previous run's, approves.
   A finding is narrower when it names a smaller surface than, or a sub-case of, a finding the previous run raised,
   and adds no required invariant. A `critical` or `high` finding, a `blocking` quorum objection, or a new required
-  invariant is never narrower: it goes into the critique, as on a first run.
-- **Cap.** Each gate, and the quorum, runs at most 3 times a plan, the first run included, across restarts. The plan's
-  revision history numbers the gate runs, and the quorum's ledgers number its own. Past the cap, the findings that are
+  invariant is blocking, so it goes into the critique, as on a first run, even at severity `low`.
+- **Cap.** Each gate, and the quorum, runs at most 3 times a plan, the first run included, across restarts. When a gate
+  returns, the skill writes that run's line in the plan's revision history, whatever the Human answers next, and counts
+  gate runs from those lines; the quorum's ledgers number its own runs. Past the cap, the findings that are
   not blocking are carried, and a blocking one escalates to the Human.
 - **Carry-forward.** A carried finding is never revised for. The approved diff records it under
   `Implementation notes from plan review:` in the plan's `## Risks`, and the report names it. The `issue-implement`
   skill, which `plan-implement` runs, gives that list to each slice's `code-reviewer` and `security-engineer`.
 
-A gate's required invariants still bind every critique, and a `blocked` critical-flow sign-off still stops the run:
+The stop rule never drops a required invariant: the rule that a gate's required invariants bind the critique holds
+unchanged, and a `blocked` critical-flow sign-off still stops the run:
 the stop rule decides only where minor findings go. The cap is skill instruction, with no config key.

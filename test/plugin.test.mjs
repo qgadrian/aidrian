@@ -1332,21 +1332,30 @@ test('plan-review gates stop re-running on minor findings, cap their runs, and c
   const section = (text, from, to) => text.slice(text.indexOf(from), text.indexOf(to, text.indexOf(from) + from.length));
   const skill = read('skills/plan-review/SKILL.md');
   const gates = section(skill, '## 3. Gates', '## 3b. Quorum');
-  assert.match(gates, /A re-run whose findings are all `low`, or all narrower than the last run's, approves; \[steps\/reruns\.md\]\(steps\/reruns\.md\) carries them as implementation notes\. A blocking finding is never narrower\./);
+  assert.match(gates, /A re-run with no blocking finding, and every finding `low` or narrower than the last run's, approves; \[steps\/reruns\.md\]\(steps\/reruns\.md\) carries them as implementation notes\./);
   assert.match(section(skill, '## 3b. Quorum', '## 4. Critique'), /its reruns under step 3's stop rule and cap/);
   assert.match(section(skill, '## 5. Apply', '## 6. Cap'), /follow its steps 5\.1 to 5\.5\./);
   assert.match(section(skill, '## 6. Cap', '## Close'), /A gate or the quorum runs at most 3 times a plan, the first included, across restarts; past that, non-blocking findings are carried, and a blocking one escalates\./);
   const reruns = read('skills/plan-review/steps/reruns.md');
   assert.match(reruns, /\*\*Narrower\*\*: it names a smaller surface than, or a sub-case of, a finding the previous run raised, and it adds no new required invariant\./);
   assert.match(reruns, /\*\*Blocking\*\*: severity `critical` or `high`, a quorum objection of severity `blocking`, or any finding that adds a required invariant\. A blocking finding is never narrower/);
-  assert.match(reruns, /The stop rule never drops a required invariant\./);
+  // A low finding that adds a required invariant is blocking, so it never approves the gate on its own severity.
+  assert.match(reruns, /When the re-run has no blocking finding, and every finding is low or narrower, the gate approves for this plan\./);
+  assert.match(reruns, /compare each finding with the immediately preceding run's findings/);
+  assert.match(reruns, /The stop rule never drops a required invariant: step 3's rule, that a gate's required invariants bind the critique, holds unchanged\./);
+  // The count holds only when every run is written down as it returns, not only the runs the Human applied.
+  assert.match(reruns, /When a gate returns, this session appends one line for that run to the plan's `## Revision history`, whatever follows: an apply, a skip, findings only, or an escalation\./);
+  assert.match(reruns, /records the plan's hash again afterwards, so step 5\.1 never reads that line as a change/);
   assert.match(reruns, /no authority covers that sign-off, and no stop rule clears it/);
   assert.match(reruns, /A restart from step 5\.1 keeps both counts\./);
   assert.match(reruns, /A blocking finding stops the run and escalates to the Human/);
   assert.match(reruns, /under the line `Implementation notes from plan review:`/);
   // The carry-forward holds only when the applied plan records the notes, the next run can count, and the slice reviewers read them.
-  assert.match(read('skills/plan-review/steps/apply.md'), /5\. Check the carried findings, .* recorded as an implementation note in the plan's `## Risks`, under the line `Implementation notes from plan review:`\. .* The report names each carried finding/);
-  assert.match(read('skills/plan-review/references/review-lens.md'), /It also names each gate run the brief carries, with its number, severity, and surface/);
+  const apply = read('skills/plan-review/steps/apply.md');
+  assert.match(apply, /5\. Check the carried findings, .* recorded as an implementation note in the plan's `## Risks`, under the line `Implementation notes from plan review:`\. .* The report names each carried finding/);
+  assert.match(apply, /a patch request against the current plan that adds only the missing notes; never resend the original diff\./);
+  assert.match(read('skills/plan-review/references/review-lens.md'), /Gate runs stay out of it: `plan-review` writes each gate run's own line when the gate returns/);
+  assert.match(read('skills/quorum/references/ledger.md'), /narrower than one the immediately preceding run accepted/);
   assert.match(read('skills/quorum/references/ledger.md'), /Such a rerun follows the stop rule and cap of `plan-review`'s `steps\/reruns\.md`, as its gates do\./);
   assert.match(read('skills/quorum/references/ledger.md'), /The quorum runs at most 3 times a plan, the first included, counted from its `complete` ledgers for the plan's path\./);
   assert.match(read('skills/issue-implement/steps/phases-1-4-implement.md'), /When the plan's `## Risks` holds `Implementation notes from plan review:`, each reviewer's brief carries that list/);

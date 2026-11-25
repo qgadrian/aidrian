@@ -61,8 +61,8 @@ docs to check against. It carries nothing of your own: no suspected findings, ri
 - **Security.** The plan touches auth, sessions, tokens, tenancy, permissions, payments, webhooks, uploads, redirects, secrets,
   untrusted content, privileged access, or a surface the project's `security` knowledge lists: `security-engineer` first.
   Its verdict and required invariants bind the critique; no critique finding drops them.
-- **Re-runs.** A re-run whose findings are all `low`, or all narrower than the last run's, approves;
-  [steps/reruns.md](steps/reruns.md) carries them as implementation notes. A blocking finding is never narrower.
+- **Re-runs.** A re-run with no blocking finding, and every finding `low` or narrower than the last run's, approves;
+  [steps/reruns.md](steps/reruns.md) carries them as implementation notes.
 
 ## 3b. Quorum
 

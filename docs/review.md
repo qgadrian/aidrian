@@ -2070,7 +2070,7 @@ new revision of the plan, so the skill holds each re-run to a stop rule, in its 
 - **Carry-forward.** A carried finding is never revised for. The approved diff records it under
   `Implementation notes from plan review:` in the plan's `## Risks`. When the critique proposes a diff, the session checks
   before the report that it holds each carried finding; it sends the diff back to `planning-agent` once for a missing one,
-  and when one is still missing, it reports it and does not offer `apply`.
+  and when one is still missing, it reports it and proposes no diff, so step 5 has nothing to apply.
   The report after the apply names it as `recorded` or `not recorded in the plan`, whatever the cause, and stops nothing.
   The `issue-implement` skill, which `plan-implement` runs, gives that list to each slice's `code-reviewer` and
   `security-engineer`.

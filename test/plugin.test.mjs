@@ -1363,7 +1363,7 @@ test('plan-review gates stop re-running on minor findings, cap their runs, and c
   assert.doesNotMatch(apply, /\bpatch\b|`blocked`/i);
   assert.match(section(skill, '## Close', '## Do not'), /an applied plan passed step 5\.4, the report names each carried finding,/);
   // A note the proposed diff omitted is caught before the Human approves; findings-only proposes no diff, so it has no check.
-  assert.match(reruns, /When the critique proposes a diff, check before step 4's report that it holds each carried finding; send it back to `planning-agent` once for a missing one, and when one is still missing, report it and do not offer `apply`\./);
+  assert.match(reruns, /When the critique proposes a diff, check before step 4's report that it holds each carried finding; send it back to `planning-agent` once for a missing one, and when one is still missing, report it and propose no diff, so step 5 has nothing to apply\./);
   assert.match(reruns, /Step 5\.5 reports each one as `recorded` or `not recorded in the plan`\./);
   assert.match(read('skills/quorum/references/ledger.md'), /narrower than one the immediately preceding run accepted/);
   assert.match(read('skills/quorum/references/ledger.md'), /Such a rerun follows the stop rule and cap of `plan-review`'s `steps\/reruns\.md`, as its gates do\./);

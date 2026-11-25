@@ -112,42 +112,31 @@ test('the clone\'s refs are read as files: a detached HEAD, a packed branch, and
   assert.deepEqual(cloneHeads(dir, BRANCH), { problem: `refs/heads/${BRANCH} lies below refs/heads, a link` });
 });
 
-test('the commit a start took from another\'s kept clone is no work of its own only when it was given back, and that clone still holds it', (t) => {
+test('the folder of a start given back that took kept commits is left as it is, and one that ran is swept as any other', (t) => {
   const state = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-sweep-took-')));
   t.after(() => rmSync(state, { recursive: true, force: true }));
-  const [taken, own] = ['a'.repeat(40), 'b'.repeat(40)];
-  const [from, folder] = [1, 2].map((attempt) => attemptFolder(state, 'launch', 'ENG-1', attempt));
-  // The clone in `dir` with HEAD on the issue branch, or detached at `head`, and the branch at `branch`, or missing.
-  const refs = (dir, branch, head = null) => {
-    rmSync(dir, { recursive: true, force: true });
-    mkdirSync(path.join(dir, 'git', 'refs', 'heads', 'feat'), { recursive: true });
-    writeFileSync(path.join(dir, 'git', 'HEAD'), head ? `${head}\n` : `ref: refs/heads/${BRANCH}\n`);
-    if (branch) writeFileSync(path.join(dir, 'git', 'refs', 'heads', BRANCH), `${branch}\n`);
+  const taken = 'a'.repeat(40);
+  const folder = attemptFolder(state, 'launch', 'ENG-1', 2);
+  mkdirSync(path.join(folder, 'drop'), { recursive: true });
+  mkdirSync(path.join(folder, 'git', 'refs', 'heads', 'feat'), { recursive: true });
+  writeFileSync(path.join(folder, 'git', 'HEAD'), `ref: refs/heads/${BRANCH}\n`);
+  writeFileSync(path.join(folder, 'git', 'refs', 'heads', BRANCH), `${taken}\n`);
+  writeFileSync(path.join(folder, TOKEN_FILES), JSON.stringify({ session: CHILD, files: ['/x/session-env/a.sh'] }));
+  const start = {
+    event: 'start', key: 'ENG-1', attempt: 2, session: DRIVER, name: 'launch · ENG-1 · 2', cwd: path.join(folder, 'work'), branch: BRANCH,
+    drop: path.join(folder, 'drop'), outcome: 'void', took: { attempt: 1, head: taken }, at: new Date().toISOString(),
   };
-  const row = { key: 'ENG-1', attempt: 2, branch: BRANCH, outcome: 'void', took: { attempt: 1, head: taken } };
-  const keptRow = { event: 'kept', key: 'ENG-1', attempt: 1, head: taken };
-  const unpushed = (more = {}, kept = [keptRow]) => unpushedHead({ folder, row: { ...row, ...more }, found: { rows: kept }, repository: { host: 'github.com', owner: 'acme', name: 'widgets' }, forge: { hasCommit: () => false } });
-  refs(from, taken);
-  refs(folder, taken);
-  assert.equal(unpushed(), null);
-  for (const outcome of ['started', 'uncertain', 'unheld']) assert.equal(unpushed({ outcome })?.head, taken, `a start that ran, ${outcome}, counts it`);
-  assert.equal(unpushed({ took: undefined })?.head, taken, 'as does one that took nothing');
-  assert.equal(unpushed({ took: { attempt: 1, head: own } })?.head, taken, 'and one that took another commit');
-  for (const [message, kept] of [['no row', []], ['another commit', [{ ...keptRow, head: own }]], ['another attempt', [{ ...keptRow, attempt: 3 }]], ['another issue', [{ ...keptRow, key: 'ENG-2' }]]]) {
-    assert.equal(unpushed({}, kept)?.head, taken, `a kept row of ${message}`);
-  }
-  const sources = [
-    ['an empty folder', () => refs(from, null)], ['another commit on its branch', () => refs(from, own)],
-    ['a detached HEAD and no branch', () => refs(from, null, taken)], ['a HEAD elsewhere', () => refs(from, taken, own)],
-    ['no folder', () => rmSync(from, { recursive: true })],
-  ];
-  for (const [message, change] of sources) {
-    change();
-    assert.equal(unpushed()?.head, taken, `${message}: this clone holds the only copy`);
-  }
-  refs(from, taken);
-  refs(folder, own);
-  assert.equal(unpushed()?.head, own, 'a commit of its own counts');
+  const forge = { hasCommit: () => true };
+  const sweep = (row) => sweepAttempts({ state, run: 'launch', found: { init: { repository: { host: 'github.com', owner: 'acme', name: 'widgets' } }, rows: [row], states: new Map([['ENG-1', { state: 'open' }]]) }, cap: { ended: () => true, forgetShellEnv: () => [] }, env: {}, spawn: null, forge });
+  assert.deepEqual(sweep(start), []);
+  assert.ok(existsSync(folder), 'left, even with a forge that holds its commit');
+  assert.equal(existsSync(path.join(folder, TOKEN_FILES)), false, 'its token goes all the same');
+  // A session that ran on the taken commits: its clone counts them as any work.
+  const unpushed = unpushedHead({ folder, row: { ...start, outcome: 'started' }, repository: { host: 'github.com', owner: 'acme', name: 'widgets' }, forge: { hasCommit: () => false } });
+  assert.equal(unpushed?.head, taken);
+  mkdirSync(path.join(state, 'runs', 'launch'), { recursive: true });
+  sweep({ ...start, took: undefined });
+  assert.equal(existsSync(folder), false, 'one that took nothing is swept');
 });
 
 test('a clone whose refs cannot be read keeps its folder, with a kept row', (t) => {

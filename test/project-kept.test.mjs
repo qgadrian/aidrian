@@ -4,7 +4,7 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,8 +12,9 @@ import path from 'node:path';
 import test from 'node:test';
 import { deflateSync, inflateSync } from 'node:zlib';
 
+import { attemptOf } from '../plugins/aidrian/lib/attempt-clone.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
-import { copyLoose, keptLines, keptPrompt } from '../plugins/aidrian/lib/project-kept.mjs';
+import { copyLoose, KEPT_CAPS, keptLines, keptPrompt, takeKept } from '../plugins/aidrian/lib/project-kept.mjs';
 import { isPolicyPath } from '../plugins/aidrian/lib/project.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { ownIssue } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -372,8 +373,9 @@ test('a protected change a later kept commit takes back, or a merge brings in, i
 });
 
 test('copyLoose reads loose object files alone, within its caps', (t) => {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-kept-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const top = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-kept-')));
+  t.after(() => rmSync(top, { recursive: true, force: true }));
+  const dir = path.join(top, 'attempt');
   const objects = path.join(dir, 'git', 'objects');
   const name = (letter) => letter.repeat(38);
   const put = (file, text) => {
@@ -385,7 +387,7 @@ test('copyLoose reads loose object files alone, within its caps', (t) => {
   put(`aa/${name('1')}`, body);
   put(`bb/${'2'.repeat(62)}`, body);
   for (const other of ['pack/pack-1.pack', 'pack/pack-1.idx', 'pack/multi-pack-index', 'info/commit-graph', 'info/alternates', 'aa/tmp_obj_1', `AA/${name('3')}x`, 'zz/notes']) put(other, 'never read');
-  const to = (each) => path.join(dir, 'to', each);
+  const to = (each) => path.join(top, 'to', each);
   assert.equal(copyLoose(dir, to('all')), null);
   assert.deepEqual(readdirSync(to('all'), { recursive: true }).sort(), ['aa', `aa/${name('1')}`, 'bb', `bb/${'2'.repeat(62)}`]);
   assert.deepEqual(readFileSync(to(`all/aa/${name('1')}`)), body, 'the raw bytes');
@@ -399,6 +401,69 @@ test('copyLoose reads loose object files alone, within its caps', (t) => {
   assert.equal(copyLoose(dir, to('entries'), { ...caps, entries: entries - 1 }), 'its clone holds too many objects');
   put(`cc/${name('3')}`, 'not zlib');
   assert.equal(copyLoose(dir, to('odd')), 'one of its clone\'s objects does not inflate');
+});
+
+// Through a hook, at the first read: no race to lose. Each change puts the folder back as it was, or leaves it as found.
+test('copyLoose takes nothing from a clone whose folders change while it reads', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-kept-race-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const folder = path.join(dir, 'attempt');
+  const objects = path.join(folder, 'git', 'objects');
+  for (const name of ['aa', 'bb']) {
+    mkdirSync(path.join(objects, name), { recursive: true });
+    writeFileSync(path.join(objects, name, '1'.repeat(38)), deflateSync(Buffer.from('x')));
+  }
+  const swap = (target) => () => {
+    renameSync(target, path.join(dir, 'away'));
+    symlinkSync(path.join(dir, 'away'), target);
+    rmSync(target);
+    renameSync(path.join(dir, 'away'), target);
+  };
+  const cases = [
+    ['its objects folder swapped and back', swap(objects)], ['its git folder swapped and back', swap(path.join(folder, 'git'))],
+    ['the attempt\'s folder swapped and back', swap(folder)],
+    ['an object\'s folder swapped and back', swap(path.join(objects, 'bb'))], ['a file put in an object\'s folder read already or later', () => writeFileSync(path.join(objects, 'aa', 'new'), '')],
+    ['an object\'s folder replaced', () => {
+      renameSync(path.join(objects, 'bb'), path.join(dir, 'gone'));
+      cpSync(path.join(dir, 'gone'), path.join(objects, 'bb'), { recursive: true });
+      rmSync(path.join(dir, 'gone'), { recursive: true });
+    }],
+  ];
+  cases.forEach(([message, change], index) => {
+    // Past the tick of a disk whose ctime is coarse.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40);
+    let once = change;
+    const answer = copyLoose(folder, path.join(dir, `to${index}`), undefined, () => {
+      once?.();
+      once = null;
+    });
+    assert.equal(answer, 'its clone changed while it was read', message);
+  });
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40);
+  assert.equal(copyLoose(folder, path.join(dir, 'still')), null, 'a clone that stays as it was');
+});
+
+test('kept commits that write more than the cap, each path counted, are not taken', (t) => {
+  const { fx, forge: forgeHead, head, prepare, kept } = keptClone(t);
+  const room = prepare();
+  const git = (args, cwd = room.work, options = {}) => spawnSync('git', args, { cwd, encoding: 'utf8', env: fx.env, ...options });
+  const take = (candidate, bytes) => {
+    const folder = path.join(fx.root, `take-${bytes}`);
+    mkdirSync(folder);
+    return takeKept({ candidate: { attempt: 1, head: candidate, folder: kept }, folder, work: room.work, gitFolder: room.git, forgeHead, guards: () => false, git, caps: { ...KEPT_CAPS, bytes } });
+  };
+  // Three paths of one blob of 400 bytes, a deleted path, a link, and a submodule over the two files already there.
+  const clone = inClone(fx, 1);
+  commit(fx, 1, Object.fromEntries(['a', 'b', 'c'].map((name) => [`same/${name}.txt`, `${'x'.repeat(399)}\n`])));
+  clone('rm', '-q', 'README.md');
+  symlinkSync('12345', path.join(kept, 'work', 'link'));
+  clone('add', 'link');
+  clone('update-index', '--add', '--cacheinfo', `160000,${head},module`);
+  clone('commit', '-q', '-m', 'more');
+  const top = clone('rev-parse', 'HEAD');
+  const bytes = 'kept one\n'.length + 'kept two\n'.length + 3 * 400 + '12345'.length;
+  assert.equal(take(top, bytes - 1).why, 'the files its commits change are too large');
+  assert.deepEqual(take(top, bytes).took, { attempt: 1, head: top });
 });
 
 // The push the issue's session makes from attempt `attempt`'s clone, as its push guard judges it, with the row's facts.
@@ -549,6 +614,32 @@ test('each limit keeps the clone it ended in: a second one with no new commit, p
   assert.deepEqual([lastStart(fx).attempt, lastStart(fx).head, lastStart(fx).took], [4, forgeHead, { attempt: 3, head: newer }]);
   assert.equal(inClone(fx, 4)('rev-parse', 'HEAD'), newer);
   assert.equal(inClone(fx, 4)('fsck', '--full', '--no-dangling', '--no-progress'), '');
+});
+
+test('a start given back that took kept commits has its folder set aside, whole, by the start that takes its number', (t) => {
+  const { fx, head } = keptRun(t);
+  assert.equal(startAgain(fx), `took ENG-1 attempt 1: 2 unpushed commits, ${head.slice(0, 12)}`);
+  fx.claude.states[STARTED[1].session] = 'done';
+  const giveBack = () => {
+    const { id, child, ...ahead } = lastStart(fx);
+    appendToRun(fx.state, 'launch', () => ({ rows: [{ ...ahead, outcome: 'void', proof: true, at: now() }, { event: 'issue', key: 'ENG-1', state: 'open', at: now() }] }));
+  };
+  // The kept clone loses its objects, as an interrupted cleanup leaves it, its refs as they were: no sweep removes the copy.
+  giveBack();
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['idle'], 'no kept row, and no line');
+  rmSync(path.join(folderOf(fx, 1), 'git', 'objects'), { recursive: true });
+  assert.match(startAgain(fx), /^not taken ENG-1 attempt 1: /u);
+  const aside = `${folderOf(fx, 2)}.given-back-1`;
+  assert.equal(fx.git('-C', path.join(aside, 'work'), '--git-dir', path.join(aside, 'git'), 'rev-parse', 'HEAD').trim(), head);
+  assert.equal(fx.git('-C', path.join(aside, 'work'), '--git-dir', path.join(aside, 'git'), 'fsck', '--no-dangling', '--no-progress').trim(), '', 'the one whole copy');
+  assert.equal(attemptOf(path.join(aside, 'work')), null, 'no attempt\'s folder to any reader');
+  assert.equal(lastStart(fx).attempt, 2);
+  // A second one of that number gets a name of its own.
+  fx.claude.states[STARTED[2].session] = 'done';
+  const { id, child, ...ahead } = lastStart(fx);
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ ...ahead, took: { attempt: 1, head }, outcome: 'void', proof: true, at: now() }, { event: 'issue', key: 'ENG-1', state: 'open', at: now() }] }));
+  startAgain(fx);
+  assert.deepEqual(readdirSync(path.dirname(aside)).sort(), ['ENG-1.1', 'ENG-1.2', 'ENG-1.2.given-back-1', 'ENG-1.2.given-back-2']);
 });
 
 test('an attempt on base copies has its kept commits taken with no host file changed, and the next holds base copies again', (t) => {

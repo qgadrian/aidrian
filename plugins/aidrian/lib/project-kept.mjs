@@ -62,15 +62,15 @@ export function keptCandidate({ found, key, branch, folderOf, refs }) {
 // Takes the kept commits `candidate` (keptCandidate) into the fresh clone `work` of the attempt folder `folder`, whose
 // git folder is `gitFolder`, over `forgeHead`, the commit the forge's branch is at: { took: { attempt, head }, count },
 // or { attempt, why } when they are not taken, or { problem } when a repository of the gate's own could not be removed,
-// which no session may find. `guards` names the host, instruction, and policy files, and `git(args, cwd)` is the
+// which no session may find. `guards` names the host, instruction, and policy files, and `git(args, cwd, options)` is the
 // attempt's gateGit. The clone keeps no ref of them, taken or not: the branch it checks out names them.
-export function takeKept({ candidate, folder, work, gitFolder, forgeHead, guards, git }) {
+export function takeKept({ candidate, folder, work, gitFolder, forgeHead, guards, git, caps = KEPT_CAPS }) {
   const { attempt, head } = candidate;
   if (head === forgeHead) return { attempt, why: 'the forge has its commits' };
   let why;
   let count = null;
   try {
-    why = fetchKept({ candidate, folder, work, gitFolder, git }) ?? judgeKept({ head, forgeHead, guards, git });
+    why = fetchKept({ candidate, folder, work, gitFolder, git }) ?? judgeKept({ head, forgeHead, guards, git, caps });
     if (!why) {
       const counted = git(['rev-list', '--count', `${forgeHead}..${head}`]);
       count = counted.status === 0 ? Number(counted.stdout.trim()) : null;
@@ -133,7 +133,7 @@ function commitAt(ref, cwd, git) {
 
 // Why the commit `head`, fetched under KEPT_REF in the new clone, may not be taken over `forgeHead`, or null. The files
 // are those any of its commits changes, a merge's from each of its parents, so a change a later one takes back counts.
-function judgeKept({ head, forgeHead, guards, git }) {
+function judgeKept({ head, forgeHead, guards, git, caps }) {
   if (git(['merge-base', '--is-ancestor', forgeHead, head]).status !== 0) return 'its commits do not descend from the branch\'s head on the forge';
   // Both settings are git's defaults, given so that no config of the user's hides a merge's or a root's files.
   const log = git(['-c', 'log.diffMerges=separate', '-c', 'log.showRoot=true', 'log', '-m', '--format=', '--name-only', '--no-renames', '--no-relative', '-z', `${forgeHead}..${head}`, '--']);
@@ -142,7 +142,23 @@ function judgeKept({ head, forgeHead, guards, git }) {
   const protects = (file) => guards(file) || workflows.counts(file) || readByCheckout(file);
   // A count alone: no file name a session chose reaches the driver.
   const held = [...new Set(log.stdout.split('\0'))].filter((file) => file !== '' && protects(file)).length;
-  return held ? `its commits change ${held} host config, instruction, policy, or workflow ${held === 1 ? 'file' : 'files'}` : null;
+  if (held) return `its commits change ${held} host config, instruction, policy, or workflow ${held === 1 ? 'file' : 'files'}`;
+  const bytes = writtenBytes({ head, forgeHead, git });
+  if (bytes === null) return 'git cannot say how much its commits write';
+  return bytes > caps.bytes ? 'the files its commits change are too large' : null;
+}
+
+// The bytes a checkout of `head` writes over one of `forgeHead`, each path's blob counted, or null when git cannot say:
+// one small blob may stand at any number of paths.
+function writtenBytes({ head, forgeHead, git }) {
+  const diff = git(['diff', '--raw', '--no-renames', '--no-relative', '--no-abbrev', '-z', forgeHead, head, '--']);
+  if (diff.status !== 0) return null;
+  // `:<mode> <mode> <id> <id> <status>`: a deleted path and a submodule write no blob.
+  const ids = diff.stdout.split('\0').map((field) => /^:\d+ (\d+) [0-9a-f]+ ([0-9a-f]+) /u.exec(field)).filter((match) => match && !['000000', '160000'].includes(match[1])).map((match) => match[2]);
+  if (!ids.length) return 0;
+  const sizes = git(['cat-file', '--batch-check=%(objectsize)'], undefined, { input: `${ids.join('\n')}\n` });
+  const bytes = sizes.status === 0 ? sizes.stdout.trim().split('\n').map(Number) : [];
+  return bytes.length === ids.length && bytes.every(Number.isInteger) ? bytes.reduce((sum, each) => sum + each, 0) : null;
 }
 
 // Copies the loose objects of the kept clone in the attempt folder `folder` into the objects folder `to` of the gate's
@@ -150,20 +166,23 @@ function judgeKept({ head, forgeHead, guards, git }) {
 // read: no pack, index, commit graph, alternates, ref, config, or hook. Each folder on the way is a plain one by lstat,
 // and each file is opened without following a link or waiting on a FIFO, and is a regular file of one link, whose bytes
 // inflate within `caps` (git inflates them outside any sandbox) and are copied as they are, for git to judge. An odd
-// entry at an object's name, or a cap, takes none.
-export function copyLoose(folder, to, caps = KEPT_CAPS) {
+// entry at an object's name, or a cap, takes none, and so does a folder of the clone that is another one, or changed, by
+// the end: a folder swapped for a link and back changes its parent's ctime. `beforeRead` is a test's hook.
+export function copyLoose(folder, to, caps = KEPT_CAPS, beforeRead = () => {}) {
   const objects = path.join(folder, 'git', 'objects');
-  for (const each of [folder, path.join(folder, 'git'), objects]) if (!lstatSync(each).isDirectory()) return 'a folder of its clone is not a plain one';
+  const stamps = new Map();
+  for (const each of [folder, path.join(folder, 'git'), objects]) if (!stamp(each, stamps)) return 'a folder of its clone is not a plain one';
   const left = { entries: caps.entries, raw: caps.bytes, expanded: caps.bytes };
   const folders = namesIn(objects, OBJECT_FOLDER, left);
   if (!folders) return MANY;
+  if (!folders.every((name) => stamp(path.join(objects, name), stamps))) return 'its clone holds something other than a folder where objects lie';
   for (const name of folders) {
     const from = path.join(objects, name);
-    if (!lstatSync(from).isDirectory()) return 'its clone holds something other than a folder where objects lie';
     const held = namesIn(from, OBJECT_FILE, left);
     if (!held) return MANY;
     if (held.length) mkdirSync(path.join(to, name), { recursive: true });
     for (const file of held) {
+      beforeRead(path.join(from, file));
       const read = readObject(path.join(from, file), Math.min(caps.file, left.raw));
       const size = read.why ? read : expandedSize(read.body, Math.min(caps.file, left.expanded));
       if (size.why) return size.why;
@@ -172,7 +191,19 @@ export function copyLoose(folder, to, caps = KEPT_CAPS) {
       writeFileSync(path.join(to, name, file), read.body, { flag: 'wx', mode: 0o400 });
     }
   }
-  return null;
+  return [...stamps].every(([each, was]) => identity(each) === was) ? null : 'its clone changed while it was read';
+}
+
+// The identity and the last change of the plain folder `dir`, or null for anything else there.
+function identity(dir) {
+  const stat = lstatSync(dir, { bigint: true });
+  return stat.isDirectory() ? `${stat.dev} ${stat.ino} ${stat.ctimeNs}` : null;
+}
+
+// Records in `stamps` the identity of `dir`: whether it is a plain folder.
+function stamp(dir, stamps) {
+  stamps.set(dir, identity(dir));
+  return stamps.get(dir) !== null;
 }
 
 const MANY = 'its clone holds too many objects';

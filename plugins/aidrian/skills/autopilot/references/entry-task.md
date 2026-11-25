@@ -53,8 +53,8 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   --catch-up` before any other work, as the first message says, and does what its one line says, recording the outcome
   the line names, with its one decision when the line names one. A `merge_base` line names the one way to merge the base in; `none` goes on with the work.
   Never edit a host config or instruction file by hand, nor a base copy the first message lists: git merges them, and
-  the push guard lets each through only as git merged it. A conflict in one, or a merge git refuses over one, records
-  `pr_open` with that file's path in its stop.
+  the push guard lets each through only as git merged it, save a knowledge index file that message lets it edit, only in
+  git's index. A conflict in one, or a merge git refuses over one, records `pr_open` with that file's path in its stop.
 - **A finding in a host file.** Unless the first message says the team's `github.autoMerge.includePolicyFiles` is on,
   this session never writes a host file, whatever `github.autoMerge.includeGuardedPaths`
   says: a host config or instruction file, such as a `CLAUDE.md` or a skill, any file of the `.aidrian/` folder, such as

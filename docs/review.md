@@ -332,6 +332,9 @@ for what its question names, never for an id that only an option the Human did n
 for every id its question names or its offered "Approve" options name. The latest answer that counts
 decides, so a refusal after an approval under the same question refuses, and a push asks
 again. The command is one plain `aidrian pr` call run from the pull request's checkout, with no shell variables, repeated flags, `cd`, `env -C`, or chain.
+The question asks whether to approve, never how the session should get the proof: proof the session can take
+itself, an end-to-end run CI defers to ready or screenshots of a screen the capture saw empty, it gathers first and
+asks nothing ([Proof the session gathers](#unattended-rulings)).
 Before it asks, a session on a host that offers a tool to send the Human a push notification sends one, so a Human away from the session, such as on a phone, sees that a decision waits.
 `--last` stays in the Human's shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
 
@@ -401,6 +404,22 @@ on GitHub. A ruling takes the same refusals as the matching sign-off, holds for 
 shows in the summary as `judge:<agent>`. It never clears an undisputed violated invariant, signs a whole flow or stage,
 or touches `harness-config`, so a `signoff: "human"` flow and a change to the review's own config still ask the Human.
 Like the [unattended waiver](config.md#unattended-waiver), a ruling is the session's word, not proof.
+
+**Proof the session gathers.** An invariant stays `unverified` when its proof needs a run or a picture no reviewer
+had: the pull request is a draft and the project's CI runs its end-to-end tests only once it is ready, or the
+[visual capture](#visual-review) shows an empty, logged-out, or data-less page. That is a process choice with a safe
+default, so the session asks the Human nothing. It runs locally, or against a deploy preview when one exists, the
+URL `review.visual.preview` prints: `e2e-runner` runs the end-to-end tests and `designer` takes the screenshots at
+each width of `review.visual.viewports`, each signing in or seeding data as the project's `product-access` knowledge
+([Personas](personas.md)) says. The session posts the run's command and result lines as a comment of the pull
+request, ingests the screenshots with `aidrian pr ingest` and posts them through the `pr-screenshot` skill, and never
+posts a secret or session token from the login. A visual reviewer then cites the ingested images as `capture:<key>`.
+With both switches on, the judge settles an invariant the run proves with `aidrian pr settle <PR> --flow <id> --accept
+<invariant> --evidence <url> --reason "<what it shows>" --head <sha> --judge <agent>`, `<url>` being that comment.
+With either off, the session asks the Human to approve that `--accept`, not how to get the proof. When
+`product-access` holds no way in, the session reports that gap as a finding and asks nothing. A `signoff: "human"`
+flow and a change to `harness-config` still ask the Human, by design. The steps are in the `pr-review-loop` skill's
+`references/review-plan.md`.
 
 Raising the round cap works the same way. On an answer naming `<owner>/<name>#<PR>` and `--max-rounds <N>`, the session runs
 `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` before `--max-rounds` when the step
@@ -567,6 +586,10 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   progress line names; an adapter whose last line is no error line says so, with its exit status or signal and that
   screen. Such a reason holds none of the adapter's own text: the screen is numbered from the capture's own list. Its whole error output is kept, readable by its owner only, as
   `capture-stderr.log` in the head's capture folder, which each new attempt removes as it starts when it can; one it cannot remove is never written into.
+- **An empty capture**: a capture that shows an empty, logged-out, or data-less page proves nothing of the screen.
+  The session dispatches `designer`, signed in or seeded through the project's `product-access` knowledge, for the
+  same screens at each width, locally or against the deploy preview, then ingests and posts the images and has the
+  visual reviewer cite them, with no question to the Human ([Proof the session gathers](#unattended-rulings)).
 - **Ingested images**: `aidrian pr ingest` ([Ingesting images](#sign-off-by-the-human)) adds images taken
   elsewhere to the manifest's own `ingested` list, never to the tool's entries. Each key is
   `ingest-<file name>-<6 hex of its hash>`, so the same image under the same file name ingests again in place. The

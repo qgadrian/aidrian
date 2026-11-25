@@ -47,3 +47,36 @@ test('at the cap, the waiver takes one route: the step\'s `waiver`, its one judg
     assert.doesNotMatch(text, /aidrian pr waive/u, `${name} names no separate waiver command`);
   }
 });
+
+test('an unverified invariant the session can prove itself is gathered, never a question to the Human of how', () => {
+  const plan = read('references/review-plan.md');
+  const fix = section(plan, '`fix_required`');
+  const gather = fix.indexOf('never ask the Human how');
+  const settle = fix.indexOf('An entry has `settle`');
+  const ask = fix.indexOf('Ask the Human with AskUserQuestion');
+  assert.ok(gather !== -1 && gather < settle && settle < ask, 'the gather route comes before the judge, and both before asking the Human');
+  const route = fix.slice(gather, settle);
+  for (const step of ['a draft', 'only once it is ready', 'empty, logged-out, or data-less page', 'Run locally, or against a deploy preview when one exists',
+    '`e2e-runner`', '`designer`', '`review.visual.viewports`', '`product-access`', 'as a comment of the pull request', '`aidrian pr ingest`',
+    '`pr-screenshot` skill', '`capture:<key>`', 'Never post a secret', 'report that gap as a finding, and ask nothing',
+    '`signoff: "human"`', '`harness-config`', '`human_required`']) {
+    assert.ok(route.includes(step), `gather route: ${step}`);
+  }
+  assert.ok(fix.slice(ask).includes('never how to get the proof'), 'the Human is asked to approve, never how to get the proof');
+  assert.doesNotMatch(read('SKILL.md') + plan, /how should the session get/iu, 'no step offers a "how should the session get that proof" question');
+
+  const docs = readFileSync(path.resolve(SKILL, '../../../../docs/review.md'), 'utf8');
+  const doc = (heading, level) => {
+    const start = docs.indexOf(`\n${level} ${heading}\n`);
+    assert.notEqual(start, -1, `docs/review.md has "${heading}"`);
+    const next = docs.slice(start + 1).search(new RegExp(`\\n#{1,${level.length}} `, 'u'));
+    return docs.slice(start, next === -1 ? docs.length : start + 1 + next).replace(/\s+/gu, ' ');
+  };
+  assert.match(doc('Answering in the session', '####'), /never how the session should get the proof/u);
+  const rulings = doc('Unattended rulings', '####');
+  for (const step of ['**Proof the session gathers.**', '`e2e-runner`', '`designer`', '`product-access`', 'aidrian pr settle <PR> --flow <id> --accept',
+    'asks nothing', '`signoff: "human"` flow and a change to `harness-config` still ask the Human']) {
+    assert.ok(rulings.includes(step), `Unattended rulings: ${step}`);
+  }
+  assert.match(doc('Visual review', '##'), /\*\*An empty capture\*\*.*`designer`.*`product-access`.*no question to the Human/u);
+});

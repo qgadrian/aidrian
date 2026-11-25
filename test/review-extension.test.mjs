@@ -11,7 +11,7 @@ import { DEFAULT_REVIEWER, exitCodeFor, runAwaitReview } from '../plugins/aidria
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { extensionSummary, formatExtensions } from '../plugins/aidrian/lib/report-reviews.mjs';
 import {
-  askQuestion, atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, retireChecks, revalidate, runExtend, signals,
+  askQuestion, atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, ownDelta, parseExtend, recordHuman, recordVerdict, retireChecks, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
 import { listedTo, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, recordFile, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -1021,6 +1021,12 @@ test('buildHistory: a fix that rewords docs adds no code, and bloat is measured 
   assert.equal(signals(read).bloating, false, 'a docs rewording is no bloat');
   const grown = signals({ ...read, rounds: [{ ...read.rounds[0], fix: { added: 45, code_added: 45, removed: 0, files: ['src/a.js'] } }] });
   assert.deepEqual([grown.bloating, grown.evidence.bloating.limit], [true, BLOAT_MIN_LINES], 'the docs do not widen the allowance for code');
+});
+
+test('ownDelta: a file on one side alone, named as every object inherits, counts its lines', () => {
+  const lines = Object.fromEntries([['constructor', ['x']], ['__proto__', ['y', 'z']]]);
+  assert.deepEqual(ownDelta({}, lines), { added: 3, removed: 0, files: ['constructor', '__proto__'] });
+  assert.deepEqual(ownDelta(lines, {}), { added: 0, removed: 3, files: ['constructor', '__proto__'] });
 });
 
 test('atCap: a red-flag stop an older version recorded goes to the judge, not a dead end', () => {

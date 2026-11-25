@@ -46,19 +46,35 @@ export function fileList(numstat, names) {
 // may anchor to. `renames` reads a moved file as the forge's diff shows it, its unchanged lines not added: the inline
 // review's anchors take it; every other reader keeps a moved file's every line, as the review reads it.
 export function diffLines(root, from, to, files = null, { renames = false } = {}) {
-  // Unquoted paths (core.quotePath=false), so a header names `src/café.ts` as the file list does; no external diff or
-  // text conversion, so the lines are the file's own.
+  // Bytes past ASCII unquoted (core.quotePath=false), so a header names `src/café.ts` raw; headerName undoes the rest.
+  // No external diff or text conversion, so the lines are the file's own.
   return parseUnified(git(root, ['-c', 'core.quotePath=false', 'diff', '--relative', '--unified=0', '--no-color', renames ? '--find-renames' : '--no-renames', '--no-ext-diff', '--no-textconv', from, to, ...(files ? ['--', ...files] : [])]));
 }
 
+const ESCAPES = Object.freeze({ a: '\x07', b: '\b', t: '\t', n: '\n', v: '\v', f: '\f', r: '\r', '"': '"', '\\': '\\' });
+const QUOTED = /^"((?:[^"\\]|\\(?:[abtnvfr"\\]|[0-3][0-7]{2}))*)"$/su;
+
+// A name a diff header holds, with its `a/` or `b/`, as the file list has it. Git ends a `---` or `+++` line whose name
+// holds a space with one tab, outside any quotes, and quotes a name that holds a tab, another control character, `"`, or
+// `\`, so no unquoted name holds a tab of its own. A quoted name git could not have written stays as it is.
+export function headerName(text) {
+  const name = text.endsWith('\t') ? text.slice(0, -1) : text;
+  const quoted = QUOTED.exec(name)?.[1];
+  if (quoted === undefined) return name.startsWith('"') ? text : name;
+  // Octal escapes are the name's UTF-8 bytes, so a run of them decodes together.
+  return quoted.replace(/((?:\\[0-7]{3})+)|\\(.)/gu, (_, octal, letter) => (
+    octal ? Buffer.from(octal.slice(1).split('\\').map((byte) => Number.parseInt(byte, 8))).toString('utf8') : ESCAPES[letter]));
+}
+
 function parseUnified(text) {
-  const addedLines = {};
+  // Keyed by file name, so with no prototype: a file may be named `constructor` or `__proto__`.
+  const addedLines = Object.create(null);
   const removedFiles = new Set();
-  const removedLines = {};
+  const removedLines = Object.create(null);
   // `{ [file]: [{ added, removed }] }`: unchanged code lies between two hunks, so a comment that opens in one and closes
   // in the next can hide it (quietDelta).
-  const hunks = {};
-  const addedAt = {};
+  const hunks = Object.create(null);
+  const addedAt = Object.create(null);
   let file = null;
   // The `to` side's number of the next added line, from the hunk header `@@ -a,b +c,d @@`.
   let next = null;
@@ -70,9 +86,9 @@ function parseUnified(text) {
     if (line.startsWith('diff --git ')) {
       header = true;
       file = null;
-    } else if (header && line.startsWith('--- ')) old = line === '--- /dev/null' ? null : line.slice('--- a/'.length);
+    } else if (header && line.startsWith('--- ')) old = line === '--- /dev/null' ? null : headerName(line.slice('--- '.length)).slice('a/'.length);
     // A deleted file has no new path: its removed lines count against the old one.
-    else if (header && line.startsWith('+++ ')) file = line === '+++ /dev/null' ? old : line.slice('+++ b/'.length);
+    else if (header && line.startsWith('+++ ')) file = line === '+++ /dev/null' ? old : headerName(line.slice('+++ '.length)).slice('b/'.length);
     else if (line.startsWith('@@')) {
       header = false;
       const start = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/u.exec(line);
@@ -215,14 +231,15 @@ function autoMerge(root, a, b) {
 }
 
 // The paths of a unified diff's `diff --git a/<path> b/<path>` headers. With no renames both sides name one path, so
-// the header splits in half whatever spaces the path holds; a quoted path is left to the other lists.
-function headerPaths(text) {
+// the header splits in half whatever spaces or quotes the path holds.
+export function headerPaths(text) {
   const out = [];
   for (const line of text.split('\n')) {
-    if (!line.startsWith('diff --git a/')) continue;
-    const rest = line.slice('diff --git a/'.length);
-    const file = rest.slice(0, (rest.length - ' b/'.length) / 2);
-    if (rest === `${file} b/${file}`) out.push(file);
+    if (!line.startsWith('diff --git ')) continue;
+    const rest = line.slice('diff --git '.length);
+    const half = (rest.length - 1) / 2;
+    const [from, to] = [headerName(rest.slice(0, half)), headerName(rest.slice(half + 1))];
+    if (rest[half] === ' ' && from.startsWith('a/') && to === `b/${from.slice('a/'.length)}`) out.push(from.slice('a/'.length));
   }
   return out;
 }

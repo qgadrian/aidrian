@@ -582,7 +582,7 @@ lock or a read refuses is not merged.
 
 ### A red flag at the cap
 
-Under `github.extraRounds` `"auto"`, with both switches counting for the pull request, the extra-round check asks the
+Under `github.extraRounds` `"auto"`, as the base branch commits it on GitHub, with both switches counting for the pull request, the extra-round check asks the
 Human nothing: a judge's `extend` over a red flag (not converging, looping, drifting, bloating) is recorded as a stop,
 `by: "unattended"`, so the review step reports `round_limit` and the route above follows, its judge recording `land` or
 `stop`. A red flag already says more rounds are unlikely to help, so stopping is the safe direction.

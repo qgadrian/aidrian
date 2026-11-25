@@ -271,8 +271,8 @@ no waiver: run the step again on it. The session runs no gate command: the step 
   On `stop`, report the stop with the judge's evidence: the Human merges, or answers the merge guard's question with
   "Merge with the findings filed". On `extend`, go on as § At the cap: extra rounds says. An `extend` the command
   records as `stopped` by `unattended`, over a red flag under `"auto"`, asks no one: follow its `next`. For the review
-  step's check, run the step again, and its `round_limit` names the waiver's judge, the step's own dispatch and no
-  verdict shopping; for the bot's, report the stop.
+  step's check, run the same review command again with the options it was run with, any `--with-bot` included, and its
+  `round_limit` names the waiver's judge, the step's own dispatch and no verdict shopping; for the bot's, report the stop.
 
 ## Owed reviews
 

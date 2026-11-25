@@ -1206,8 +1206,10 @@ const atFlaggedCheck = (mode, extra = {}) => (state) => {
   atCheck(state);
   Object.assign(state.extensions[0], { mode, red_flags: ['looping: R2-1 came back at src/a.js:3 after its fix in round 2'], ...extra });
 };
-// The base branch's github.extraRounds, as the checkout commits it.
+// The base branch's github.extraRounds: as the checkout commits it, and, beside the team's switch, as the forge answers.
 const AUTO = { github: { extraRounds: 'auto' } };
+const ALLOW_AUTO = { ...ALLOW, github: { ...ALLOW.github, ...AUTO.github } };
+const autoForge = (r) => landForge(r, { policy: ALLOW_AUTO });
 const BOT_CHECK = { source: 'bot', reviewer: 'chatgpt-codex-connector[bot]' };
 const EXTEND_OVER_FLAG = ['--verdict', 'extend', '--reason', 'R2-1 at src/a.js:3 is a valid medium finding', '--head', HEAD];
 // The review step at the cap after the verdict, as it reads this machine's record: no history is read on a decided head.
@@ -1216,12 +1218,12 @@ const stepAfter = (r, mode, { source = 'plan', reviewer = null } = {}) => atCap(
 test('the unattended rule: under "auto" with the waiver counting, an extend over a red flag is round_limit, never extension_ask, and says why', async (t) => {
   const r = repo(t, { local: ON, config: AUTO });
   r.record(5, atFlaggedCheck('auto'));
-  const { code, out } = await extend(t, r, EXTEND_OVER_FLAG);
+  const { code, out } = await extend(t, r, EXTEND_OVER_FLAG, { forge: autoForge(r) });
   assert.equal(code, 0);
   assert.deepEqual([out.extension.status, out.extension.by], ['stopped', 'unattended']);
   assert.equal(out.extension.reasons[0], 'R2-1 at src/a.js:3 is a valid medium finding', 'the judge\'s evidence is kept');
   assert.match(out.extension.reasons[1], /^red flags \(looping\) stand under github\.extraRounds "auto" and the unattended waiver, so the cap stands with no extra round and no question to the Human$/u);
-  assert.match(out.next, /^the cap stands on a red flag under the unattended rule: run aidrian pr review 5\b.*, which reports round_limit/u);
+  assert.match(out.next, /^the cap stands on a red flag under the unattended rule: run aidrian pr review 5\b.* again, with the options it was run with, any --with-bot included, which reports round_limit/u);
   const step = stepAfter(r, 'auto');
   assert.deepEqual([step.status, step.extension.status, step.extension.by], ['round_limit', 'stopped', 'unattended']);
   assert.deepEqual([step.question, step.options], [undefined, undefined], 'no question to the Human');
@@ -1233,8 +1235,8 @@ test('the unattended rule: under "auto" with the waiver counting, an extend over
 
 test('the unattended rule: with either switch off, or the team switch only in the working copy, an extend over a red flag still asks the Human', async (t) => {
   for (const [name, options, forge] of [
-    ['the team does not allow it on the forge, though the working copy does', { local: ON, config: { github: { extraRounds: 'auto', unattendedWaiver: { allow: true } } } }, (r) => landForge(r, { policy: REFUSE })],
-    ['this machine has not opted in', { config: AUTO }, (r) => landForge(r)],
+    ['the team does not allow it on the forge, though the working copy does', { local: ON, config: { github: { extraRounds: 'auto', unattendedWaiver: { allow: true } } } }, (r) => landForge(r, { policy: { ...REFUSE, ...AUTO } })],
+    ['this machine has not opted in', { config: AUTO }, autoForge],
   ]) {
     const r = repo(t, options);
     r.record(5, atFlaggedCheck('auto'));
@@ -1249,7 +1251,7 @@ test('the unattended rule: with either switch off, or the team switch only in th
 test('the unattended rule: under "ask", an extend over a red flag asks the Human with the waiver on, and reads no switch', async (t) => {
   const r = repo(t, { local: ON });
   r.record(5, atFlaggedCheck('ask'));
-  const forge = landForge(r);
+  const forge = autoForge(r);
   const { code, out } = await extend(t, r, EXTEND_OVER_FLAG, { forge });
   assert.deepEqual([code, out.extension.status, out.extension.by], [0, 'asking', 'judge']);
   assert.equal(stepAfter(r, 'ask').status, 'extension_ask');
@@ -1259,7 +1261,7 @@ test('the unattended rule: under "ask", an extend over a red flag asks the Human
 test('the unattended rule: a team switch the forge cannot read is off, and the Human is asked', async (t) => {
   const r = repo(t, { local: ON, config: AUTO });
   r.record(5, atFlaggedCheck('auto'));
-  const forge = landForge(r);
+  const forge = autoForge(r);
   forge.contents = () => {
     throw Object.assign(new Error('gh: HTTP 502'), { stderr: 'gh: HTTP 502' });
   };
@@ -1268,18 +1270,23 @@ test('the unattended rule: a team switch the forge cannot read is off, and the H
   assert.equal(stepAfter(r, 'auto').status, 'extension_ask');
 });
 
-test('the unattended rule: a check opened under "auto" asks the Human once the base branch commits "ask"', async (t) => {
-  const r = repo(t, { local: ON });
-  r.record(5, atFlaggedCheck('auto'));
-  const { code, out } = await extend(t, r, EXTEND_OVER_FLAG);
-  assert.deepEqual([code, out.extension.status, out.extension.by], [0, 'asking', 'judge']);
-  assert.equal(stepAfter(r, 'ask').status, 'extension_ask');
+test('the unattended rule: the base branch on the forge decides the mode, not a local ref, so a base that moved to "ask" asks the Human', async (t) => {
+  for (const [name, config, policy, by] of [
+    ['the forge on ask, the local ref still on auto', AUTO, { ...ALLOW, github: { ...ALLOW.github, extraRounds: 'ask' } }, 'judge'],
+    ['the forge on auto, the local ref still on ask', { github: { extraRounds: 'ask' } }, ALLOW_AUTO, 'unattended'],
+  ]) {
+    const r = repo(t, { local: ON, config });
+    r.record(5, atFlaggedCheck('auto'));
+    const { code, out } = await extend(t, r, EXTEND_OVER_FLAG, { forge: landForge(r, { policy }) });
+    assert.deepEqual([code, out.extension.status, out.extension.by], [0, by === 'judge' ? 'asking' : 'stopped', by], name);
+    if (by === 'judge') assert.equal(stepAfter(r, 'ask').status, 'extension_ask', name);
+  }
 });
 
 test('the unattended rule on the bot`s cap: the stop is reported as it stands, and names no step that would offer a judge', async (t) => {
   const r = repo(t, { local: ON, config: AUTO });
   r.record(5, atFlaggedCheck('auto', BOT_CHECK));
-  const { code, out } = await extend(t, r, EXTEND_OVER_FLAG);
+  const { code, out } = await extend(t, r, EXTEND_OVER_FLAG, { forge: autoForge(r) });
   assert.deepEqual([code, out.extension.source, out.extension.status, out.extension.by], [0, 'bot', 'stopped', 'unattended']);
   assert.equal(out.next, 'the cap stands on a red flag under the unattended rule, with no question: report round_limit and the findings left open');
   const step = stepAfter(r, 'auto', BOT_CHECK);

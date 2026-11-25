@@ -8,7 +8,7 @@ import test from 'node:test';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
 import { fileList } from '../plugins/aidrian/lib/review/diff.mjs';
-import { routeOf } from '../plugins/aidrian/lib/review/visual-route.mjs';
+import { fileRoute } from '../plugins/aidrian/lib/review/visual-route.mjs';
 import { attachMode, captureDir, captureKeys, captureVisual, capturesBody, readManifest, uploadCaptures, visualMatrix, visualRoutes } from '../plugins/aidrian/lib/review/visual.mjs';
 
 const R = (...routes) => routes.map((route) => ({ route, base: null }));
@@ -341,16 +341,16 @@ test('a capture-wide failure keeps the refused routes beside its own reason', as
   }
 });
 
-test('a file name that holds or starts with a tab reaches routeOf whole', () => {
+test('a file name that holds or starts with a tab reaches fileRoute whole', () => {
   const names = ['src/screens/a\tb/view.html', '\tsrc/screens/a/view.html', 'src/screens/gone\t/view.html', 'src/screens/ok/view.html', 'src/screens/ok/view.html\t.png'];
   const numstat = names.map((name, i) => `${i === 4 ? '-\t-' : '3\t1'}\t${name}\0`).join('');
   const changes = fileList(numstat, names.map((name, i) => `${i === 2 ? 'D' : 'A'}\0${name}\0`).join(''));
   assert.deepEqual(changes.map(({ file, added, removed, status }) => [file, added, removed, status]), names.map((name, i) => [name, i === 4 ? 0 : 3, i === 4 ? 0 : 1, i === 2 ? 'D' : 'A']));
   assert.throws(() => fileList('1\t0\t\0', ''), /no path/u);
   const from = { pattern: 're:^\\t?src/screens/(.*)/view\\.html$', route: '/$1' };
-  const problem = { problem: routeOf(from, names[0]).problem };
+  const problem = { problem: fileRoute(from, names[0]).problem };
   assert.match(problem.problem, /yields no path/u);
-  assert.deepEqual(changes.map((change) => routeOf(from, change.file)), [problem, { route: '/a' }, problem, { route: '/ok' }, null]);
+  assert.deepEqual(changes.map((change) => fileRoute(from, change.file)), [problem, { route: '/a' }, problem, { route: '/ok' }, null]);
   const visual = fromConfig({ files: ['re:src/'], routeFrom: from });
   assert.deepEqual(visualRoutes(visual, changes).map((each) => each.file ?? each.route), ['/a', '/ok', names[0]]);
 });

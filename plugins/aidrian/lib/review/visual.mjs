@@ -23,7 +23,7 @@ import { recordsFolder, stateDir } from '../project.mjs';
 import { pathPattern } from './plan.mjs';
 import { clip, INGEST_NOTE, REVIEWED_WITHOUT } from './state.mjs';
 import { VISUAL_PER_RUN } from './config.mjs';
-import { routeOf } from './visual-route.mjs';
+import { fileRoute } from './visual-route.mjs';
 
 export const VISUAL_MARKER = '<!-- aidrian-visual-captures -->';
 const ADAPTERS = Object.freeze({ web: fileURLToPath(new URL('./visual-web.mjs', import.meta.url)) });
@@ -82,7 +82,7 @@ export function visualRoutes(visual, changes) {
     if (!touched.length) continue;
     const listed = [...(target.routes ?? [])];
     for (const { file } of target.routeFrom ? touched.filter((change) => change.status !== 'D') : []) {
-      const yielded = routeOf(target.routeFrom, file);
+      const yielded = fileRoute(target.routeFrom, file);
       if (yielded?.route) listed.push(yielded.route);
       else if (yielded) {
         const { route } = target.routeFrom;

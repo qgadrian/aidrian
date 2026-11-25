@@ -28,7 +28,7 @@ export function templateProblem({ pattern, route }) {
 }
 
 // What `file` yields: null when the pattern does not match it, { route }, or { problem } for a route the rule refuses.
-export function routeOf({ pattern, route }, file) {
+export function fileRoute({ pattern, route }, file) {
   const match = pathPattern(pattern).exec(file);
   if (!match) return null;
   const group = (number) => match[number] ?? '';

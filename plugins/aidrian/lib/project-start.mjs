@@ -367,7 +367,7 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
       // The recorded commit, or one after it: exit 1 is another history, and 128 a commit the fetch did not bring.
       const ours = own ? git(['merge-base', '--is-ancestor', own, from]) : null;
       if (ours && ours.status !== 0) return park(own, `its head ${from.slice(0, 7)} does not hold ${own.slice(0, 7)}, the commit this project's runs recorded it at`);
-      const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--']);
+      const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--'], work, { maxBuffer: WHOLE_TREE_BUFFER });
       if (changed.status !== 0) return failed('diff', changed);
       const paths = changed.stdout.split('\0').filter((file) => file !== '');
       const guarded = paths.filter(guards);

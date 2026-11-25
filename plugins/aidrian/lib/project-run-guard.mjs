@@ -229,9 +229,8 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
     const branch = issueBranch(found, mark.issue);
     const pushUrl = typeof start.pushUrl === 'string' && start.pushUrl !== '' ? start.pushUrl : null;
     const overlay = typeof start.overlay === 'string' && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(start.overlay) ? start.overlay : null;
-    // What the start's spelling rule held, with or without an overlay: every start on existing work keeps it.
-    const policyFiles = Array.isArray(start.policyFiles) && (overlay || start.policyFiles.every((each) => typeof each === 'string')) ? start.policyFiles.filter((each) => typeof each === 'string') : [];
-    const startLoaded = startLoadedIn(start.startLoaded);
+    const policyFiles = overlay && Array.isArray(start.policyFiles) ? start.policyFiles.filter((each) => typeof each === 'string') : [];
+    const startLoaded = overlay ? startLoadedIn(start.startLoaded) : null;
     const indexFiles = overlay ? indexFilesIn(start.indexFiles) : [];
     if (typeof branch === 'string' && branch !== '') return { key: mark.issue, branch, pushUrl, overlay, policyFiles, ...(startLoaded ? { startLoaded } : {}), ...(indexFiles.length ? { indexFiles } : {}), ...slugsShared(found, mark.issue, branch) };
   }

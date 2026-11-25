@@ -948,10 +948,7 @@ function launchStart(context, place) {
   // would let a push change what it leaves out), and the knowledge index files it may edit (`indexFiles`), for the push guard. `took`: the attempt whose kept commits it was
   // offered, and the commit, which a later offer reads (project-kept.mjs keptCandidate). A recorded decision that stood
   // is in the row for the audit alone: nothing reads it back.
-  // A start on existing work keeps the names its spelling rule held (`startLoaded`, and the policy files beside it), with
-  // or without base copies, so its push guard holds the same ones.
-  const spelled = startLoaded ? { policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20), startLoaded } : {};
-  const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20), ...spelled, ...(indexFiles?.length ? { indexFiles } : {}) } : spelled;
+  const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20), ...(startLoaded ? { startLoaded } : {}), ...(indexFiles?.length ? { indexFiles } : {}) } : {};
   // `machine`: this machine's auto-merge switch as the main checkout reads it, which a confined session, denied that
   // checkout, reads in its place (attempt-clone.mjs confinedMachine): "unset" only for an untracked local file.
   const local = context.project.localAutoMerge;

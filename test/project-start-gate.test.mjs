@@ -1059,12 +1059,6 @@ test('a later attempt loads the branch\'s own host files only when the bot passe
   const clone = work(fx);
   assert.equal(readFileSync(path.join(clone, '.aidrian/knowledge/docs.json'), 'utf8'), '{"dir":"docs","docs":{}}\n', 'the branch\'s own file');
   assert.equal(readFileSync(path.join(clone, 'docs/rules.md'), 'utf8'), 'branch rules\n', 'and its own always doc');
-  // With no base copies, the start keeps what its spelling rule held, and the push guard holds the same names.
-  const own = ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home });
-  assert.deepEqual([own.overlay, own.startLoaded], [null, { docs: ['docs/rules.md'], folder: '.aidrian/knowledge' }]);
-  addEntry(fx, clone, 'docs/RULES.md', 'branch rules\n');
-  const pushed = pushCheckoutProblem(clone, { root: { root: clone, common: fx.git('-C', clone, 'rev-parse', '--path-format=absolute', '--git-common-dir').trim() }, fold: (each) => each, ...own });
-  assert.match(pushed ?? '', /^it pushes commits that change "docs\/RULES\.md" is "docs\/rules\.md" in another spelling/u);
   assert.doesNotMatch(fx.claude.starts()[0].args.at(-1), /base branch's copies/u);
   assert.equal(existsSync(path.join(path.dirname(clone), 'base-copies.txt')), false);
   assert.equal(fx.rows().findLast((row) => row.event === 'start').overlay, undefined);
@@ -2007,8 +2001,7 @@ test('a moved project folder\'s knowledge index is a base copy, and its one edit
   const base = alwaysIndex('rules.md');
   const { fx, more } = branchRun(t, { [tagged]: 'branch tagged\n' }, { folder: '-0:cfg', config: { github: { autoMerge: BOTH_KEYS } }, files: { [docs]: base, 'docs/rules.md': 'base rules\n', [tagged]: 'base tagged\n' } });
   const first = laterAttempt(fx, 1);
-  // No base copies; the row keeps what the spelling rule held all the same, as every start on existing work does.
-  assert.deepEqual([first.row.overlay, first.row.startLoaded, first.listing, textIn(first.clone, tagged)], [undefined, { docs: ['docs/rules.md'], folder: '-0:cfg/knowledge' }, null, 'branch tagged\n'], 'a tagged doc is the branch\'s own');
+  assert.deepEqual([first.row.overlay, 'startLoaded' in first.row, first.listing, textIn(first.clone, tagged)], [undefined, false, null, 'branch tagged\n'], 'a tagged doc is the branch\'s own');
   reopen(fx, 1, 12);
   const head = more({ [docs]: alwaysIndex() });
   const { clone, row, own, push } = laterAttempt(fx, 2);
@@ -2115,6 +2108,16 @@ test('a base tip whose indexes cannot say what the start hook loads, or a tip or
   stubGitSpawn((program, args, options) => (args.includes('ls-tree') && args.includes('--full-tree') && args.includes('-r') ? { status: 0, signal: null, stdout: 'src.js\0', stderr: 'spawnSync git ENOBUFS', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : spawnSync(program, args, options)));
   try {
     refuses(fx, 1, "the attempt's clone could not be made \\(ls-tree: spawnSync git ENOBUFS\\)", true);
+  } finally {
+    stubGitSpawn();
+  }
+  // The branch takes the workflow folder's alias back; the head's diff from the tip, cut the same way, refuses too.
+  fx.git('-C', scratch, 'rm', '-q', '--', '.github/work\ufb02ows/ci.yml');
+  fx.git('-C', scratch, 'commit', '-q', '-m', 'no alias');
+  fx.git('-C', scratch, 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
+  stubGitSpawn((program, args, options) => (args.includes('diff') && args.includes('--name-only') && args.includes('--no-renames') && args.at(-1) === '--' && !args.includes('--cached') && !args.includes('--no-relative') ? { status: 0, signal: null, stdout: 'src.js\0', stderr: 'spawnSync git ENOBUFS', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : spawnSync(program, args, options)));
+  try {
+    refuses(fx, 1, "the attempt's clone could not be made \\(diff: spawnSync git ENOBUFS\\)", true);
   } finally {
     stubGitSpawn();
   }

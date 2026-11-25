@@ -2159,8 +2159,7 @@ changes one is refused.
 What the start hook loads is the knowledge folder beside that `config.json`, wherever it lies, with every path below it,
 and each `always` doc its indexes name, by the rule of the [auto-merge](#auto-merge) `paths` check, case and Unicode form ignored, and a
 link, file, or submodule in the place of one or of a folder that holds it.
-Every start on existing work keeps it in its row as `startLoaded`, `{ docs, folder }`, beside `policyFiles`, with or
-without base copies, so its push guard holds the same names; a doc only the base moved counts too.
+The start row keeps it as `startLoaded`, `{ docs, folder }`, beside `overlay`; a doc only the base moved counts too.
 A start on existing work is refused, too, when a path of the tip, or of the branch's head once fetched, spells another
 way a name the harness holds by its exact spelling: the pointer, the policy files, what the start hook loads, the
 forge's workflow folders, and each guarded path of the tip (`spellingRule` in `lib/project.mjs`), such as `.AIDRIAN.JSON`.
@@ -2244,6 +2243,9 @@ Residuals of the base copies:
 - A checkout filter that rewrites an `always` doc, such as `eol=crlf`, refuses a start on existing work, as it does for `AGENTS.md`;
   one that rewrites a policy file refuses a first attempt too.
 - A hand write by the session, a first attempt, and a base that renames a host file the branch changed are not held.
+- Without base copies, the push guard holds the workflow folders alone to the spelling rule, so a push of another
+  spelling of a held name, such as `docs/RULES.md` beside an always `docs/rules.md`, passes it; the next start on that
+  head refuses it, and so does the merge gate.
 
 Every park row names the recorded head.
 A kept clone's commits never move it: a start on them records the forge's head.

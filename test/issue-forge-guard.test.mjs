@@ -526,10 +526,7 @@ test('an edit of a knowledge index lifts the push guard for no other file: an in
   for (const overlay of [undefined, 'HEAD', 'abc']) assert.equal('indexFiles' in own({ ...start, overlay, indexFiles: good }), false, `overlay ${overlay}`);
   assert.deepEqual(own({ ...start, startLoaded: { ...LOADED, more: 1 } }).startLoaded, LOADED);
   for (const startLoaded of [undefined, null, 'x', {}, { docs: [] }, { docs: [], folder: null }, { docs: 'x', folder: 'k' }, { docs: ['x', 7], folder: 'k' }]) assert.equal('startLoaded' in own({ ...start, startLoaded }), false, JSON.stringify(startLoaded));
-  // With no overlay, what the spelling rule held is kept all the same, and its policy files only when whole.
-  assert.deepEqual(own({ ...start, overlay: undefined }).startLoaded, LOADED, 'no overlay');
-  assert.deepEqual(own({ ...start, overlay: undefined, policyFiles: ['a.json', 7] }).policyFiles, [], 'no overlay: a list that is not whole');
-  assert.deepEqual(own({ ...start, overlay: undefined, policyFiles: ['a.json'] }).policyFiles, ['a.json']);
+  assert.equal('startLoaded' in own({ ...start, overlay: undefined }), false, 'no overlay');
 });
 
 test('an issue session merges a moved base, which may give an index the base\'s own copy, then edits one, and pushes no merge whose index conflicted', (t) => {

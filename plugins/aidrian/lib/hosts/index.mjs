@@ -346,6 +346,15 @@ function askBackground(host, member, ask) {
   }
 }
 
+// A host's name for a person, or its id, read through a guard: what a wrapper's reason follows.
+export function hostName(host) {
+  try {
+    return plainLine(host?.name) ?? plainLine(host?.id) ?? 'a host';
+  } catch {
+    return 'a host';
+  }
+}
+
 // The background sessions `host` holds, `ask` being { env, run }: { sessions: [{ id, session, name, cwd, startedAt,
 // idle, waiting }] }, with `id` one line of plain text, `session`, `name`, and `cwd` plain text or null, `startedAt` in
 // milliseconds or null, and `idle` and `waiting` booleans; or a wrapper's other shape.

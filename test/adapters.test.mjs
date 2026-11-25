@@ -1125,7 +1125,8 @@ test('Claude Code\'s adapter answers denied from a transcript in auto mode and s
 
 // capabilities.backgroundSessions: which background sessions a host holds, which of a given set it still holds, or
 // why it cannot. Shared code reads `list` and `held` only through backgroundList and backgroundHeld in
-// lib/hosts/index.mjs, which never throw, and `stop` and `stopLine` directly, through a guard that catches a throw.
+// lib/hosts/index.mjs, which never throw, and `stopLine` directly, through a guard that catches a throw; a run stops a
+// held session through capabilities.projectStart.stop, never through backgroundSessions.
 // Every call here goes through the run stand-in, so no test starts a process.
 const CLAUDE = '/usr/local/bin/claude';
 const WORKING = '306d6ea0-6f93-4ac6-abe0-473db3caabb0';
@@ -1267,7 +1268,7 @@ test('Claude Code\'s adapter answers backgroundList and backgroundHeld through a
   assert.deepEqual(backgroundHeld(claudeCode, { sessions: [{ id: '189eaf3d', session: DONE }, { id: 'ffff0000' }], env, run }), { held: [true, false] });
   assert.deepEqual(calls, [['agents', '--json'], ['agents', '--json']]);
   const { stop, stopLine } = claudeCode.capabilities.backgroundSessions;
-  assert.equal(typeof stop, 'function');
+  assert.equal(stop, undefined, 'a run stops a held session with the project start\'s stop');
   assert.equal(stopLine({ id: '189eaf3d' }), '`claude stop 189eaf3d` stops it');
 });
 
@@ -1296,7 +1297,7 @@ test('Codex held follows the process table through the run stand-in', { skip: pr
     'running, a zombie, a pid another process took over, gone, an unreadable table, the session id, and an id that names no process');
   assert.deepEqual(asked, [4100, 4200, 4300, 4500, 4400, 4100]);
   const { stop, stopLine } = hostOf('codex').capabilities.backgroundSessions;
-  assert.equal(typeof stop, 'function');
+  assert.equal(stop, undefined, 'a run stops a held session with the project start\'s stop');
   assert.equal(typeof stopLine({ id: `pid-4100-${digest}` }), 'string');
 });
 

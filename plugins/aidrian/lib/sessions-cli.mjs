@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 
 import { PLAIN_NAME, SESSION_ID } from './handoff-markers.mjs';
 import { plainLine } from './hidden-text.mjs';
-import { backgroundList, HOSTS } from './hosts/index.mjs';
+import { backgroundList, hostName, HOSTS } from './hosts/index.mjs';
 import { listMarks, markNames } from './unattended-mark.mjs';
 import { usageLines } from './usage.mjs';
 
@@ -91,15 +91,6 @@ function stopLineOf(host, id) {
     return plainLine(host.capabilities.backgroundSessions.stopLine({ id }));
   } catch {
     return null;
-  }
-}
-
-// A host's name for a person, or its id, read through a guard.
-function hostName(host) {
-  try {
-    return plainLine(host?.name) ?? plainLine(host?.id) ?? 'a host';
-  } catch {
-    return 'a host';
   }
 }
 

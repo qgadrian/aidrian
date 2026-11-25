@@ -338,7 +338,8 @@ a `list` that answers `{ unsupported }` with that reason, which `backgroundList`
 as a failure. Codex lists no sessions, and its `held` reads the process table for each start record instead
 (`heldProcesses` in `lib/hosts/codex-exec.mjs`): held while the process its `pid-<pid>-<start digest>` id names runs,
 not held once that process is gone, a zombie, or a process that started at another time, and null for an id that names
-no process or a table that cannot be read. `stop` and `stopLine` are the project start's.
+no process or a table that cannot be read. `stopLine` is the project start's, and a run stops a session it holds with
+the project start's `stop`.
 Verified by `node --test` on a stand-in process table (`test/adapters.test.mjs`); no live `codex exec` has run it.
 
 ## Session ids

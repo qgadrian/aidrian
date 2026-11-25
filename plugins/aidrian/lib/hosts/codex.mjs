@@ -359,11 +359,10 @@ export default {
     handoffContinue: { routes: [] },
     // A session the harness starts here is a `codex exec` process, which exits once its turn ends, so `list` says none
     // stays idle by design; `held` reads the process table for each session a start record names (codex-exec.mjs
-    // heldProcesses), and `stop` and `stopLine` are the project start's. docs/providers/codex.md#background-sessions.
+    // heldProcesses), and `stopLine` is the project start's. docs/providers/codex.md#background-sessions.
     backgroundSessions: {
       list: () => ({ unsupported: NO_IDLE }),
       held: ({ sessions, run }) => heldProcesses({ sessions, run }),
-      stop: ({ id, started, run }) => stopProcess({ id, started, run }),
       stopLine,
     },
     // A project run's issue session, through a detached `codex exec` in a fresh clone made for its attempt

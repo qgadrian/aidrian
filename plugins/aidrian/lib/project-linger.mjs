@@ -8,12 +8,15 @@
 //   - `wait` writes a `linger` row the first time it meets one, and once LINGER_GRACE has passed since, stops its chain
 //     and writes a `gone` row with `how: 'stopped'`; one the host lists as ended gets a `gone` row with `how: 'ended'`,
 //     from `wait`, `start`, or `end`. A session that cannot be stopped gets a line each wait, as an overdue one does,
-//     which names that session and the host's command that stops it by hand (notStopped).
+//     which names that session and the host's command that stops it by hand (notStopped);
+//   - a `gone` row says the host listed the session ended: its work ended, not that the host let it go. A host can keep a
+//     finished session until something stops it, so `wait` and `end` stop each one it still holds (releaseAttempts).
 // The write-ahead row of a start asks settledStarts again under the ledger's lock, from the ledger alone, so no start
 // passes beside a session the run still answers for.
 
 import { SESSION_ID } from './handoff-markers.mjs';
 import { plainLine } from './hidden-text.mjs';
+import { backgroundHeld, hostName } from './hosts/index.mjs';
 import { appendToRun, readRun } from './project-run.mjs';
 import { issueChain, startRows, startsOf, timeOf } from './project-run-guard.mjs';
 import { safely } from './session-start-gate.mjs';
@@ -77,6 +80,44 @@ export function lingeringStarts({ found, store, cap, env, spawn, now }) {
   }
   return { lingering, ended };
 }
+
+// Stops each session the host `host` still holds of an attempt of the run `found` that a `gone` row records ended, as
+// `wait` and `end` do: one read of which members of those attempts' chains it holds (hosts/index.mjs backgroundHeld),
+// then the project start's `stop` (`cap`) for each held one the host still lists as ended, so one that works or waits
+// on a response again, as while a person's turn runs in it, is left alone. It writes no row. Returns a line for each
+// attempt with such a member, `released KEY attempt N` once each stopped, else `not released KEY attempt N: ` and
+// notStopped's text for the first that did not; and `note sessions: <host name>: <reason>` when the host cannot say now
+// which it holds, or whether one it holds ended. A host that by design holds no such session, and a member it answers
+// false or null for, stops nothing and prints nothing.
+export function releaseAttempts({ found, store, cap, host, env, spawn, now }) {
+  const gone = new Set(found.rows.filter((row) => row.event === 'gone').map(attemptOf));
+  const attempts = startRows(found).filter((row) => row.outcome === 'started' && gone.has(attemptOf(row)))
+    .map((row) => ({ row, chain: issueChain(store, row, { now }).chain }));
+  if (attempts.length === 0) return [];
+  const read = backgroundHeld(host, { sessions: attempts.flatMap(({ chain }) => chain), env, run: spawn });
+  if (read.problem) return [`note sessions: ${hostName(host)}: ${read.problem}`];
+  if (!read.held) return [];
+  const lines = [];
+  let unsure = false;
+  let first = 0;
+  for (const { row, chain } of attempts) {
+    const held = chain.filter((_, index) => read.held[first + index] === true);
+    first += chain.length;
+    const ended = held.map((member) => safely(() => cap.ended({ id: member.id, session: member.session, env, run: spawn })));
+    unsure ||= ended.includes(null);
+    const finished = held.filter((_, index) => ended[index] === true);
+    if (finished.length === 0) continue;
+    const stuck = finished.filter((member) => safely(() => cap.stop({ id: member.session ?? member.id, started: member.id, env, run: spawn })) !== true);
+    const attempt = `${row.key} attempt ${row.attempt}`;
+    const line = stuck.length === 0 ? `released ${attempt}` : `not released ${attempt}: ${notStopped(cap, stuck[0], 'stayed with the host after its work ended and ')}`;
+    lines.push(line);
+  }
+  if (unsure) lines.push(`note sessions: ${hostName(host)}: ${UNSURE}`);
+  return lines;
+}
+
+// Why a held session of a settled attempt was left alone when the host's listing gave no answer whether it ended.
+const UNSURE = 'it holds a session of a settled attempt and cannot say now whether that session ended, so it was left alone';
 
 // The line a settled start's session that runs on prints in `next` and `wait`.
 export const lingerLine = (row) => `lingering ${row.key} attempt ${row.attempt}`;

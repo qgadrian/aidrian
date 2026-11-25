@@ -44,9 +44,17 @@ named and go on from that output as step 2 says.
    - `lingered <key> attempt <n> ended` or `... stopped`: a session that ran on after its issue settled runs no more;
      step 1.
    - only `running <key>` and `lingering <key> attempt <n>` lines: step 3 again.
+   - `released <key> attempt <n>`: the host still held the session of a settled attempt, and wait stopped it. Go on by
+     the other lines.
+   - `not released <key> attempt <n>: ...`: the host still holds the session of a settled attempt, and wait could not
+     stop it. It ends no wait and prints again each wait. Note it once for the final report, with the session id and the
+     host's command it names, and go on by the other lines. Never § Stop for it, whatever its words.
+   - `note sessions: <host name>: <reason>`: the host cannot say now which sessions it still holds, or whether a
+     session it holds ended. Note it, and go on by the other lines.
    - `overdue <key> ...`, or `limited <key> attempt <n>: ...` or `lingered <key> attempt <n>: ...` that says `could not
      be stopped`, then the host's command that stops it by hand: a session the run could not stop.
-     Note it, and go on; a second such line for the same issue: § Stop, with that line as the cause.
+     Note it, and go on; a second such line for the same issue: § Stop, with that line as the cause. A `not released`
+     line is never such a line.
    - `idle`: step 1.
    - exit 75, `retry: <why>`, as when another process holds the ledger: § Retry. Exit 1: § Stop.
 4. `aidrian project report <run> --json`, and write each report it owes as [tracker-writes.md](tracker-writes.md) says.
@@ -84,8 +92,9 @@ forge that could not answer, may pass then with no change.
 
 1. Start nothing more.
 2. Run `aidrian project wait <run> --max-wait 150` until it prints `idle`, writing each owed report after each settle.
-   Stop waiting sooner once every line left is a `running <key>` or `lingering <key> attempt <n>` line of a session
-   that a `could not be stopped` line named twice: no wait ends it.
+   Stop waiting sooner once every line left, but `released`, `not released`, and `note sessions:` lines, is a
+   `running <key>` or `lingering <key> attempt <n>` line of a session that a `could not be stopped` line named twice:
+   no wait ends it.
 3. `aidrian project summary <run>`.
 4. Tell the Human, in the final report: the cause on the `halt` line, the fix on stderr after `halt:`,
    and `aidrian project resume <run>` for the Human to run once it is fixed. When the re-check's lines were only
@@ -123,7 +132,11 @@ id with a line that says `which the host continued as <id>`.
 
 After `done`: `aidrian project report <run> --json` once more, writing what it owes, then `aidrian project summary <run>`.
 Then `aidrian project end <run>`, which records the run's end and releases this session's hold; it refuses while an
-issue still runs, or a session runs on after its issue settled, so run it only after `wait` printed `idle`. Then the final report of `SKILL.md` § Report.
+issue still runs, or a session runs on after its issue settled, so run it only after `wait` printed `idle`. Its
+`released`, `not released`, and `note sessions:` lines are read as step 3 reads them: the run ends all the same. Then
+the final report of `SKILL.md` § Report, which names, under **Stopped**, each session a `not released` line named,
+from `wait` or `end`, by its issue, its attempt, and its session id, with the host's command on that line that stops it
+by hand.
 
 ## Hand off
 

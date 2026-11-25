@@ -544,6 +544,9 @@ test('a confined session hands its result over in its drop folder, and the drive
   assert.equal(existsSync(fx.attempt()), false, 'removed once its session ended');
   const gone = fx.rows().find((row) => row.event === 'gone');
   assert.deepEqual([gone?.key, gone?.attempt, gone?.how], ['ENG-1', 1, 'ended'], 'the host lists it ended');
+  // A process that ended is one Codex holds no more: end stops nothing and prints no release line.
+  const ended = fx.cmd(['end', 'launch']);
+  assert.deepEqual([ended.exitCode, ended.out.filter((line) => /^(not )?released |^note sessions:/u.test(line))], [0, []], ended.err.join('\n'));
 });
 
 test('a drop the driver cannot trust ends the attempt bad_result', (t) => {

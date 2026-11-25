@@ -2319,6 +2319,9 @@ from the ledger and from `results/ISSUE.json`, read again with no symlink follow
 ledger's run, issue, attempt, status, and pull request, and checked again; a file that fails gives a body from the
 ledger alone that says so. `recorded RUN ISSUE` closes one, with a `recorded` row holding its attempt and sha256.
 `end RUN` refuses while any issue still runs, naming them, or while a session runs on after its issue settled.
+Before it writes the `end` row it stops each attempt's session the host still holds after its `gone` row, as `wait`
+does below, and prints those lines before the sweep's; a session it cannot stop, or a host that cannot say, refuses no
+end: the `end` row is written and the command exits 0.
 
 Every session a start held counts toward the run's caps until the host lists it ended, not only the session of an issue
 that runs (`lib/project-linger.mjs`). An issue settles once `wait` takes in its result, often while its session still
@@ -2336,7 +2339,21 @@ stops it by hand, such as `` `claude stop <id>` stops it ``; so do the `overdue`
 could not stop, `a session of it, <id>, could not be stopped; <how>`. An id of no session's shape is left out, and a
 `<how>` that is empty or holds a character no display text keeps, such as a control, a line or paragraph separator,
 a bidirectional mark, or a zero-width character, becomes `the host's own command stops it`.
-The write-ahead row of a start asks the ledger again under its lock, so no start passes beside such a session.
+The write-ahead row of a start asks the ledger again under its lock, so no start passes beside a session that runs on
+after its issue settled.
+A `gone` row says the host listed the session ended, which says its work ended, not that the host let it go: Claude
+Code keeps a finished background session in its plain `claude agents --json` listing until `claude stop`. Such a
+session no longer counts toward the run's caps, and a start passes beside it. Each pass of `wait`, and each `end`, asks
+the host once which sessions of the attempts with a `gone` row it still holds (`capabilities.backgroundSessions`) and
+stops each one with the project start's `stop`, printing `released <issue> attempt <n>` once every such session of the
+attempt stopped, `not released <issue> attempt <n>: a session of it, <id>, stayed with the host after its work ended
+and could not be stopped; <how>` when one did not, and `note sessions: <host name>: <reason>` when the host cannot say
+now which sessions it holds, or whether one it holds ended. None of the three ends a `wait`: each prints once, after
+the lines that did, when it returns, and `wait` still prints `idle`. Only a session the host lists as ended is
+released: one that works or waits on a response again is left alone, as while a person's turn runs in a session they
+attached to. That holds only for the turn: once it ends, the next pass of `wait` stops the session, as it stops a
+session that runs on after its issue settled. A session whose attempt has no `gone` row yet is the linger rule's alone.
+On Codex a process that ended is not held, so nothing is stopped or printed.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
 A command whose ledger another process holds locked, and a `start` whose read of the team's policy the forge cannot

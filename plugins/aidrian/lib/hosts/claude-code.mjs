@@ -394,11 +394,10 @@ export default {
     },
     // The background sessions the supervisor holds (hosts/claude-code-background.mjs): `list` and `held` each read the
     // plain `claude agents --json` once, which keeps a session whose turn ended until `claude stop` releases it (read on
-    // 2.1.331); `stop` and `stopLine` are the project start's. docs/providers/claude-code.md#background-sessions.
+    // 2.1.331); `stopLine` is the project start's. docs/providers/claude-code.md#background-sessions.
     backgroundSessions: {
       list: ({ env, run }) => listBackground({ env, run }),
       held: ({ sessions, env, run }) => heldSessions({ sessions, env, run }),
-      stop: ({ id, started, env, run }) => stopBackground({ id, started, env, run }),
       stopLine,
     },
     // How `aidrian project start` starts the session of one issue (lib/project-run-gate.mjs): Claude Code is `confined`,

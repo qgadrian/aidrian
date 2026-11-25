@@ -2026,26 +2026,32 @@ a halt again under the ledger's lock. The attempt counts toward the issue's 3, a
 run's life, so work its clone holds that a failed push never sent can be recovered from
 `<state>/runs/RUN/attempts/ISSUE.ATTEMPT/work`. So does any ended attempt whose clone holds a commit the forge does not
 have, whatever its result, with a `kept` row and a `kept` line from `wait` ([Handoff](handoff.md)): a usage limit or a
-crash that ends a session mid-work never loses what it committed and did not push. A start that would take the number
-of a kept attempt, as after a start given back (`void`), refuses and removes nothing until a person has recovered the
-work and moved that folder away.
+crash that ends a session mid-work never loses what it committed and did not push. A start given back (`void`) frees its
+attempt's number for the next start, and its session may have committed work too. Once a `kept` row names that number,
+no start of the run takes it, wherever the folder went: recover the work and start the issue in a new run. While the
+sweep has yet to decide, as when the folder's clone holds a commit its start row does not name, `start` exits 75:
+`aidrian project wait RUN` keeps the folder or removes it, and the next start goes on.
 The issue's next attempt starts on the commits a kept clone holds (`lib/project-kept.mjs`) when its attempt ended on a
-usage or rate limit, no other attempt ran since but one that started on that very commit, the clone's HEAD and issue
-branch, read as files, are both the one commit its `kept` row names, and the forge has the issue's branch at a commit
-they descend from. The gate pushes nothing and runs no git in the kept clone. It copies the clone's loose objects alone,
-each a regular file of one link, never through a link, at most 64 MiB each, 20,000 files, and 256 MiB in all, into a
-repository it makes in the new attempt's folder. A second one there fetches from it under git's fsck, and the new clone
-fetches from that second one, so an object enters only under the id its bytes hash to, once fsck passed it. The gate
-removes both before the session starts. Commits that change a host config,
-instruction, or policy file, or a forge workflow file, are never taken.
+usage or rate limit, no other attempt ran since but one that started on that very commit, the clone's HEAD and its issue
+branch, each read as a file, both resolve to the one commit its `kept` row names, and the forge has the issue's branch at
+a commit they descend from. The gate pushes nothing and runs no git in the kept clone. It copies the clone's loose objects
+alone, each a regular file of one link, never through a link, at most 64 MiB each and 256 MiB in all, as files and as they
+expand, out of at most 20,000 folder entries, into a repository it makes in the new attempt's folder. A second one there
+fetches from it under git's fsck, and the new clone fetches from that second one, so an object enters only under the id
+its bytes hash to, once fsck passed it. The gate removes both before the session starts.
+They are never taken when any one of them, a merge read from each of its parents, changes a host config, instruction, or
+policy file, a forge workflow file, or a `.gitattributes`, `.gitmodules`, or `.lfsconfig` at any depth, which pick what a
+checkout runs, even when a later one takes the change back.
 A start that took them prints `took ISSUE attempt N: <count> unpushed commits, <commit>` and records `took`, the attempt
 and the commit, in its start row, whose `head` stays the forge's; the first message says the branch holds that attempt's
-commits the forge does not have, as unreviewed data to check and then push. The session pushes them through its own push guard,
-and base copies of host files go over them as over any head no review passed. Any other start of an issue with a kept
-clone prints `not taken ISSUE attempt N: <why>` and goes on from the forge's branch; the row and the folder stay, and
-nothing parks. An attempt that ends on just the commit it took keeps no folder of its own while the kept one is there.
+commits the forge does not have, as unreviewed data to check and then push. The session pushes them through its own push
+guard, and base copies of host files go over them as over any head no review passed. Any other start of an issue with a
+kept clone prints `not taken ISSUE attempt N: <why>` and goes on from the forge's branch; the row and the folder stay, and
+nothing parks. A session that started on them and pushed nothing keeps a clone of its own, as any does, and the next
+attempt takes from that one; a start given back keeps none for them while the clone they came from still holds them.
 Not taken, and left for a person in the kept folder: uncommitted files, a first attempt that never pushed, a clone whose
-objects a session packed, commits that change such a file, and the work of an earlier run.
+objects a session packed, commits that change such a file, a merge of a moved base that brings such a change in, and the
+work of an earlier run.
 The driver lifts two kinds of halt by itself, once each, when the preflight's own checks of that cause pass
 (`lib/project-recheck.mjs`): an environment result's, re-checked by `commit`, `host`, `trust`, and `access` with its
 `token-reads`, and a failed proof's but the sandbox proof's, by `host`, `trust`, and `access`. When the driver's

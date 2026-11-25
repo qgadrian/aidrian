@@ -1,16 +1,18 @@
 // How a project run's next attempt starts on the commits an ended attempt's kept clone holds and the forge lacks
 // (lib/project-start.mjs prepareAttempt). The gate pushes nothing and runs no git in a kept clone, which a session no
-// Human attended had: it reads that clone as data. Its loose objects are copied into a repository the gate makes itself,
-// `<new attempt>/kept`; a second one, `<new attempt>/checked`, fetches from there under git's fsck; and the new attempt's
-// fresh clone fetches from that second one alone. git hashes every object a fetch takes in, so one enters only under the
-// id its own bytes give, and what enters the clone is exactly what fsck judged. The session that starts on them pushes them through its own push guard,
-// sandbox, and token, as any commit of its own. Commits are taken only after a usage or rate limit, only as descendants
-// of the branch's head on the forge, only when no attempt did other work since, and never when they change a host
-// config, instruction, policy, or forge workflow file. Anything else is not taken: the start goes on as with no kept
-// clone, and the `kept` row and its folder stay. No kept folder is ever changed or removed here.
+// Human attended had: it reads that clone as data. Its loose objects are copied into a repository the gate makes
+// itself, `<new attempt>/kept`; a second one, `<new attempt>/checked`, fetches from there under git's fsck; and the new
+// attempt's fresh clone fetches from that second one alone. git hashes every object a fetch takes in, so one enters
+// only under the id its own bytes give, and what enters the clone is exactly what fsck judged. The session that starts
+// on them pushes them through its own push guard, sandbox, and token, as any commit of its own. Commits are taken only
+// after a usage or rate limit, only as descendants of the branch's head on the forge, only when no attempt did other
+// work since, and never when one of them changes a host config, instruction, policy, or forge workflow file, or a file
+// git reads for what a checkout runs or fetches (CHECKOUT_FILES). Anything else is not taken: the start goes on as with
+// no kept clone, and the `kept` row and its folder stay. No kept folder is ever changed or removed here.
 
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, opendirSync, openSync, readSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { inflateSync } from 'node:zlib';
 
 import { workflowPaths } from './issue-push-checkout.mjs';
 import { startsOf } from './project-run-guard.mjs';
@@ -25,14 +27,19 @@ const KEPT_REF = 'refs/aidrian/kept';
 // The names of a loose object's folder and file.
 const OBJECT_FOLDER = /^[0-9a-f]{2}$/u;
 const OBJECT_FILE = /^(?:[0-9a-f]{38}|[0-9a-f]{62})$/u;
-// The most one object file may hold, the most object files, and the most bytes in all a take copies.
-export const KEPT_CAPS = Object.freeze({ file: 64 * 1024 * 1024, files: 20_000, bytes: 256 * 1024 * 1024 });
+// The most one object may hold, and all of them together, as their files and as those expand, and the most entries of
+// the object folders a take reads, whatever their names.
+export const KEPT_CAPS = Object.freeze({ file: 64 * 1024 * 1024, bytes: 256 * 1024 * 1024, entries: 20_000 });
+// The files, at any depth and in any case, by which git picks the programs a checkout runs and the places it fetches
+// from: the gate checks a kept commit out before any session's sandbox holds.
+const CHECKOUT_FILES = new Set(['.gitattributes', '.gitmodules', '.lfsconfig']);
 
 // The kept commits issue `key`'s next attempt may start on, in the run `found`, whose branch is `branch`: null when the
 // run kept no clone of the issue; { attempt, why } when its latest `kept` row names none to take; or { attempt, head,
-// folder }, that attempt's number, its one commit, and its folder (`folderOf(attempt)`). `heads(gitFolder, branch)` reads
-// a clone's refs as files (project-start.mjs cloneHeads).
-export function keptCandidate({ found, key, branch, folderOf, heads }) {
+// folder }, that attempt's number, its one commit, and its folder (`folderOf(attempt)`). `refs(gitFolder, branch)`
+// reads a clone's refs as files (project-start.mjs cloneRefs): its HEAD and its issue branch must each be at that
+// commit.
+export function keptCandidate({ found, key, branch, folderOf, refs }) {
   const row = found.rows.findLast((each) => each.event === 'kept' && each.key === key && Number.isInteger(each.attempt));
   if (!row) return null;
   const { attempt, head } = row;
@@ -44,16 +51,16 @@ export function keptCandidate({ found, key, branch, folderOf, heads }) {
   if (last?.attempt !== attempt && last?.took?.head !== head) return not('another attempt ran since');
   if (ran.find((each) => each.attempt === attempt)?.branch !== branch) return not('it worked on another branch');
   const folder = folderOf(attempt);
-  const read = heads(path.join(folder, 'git'), branch);
-  if (read.problem || read.heads.length !== 1 || read.heads[0] !== head) return not(`its clone's HEAD and branch are not both at ${head.slice(0, 12)}`);
+  const read = refs(path.join(folder, 'git'), branch);
+  if (read.head !== head || read.branch !== head) return not(`its clone's HEAD and branch are not both at ${head.slice(0, 12)}`);
   return { attempt, head, folder };
 }
 
 // Takes the kept commits `candidate` (keptCandidate) into the fresh clone `work` of the attempt folder `folder`, whose
 // git folder is `gitFolder`, over `forgeHead`, the commit the forge's branch is at: { took: { attempt, head }, count },
-// or { attempt, why } when they are not taken, or { problem } when a repository of the gate's own could not be removed, which
-// no session may find. `guards` names the host, instruction, and policy files, and `git(args, cwd)` is the attempt's
-// gateGit. The clone keeps no ref of them, taken or not: the branch it checks out names them.
+// or { attempt, why } when they are not taken, or { problem } when a repository of the gate's own could not be removed,
+// which no session may find. `guards` names the host, instruction, and policy files, and `git(args, cwd)` is the
+// attempt's gateGit. The clone keeps no ref of them, taken or not: the branch it checks out names them.
 export function takeKept({ candidate, folder, work, gitFolder, forgeHead, guards, git }) {
   const { attempt, head } = candidate;
   if (head === forgeHead) return { attempt, why: 'the forge has its commits' };
@@ -78,8 +85,8 @@ export function takeKept({ candidate, folder, work, gitFolder, forgeHead, guards
   return why ? { attempt, why } : { took: { attempt, head }, count };
 }
 
-// Puts the kept commit of `candidate` in the clone `work` under KEPT_REF: null, or why it could not. The copied objects go
-// into QUARANTINE, git's fsck judges them as CHECKED fetches them, and the clone fetches from CHECKED: nothing reads
+// Puts the kept commit of `candidate` in the clone `work` under KEPT_REF: null, or why it could not. The copied objects
+// go into QUARANTINE, git's fsck judges them as CHECKED fetches them, and the clone fetches from CHECKED: nothing reads
 // QUARANTINE after the first fetch.
 function fetchKept({ candidate, folder, work, gitFolder, git }) {
   const { head } = candidate;
@@ -108,8 +115,8 @@ function gateRepository(dir, { head, folder, gitFolder, git }) {
   return true;
 }
 
-// The fetch of KEPT_BRANCH from the gate's repository `from` into the ref `to`. Each setting is given by both its names,
-// so no config of the user's moves it to another path.
+// The fetch of KEPT_BRANCH from the gate's repository `from` into the ref `to`. Each setting is given by both its
+// names, so no config of the user's moves it to another path.
 function fetchArgs(from, to, { fsck }) {
   const settings = ['fetch', 'transfer'].flatMap((scope) => ['-c', `${scope}.fsckObjects=${fsck}`, '-c', `${scope}.unpackLimit=100000`]);
   return [...settings, 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', from, `+${KEPT_BRANCH}:${to}`];
@@ -121,41 +128,78 @@ function commitAt(ref, cwd, git) {
   return read.status === 0 ? read.stdout.trim() : null;
 }
 
-// Why the commit `head`, fetched under KEPT_REF in the new clone, may not be taken over `forgeHead`, or null.
+// Why the commit `head`, fetched under KEPT_REF in the new clone, may not be taken over `forgeHead`, or null. The files
+// are those any of its commits changes, a merge's from each of its parents, so a change a later one takes back counts.
 function judgeKept({ head, forgeHead, guards, git }) {
   if (git(['merge-base', '--is-ancestor', forgeHead, head]).status !== 0) return 'its commits do not descend from the branch\'s head on the forge';
-  const diff = git(['diff', '--name-only', '--no-renames', '--no-relative', '-z', forgeHead, head, '--']);
-  if (diff.status !== 0) return 'git cannot say which files its commits change';
+  // Both settings are git's defaults, given so that no config of the user's hides a merge's or a root's files.
+  const log = git(['-c', 'log.diffMerges=separate', '-c', 'log.showRoot=true', 'log', '-m', '--format=', '--name-only', '--no-renames', '--no-relative', '-z', `${forgeHead}..${head}`, '--']);
+  if (log.status !== 0) return 'git cannot say which files its commits change';
   const workflows = workflowPaths();
+  const protects = (file) => guards(file) || workflows.counts(file) || CHECKOUT_FILES.has(path.posix.basename(file).toLowerCase());
   // A count alone: no file name a session chose reaches the driver.
-  const held = diff.stdout.split('\0').filter((file) => file !== '' && (guards(file) || workflows.counts(file))).length;
+  const held = [...new Set(log.stdout.split('\0'))].filter((file) => file !== '' && protects(file)).length;
   return held ? `its commits change ${held} host config, instruction, policy, or workflow ${held === 1 ? 'file' : 'files'}` : null;
 }
 
 // Copies the loose objects of the kept clone in the attempt folder `folder` into the objects folder `to` of the gate's
-// own repository, within `caps`: null, or why none of the clone is taken. Nothing else of the clone's git folder is read:
-// no pack, index, commit graph, alternates, ref, config, or hook. Each folder on the way is a plain one by lstat, and
-// each file is opened without following a link or waiting on a FIFO, and is a regular file of one link. An odd entry at
-// an object's name, or a cap, takes none.
+// own repository, within `caps`: null, or why none of the clone is taken. Nothing else of the clone's git folder is
+// read: no pack, index, commit graph, alternates, ref, config, or hook. Each folder on the way is a plain one by lstat,
+// and each file is opened without following a link or waiting on a FIFO, and is a regular file of one link, whose bytes
+// inflate within `caps` (git inflates them outside any sandbox) and are copied as they are, for git to judge. An odd
+// entry at an object's name, or a cap, takes none.
 export function copyLoose(folder, to, caps = KEPT_CAPS) {
   const objects = path.join(folder, 'git', 'objects');
   for (const each of [folder, path.join(folder, 'git'), objects]) if (!lstatSync(each).isDirectory()) return 'a folder of its clone is not a plain one';
-  let [files, bytes] = [0, 0];
-  for (const name of readdirSync(objects).filter((each) => OBJECT_FOLDER.test(each))) {
+  const left = { entries: caps.entries, raw: caps.bytes, expanded: caps.bytes };
+  const folders = namesIn(objects, OBJECT_FOLDER, left);
+  if (!folders) return MANY;
+  for (const name of folders) {
     const from = path.join(objects, name);
     if (!lstatSync(from).isDirectory()) return 'its clone holds something other than a folder where objects lie';
-    const held = readdirSync(from).filter((each) => OBJECT_FILE.test(each));
+    const held = namesIn(from, OBJECT_FILE, left);
+    if (!held) return MANY;
     if (held.length) mkdirSync(path.join(to, name), { recursive: true });
     for (const file of held) {
-      files += 1;
-      if (files > caps.files) return 'its clone holds too many objects';
-      const read = readObject(path.join(from, file), Math.min(caps.file, caps.bytes - bytes));
-      if (read.why) return read.why;
-      bytes += read.body.length;
+      const read = readObject(path.join(from, file), Math.min(caps.file, left.raw));
+      const size = read.why ? read : expandedSize(read.body, Math.min(caps.file, left.expanded));
+      if (size.why) return size.why;
+      left.raw -= read.body.length;
+      left.expanded -= size.bytes;
       writeFileSync(path.join(to, name, file), read.body, { flag: 'wx', mode: 0o400 });
     }
   }
   return null;
+}
+
+const MANY = 'its clone holds too many objects';
+const LARGE = 'its clone\'s objects are too large';
+
+// The names in the folder `dir` that `wanted` takes, or null once the entries read pass those `left` allows, which each
+// entry counts toward, whatever its name.
+function namesIn(dir, wanted, left) {
+  const names = [];
+  const open = opendirSync(dir);
+  try {
+    for (let entry = open.readSync(); entry; entry = open.readSync()) {
+      left.entries -= 1;
+      if (left.entries < 0) return null;
+      if (wanted.test(entry.name)) names.push(entry.name);
+    }
+  } finally {
+    open.closeSync();
+  }
+  return names;
+}
+
+// The bytes the object file's `body` inflates to, at most `cap`: { bytes } or { why }.
+function expandedSize(body, cap) {
+  if (cap < 1) return { why: LARGE };
+  try {
+    return { bytes: inflateSync(body, { maxOutputLength: cap }).length };
+  } catch (error) {
+    return { why: error.code === 'ERR_BUFFER_TOO_LARGE' ? LARGE : 'one of its clone\'s objects does not inflate' };
+  }
 }
 
 // The bytes of the object file `file`, at most `cap` of them: { body } or { why }.
@@ -165,7 +209,7 @@ function readObject(file, cap) {
     fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.nlink !== 1) return { why: 'its clone holds something other than a file of its own where an object lies' };
-    if (stat.size > cap) return { why: 'its clone\'s objects are too large' };
+    if (stat.size > cap) return { why: LARGE };
     const body = Buffer.alloc(stat.size);
     let at = 0;
     while (at < body.length) {

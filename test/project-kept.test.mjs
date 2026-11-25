@@ -72,9 +72,10 @@ function keptClone(t) {
   const spare = path.join(fx.root, 'spare');
   cpSync(kept, spare, { recursive: true, verbatimSymlinks: true });
   const tip = fx.git('rev-parse', 'refs/remotes/origin/main').trim();
-  const prepare = ({ found = fx.run(), recorded = tip, guards = isGuarded, reviewed } = {}) => prepareAttempt({
-    project: fx.project, state: fx.state, run: 'launch', found, key: 'ENG-1', attempt: 2, branch: BRANCH, recorded, tip, guards, env: fx.env, ...(reviewed ? { reviewed } : {}),
-  });
+  const prepare = ({ found = fx.run(), guards = isGuarded } = {}) => {
+    rmSync(folderOf(fx, 2), { recursive: true, force: true });
+    return prepareAttempt({ project: fx.project, state: fx.state, run: 'launch', found, key: 'ENG-1', attempt: 2, branch: BRANCH, recorded: tip, tip, guards, env: fx.env });
+  };
   const fresh = () => {
     rmSync(kept, { recursive: true, force: true });
     cpSync(spare, kept, { recursive: true, verbatimSymlinks: true });
@@ -251,6 +252,11 @@ test('kept commits are taken only after a limit, only with no other attempt sinc
   // The clone's own state.
   const clones = [
     ['two heads', () => git('checkout', '-q', '--detach', 'HEAD^'), /^its clone's HEAD and branch are not both at /u],
+    ['a detached HEAD at the commit, and no branch', () => {
+      git('checkout', '-q', '--detach', 'HEAD');
+      git('update-ref', '-d', `refs/heads/${BRANCH}`);
+    }, /^its clone's HEAD and branch are not both at /u],
+    ['a HEAD on a branch not born yet, and the issue branch at the commit', () => git('symbolic-ref', 'HEAD', 'refs/heads/unborn'), /^its clone's HEAD and branch are not both at /u],
     ['packed objects', () => git('repack', '-q', '-a', '-d'), /^git refused its objects/u],
     ['a missing object', () => rmSync(loose(fx, git('rev-parse', 'HEAD^{tree}'))), /^git refused its objects/u],
     ['an object over the cap', () => {
@@ -258,6 +264,14 @@ test('kept commits are taken only after a limit, only with no other attempt sinc
       writeFileSync(path.join(kept, 'git', 'objects', '00', 'f'.repeat(38)), '');
       truncateSync(path.join(kept, 'git', 'objects', '00', 'f'.repeat(38)), 64 * 1024 * 1024 + 1);
     }, /^its clone's objects are too large$/u],
+    ['an object that expands over the cap', () => {
+      mkdirSync(path.join(kept, 'git', 'objects', '00'), { recursive: true });
+      writeFileSync(path.join(kept, 'git', 'objects', '00', 'f'.repeat(38)), deflateSync(Buffer.alloc(64 * 1024 * 1024 + 1)));
+    }, /^its clone's objects are too large$/u],
+    ['an object that does not inflate', () => {
+      mkdirSync(path.join(kept, 'git', 'objects', '00'), { recursive: true });
+      writeFileSync(path.join(kept, 'git', 'objects', '00', 'f'.repeat(38)), 'not zlib');
+    }, /^one of its clone's objects does not inflate$/u],
     ['no clone at all', () => rmSync(kept, { recursive: true }), /^its clone's HEAD and branch are not both at /u],
   ];
   for (const [message, change, why] of clones) {
@@ -291,7 +305,7 @@ test('kept commits that change a host, policy, or workflow file are not taken, a
   const guards = (file) => isGuarded(file) || isPolicyPath(file, ['settings/team/config.json']);
   const files = [
     'AGENTS.md', '.aidrian/knowledge/docs.json', '.aidrian/config.json', 'settings/team/config.json', '.github/workflows/ci.yml',
-    '.github', 'tools/skill/SKILL.md', '.claude/settings.json',
+    '.github', 'tools/skill/SKILL.md', '.claude/settings.json', '.gitattributes', 'src/deep/.GitAttributes', '.gitmodules', 'lib/.lfsconfig',
   ];
   for (const file of files) {
     fresh();
@@ -304,6 +318,57 @@ test('kept commits that change a host, policy, or workflow file are not taken, a
   }
 });
 
+test('a protected change a later kept commit takes back, or a merge brings in, is not taken', (t) => {
+  const setting = keptClone(t);
+  const { fx, head, prepare, fresh } = setting;
+  const git = inClone(fx, 1);
+  const back = () => {
+    git('checkout', '-q', head, '--', 'AGENTS.md');
+    git('commit', '-q', '-m', 'taken back');
+  };
+  const cases = [
+    ['an edit and its revert', () => {
+      commit(fx, 1, { 'AGENTS.md': 'a session wrote this\n' });
+      back();
+    }],
+    ['an edit and its revert on a side branch, merged', () => {
+      git('checkout', '-q', '-b', 'side');
+      commit(fx, 1, { 'AGENTS.md': 'a session wrote this\n' });
+      back();
+      git('checkout', '-q', BRANCH);
+      git('merge', '-q', '--no-ff', '-m', 'merge', 'side');
+    }],
+  ];
+  for (const [message, change] of cases) {
+    fresh();
+    change();
+    const top = git('rev-parse', 'HEAD');
+    assert.equal(git('diff', '--name-only', head, top, '--', 'AGENTS.md'), '', `${message}: the final tree shows nothing`);
+    const ledger = { ...fx.run(), rows: fx.rows().map((row) => (row.event === 'kept' ? { ...row, head: top } : row)) };
+    notTaken(setting, prepare({ found: ledger }), /^its commits change 1 host config, instruction, policy, or workflow file$/u, message);
+  }
+  // An edit only a merge commit makes, whatever the user's own config says of merges.
+  fresh();
+  fx.git('config', '--file', testGlobalConfig(t), 'log.diffMerges', 'off');
+  git('checkout', '-q', '-b', 'side');
+  commit(fx, 1, { 'side.js': 'side\n' });
+  git('checkout', '-q', BRANCH);
+  git('merge', '-q', '--no-ff', '--no-commit', 'side');
+  const merge = commit(fx, 1, { 'AGENTS.md': 'a session wrote this\n' });
+  assert.equal(git('rev-list', '--count', '--merges', `${head}..${merge}`), '1');
+  const edited = { ...fx.run(), rows: fx.rows().map((row) => (row.event === 'kept' ? { ...row, head: merge } : row)) };
+  notTaken(setting, prepare({ found: edited }), /^its commits change 1 host config, instruction, policy, or workflow file$/u, 'an edit only a merge makes');
+  // A merge of a side branch that changes none is taken, with names git would quote.
+  fresh();
+  git('checkout', '-q', '-b', 'side');
+  commit(fx, 1, { 'dir/a name.js': 'side\n' });
+  git('checkout', '-q', BRANCH);
+  git('merge', '-q', '--no-ff', '-m', 'merge', 'side');
+  const top = git('rev-parse', 'HEAD');
+  const ledger = { ...fx.run(), rows: fx.rows().map((row) => (row.event === 'kept' ? { ...row, head: top } : row)) };
+  assert.deepEqual(prepare({ found: ledger }).kept.took, { attempt: 1, head: top });
+});
+
 test('copyLoose reads loose object files alone, within its caps', (t) => {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-kept-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -313,18 +378,25 @@ test('copyLoose reads loose object files alone, within its caps', (t) => {
     mkdirSync(path.dirname(path.join(objects, file)), { recursive: true });
     writeFileSync(path.join(objects, file), text);
   };
-  put(`aa/${name('1')}`, 'one');
-  put(`bb/${'2'.repeat(62)}`, 'two');
+  // Each expands to 100 bytes.
+  const body = deflateSync(Buffer.alloc(100));
+  put(`aa/${name('1')}`, body);
+  put(`bb/${'2'.repeat(62)}`, body);
   for (const other of ['pack/pack-1.pack', 'pack/pack-1.idx', 'pack/multi-pack-index', 'info/commit-graph', 'info/alternates', 'aa/tmp_obj_1', `AA/${name('3')}x`, 'zz/notes']) put(other, 'never read');
   const to = (each) => path.join(dir, 'to', each);
   assert.equal(copyLoose(dir, to('all')), null);
   assert.deepEqual(readdirSync(to('all'), { recursive: true }).sort(), ['aa', `aa/${name('1')}`, 'bb', `bb/${'2'.repeat(62)}`]);
-  assert.equal(readFileSync(to(`all/aa/${name('1')}`), 'utf8'), 'one');
-  const caps = { file: 3, files: 2, bytes: 6 };
+  assert.deepEqual(readFileSync(to(`all/aa/${name('1')}`)), body, 'the raw bytes');
+  const entries = readdirSync(objects).length + readdirSync(path.join(objects, 'aa')).length + readdirSync(path.join(objects, 'bb')).length;
+  const caps = { file: 100, bytes: 200, entries };
   assert.equal(copyLoose(dir, to('exact'), caps), null);
-  assert.equal(copyLoose(dir, to('files'), { ...caps, files: 1 }), 'its clone holds too many objects');
-  assert.equal(copyLoose(dir, to('bytes'), { ...caps, bytes: 5 }), 'its clone\'s objects are too large');
-  assert.equal(copyLoose(dir, to('file'), { ...caps, file: 2 }), 'its clone\'s objects are too large');
+  assert.equal(copyLoose(dir, to('bytes'), { ...caps, bytes: 199 }), 'its clone\'s objects are too large');
+  assert.equal(copyLoose(dir, to('file'), { ...caps, file: 99 }), 'its clone\'s objects are too large');
+  assert.equal(copyLoose(dir, to('raw'), { ...caps, file: body.length - 1 }), 'its clone\'s objects are too large');
+  // Every entry counts, whatever its name.
+  assert.equal(copyLoose(dir, to('entries'), { ...caps, entries: entries - 1 }), 'its clone holds too many objects');
+  put(`cc/${name('3')}`, 'not zlib');
+  assert.equal(copyLoose(dir, to('odd')), 'one of its clone\'s objects does not inflate');
 });
 
 // The push the issue's session makes from attempt `attempt`'s clone, as its push guard judges it, with the row's facts.
@@ -391,18 +463,18 @@ function startAgain(fx) {
   return out.find((line) => /^(?:took|not taken) /u.test(line)) ?? null;
 }
 
-test('a second limit with no new commit takes from the same kept clone, past a start given back, and one with a new commit from the newer', (t) => {
+test('each limit keeps the clone it ended in: a second one with no new commit, past a start given back, and a third with one', (t) => {
   const { fx, forge: forgeHead, head } = keptRun(t);
   const twelve = head.slice(0, 12);
   assert.equal(startAgain(fx), `took ENG-1 attempt 1: 2 unpushed commits, ${twelve}`);
-  // No commit of its own: its clone is swept, and the commit it started on stays in attempt 1's.
-  assert.equal(limited(fx, 2), null, 'no second kept row for the commits taken');
-  assert.deepEqual([existsSync(folderOf(fx, 2)), existsSync(folderOf(fx, 1))], [false, true]);
+  // No commit of its own: its clone is kept all the same, since its session ran, and the next attempt takes from it.
+  assert.match(limited(fx, 2), new RegExp(`^kept ENG-1 attempt 2: its clone holds ${twelve}, `, 'u'));
+  assert.deepEqual([existsSync(folderOf(fx, 2)), existsSync(folderOf(fx, 1))], [true, true]);
   // A start given back between, whose row holds the next number.
   const { id, child, ...ahead } = lastStart(fx);
   appendToRun(fx.state, 'launch', () => ({ rows: [{ ...ahead, attempt: 3, outcome: 'void', at: now() }] }));
-  assert.equal(startAgain(fx), `took ENG-1 attempt 1: 2 unpushed commits, ${twelve}`);
-  assert.deepEqual([lastStart(fx).attempt, lastStart(fx).head, lastStart(fx).took], [3, forgeHead, { attempt: 1, head }]);
+  assert.equal(startAgain(fx), `took ENG-1 attempt 2: 2 unpushed commits, ${twelve}`);
+  assert.deepEqual([lastStart(fx).attempt, lastStart(fx).head, lastStart(fx).took], [3, forgeHead, { attempt: 2, head }]);
   assert.equal(inClone(fx, 3)('rev-parse', 'HEAD'), head);
   // One new commit on them, unpushed: attempt 3's clone is kept, and the next attempt starts on all three.
   const newer = commit(fx, 3, { 'kept/three.js': 'kept three\n' }, 'kept three');

@@ -52,18 +52,18 @@ export function idleSessions({ hosts = HOSTS, env = process.env, home, now = Dat
       continue;
     }
     for (const row of read.sessions.filter((each) => each.idle)) {
-      const mark = markNaming(marks, row.session);
+      const mark = markNaming(marks, row);
       if (mark) idle.push(idleRow({ host, name, row, mark, now }));
     }
   }
   return { idle: idle.sort((a, b) => b.ageMs - a.ageMs), notes };
 }
 
-// The mark filed under the full id `session`, else under a short id it starts with (unattended-mark.mjs markNames),
-// or null.
-function markNaming(marks, session) {
+// The mark filed under the full id of the listing row `row`, else under its short id `id`, or one the full id starts
+// with (unattended-mark.mjs markNames), or null.
+function markNaming(marks, { id, session }) {
   if (typeof session !== 'string') return null;
-  return marks.find((mark) => mark.session === session) ?? marks.find((mark) => markNames(mark.session, session)) ?? null;
+  return marks.find((mark) => mark.session === session) ?? marks.find((mark) => mark.session === id || markNames(mark.session, session)) ?? null;
 }
 
 // One idle session, from `row` as backgroundList cleaned it and the mark that names it, whose fields no wrapper read.
@@ -101,8 +101,8 @@ function stopLineOf(host, id) {
 const plainName = (name) => (typeof name === 'string' && PLAIN_NAME.test(name) ? name : null);
 
 // A folder the line prints after `in`, given as one line of plain text (backgroundList's, or the mark's through
-// plainLine): only one with no backtick and no colon and space, so no part of it can read as a second stop line.
-const printableFolder = (folder) => (typeof folder === 'string' && !folder.includes('`') && !folder.includes(': ') ? folder : null);
+// plainLine): only one with no backtick and no colon before whitespace, so no part of it can read as a second stop line.
+const printableFolder = (folder) => (typeof folder === 'string' && !folder.includes('`') && !/:\s/u.test(folder) ? folder : null);
 
 // The lines a person reads (docs/handoff.md#idle-sessions): `none` when no session is idle and no host
 // failed, one `idle` line for each session, and one `note` line for each host whose listing failed. A host that holds

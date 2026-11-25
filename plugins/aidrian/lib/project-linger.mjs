@@ -83,8 +83,9 @@ export function lingeringStarts({ found, store, cap, env, spawn, now }) {
 
 // Stops each session the host `host` still holds of an attempt of the run `found` that a `gone` row records ended, as
 // `wait` and `end` do: one read of which members of those attempts' chains it holds (hosts/index.mjs backgroundHeld),
-// then the project start's `stop` (`cap`) for each held one the host still lists as ended, so one that works or waits
-// on a response again, as while a person's turn runs in it, is left alone. It writes no row. Returns a line for each
+// then, member by member, whether the host still lists each held one as ended, and at once the project start's `stop`
+// (`cap`) for it, so one that works or waits on a response again, as while a person's turn runs in it, is left alone. A
+// host with no conditional stop leaves the moment between that read and its stop. It writes no row. Returns a line for each
 // attempt with such a member: `not released KEY attempt N: ` and notStopped's text for the first that did not stop,
 // else `released KEY attempt N` once each held member ended and stopped, so none is printed while a held member of the
 // chain still works, or the host cannot say whether it ended; and `note sessions: <host name>: <reason>` when the host cannot say now
@@ -104,14 +105,19 @@ export function releaseAttempts({ found, store, cap, host, env, spawn, now }) {
   for (const { row, chain } of attempts) {
     const held = chain.filter((_, index) => read.held[first + index] === true);
     first += chain.length;
-    const ended = held.map((member) => safely(() => cap.ended({ id: member.id, session: member.session, env, run: spawn })));
-    unsure ||= ended.includes(null);
-    const finished = held.filter((_, index) => ended[index] === true);
-    if (finished.length === 0) continue;
-    const stuck = finished.filter((member) => safely(() => cap.stop({ id: member.session ?? member.id, started: member.id, env, run: spawn })) !== true);
+    if (held.length === 0) continue;
+    const stuck = [];
+    let stopped = 0;
+    for (const member of held) {
+      const ended = safely(() => cap.ended({ id: member.id, session: member.session, env, run: spawn }));
+      unsure ||= ended === null;
+      if (ended !== true) continue;
+      if (safely(() => cap.stop({ id: member.session ?? member.id, started: member.id, env, run: spawn })) === true) stopped += 1;
+      else stuck.push(member);
+    }
     const attempt = `${row.key} attempt ${row.attempt}`;
     if (stuck.length > 0) lines.push(`not released ${attempt}: ${notStopped(cap, stuck[0], 'stayed with the host after its work ended and ')}`);
-    else if (finished.length === held.length) lines.push(`released ${attempt}`);
+    else if (stopped === held.length) lines.push(`released ${attempt}`);
   }
   if (unsure) lines.push(`note sessions: ${hostName(host)}: ${UNSURE}`);
   return lines;

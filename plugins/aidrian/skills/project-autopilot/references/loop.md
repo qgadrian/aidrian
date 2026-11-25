@@ -44,12 +44,11 @@ named and go on from that output as step 2 says.
    - `lingered <key> attempt <n> ended` or `... stopped`: a session that ran on after its issue settled runs no more;
      step 1.
    - only `running <key>` and `lingering <key> attempt <n>` lines: step 3 again.
-   - `released <key> attempt <n>`: the host still held the session of a settled attempt, and wait stopped it. It clears
-     an earlier `not released` note of that attempt. Go on by the other lines.
+   - `released <key> attempt <n>`: the host still held the session of a settled attempt, and wait stopped it.
+     Go on by the other lines.
    - `not released <key> attempt <n>: ...`: the host still holds the session of a settled attempt, and wait could not
-     stop it. It ends no wait and prints again each wait. Note it once for the final report, with the session id and the
-     host's command it names, and go on by the other lines. A later `released` line of that attempt clears the note. Never
-     § Stop for it, whatever its words.
+     stop it. It ends no wait and prints again each wait while it holds. Go on by the other lines: the final report names
+     only what the last `wait` or `end` printed. Never § Stop for it, whatever its words.
    - `note sessions: <host name>: <reason>`: the host cannot say now which sessions it still holds, or whether a
      session it holds ended. Note it, and go on by the other lines.
    - `overdue <key> ...`, or `limited <key> attempt <n>: ...` or `lingered <key> attempt <n>: ...` that says `could not
@@ -135,9 +134,9 @@ After `done`: `aidrian project report <run> --json` once more, writing what it o
 Then `aidrian project end <run>`, which records the run's end and releases this session's hold; it refuses while an
 issue still runs, or a session runs on after its issue settled, so run it only after `wait` printed `idle`. Its
 `released`, `not released`, and `note sessions:` lines are read as step 3 reads them: the run ends all the same. Then
-the final report of `SKILL.md` § Report, which names, under **Stopped**, each session a `not released` line named,
-from `wait` or `end`, and no later `released` line of its attempt cleared, by its issue, its attempt, and its session
-id, with the host's command on that line that stops it by hand.
+the final report of `SKILL.md` § Report, which names, under **Stopped**, each session a `not released` line of the
+last `wait` or `end` named, by its issue, its attempt, and its session id, with the host's command on that line that
+stops it by hand, and the `note sessions:` line it printed, if any.
 
 ## Hand off
 

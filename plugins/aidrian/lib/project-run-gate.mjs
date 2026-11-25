@@ -1103,7 +1103,7 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
     if (last && until - began < slowest + WAIT_MARGIN) return last;
     const at = pass === 0 ? now : began;
     const { lines, lingering, release } = waitPass({ state, run, store, cap, host, env, home, spawn, policy, forge: facade, now: at });
-    released = mergeRelease(released, release);
+    if (release) released = mergeRelease(released, release);
     const found = readRun(state, run);
     if (found.problem) return { ...refuse(found.problem), out: released };
     for (const [key, was] of before) {
@@ -1125,16 +1125,18 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
 }
 
 // The release lines one wait prints (project-linger.mjs releaseAttempts): `held`, those of its passes so far, with
-// `fresh`, those of one more, each once. A `released KEY attempt N` line takes the place of an earlier `not released KEY
-// attempt N: ...`, so a session a later pass stopped is never left for the Human to stop by hand.
-function mergeRelease(held, fresh) {
-  let merged = held;
-  for (const line of fresh) {
-    const kept = merged.filter((each) => each !== line && !each.startsWith(`not ${line}:`));
-    merged = [...kept, line];
-  }
-  return merged;
+// `fresh`, those of one more, each once. A `not released KEY attempt N: ...` line of an earlier pass stays only while the
+// latest pass that could read the host repeats it, so a session that runs no more is never left for the Human to stop by
+// hand; one that could not, which prints a `note sessions:` line, keeps it for each attempt it prints no line of.
+export function mergeRelease(held, fresh) {
+  const unread = fresh.some((line) => line.startsWith('note sessions: '));
+  const answered = new Set(fresh.map(attemptNamed));
+  const stands = (line) => !line.startsWith('not released ') || (unread && !answered.has(attemptNamed(line)));
+  return [...held.filter((line) => !fresh.includes(line) && stands(line)), ...fresh];
 }
+
+// The `KEY attempt N` a release line names, or undefined for one that names none.
+const attemptNamed = (line) => /^(?:not )?released (\S+ attempt \d+)/u.exec(line)?.[1];
 
 // The policy `wait` settles a run's issues under, from the team's policy `team` (teamPolicy): { policy, note }, where
 // `note` holds the line to print first, if any. A policy the forge confirms stands. One it no longer confirms, or cannot
@@ -1165,7 +1167,7 @@ const hoursOf = (policy, start) => (typeof policy.hoursOf === 'function' ? polic
 
 // One read of `wait`: orphans, handed-over results, ended sessions, then sessions that run on after their issue
 // settled, the stop of each the host still holds after its `gone` row (project-linger.mjs), and the sweep of ended
-// attempts' folders: { lines, lingering, release }, with the stop's lines in `release`.
+// attempts' folders: { lines, lingering, release }, with the stop's lines in `release`, null when it asked no host.
 function waitPass({ state, run, store, cap, host, env, home, spawn, policy, forge, now }) {
   const lines = settleOrphans({ state, run, store, cap, env, spawn, now });
   const dropped = readRun(state, run);
@@ -1174,7 +1176,7 @@ function waitPass({ state, run, store, cap, host, env, home, spawn, policy, forg
   const lingered = settleLingering({ state, run, store, cap, env, spawn, now, wait: true });
   lines.push(...lingered.lines);
   const after = readRun(state, run);
-  if (after.problem) return { lines, lingering: lingered.lingering, release: [] };
+  if (after.problem) return { lines, lingering: lingered.lingering, release: null };
   const release = releaseAttempts({ found: after, store, cap, host, env, spawn, now });
   lines.push(...sweepAttempts({ state, run, found: after, cap, env, home, spawn, forge }));
   return { lines, lingering: lingered.lingering, release };

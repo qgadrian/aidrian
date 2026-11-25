@@ -144,6 +144,9 @@ test('a row the host does not call idle and an idle row no mark names are left o
   assert.deepEqual(idleSessions({ hosts: [underscore], env, home, now: NOW }).idle, [], 'a name no short id takes, with an underscore, names no other session');
   const marks = listMarks({ env, home, now: NOW });
   assert.deepEqual(marks.map(({ session }) => session).sort(), [WORKING, 'ab_c', 'abc', 'abcd1234'].sort());
+  markUnattended('feed0001', { root: '/work/app', env, now: NOW });
+  const apart = fakeHost({ rows: [{ id: 'feed0001', session: UNMARKED }, { id: 'feed00012', session: UNMARKED }] }).host;
+  assert.deepEqual(idleSessions({ hosts: [apart], env, home, now: NOW }).idle.map(({ id }) => id), ['feed0001'], 'a short id the full id does not start with matches the row\'s own id, and only the whole of it');
 });
 
 test('listMarks reads plain and issue marks of this user within their age, and leaves every other file out', (t) => {
@@ -217,17 +220,19 @@ test('a name that is not plain words, a folder or stop line with a hidden charac
   assert.equal(idleSessions({ hosts: [thrown], env, home, now: NOW }).idle[0].stop, null, 'a stop line that throws reads null');
 });
 
-// A folder holds any character a path may, so one with a backtick or a colon and space could make the line read as
+// A folder holds any character a path may, so one with a backtick or a colon and whitespace could make the line read as
 // two stop lines to whoever copies from it: it is left out, whether the host's listing or the mark gives it.
-test('a folder with a backtick or a colon and space is left out, from the host listing and from the mark alike', (t) => {
+test('a folder with a backtick or a colon and whitespace is left out, from the host listing and from the mark alike', (t) => {
   const { env, home } = place(t);
   const trap = '/work/a: `claude stop 306d6ea0` stops it';
   markUnattended(HANDOFF, { root: '/work/app', cwd: '/work/a: claude stop 306d6ea0', env, now: NOW });
   markUnattended(ATTEMPT, { root: '/work/app', env, now: NOW });
   markUnattended(SHORT, { root: '/work/app', cwd: '/work/`tick`', env, now: NOW });
   markUnattended(WORKING, { root: '/work/app', env, now: NOW });
+  markUnattended(UNMARKED, { root: '/work/app', env, now: NOW });
   const { host } = fakeHost({
     rows: [
+      { id: '77777777', session: UNMARKED, cwd: '/work/a:\u00a0claude stop 306d6ea0', startedAt: NOW - 5 * MINUTE },
       { id: '189eaf3d', session: HANDOFF, startedAt: NOW - 4 * MINUTE },
       { id: '42cf8d0a', session: ATTEMPT, cwd: trap, startedAt: NOW - 3 * MINUTE },
       { id: 'abcd1234', session: SHORT, startedAt: NOW - 2 * MINUTE },
@@ -235,9 +240,10 @@ test('a folder with a backtick or a colon and space is left out, from the host l
     ],
   });
   const read = idleSessions({ hosts: [host], env, home, now: NOW });
-  assert.deepEqual(read.idle.map(({ id, cwd }) => [id, cwd]), [['189eaf3d', null], ['42cf8d0a', null], ['abcd1234', null], ['306d6ea0', '/work/b:c d']],
-    'a mark\'s folder with a colon and space alone, a host\'s with both, a mark\'s with a backtick alone; a colon with no space after it is kept');
+  assert.deepEqual(read.idle.map(({ id, cwd }) => [id, cwd]), [['77777777', null], ['189eaf3d', null], ['42cf8d0a', null], ['abcd1234', null], ['306d6ea0', '/work/b:c d']],
+    'a host\'s folder with a colon and a no-break space, a mark\'s folder with a colon and space alone, a host\'s with both, a mark\'s with a backtick alone; a colon with no space after it is kept');
   assert.deepEqual(plainLines(read), [
+    'idle 77777777 5m handoff continuation: `fake stop 77777777` stops it',
     'idle 189eaf3d 4m handoff continuation: `fake stop 189eaf3d` stops it',
     'idle 42cf8d0a 3m handoff continuation: `fake stop 42cf8d0a` stops it',
     'idle abcd1234 2m handoff continuation: `fake stop abcd1234` stops it',

@@ -964,9 +964,10 @@ asks, runs the stop line it prints.
 
 A session is listed only when both hold:
 
-- An [unattended mark](#the-background-route) names it, under its full id or a short id of at least 4 characters
-  that the full id starts with. A mark holds 30 days, so an older session is not listed. A mark whose tags name a run
-  and an issue makes the session that run's attempt; any other is a handoff continuation.
+- An [unattended mark](#the-background-route) names it, under its full id, the exact short id the host lists it by, or
+  a short id of at least 4 characters that the full id starts with. A mark holds 30 days, so an older session is not
+  listed. A mark whose tags name a run and an issue makes the session that run's attempt; any other is a handoff
+  continuation.
 - Its host's listing, through the adapter's `backgroundSessions.list`, says it is idle: its turn ended, or it waits
   on a response, such as a question or a permission prompt. A session still working is never
   listed, nor an interactive session. A background session the Human attached to is listed once it is idle, as any
@@ -980,9 +981,9 @@ idle <id> <age> <what>: <stop line>
 
 `<age>` is `<m>m`, `<h>h<mm>m`, or `<d>d<h>h`, from the host's start time, else the mark's. `<what>` is
 `handoff continuation` or `attempt of <issue> in run <run>`, then the session's name in quotes when it is plain words:
-up to 100 characters, each an ASCII letter or digit, a space, or one of `_ . @ : · -`. Then `in <folder>` when the folder holds no hidden character, no backtick, and no colon followed by a
-space, so the line shows one stop command alone, then `(waiting on a response)` when the host says it waits on one: such
-a session may be mid-task, and the stop ends that task undone. `<stop line>` is the host's, such as
+up to 100 characters, each an ASCII letter or digit, a space, or one of `_ . @ : · -`. Then `in <folder>` when the folder holds no hidden character, no backtick, and no colon followed by
+whitespace, so the line shows one stop command alone, then `(waiting on a response)` when the host says it waits on one:
+such a session may be mid-task, and the stop ends that task undone. `<stop line>` is the host's, such as
 `` `claude stop 189eaf3d` stops it ``. An id with any character but a letter, a digit, `_`, or `-` gets none, and
 neither does a host whose line is empty or holds a hidden character: the line then ends `<host name> gave no stop line
 it is safe to print`.

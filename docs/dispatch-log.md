@@ -279,13 +279,14 @@ Most costly sessions, top 3:
   `--json` lists them in `unknown_models`.
 - **Per effort**: `-` is a session whose main conversation recorded no level, such as one logged before the field existed.
 - A session logged before the main and subagent split counts in the total, per day, and per effort; a `Partial:` line says how many.
-- **Costs** are [at today's list prices](#prices-at-report-time). The total, the main conversation, and the subagents
-  each show `logged $X` beside them where that moves them by a cent or more. A session that cannot be priced again
+- **Costs** are [at today's list prices](#prices-at-report-time). The total, the main conversation, the subagents,
+  each day, model, and effort, and each of the most costly sessions show `logged $X` beside them where that moves them
+  by a cent or more. A session that cannot be priced again
   keeps its logged cost, and a `Partial:` line counts those sessions and their dollars; another counts the sessions
   whose main and subagent lines keep a logged cost, which an older row with several models and no tokens per side does.
 
-`--since` works as above; `--json` prints the same summary, with `cost_logged_usd` beside the total, each side, and
-each of the most costly sessions, and `kept_logged` and `sides_kept_logged`, each a count of `sessions` and their `cost_usd`.
+`--since` works as above; `--json` prints the same summary, with `cost_logged_usd` beside the total, each side, each
+day, model, and effort, and each of the most costly sessions, and `kept_logged` and `sides_kept_logged`, each a count of `sessions` and their `cost_usd`.
 `--prs` belongs to the default view and to `reviews`.
 
 ### When the report is incomplete

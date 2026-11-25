@@ -107,6 +107,16 @@ export function rowCostUsd(row, tables = priceTables()) {
   return result ? { ...result, logged, exact: true } : kept;
 }
 
+// The cost per model a row logged, its own `cost_by_model` entries that are numbers, for a view that shows the logged
+// figure beside rowCostUsd's `by_model`; {} for a row that logged none.
+export function loggedByModel(row) {
+  const logged = {};
+  for (const [model, usd] of isObject(row?.cost_by_model) ? Object.entries(row.cost_by_model) : []) {
+    if (Number.isFinite(usd)) setOwn(logged, model, usd);
+  }
+  return logged;
+}
+
 const daysSince = (date, now) => Math.floor((now - Date.parse(date)) / DAY_MS);
 
 // The tables with a row read more than STALE_DAYS ago, as { host, read_on, days }, the oldest such row of each.

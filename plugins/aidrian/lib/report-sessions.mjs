@@ -3,7 +3,7 @@
 
 import { loggedCost, loggedNote, money } from './dispatch-log.mjs';
 import { endedSessions } from './jsonl.mjs';
-import { priceFor, rowCostUsd } from './model-prices.mjs';
+import { loggedByModel, priceFor, rowCostUsd } from './model-prices.mjs';
 
 // The view lists this many sessions, most costly first.
 const TOP_SESSIONS = 5;
@@ -27,6 +27,8 @@ function addSide(sum, side, cost) {
   return sum;
 }
 const noSide = () => ({ tokens: noTokens(), cost_usd: 0, cost_logged_usd: 0, requests: 0, tool_requests: 0, tool_calls: 0 });
+// `record[key]` when it is the object's own number, else 0: a model named `constructor` reads nothing inherited.
+const ownNumber = (record, key) => (Object.hasOwn(record, key) && Number.isFinite(record[key]) ? record[key] : 0);
 // A side's cost: its own tokens per model, or its summed tokens priced as the session's one model (model-prices.mjs rowCostUsd).
 const sideCost = (row, side) => rowCostUsd({ models: row.models, ...side });
 
@@ -51,18 +53,21 @@ export function summarizeSessions(rows, { sinceMs = 0 } = {}) {
     const groups = new Map();
     for (const row of sessions) {
       const key = keyOf(row);
-      const entry = groups.get(key) ?? { sessions: 0, cost_usd: 0 };
+      const entry = groups.get(key) ?? { sessions: 0, cost_usd: 0, cost_logged_usd: 0 };
       entry.sessions += 1;
       entry.cost_usd += usd(row);
+      entry.cost_logged_usd += costs.get(row).logged;
       groups.set(key, entry);
     }
-    return [...groups].map(([key, entry]) => ({ key, sessions: entry.sessions, cost_usd: round(entry.cost_usd) }));
+    return [...groups].map(([key, entry]) => ({ key, sessions: entry.sessions, cost_usd: round(entry.cost_usd), cost_logged_usd: round(entry.cost_logged_usd) }));
   };
   const models = new Map();
   for (const row of split) {
+    const logged = loggedByModel(row);
     for (const [model, tokens] of Object.entries(row.tokens_by_model ?? {})) {
-      const entry = models.get(model) ?? { model, cost_usd: 0, tokens: 0 };
-      entry.cost_usd += costs.get(row).by_model[model] ?? 0;
+      const entry = models.get(model) ?? { model, cost_usd: 0, cost_logged_usd: 0, tokens: 0 };
+      entry.cost_usd += ownNumber(costs.get(row).by_model, model);
+      entry.cost_logged_usd += ownNumber(logged, model);
       entry.tokens += allTokens(addTokens(noTokens(), tokens));
       models.set(model, entry);
     }
@@ -85,7 +90,7 @@ export function summarizeSessions(rows, { sinceMs = 0 } = {}) {
     // A model no price table knows today costs $0 in every figure; this names it.
     unknown_models: [...new Set(sessions.flatMap((row) => [...(Array.isArray(row.models) ? row.models : []), ...Object.keys(row.tokens_by_model ?? {})])
       .filter((model) => typeof model === 'string' && !priceFor(model)))].sort(),
-    by_model: [...models.values()].map((entry) => ({ ...entry, cost_usd: round(entry.cost_usd) })).sort((a, b) => b.cost_usd - a.cost_usd || b.tokens - a.tokens),
+    by_model: [...models.values()].map((entry) => ({ ...entry, cost_usd: round(entry.cost_usd), cost_logged_usd: round(entry.cost_logged_usd) })).sort((a, b) => b.cost_usd - a.cost_usd || b.tokens - a.tokens),
     by_effort: group((row) => row.effort ?? null).map(({ key, ...rest }) => ({ effort: key, ...rest })).sort((a, b) => b.cost_usd - a.cost_usd),
     top: [...sessions].sort((a, b) => usd(b) - usd(a)).slice(0, TOP_SESSIONS).map((row) => ({
       session_id: row.session_id,
@@ -102,6 +107,8 @@ export function summarizeSessions(rows, { sinceMs = 0 } = {}) {
 }
 
 const tokenCount = (count) => (count >= 1_000_000 ? `${(count / 1_000_000).toFixed(1)}M` : `${Math.round(count / 1000)}k`);
+// A line's cost in its column, then `(logged $X)` when re-pricing moved it by a cent or more (dispatch-log.mjs loggedNote).
+const dollars = (line) => `${money(line.cost_usd).padStart(9)}${loggedNote(line.cost_usd, line.cost_logged_usd)}`;
 const percentOf = (part, whole) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '');
 const share = (part, whole) => (whole > 0 ? ` (${percentOf(part, whole)})` : '');
 // A side's share of both sides' cost, and its logged cost when today's prices moved it: ` (80%; logged $6.00)`.
@@ -144,19 +151,20 @@ export function formatSessions(summary, { file, since, skipped, notes = [] }) {
     `Cache writes: ${tokenCount(writes)} tokens; 1-hour ${tokenCount(hour)}${share(hour, writes)} at 2x the input price, ` +
       `5-minute ${tokenCount(writes - hour)} at 1.25x`,
     'Per day:',
-    ...summary.by_day.map((day) => `  ${day.day}  ${plural(day.sessions, 'session').padEnd(12)}  ${money(day.cost_usd).padStart(9)}`),
+    ...summary.by_day.map((day) =>
+      `  ${day.day}  ${plural(day.sessions, 'session').padEnd(12)}  ${dollars(day)}`),
   );
   if (summary.by_model.length) {
     const width = Math.max(...summary.by_model.map((model) => model.model.length));
     lines.push('Per model:', ...summary.by_model.map((model) =>
-      `  ${model.model.padEnd(width)}  ${money(model.cost_usd).padStart(9)}  ${tokenCount(model.tokens)} tokens`));
+      `  ${model.model.padEnd(width)}  ${dollars(model)}  ${tokenCount(model.tokens)} tokens`));
   }
   lines.push('Per effort (the main conversation at its last request):', ...summary.by_effort.map((effort) =>
-    `  ${(effort.effort ?? '-').padEnd(6)}  ${plural(effort.sessions, 'session').padEnd(12)}  ${money(effort.cost_usd).padStart(9)}`));
+    `  ${(effort.effort ?? '-').padEnd(6)}  ${plural(effort.sessions, 'session').padEnd(12)}  ${dollars(effort)}`));
   lines.push(`Most costly sessions, top ${summary.top.length}:`, ...summary.top.map((session) => {
     const details = [session.agent, session.effort, session.duration_min === null ? null : `${Math.round(session.duration_min)} min`].filter(Boolean);
     const split = session.main_cost_usd === null ? '' : `; main ${money(session.main_cost_usd)}, subagents ${money(session.subagents_cost_usd)}`;
-    return `  ${money(session.cost_usd).padStart(9)}  ${session.ts.slice(0, 16).replace('T', ' ')}  ${session.session_id}` +
+    return `  ${dollars(session)}  ${session.ts.slice(0, 16).replace('T', ' ')}  ${session.session_id}` +
       `${details.length ? `  ${details.join(', ')}` : ''}${split}`;
   }));
   return lines.join('\n');

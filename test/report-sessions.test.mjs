@@ -60,12 +60,17 @@ test('summarizeSessions: last row per session, main and subagent sides, cache wr
   const logged = (sum) => ({ ...sum, cost_logged_usd: sum.cost_usd });
   assert.deepEqual(summary.main, logged(side(8, 1_700_000, { cache1h: 300_000, requests: 50, toolRequests: 40, toolCalls: 48 })));
   assert.deepEqual(summary.subagents, logged(side(2, 900_000, { cache1h: 100_000, cache5m: 100_000, requests: 30, toolRequests: 20, toolCalls: 30 })));
-  assert.deepEqual(summary.by_day, [{ day: '2026-10-28', sessions: 1, cost_usd: 8 }, { day: '2026-10-29', sessions: 2, cost_usd: 2.5 }]);
+  assert.deepEqual(summary.by_day, [
+    { day: '2026-10-28', sessions: 1, cost_usd: 8, cost_logged_usd: 8 }, { day: '2026-10-29', sessions: 2, cost_usd: 2.5, cost_logged_usd: 2.5 },
+  ]);
   assert.deepEqual(summary.by_model, [
-    { model: 'claude-opus-5-5', cost_usd: 8.5, tokens: 2_400_000 },
-    { model: 'claude-sonnet-5-5', cost_usd: 1.5, tokens: 700_000 },
+    { model: 'claude-opus-5-5', cost_usd: 8.5, cost_logged_usd: 8.5, tokens: 2_400_000 },
+    { model: 'claude-sonnet-5-5', cost_usd: 1.5, cost_logged_usd: 1.5, tokens: 700_000 },
   ], 's3, logged before cost per model, is left out');
-  assert.deepEqual(summary.by_effort, [{ effort: 'high', sessions: 1, cost_usd: 8 }, { effort: 'medium', sessions: 1, cost_usd: 2 }, { effort: null, sessions: 1, cost_usd: 0.5 }]);
+  assert.deepEqual(summary.by_effort, [
+    { effort: 'high', sessions: 1, cost_usd: 8, cost_logged_usd: 8 }, { effort: 'medium', sessions: 1, cost_usd: 2, cost_logged_usd: 2 },
+    { effort: null, sessions: 1, cost_usd: 0.5, cost_logged_usd: 0.5 },
+  ]);
   assert.deepEqual(summary.top.map((session) => [session.session_id, session.cost_usd, session.main_cost_usd]), [['s1', 8, 6], ['s2', 2, 2], ['s3', 0.5, null]]);
 });
 
@@ -149,6 +154,25 @@ test('summarizeSessions prices each session at today`s list prices, shows the lo
   assert.match(text, /\n2 sessions, \$7\.00 estimated \(logged \$13\.00\)\n/u);
   assert.match(text, /\nMain conversation: \$6\.00 \(86%; logged \$12\.00\), 2\.0M tokens/u);
   assert.match(text, /\nSubagents: \$1\.00 \(14%\), 1\.0M tokens/u, 'a cost the prices did not move shows no logged figure');
+  // Each breakdown and the ranking show the logged figure beside one that re-pricing moved, and none beside r2's.
+  assert.match(text, /\n {2}2026-10-29 {2}2 sessions {8}\$7\.00 \(logged \$13\.00\)\n/u);
+  assert.match(text, /\n {2}claude-opus-5-5 {6}\$4\.00 \(logged \$10\.00\) {2}1\.0M tokens\n/u);
+  assert.match(text, /\n {2}- {7}2 sessions {8}\$7\.00 \(logged \$13\.00\)\n/u);
+  assert.match(text, /\n {6}\$4\.00 \(logged \$10\.00\) {2}2026-10-29 10:00 {2}r1; main/u);
+  assert.match(text, /\n {6}\$3\.00 {2}2026-10-29 11:00 {2}r2; main/u);
+});
+
+test('a model named like an Object property, such as constructor, costs $0 per model, never an inherited value', () => {
+  const million = { input: 1_000_000, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };
+  const side = { tokens: million, cost_usd: 0 };
+  const names = ['constructor', 'toString', '__proto__'];
+  // Each row as a log line parses: JSON.parse makes a key named __proto__ an own key, as reading the log does.
+  const rows = names.map((model, i) => JSON.parse(JSON.stringify({
+    event: 'session', ts: `2026-10-29T1${i}:00:00Z`, session_id: `o${i}`, models: [model], cost_usd: 0, main: side, subagents: side,
+  }).replace(/\}$/u, `,"tokens_by_model":{"${model}":${JSON.stringify(million)}}}`)));
+  const summary = summarizeSessions(rows);
+  assert.deepEqual(summary.by_model.map((entry) => [entry.model, entry.cost_usd, entry.cost_logged_usd]), names.map((model) => [model, 0, 0]));
+  assert.doesNotMatch(formatSessions(summary, { file: 'f', since: '7d', skipped: 0 }), /NaN/u);
 });
 
 test('a session row as written now, whose subagents made no request, is priced whole: no side keeps a logged cost', () => {

@@ -7,14 +7,14 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
-import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, rereadAt, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
+import { blocks, freshId, listedTo, listing, MAX_COUNTER, ownReviewerCloses, parseFindings, recordFindings, rereadAt, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
 import { gitPaths, postedCopy, securityReading } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
 import { cleanOutput, FINDINGS_SCHEMA, REQUEST_BRIEF, reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { isCleanReceipt, RECEIPT_MARKER, REQUEST_COMMENT, requestCommentBody } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { REQUEST_TEXT } from '../plugins/aidrian/lib/review/request-text.mjs';
-import { settledEntries } from '../plugins/aidrian/lib/review/settled.mjs';
-import { noteFindings, stderrTail } from '../plugins/aidrian/lib/review/run.mjs';
+import { inputCopy, settledEntries } from '../plugins/aidrian/lib/review/settled.mjs';
+import { stderrTail } from '../plugins/aidrian/lib/review/run.mjs';
 
 const finding = (over) => ({ title: 'Button text overflows at 360px', file: 'src/app/x.tsx', line: 4, severity: 'high', likelihood: 'routine', affects: 'users', state: 'open', ...over });
 
@@ -389,71 +389,47 @@ test('recordFindings: the security mark by severity, by the reviewer`s flag (any
   assert.deepEqual(marks([exec({ title: 'h', severity: 'low', file: 'src/b.js', line: 35 })], { securityPass: true }), [true]);
   // The flag reaches the list through both writers.
   assert.equal(cleanOutput({ findings: [{ ...exec(), security: 'maybe' }] }).findings[0].security, true, 'an exec value that is not a boolean counts as true');
-  assert.equal(cleanOutput({ findings: [{ ...exec(), security: false }] }).findings[0].security, false, 'an exec false is kept');
+  assert.equal(cleanOutput({ findings: [{ ...exec(), security: false }] }).findings[0].security, undefined);
   assert.equal(parseFindings(JSON.stringify([finding({ security: 1 })])).list[0].security, true);
   assert.ok(FINDINGS_SCHEMA.properties.findings.items.required.includes('security'));
 });
 
-test('recordFindings: a finding attested with security false reads false through the plan`s security pass, the step that ids it, and the security reading', () => {
-  const state = recordWith();
-  const pass = 'agent:code-reviewer';
-  state.planNote = { head: 'h', passes: { [pass]: { stage: 'local', reviewer: 'code-reviewer', security: true } } };
-  const { list } = parseFindings(JSON.stringify([
-    finding({ title: 'Notification wording is vague', file: 'src/a.js', line: 3, severity: 'low', likelihood: 'routine', affects: 'users', security: false }),
-    finding({ title: 'Doc wording drifts', file: 'src/b.js', line: 30, severity: 'low', likelihood: 'routine', affects: 'users' }),
-  ]));
-  assert.deepEqual(list.map((each) => each.security), [false, undefined], 'the findings file`s false is kept, an omitted key stays omitted');
-  // Attest on a record no step floored stores the findings with no id; the step then gives them ids (step.mjs).
-  const attested = recordFindings(state, pass, { head: 'h', list }, { securityPass: true, paths: places() });
-  assert.deepEqual(attested.list.map((each) => each.security), [false, true], 'false wins over the security pass; an omitted key takes the pass`s mark');
-  const stepped = recordFindings(state, pass, state.passes[pass], { mint: true, securityPass: true, kept: true });
-  assert.deepEqual(stepped.list.map((each) => each.security), [false, true]);
-  const [quiet, marked] = stepped.list;
-  assert.equal(state.index[quiet.id].security, false, 'the index entry keeps the false');
-  assert.equal(state.index[marked.id].security, true);
-  const reading = new Set([...securityReading(state)].map((each) => each.id));
-  assert.ok(!reading.has(quiet.id), 'the security reading leaves it out');
-  assert.ok(reading.has(marked.id));
-  // A high severity or a twin of a security finding still marks it.
-  const high = recordFindings(state, 'agent:other', { head: 'h', list: [exec({ title: 'Token leaks', file: 'src/b.js', line: 1, severity: 'high', security: false })] }, { mint: true, securityPass: true, paths: places() });
-  assert.equal(high.list[0].security, true);
-});
-
-// A record whose code-reviewer pass the plan marks as a security pass, holding two attested low findings: one whose
-// reviewer wrote `security: false`, one that left the key out.
-function attestedQuiet() {
+// A record whose code-reviewer pass the plan marks as a security pass, with the attested findings `over` gives.
+function securityPassRecord(over) {
   const state = recordWith();
   const pass = 'agent:code-reviewer';
   state.planNote = { head: 'h', passes: { [pass]: { stage: 'local', reviewer: 'code-reviewer', security: true } }, pairs: [] };
-  const { list } = parseFindings(JSON.stringify([
-    finding({ title: 'Notification wording is vague', file: 'src/a.js', line: 3, severity: 'medium', likelihood: 'routine', affects: 'users', security: false }),
-    finding({ title: 'Doc wording drifts', file: 'src/b.js', line: 30, severity: 'medium', likelihood: 'routine', affects: 'users' }),
-  ]));
+  const { list } = parseFindings(JSON.stringify(over.map((each) => finding({ file: 'src/a.js', severity: 'low', likelihood: 'routine', affects: 'users', ...each }))));
   recordFindings(state, pass, { head: 'h', list }, { mint: true, securityPass: true, paths: places() });
-  return { state, pass, ids: state.passes[pass].list.map((each) => each.id) };
+  return { state, pass, list: state.passes[pass].list };
 }
 
-test('the round`s snapshot keeps a finding`s false, and neither the security reading nor the posted copy marks it again', () => {
-  const { state, pass, ids: [quiet, marked] } = attestedQuiet();
-  const head = state.rounds[0].head;
-  noteFindings({ state, head }, { open: [{ pass, findings: state.passes[pass].list }] });
-  assert.deepEqual(state.rounds[0].findings.map((each) => [each.id, each.security]), [[quiet, false], [marked, true]]);
-  const reading = new Set([...securityReading(state)].map((each) => each.id));
-  assert.deepEqual([reading.has(quiet), reading.has(marked)], [false, true], 'the snapshot spreads no mark to the finding through its id');
-  const { copy } = postedCopy(state, { reading: { visibility: 'PUBLIC', inside: true } });
-  const posted = (list) => list.find((each) => each.id === quiet)?.security;
-  assert.equal(posted(copy.rounds[0].findings), false);
-  assert.equal(posted(copy.passes[pass].list), false);
-  assert.equal(copy.index[quiet].security, false);
-  assert.equal(copy.index[marked].security, true);
+test('ownReviewerCloses: a low finding attested security false on a security pass may be closed by its own reviewer; its mark and redaction stay as they were', () => {
+  const { state, pass, list: [quiet] } = securityPassRecord([{ title: 'Notification wording is vague', line: 3, security: false }]);
+  assert.equal(quiet.security, true, 'the security pass still marks it, as before');
+  assert.equal(quiet.reviewer_not_security, true);
+  assert.equal(ownReviewerCloses(state, quiet), true);
+  assert.ok(new Set([...securityReading(state)]).has(quiet), 'the security reading still withholds it');
+  for (const reading of [{ visibility: 'PUBLIC', inside: true }, { visibility: 'PRIVATE', inside: true }]) {
+    const { copy } = postedCopy(state, { reading, checker: { allows: () => true } });
+    const posted = copy.passes[pass].list[0];
+    assert.equal(posted.security, true, `${reading.visibility}: the posted copy marks it security`);
+    assert.ok(!('reviewer_not_security' in posted), `${reading.visibility}: the reviewer's raw false is never posted`);
+    if (reading.visibility === 'PUBLIC') assert.ok(!('file' in posted) && !('line' in posted), 'its place is withheld on a public repository');
+  }
+  assert.ok(!('reviewer_not_security' in inputCopy(quiet)), 'no reviewer`s input shows it');
 });
 
-test('securityReading: a false exempts a finding only of a pass the plan note knows; with no note or no entry it is withheld', () => {
-  const { state, ids: [quiet] } = attestedQuiet();
-  const read = (each) => new Set([...securityReading(each)].map((one) => one.id)).has(quiet);
-  assert.equal(read(state), false, 'a known pass');
-  assert.equal(read({ ...state, planNote: { ...state.planNote, passes: {} } }), true, 'a pass the note does not hold');
-  assert.equal(read({ ...state, planNote: null }), true, 'no plan note');
+test('ownReviewerCloses: a high finding, one with no explicit false, and a twin of a security finding still need the security reviewer', () => {
+  const { state, list: [high, unsaid, quiet] } = securityPassRecord([
+    { title: 'Token leaks into the log', line: 3, severity: 'high', security: false },
+    { title: 'Doc wording drifts', line: 20, security: undefined },
+    { title: 'Retry label is unclear', line: 30, security: false },
+  ]);
+  assert.deepEqual([ownReviewerCloses(state, high), ownReviewerCloses(state, unsaid), ownReviewerCloses(state, quiet)], [false, false, true]);
+  // Another pass reports a security finding at the same place: the quiet one is its twin now.
+  recordFindings(state, 'agent:security-engineer', { head: 'h', list: [exec({ title: 'Retry label leaks the tenant id', line: 31, severity: 'medium', security: true })] }, { mint: true, paths: places() });
+  assert.equal(ownReviewerCloses(state, quiet), false);
 });
 
 test('recordFindings: the mark spans twins, by id, place, or title, in every list, whichever is recorded first', () => {

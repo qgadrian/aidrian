@@ -135,7 +135,10 @@ export function parseFindings(raw, settled = [], { round } = {}) {
       ...(text(finding.evidence, 300) ? { evidence: text(finding.evidence, 300) } : {}),
       ...(cites ? { cites } : {}),
       ...(ruled ? { already_ruled: ruled.title } : {}),
-      ...securityKey(finding.security),
+      ...(flagged(finding.security) ? { security: true } : {}),
+      // The reviewer's own word that it is no security problem: read only by ownReviewerCloses, never published
+      // (publish.mjs), shown to no reviewer (settled.mjs inputCopy), and never a reason to withhold less.
+      ...(finding.security === false ? { reviewer_not_security: true } : {}),
       // The id of a priorFindings entry the reviewer reports again: recordFindings checks it, and never stores it.
       ...(finding.id !== undefined && finding.id !== '' ? { returned_id: finding.id } : {}),
       state: finding.state,
@@ -180,14 +183,21 @@ export function rereadAt(result, round) {
 // A reviewer's `security` flag (--findings-file, and an exec reviewer's key): absent or false is no flag, and any other
 // value, one that is not a boolean included, is one.
 export const flagged = (value) => value !== undefined && value !== false;
-// The flag as a finding keeps it: true for a flag, false when the reviewer wrote false, so the plan's security pass
-// does not mark the finding (recordResult), and nothing when it was left out.
-export const securityKey = (value) => (flagged(value) ? { security: true } : value === false ? { security: false } : {});
-// A recorded finding's mark as a copy of it keeps it: true, false, or left out, so a copy never loses a reviewer's false.
-export const securityMark = (value) => (value === true ? { security: true } : value === false ? { security: false } : {});
-// Whether the plan or the dispatch note says pass `pass` is one the security reviewer is required for: its findings
-// stay out of every waiver and delegation whatever their own mark says.
-export const securityPassOf = (state, pass) => typeof pass === 'string' && (state?.planNote?.passes?.[pass]?.security === true || state?.dispatched?.[pass]?.security === true);
+
+// Whether the pass that raised `finding` may close it although it is marked security, so a security-engineer is not the
+// only one who may (docs/review.md#the-security-key): its reviewer's findings file said `security: false`
+// (`reviewer_not_security`), it is `low` or `medium`, and nothing else in the record marks it, so its mark is only its
+// pass's, as a security pass. Nothing else marks it when it is no twin of a finding that is critical or high, or marked
+// with no such word from its reviewer. The mark itself, and what the posted record withholds, are unchanged.
+export function ownReviewerCloses(state, finding) {
+  if (!isObject(finding) || finding.reviewer_not_security !== true || !noHigher(finding.severity, 'medium') || !severityOf(finding.severity)) return false;
+  const all = recordedFindings(state);
+  const quietIds = new Set(all.filter((each) => each.reviewer_not_security === true && isFindingId(each.id)).map((each) => each.id));
+  const quiet = (each) => each.reviewer_not_security === true || (isFindingId(each.id) && quietIds.has(each.id));
+  const seed = (each) => securitySeverity(each.severity) || (each.security === true && !quiet(each));
+  const marked = twinClosure([...all, ...(all.includes(finding) ? [] : [finding])], seed);
+  return !marked.has(finding);
+}
 
 // Finding identity (docs/review.md#the-record). Every finding a pass records gets an id, `R<round>-<n>`: the round it was
 // first recorded in and the record's one counter (`idCounter`), which is never reset and never reused, so an id is
@@ -352,14 +362,9 @@ function enter(index, finding, group, at) {
   }
   const state = entryState(finding, group);
   Object.assign(entry, { state, pass: at.pass });
-  // Whether its last write was a carried ruling, which the security reading withholds without spreading (publish.mjs).
-  if (group === 'carried') entry.carried = true;
-  else delete entry.carried;
   if (at.stage) entry.stage = at.stage;
   if (at.reviewer) entry.reviewer = at.reviewer;
   if (finding.security === true || before?.security === true) entry.security = true;
-  else if (finding.security === false) entry.security = false;
-  else delete entry.security;
   // Every write sets the file and line together with the head they were checked at, in any state, fixed included:
   // the posted copy and the findings table check them there again. `seen` is only where a closing range starts.
   if (FULL_SHA.test(String(at.head ?? ''))) entry.placed = at.head;
@@ -477,9 +482,8 @@ function closeOmitted(state, plan, { head, complete, range }) {
 //     to no pass whose pass left the plan, so the first pass to claim it keeps it. Each id once. Else it takes a new id
 //     when `mint` allows it, else is stored without one. An id or a mark a reviewer printed is never read.
 //   - is a security finding (R5) when it is critical or high, its reviewer flagged it, `securityPass` says the head's
-//     plan requires the security reviewer and the pass is in its local or independent stage and the reviewer did not
-//     write `security: false`, which the finding then keeps, or the finding or entry it takes its id from had the mark.
-//     A carried ruling with no mark of its own never takes the pass's: the security reading withholds it instead.
+//     plan requires the security reviewer and the pass is in its local or independent stage, or the finding or entry it
+//     takes its id from had the mark.
 //   - keeps its `file` only as a path of at most MAX_PATH characters that `paths.tracked` says git tracks at the reviewed
 //     head, and its `line` only as a positive integer at most `paths.lines` of that file (H3). Otherwise neither is
 //     recorded, and the result's `dropped` notes name the finding's id, never the value. With no `paths`, the check
@@ -550,13 +554,8 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
   const taken = new Set();
   const dropped = [];
   const fresh = () => mintId(state);
-  const one = (group) => (raw) => {
-    const { id, mint: mark, aliases, ruled_id: _named, security: given, returned_id: returned, ...finding } = raw;
-    const security = given;
-    // A carried ruling is the engine's own rebuild, and a pass's input shows no reviewer a mark (settled.mjs inputCopy), so
-    // it arrives with none. The pass's default is not stored on it: the security reading withholds it (publish.mjs
-    // securityReading), and a mark it never had spreads to no twin, so the finding it names keeps its own false.
-    const carriedRuling = given === undefined && group === 'carried' && Boolean(trimmed(finding.already_ruled));
+  const one = (raw) => {
+    const { id, mint: mark, aliases, ruled_id: _named, security, returned_id: returned, ...finding } = raw;
     const kept = isFindingId(id) && isMint(mark) && held.get(id)?.mint === mark ? held.get(id) : null;
     // A ruling carries a prior ruling's id, and a finding a prior finding's: a ruling never takes the id of the finding
     // it repeats, whose title it shares, nor an id it returned.
@@ -571,8 +570,8 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
       ?? null;
     if (match) taken.add(match.id);
     const identity = match ? { id: match.id, mint: match.mint, ...(Array.isArray(match.aliases) && match.aliases.length ? { aliases: match.aliases.filter(isFindingId) } : {}) } : mint ? fresh() : null;
-    const marked = flagged(security) || match?.security === true || securitySeverity(finding.severity) || (securityPass && security !== false && !carriedRuling);
-    const out = { ...(identity ?? {}), ...finding, ...(marked ? { security: true } : security === false ? { security: false } : {}) };
+    const marked = flagged(security) || match?.security === true || securitySeverity(finding.severity) || securityPass;
+    const out = { ...(identity ?? {}), ...finding, ...(marked ? { security: true } : {}) };
     const name = identity?.id ?? 'a finding with no id';
     if (asked && !named && idLike(returned)) dropped.push(`${name}: its returned id is not an open finding its input listed, so it was read as no id`);
     if (checked) return out;
@@ -585,7 +584,7 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
     delete out.line;
     return { ...out, ...(file !== null ? { file } : {}), ...(line !== null ? { line } : {}) };
   };
-  const groups = Object.fromEntries(GROUPS.filter((key) => Array.isArray(result[key])).map((key) => [key, result[key].filter(isObject).map(one(key))]));
+  const groups = Object.fromEntries(GROUPS.filter((key) => Array.isArray(result[key])).map((key) => [key, result[key].filter(isObject).map(one)]));
   const recorded = { ...result, ...groups, ...(dropped.length ? { dropped: [...(Array.isArray(result.dropped) ? result.dropped : []), ...dropped] } : {}) };
   const raised = [...(groups.list ?? []).filter((each) => isFindingId(each.id)), ...raisedBefore];
   for (const ruling of [...(groups.ruled ?? []), ...(groups.carried ?? [])]) {

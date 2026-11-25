@@ -33,7 +33,7 @@ import { runGit } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { givenRepo, namesChange, repoName } from '../remotes.mjs';
 import { prNumber } from '../review-gate.mjs';
-import { isFindingId, noHigher, RESIDUAL_CAP, securityPassOf, severityOf } from './findings.mjs';
+import { isFindingId, noHigher, RESIDUAL_CAP, severityOf } from './findings.mjs';
 import { CAPPED, heldMessage, mergePending, openCount, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
 
 export const KIND = 'round_cap';
@@ -99,12 +99,11 @@ export function lowOnly(state, head) {
   // A finding the cause holds and the round does not, of another stage or a second pass's id for one finding, is not
   // in the question the Human answered: it refuses, and the Human gets the guard's two options.
   const listed = new Set(last.findings.map((finding) => finding?.id));
-  const marked = (finding) => finding.security === true || finding.security_pass === true || securityPassOf(state, finding.pass);
-  const above = [...last.findings, ...cap.items].find((finding) => !isObject(finding) || marked(finding) || !noHigher(finding.severity, RESIDUAL_CAP));
+  const above = [...last.findings, ...cap.items].find((finding) => !isObject(finding) || finding.security === true || !noHigher(finding.severity, RESIDUAL_CAP));
   const elsewhere = cap.items.find((item) => !isObject(item) || !listed.has(item.id));
   if (above === undefined && elsewhere !== undefined) return { ok: false, why: `${named(elsewhere)} is open but not in the round's list` };
   if (above === undefined) return { ok: true, count: last.open, ids: last.findings.map((finding) => finding.id) };
-  if (isObject(above) && marked(above)) return { ok: false, why: `${named(above)} is ${above.security === true ? 'marked security' : 'from a security pass'}` };
+  if (above?.security === true) return { ok: false, why: `${named(above)} is marked security` };
   const severity = severityOf(above?.severity);
   return { ok: false, why: `${named(above)} ${severity ? `is ${severity}` : 'has no severity on record'}` };
 }

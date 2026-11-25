@@ -643,8 +643,8 @@ accepted (`fix_now`, or no likelihood and affects yet): one the reviewer calls a
 stricter than the count it replaces, which took the reviewer's word for what it accepted. The counts form,
 `--findings <n> --fixed <n>`, is still accepted, for a pass an older release dispatched, and is read as before.
 A finding may add `"cites"`, the written project rule it breaks, which turns a `drop_unless_cited` into `fix_now`
-([Small gaps](#small-gaps)); the summary comment posts the disposition, not the citation. A finding may add `"security": true` for a security problem; any value but `false` counts as true, and an explicit
-`false` keeps a security pass's mark off it ([Reviewers](#reviewers)). A finding that reports a `priorFindings` entry again sets `id` to that entry's id; the engine
+([Small gaps](#small-gaps)); the summary comment posts the disposition, not the citation. A finding may add `"security": true` for a security problem; any value but `false` counts as true
+([Reviewers](#reviewers)). A finding that reports a `priorFindings` entry again sets `id` to that entry's id; the engine
 checks it ([Finding ids](#finding-ids)), and a mint mark in the file is never read.
 
 Each finding then has an outcome in the finding index: `open`; `fixed`, when a pass lists it as fixed; `accepted`, when
@@ -820,14 +820,7 @@ A project adds its own in `review.reviewers`:
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set
 `security` (Codex's schema requires the key, a project's exec reviewer and `--findings-file` may leave it out, and any
 value but `false` counts as true), or when the head's plan requires `agent:security-engineer` and the pass is in its
-`local` or `independent` stage, unless its reviewer wrote `"security": false`, which the finding, its index entry, the
-round's list, a ruling, and the `pr review` output keep. A pass's input shows no reviewer a mark, so a ruling carried to
-a later head arrives with none and inherits none. Its pass's default is not stored on it: the posted record withholds
-it, and its index entry, marked `carried`, as a security finding, but neither spreads that default to a twin, so the
-finding it names keeps its own `false`. A real mark, a `critical` or `high` severity, or a reviewer's own `true`, still
-spreads through it. Such a finding still comes from a security pass, which its cap
-item says as `security_pass`: no waiver or delegation takes it, and the posted record withholds its place unless the plan
-note holds its pass. The engine stores that mark on the finding, and a finding that keeps its id keeps it.
+`local` or `independent` stage. The engine stores that mark on the finding, and a finding that keeps its id keeps it.
 The mark covers a twin: a finding at the same place (the same file and lines within 3), under the same title words
 where the record at hand holds both titles, or sharing its id, an alias, or the id a ruling names, whichever was recorded
 first. So a second
@@ -837,6 +830,14 @@ a repository that is not private, unless [`review.publish.publicSecurity`](#publ
 holds no file or line for a security finding, in its own entries, the index, or an extra round's looping and drifting evidence, and its residual
 row names it by id ([The record](#the-record)). The match errs toward withholding: a nearby finding under the same file
 can be read as a twin.
+
+**Who closes a security finding.** Only `security-engineer` closes a security finding, with one exception: a finding
+the `fix_required` output of `aidrian pr review` lists with `own_reviewer_closes: true` may also be closed by the pass
+that raised it. That holds when the findings file `aidrian pr attest` read for it said `"security": false`, it is `low`
+or `medium`, and nothing else in the record marks it: it is no twin of a `critical` or `high` finding, or of one marked
+security whose reviewer did not say `false`. Its mark then comes only from its pass being a security pass. The mark, and
+what the posted record withholds, stay as above. The reviewer's `false` is kept on the finding as `reviewer_not_security`,
+which only this check reads: no posted copy holds it, and no reviewer's input shows it.
 
 **Names on the pull request.** A reviewer, an agent, a stage, a pass id, and a flow and invariant pair are posted only
 where the plan or the config defines them: the plan note the step keeps, which holds every pass an engine plan of the

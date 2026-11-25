@@ -118,11 +118,9 @@ export function dedupe(lists) {
       const twin = !titled(finding) ? null : kept.find((each) => titled(each) && each.file === finding.file && Math.abs(each.line - finding.line) <= 3 && words(each.title) === words(finding.title));
       if (!twin) kept.push({ ...finding, sources: [source] });
       else {
-        // Either mark makes the merged finding a security one; it keeps a false only when both wrote false.
-        const security = twin.security === true || finding.security === true ? true : twin.security === false && finding.security === false ? false : undefined;
+        const security = twin.security === true || finding.security === true;
         if (rank(finding.severity) > rank(twin.severity)) Object.assign(twin, { ...finding, sources: twin.sources });
-        if (security === undefined) delete twin.security;
-        else twin.security = security;
+        if (security) twin.security = true;
         if (!twin.sources.includes(source)) twin.sources.push(source);
       }
     }

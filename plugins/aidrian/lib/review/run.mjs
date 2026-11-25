@@ -38,7 +38,7 @@ import { withGitFacts, withoutGitFacts } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { repoFlag, repoName } from '../remotes.mjs';
 import { isAncestor } from './diff.mjs';
-import { blocks, isFindingId, securityMark, securityPassOf } from './findings.mjs';
+import { blocks, isFindingId } from './findings.mjs';
 import { isPrivate, residualRows } from './publish.mjs';
 import { mergeDeletes, removedPosts } from './delete.mjs';
 import { engineLists, postInline } from './inline.mjs';
@@ -118,7 +118,7 @@ function withPosts(s, result) {
 
 // The current round's open findings, kept on its entry in the record, so the check at the cap can read each round's
 // findings after the passes have moved on to later heads.
-export function noteFindings({ state, head }, extra) {
+function noteFindings({ state, head }, extra) {
   const round = state.rounds.at(-1);
   if (!round || round.head !== head || !(Array.isArray(extra.open) || Array.isArray(extra.flows))) return;
   const violated = (extra.flows ?? []).flatMap((flow) => (flow.violated ?? []).map((id) => ({ title: `flow ${flow.flow}: invariant ${id} violated`, file: null, line: null, severity: null })));
@@ -138,7 +138,7 @@ export function noteFindings({ state, head }, extra) {
     ? [...merged.map((each) => ({
       ...(isFindingId(each.id) ? { id: each.id, mint: each.mint, ...(Array.isArray(each.aliases) && each.aliases.length ? { aliases: each.aliases } : {}) } : {}),
       title: each.title ?? null, file: each.file ?? null, line: Number.isInteger(each.line) ? each.line : null, severity: each.severity ?? null,
-      ...securityMark(each.security), pass: each.sources?.[0] ?? null,
+      ...(each.security === true ? { security: true } : {}), pass: each.sources?.[0] ?? null,
     })), ...violated].slice(0, 50)
     : null;
 }
@@ -193,12 +193,10 @@ function capCause(s, extra) {
       tests_removed: [...new Set([...(kept.tests_removed ?? []), ...tests])], bot: kept.bot === true || bot, human: [...new Set([...(kept.human ?? []), ...human])],
     };
   }
-  // `security_pass` keeps where a finding came from apart from its own mark: a finding of a security pass whose reviewer
-  // wrote `security: false` is no security finding, and still no waiver or delegation takes it (waiver.mjs, delegation.mjs).
+  const securityPass = (id) => state.planNote?.passes?.[id]?.security === true || state.dispatched?.[id]?.security === true;
   const item = (finding, pass, stage, reviewer) => ({
     ...(isFindingId(finding?.id) ? { id: finding.id } : {}), severity: typeof finding?.severity === 'string' ? finding.severity : null,
-    ...(finding?.security === true || (finding?.security !== false && securityPassOf(state, pass)) ? { security: true } : {}),
-    ...(securityPassOf(state, pass) ? { security_pass: true } : {}), pass, stage, reviewer: reviewer ?? null,
+    ...(finding?.security === true || securityPass(pass) ? { security: true } : {}), pass, stage, reviewer: reviewer ?? null,
   });
   const open = passes.map(({ pass, stage }) => ({ pass, stage, result: resultFor(pass) })).filter(({ result }) => result?.open > 0);
   const listed = open.map(({ pass, stage, result }) => ({ open: result.open, list: Array.isArray(result.list) ? result.list.filter(blocks).map((finding) => item(finding, pass.id, stage, pass.reviewer)) : null }));

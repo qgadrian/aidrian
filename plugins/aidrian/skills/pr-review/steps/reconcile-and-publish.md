@@ -14,7 +14,8 @@ Read this file when the first agent returns. Start merging once every agent of t
   Set `pre_existing` only when the same failure happens at `base_sha`: it is reported, and fixed in a later change.
   With config.json `review.fixSmallGaps` true, such a finding whose cost is `trivial` stays `open` instead, and the table gives its disposition.
   When the agent's words do not settle which, ask that agent once, and keep the finding `open` until it answers.
-- Only `security-engineer` may drop or downgrade a security finding.
+- Only `security-engineer` may drop or downgrade a security finding. The pass that raised one may also close it
+  when `aidrian pr review` lists it with `own_reviewer_closes: true`.
 - On a re-review, a finding its agent confirms fixed becomes `resolved`, and one it finds still there goes back to `open`.
   A new finding that matches an open one by file and summary is that finding, not a new one.
 

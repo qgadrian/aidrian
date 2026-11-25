@@ -9,7 +9,7 @@
 import { isObject } from '../fs.mjs';
 import { residualItems } from '../decisions.mjs';
 import { LIST_ITEM } from '../markdown-sections.mjs';
-import { ACCEPTABLE_DISPOSITIONS, blocks, FINDING_STATES, isFindingId, noHigher, PRIOR_CAP, RESIDUAL_CAP, securityMark, settledMatch, severityOf } from './findings.mjs';
+import { ACCEPTABLE_DISPOSITIONS, blocks, FINDING_STATES, isFindingId, noHigher, PRIOR_CAP, RESIDUAL_CAP, settledMatch, severityOf } from './findings.mjs';
 // A call-time cycle (state.mjs imports ruledLines): neither module reads the other's bindings while it loads.
 import { clip } from './state.mjs';
 
@@ -66,7 +66,7 @@ export function settledEntries(input) {
 
 // A recorded finding without the engine's own keys, as a pass input carries it: its id, mint mark, the id it repeats,
 // and its marks stay on the record, and no reviewer is shown a mark it could copy.
-export const inputCopy = ({ id: _id, mint: _mint, ruled_id: _ruled, aliases: _aliases, security: _security, ...finding }) => finding;
+export const inputCopy = ({ id: _id, mint: _mint, ruled_id: _ruled, aliases: _aliases, security: _security, reviewer_not_security: _said, ...finding }) => finding;
 // A finding as the pass's input shows it, with its id first only when `listed`, the ids the finding index lists to the
 // pass (dispatch.mjs listedFor), holds it: exactly the ids a finding it returns may take (findings.mjs recordFindings),
 // so the reviewer is never shown an id the check would refuse. Any other finding is context, with no id. Nothing else
@@ -118,8 +118,8 @@ export function splitRuled(findings, settled) {
       const capped = 'file' in entry;
       const from = capped && !entry.residual ? 'prior' : 'residual';
       out.ruled.push({
-        // The reviewer's security flag stays with the repeat, true or false, so recordFindings marks it whatever settled it.
-        title, file, line, severity, ...securityMark(security), already_ruled: entry.raised ?? entry.title, from,
+        // The reviewer's security flag stays with the repeat, so recordFindings marks it whatever settled it.
+        title, file, line, severity, ...(security === true ? { security: true } : {}), already_ruled: entry.raised ?? entry.title, from,
         ...(capped ? { settled_severity: entry.severity } : {}), ...(entry.settled_by ? { settled_by: entry.settled_by } : {}), ...(entry.accepted_by ? { accepted_by: entry.accepted_by } : {}), ...(entry.residual ? { residual: entry.residual } : {}),
       });
       continue;

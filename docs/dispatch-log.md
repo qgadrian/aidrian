@@ -7,8 +7,10 @@ which of the plugin's rules blocked a tool call, and how often the Human overrod
 
 It is `dispatch-log.jsonl` in the [state folder](project-folder.md#local-state): one JSON object per line,
 on this machine only, shared by every worktree of the repository.
-Three Claude Code hooks append the dispatch, stop, and session rows, the last through a worker
-(see [`session`](#session-when-a-session-ends)), the plugin's blocking hooks append a `hook_deny` row,
+Three hooks append the dispatch, stop, and session rows on Claude Code, the last through a worker
+(see [`session`](#session-when-a-session-ends)); on OpenCode the bridge's dispatch hook appends a dispatch row too,
+with a null `agent_id` ([its limits](providers/opencode.md#limits)), and no hook there appends a stop or session row.
+The plugin's blocking hooks append a `hook_deny` row,
 the review commands append a `review_extension` row, and `aidrian decisions` appends the decision rows,
 only inside a project folder, and only while config.json `telemetry.enabled` is on:
 [config.md](config.md#telemetry) has the switches.
@@ -505,7 +507,8 @@ and is named as unpriced. The repository's `model-prices` skill says how a maint
 
 ## Limits
 
-- **Claude Code only**, except `hook_deny` rows. Codex has no Agent tool, and its stop and session payloads are not verified.
+- **Claude Code only**, except `hook_deny` rows and OpenCode's `dispatch` rows.
+  Codex has no Agent tool, and its stop and session payloads are not verified.
   The hooks let any payload they cannot read pass: a transcript with no Claude Code usage writes no `session` row,
   and a stop payload without `stop_hook_active` is never sent back.
   The Bash rules and the agent gates also run in Codex, so its blocks write `hook_deny` rows there too.

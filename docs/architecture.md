@@ -40,7 +40,8 @@ plugins/aidrian/
     ├── call.mjs                    what a call sends: the folder it runs in, the session's folder, and who made it
     ├── session-hooks.mjs           each session's start, run once, and where the plugin's text reaches the model
     ├── environment.mjs             the Node program, the trace, and the PATH of a shell
-    ├── output.mjs                  runs each script, reads its bounded answer, and applies it: a refusal or a rewritten input
+    ├── output.mjs                  runs each script, reads its bounded answer, and applies it: context at the end of a tool
+    │                               result, and, once a blocking route runs, a refusal or a rewritten input
     └── server.mjs                  the package's server entry, { id, setup }
 plugins/aidrian-claude-mod/         the optional Claude mod, aidrian-mod, for Claude Code alone (docs/claude-mod.md)
 ├── .claude-plugin/plugin.json      its manifest, settings, and version

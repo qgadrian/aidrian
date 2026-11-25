@@ -1,4 +1,4 @@
-// SessionEnd hook (Claude Code): records a tracker refusal no read followed (settleRefusal), then deletes the session's block counts (lesson-signals.mjs noteDenial), its gate snapshot
+// SessionEnd hook: records a tracker refusal no read followed (settleRefusal), then deletes the session's block counts (lesson-signals.mjs noteDenial), its gate snapshot
 // (gate-snapshot.mjs), its tracker record (hook-tracker-post.mjs), its recorded issue reads (project-issue-text.mjs),
 // and the session-length reminder's marker
 // (hook-stop.mjs), wherever the session ran. Then, inside a project with config.json `telemetry.enabled` on, it hands the

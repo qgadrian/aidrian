@@ -92,7 +92,7 @@
       "tags": []
     },
     "providers/opencode.md": {
-      "summary": "OpenCode 2.0+ host: install by Git specifier, bridge plugin, session ledger, AIDRIAN_NODE, AIDRIAN_OPENCODE_TRACE, no guard on an OpenCode session, limits.",
+      "summary": "OpenCode 2.0+ host: Git install, bridge, start lines, hook context in a tool result, session end, ledger, tool names, AIDRIAN_NODE, trace, no guard, limits.",
       "tags": []
     },
     "providers/adding-a-host.md": {

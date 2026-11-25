@@ -603,15 +603,20 @@ function judgeEvidence(body, call, { config, project, folder, readRuns, listOpen
     return trees.get(commit);
   };
   // Digits alone git cannot read are a number, such as "at 1234567 ms", and leave the line to HEAD's tree.
-  const claimTree = (claim) => treeAt(claim.commits.filter((id) => /[a-f]/u.test(id) || treeAt(id) !== null).at(-1) ?? 'HEAD');
+  const namedCommit = (claim) => claim.commits.filter((id) => /[a-f]/u.test(id) || treeAt(id) !== null).at(-1) ?? null;
+  const claimTree = (claim) => treeAt(namedCommit(claim) ?? 'HEAD');
   const missing = claims.filter((claim) => {
     const tree = claimTree(claim);
     return tree !== null && unsupportedClaims([claim], runs, { tree }).length > 0;
   });
   if (!missing.length) return null;
   const commitOf = commitsByTree(folder);
+  const fullId = (id) => {
+    const read = id === null ? null : runGit(['rev-parse', '--verify', '--quiet', `${id}^{commit}`], folder);
+    return read?.status === 0 ? read.stdout.trim() : null;
+  };
   const facts = missing.slice(0, FACTS_SHOWN)
-    .map((claim) => `For \`${claim.key}\`, ${claimFacts(claim, runs, { tree: claimTree(claim), commitOf })}`);
+    .map((claim) => `For \`${claim.key}\`, ${claimFacts(claim, runs, { tree: claimTree(claim), commitOf, named: () => fullId(namedCommit(claim)) })}`);
   return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section' })} The run must be of the files of HEAD ` +
     `(tree ${String(treeAt('HEAD') ?? 'unknown').slice(0, 12)}), or of the commit the line names, such as "at <commit id>". ` +
     `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.\n\nWhat the record shows: ${facts.join(' ')}`);

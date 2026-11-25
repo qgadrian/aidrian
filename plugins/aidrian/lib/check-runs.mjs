@@ -638,11 +638,13 @@ export function claimProblem(missing, runs, { where }) {
 }
 
 // The facts of the recorded run nearest to a claim no run supports at `tree`: a pass of the command there, else one of
-// the same program with other words there, else the command's last pass anywhere, else its last run. `commitOf(tree)`
-// gives a commit's full id, or null. It states what the record holds and composes no line: a record key drops quotes and
+// the same program with other words there, else the command's last pass anywhere, else its last run. `named()` gives the
+// full id of the commit the claim names, or null, used when the run matches its tree; `commitOf(tree)` gives another
+// commit's, or null. Only a run that can support a pass claim, at a commit to name, is one to cite. It states what the record holds and composes no line: a record key drops quotes and
 // a long one is cut, so the key only names the run.
 const CITE = 'Cite one finished run: its command as written in the call that ran it, its counts, and its commit.';
-export function claimFacts({ key }, runs, { tree, commitOf = () => null }) {
+const NO_CITE = 'Report that outcome, or get a passing run.';
+export function claimFacts({ key }, runs, { tree, commitOf = () => null, named = () => null }) {
   const own = runs.filter((run) => run.command === key);
   const passed = (run) => run.status === 'passed' && run.pass !== 0;
   const runner = key.split(' ')[0];
@@ -651,9 +653,10 @@ export function claimFacts({ key }, runs, { tree, commitOf = () => null }) {
   const nearest = own.findLast(passedHere) ?? others.findLast(passedHere) ?? own.findLast(passed) ?? own.at(-1);
   if (!nearest) {
     return 'the record holds no finished run of it: a run in the background, inside `sh -c` or `$( )`, or in another ' +
-      `session leaves no row. ${CITE}`;
+      `session leaves no row. ${NO_CITE}`;
   }
-  const commit = commitOf(nearest.tree) ?? (nearest.untrackedCode?.length ? null : commitOf(nearest.trackedTree));
+  const commit = (atTree(nearest, tree) ? named() : null)
+    ?? commitOf(nearest.tree) ?? (nearest.untrackedCode?.length ? null : commitOf(nearest.trackedTree));
   const held = typeof nearest.pass === 'number' || typeof nearest.fail === 'number';
   const counts = held ? `${nearest.pass ?? 'unknown'} pass, ${nearest.fail ?? 'unknown'} fail` : 'no counts';
   const facts = [
@@ -662,5 +665,5 @@ export function claimFacts({ key }, runs, { tree, commitOf = () => null }) {
     ...(nearest.pass === 0 ? ['it recorded zero passes, which supports no pass'] : []),
     ...(nearest.status === 'unjudged' ? ['its output showed no count and its exit status is unknown'] : []),
   ];
-  return `${facts.join('; ')}. ${CITE}`;
+  return `${facts.join('; ')}. ${passed(nearest) && commit ? CITE : NO_CITE}`;
 }

@@ -555,6 +555,13 @@ test('a Tests run deny states the nearest recorded run, and a claim written from
   };
   const run = (fields) => ({ command: 'npm test', status: 'passed', pass: 12, fail: 0, tree, trackedTree: tree, untrackedCode: [], ...fields });
   const older = run({ tree: firstTree, trackedTree: firstTree });
+  // A commit HEAD's history does not hold, so the log search cannot find it.
+  const side = git('commit-tree', git('mktree'), '-m', 'side');
+  const sideTree = git('rev-parse', `${side}^{tree}`);
+  const atSide = run({ tree: sideTree, trackedTree: sideTree });
+  // Another commit of HEAD's tree: the one the claim names is stated, not the one the log search finds.
+  const twin = git('commit-tree', tree, '-m', 'twin');
+  const noCite = 'Report that outcome, or get a passing run.';
   const cite = 'Cite one finished run: its command as written in the call that ran it, its counts, and its commit.';
 
   // [the line, the record, the command as the call wrote it, the counts and the commit the deny must state]
@@ -567,6 +574,8 @@ test('a Tests run deny states the nearest recorded run, and a claim written from
     [`- \`npm test\` at ${head}: 12 pass`, [older], 'npm test', first],
     ['- `aidrian test changed`: 12 pass', [run({ command: 'aidrian test changed --base origin/main' })], 'aidrian test changed --base origin/main', head],
     ['- `node --test`: 12 pass', [run({ command: key })], spaced, head],
+    [`- \`npm test\` at ${side.slice(0, 12)}: 11 pass`, [atSide], 'npm test', side],
+    [`- \`npm test\` at ${twin}: 11 pass`, [run({})], 'npm test', twin],
   ]) {
     const reason = judge(line, runs);
     const facts = /What the record shows: For `[^`]+`, the nearest recorded run is of `([^`]+)`: passed, (\d+) pass, (\d+) fail; at commit ([0-9a-f]{40})\. (.+)$/mu.exec(reason);
@@ -576,7 +585,12 @@ test('a Tests run deny states the nearest recorded run, and a claim written from
     assert.equal(judge(written, runs), null, `a claim written from the facts clears the rule: ${written}`);
   }
 
-  // Runs that support no pass: the facts alone, and nothing about why.
+  // A run whose record holds no counts supports a pass that states none.
+  const uncounted = [run({ pass: null, fail: null, tree: firstTree, trackedTree: firstTree })];
+  assert.ok(judge('- `npm test`: pass', uncounted).includes(`passed, no counts; at commit ${first}. ${cite}`));
+  assert.equal(judge(`- \`npm test\` at ${first}: pass`, uncounted), null);
+
+  // Runs that support no pass claim, or whose commit is not found: the facts, and no instruction to cite them.
   for (const [runs, said] of [
     [[], 'the record holds no finished run of it: a run in the background, inside `sh -c` or `$( )`, or in another session leaves no row.'],
     [[run({ pass: 0 })], `passed, 0 pass, 0 fail; at commit ${head}; it recorded zero passes, which supports no pass.`],
@@ -587,6 +601,7 @@ test('a Tests run deny states the nearest recorded run, and a claim written from
   ]) {
     const reason = judge('- `npm test`: 12 pass', runs);
     assert.match(reason, /^Blocked: the `## Tests run` section says `npm test` passed, but no run of it/u, 'the first sentence the dispatch log keys on stays');
-    assert.ok(reason.includes(`${said} ${cite}`), reason);
+    assert.ok(reason.includes(`${said} ${noCite}`), reason);
+    assert.ok(!reason.includes(cite), reason);
   }
 });

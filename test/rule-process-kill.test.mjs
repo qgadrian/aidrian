@@ -745,6 +745,12 @@ test('a listing deny names first the exact command to run instead, and that comm
   }
 });
 
+test('a listing filtered by a quoted pattern with an unmatched parenthesis gets no whole-line replacement', () => {
+  const { decision, reason } = decideForCommand("ps aux | grep 'foo)'", NO_OVERRIDE);
+  assert.equal(decision, 'deny');
+  assert.ok(!reason.includes('Run this instead'), reason);
+});
+
 test('each top denied listing shape of issue 130 is denied with a replacement that passes', () => {
   for (const [command, replacement] of [
     ['ps -axo pid,etime,command | grep -E "node --test|aidrian test" | grep -v grep | head', "pgrep -d, -f 'node --test|aidrian test' | xargs -r ps -o pid=,etime=,ucomm= -p | head"],
@@ -769,7 +775,7 @@ function assertParses(line) {
 
 test('no whole-line replacement for a listing behind a shell word, in a group, or in a body that occurs twice', () => {
   const lead = 'Blocked: this process listing prints full command lines.';
-  for (const command of ['(ps aux; echo done)', 'while pgrep -fl x; do sleep 1; done', '! pgrep -fl x', 'case $x in a) ps aux;; esac', 'ps aux | grep "(a|b)"', "ps aux | grep 'foo)'"]) {
+  for (const command of ['(ps aux; echo done)', 'while pgrep -fl x; do sleep 1; done', '! pgrep -fl x', 'case $x in a) ps aux;; esac', 'ps aux | grep "(a|b)"']) {
     const { decision, reason } = decideForCommand(command, NO_OVERRIDE);
     assert.equal(decision, 'deny', command);
     assert.ok(!reason.includes('Run this instead'), `${command}\n${reason}`);

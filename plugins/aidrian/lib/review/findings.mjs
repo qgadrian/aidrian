@@ -183,6 +183,11 @@ export const flagged = (value) => value !== undefined && value !== false;
 // The flag as a finding keeps it: true for a flag, false when the reviewer wrote false, so the plan's security pass
 // does not mark the finding (recordResult), and nothing when it was left out.
 export const securityKey = (value) => (flagged(value) ? { security: true } : value === false ? { security: false } : {});
+// A recorded finding's mark as a copy of it keeps it: true, false, or left out, so a copy never loses a reviewer's false.
+export const securityMark = (value) => (value === true ? { security: true } : value === false ? { security: false } : {});
+// Whether the plan or the dispatch note says pass `pass` is one the security reviewer is required for: its findings
+// stay out of every waiver and delegation whatever their own mark says.
+export const securityPassOf = (state, pass) => typeof pass === 'string' && (state?.planNote?.passes?.[pass]?.security === true || state?.dispatched?.[pass]?.security === true);
 
 // Finding identity (docs/review.md#the-record). Every finding a pass records gets an id, `R<round>-<n>`: the round it was
 // first recorded in and the record's one counter (`idCounter`), which is never reset and never reused, so an id is

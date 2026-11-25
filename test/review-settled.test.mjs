@@ -137,6 +137,16 @@ test('a carried ruling keeps the settled finding\'s severity as its cap, not the
   assert.deepEqual(medium.ruled.map((each) => [each.title, each.settled_severity]), [['Medium repeat', 'medium']]);
 });
 
+test('a ruling keeps the reviewer`s security mark as it was: true, false, or left out', () => {
+  const map = { 'codex-local': { kind: 'exec' }, 'code-reviewer': { kind: 'agent' } };
+  const pass = { id: 'engine:codex-local', reviewer: 'codex-local', files: null };
+  const state = { ...emptyState(7, 'o/r'), passes: { 'agent:code-reviewer': { head: 'h1', files: null, list: [{ title: 'Accepted', file: 'a.js', severity: 'low', state: 'accepted', disposition: 'drop_unless_cited' }] } } };
+  const settled = settledEntries(passInput(context({ state, map, info: { body: '' } }), pass, { name: 'independent', passes: [pass] }));
+  const repeat = (title, extra) => ({ file: 'a.js', line: 3, title, body: 'b', severity: 'low', already_ruled: 'Accepted', ...extra });
+  const out = splitRuled([repeat('Quiet', { security: false }), repeat('Marked', { security: true }), repeat('Unsaid')], settled);
+  assert.deepEqual(out.ruled.map((each) => [each.title, each.security]), [['Quiet', false], ['Marked', true], ['Unsaid', undefined]]);
+});
+
 test('a carried ruling is dropped once any pass holds its source as fixed or open, or blocking', () => {
   const accepted = { title: 'Accepted', file: 'a.js', severity: 'low', state: 'accepted', disposition: 'drop_unless_cited' };
   const answer = [{ file: 'a.js', line: 3, title: 'The same cause', body: 'b', severity: 'low', already_ruled: 'Accepted' }];

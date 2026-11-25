@@ -820,8 +820,10 @@ A project adds its own in `review.reviewers`:
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set
 `security` (Codex's schema requires the key, a project's exec reviewer and `--findings-file` may leave it out, and any
 value but `false` counts as true), or when the head's plan requires `agent:security-engineer` and the pass is in its
-`local` or `independent` stage, unless its reviewer wrote `"security": false`, which the finding, its index entry, and
-the `pr review` output keep. The engine stores that mark on the finding, and a finding that keeps its id keeps it.
+`local` or `independent` stage, unless its reviewer wrote `"security": false`, which the finding, its index entry, the
+round's list, a ruling, and the `pr review` output keep. Such a finding still comes from a security pass, which its cap
+item says as `security_pass`: no waiver or delegation takes it, and the posted record withholds its place unless the plan
+note holds its pass. The engine stores that mark on the finding, and a finding that keeps its id keeps it.
 The mark covers a twin: a finding at the same place (the same file and lines within 3), under the same title words
 where the record at hand holds both titles, or sharing its id, an alias, or the id a ruling names, whichever was recorded
 first. So a second

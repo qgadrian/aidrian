@@ -887,6 +887,22 @@ test('a verdict waives only medium-or-lower findings of this machine\'s reviewer
   assert.match(capProblem(held, HEAD) ?? '', /an accepted residual waived a finding above low severity/u);
 });
 
+test('a verdict never waives a finding of a security pass, though its reviewer wrote security false', () => {
+  const state = emptyState(5, 'acme/notes');
+  const item = { id: 'R2-1', severity: 'low', security: false, stage: 'local', reviewer: 'code-reviewer', pass: 'agent:code-reviewer' };
+  state.planNote = { head: HEAD, passes: { 'agent:code-reviewer': { stage: 'local', reviewer: 'code-reviewer', security: false } }, pairs: [] };
+  roundLimit(state, HEAD, { items: [item], counted: 1 });
+  assert.equal(capProblem(state, HEAD), null, 'a pass the plan does not mark: the low finding is waivable');
+  roundLimit(state, HEAD, { items: [{ ...item, security_pass: true }], counted: 1 });
+  assert.match(capProblem(state, HEAD) ?? '', /finding R2-1 is a security finding/u, 'the cause item says it came from a security pass');
+  state.planNote.passes['agent:code-reviewer'].security = true;
+  roundLimit(state, HEAD, { items: [item], counted: 1 });
+  assert.match(capProblem(state, HEAD) ?? '', /finding R2-1 is a security finding/u, 'the plan note says the pass is a security pass');
+  roundLimit(state, HEAD, { items: [], counted: 0 });
+  state.index = { 'R1-1': { id: 'R1-1', title: 't', severity: 'low', security: false, state: 'open', stage: 'local', pass: 'agent:code-reviewer', reviewer: 'code-reviewer' } };
+  assert.match(capProblem(state, HEAD) ?? '', /finding R1-1 is a security finding/u, 'an open index entry of that pass');
+});
+
 test('a verdict stands only when open findings are the whole cause of the cap: every other cause, and a record with none, keeps the denial', (t) => {
   const r = repo(t, { local: ON });
   const command = `gh pr merge 5 --match-head-commit ${HEAD}`;

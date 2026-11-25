@@ -9,7 +9,7 @@
 import { isObject } from '../fs.mjs';
 import { residualItems } from '../decisions.mjs';
 import { LIST_ITEM } from '../markdown-sections.mjs';
-import { ACCEPTABLE_DISPOSITIONS, blocks, FINDING_STATES, isFindingId, noHigher, PRIOR_CAP, RESIDUAL_CAP, settledMatch, severityOf } from './findings.mjs';
+import { ACCEPTABLE_DISPOSITIONS, blocks, FINDING_STATES, isFindingId, noHigher, PRIOR_CAP, RESIDUAL_CAP, securityMark, settledMatch, severityOf } from './findings.mjs';
 // A call-time cycle (state.mjs imports ruledLines): neither module reads the other's bindings while it loads.
 import { clip } from './state.mjs';
 
@@ -118,8 +118,8 @@ export function splitRuled(findings, settled) {
       const capped = 'file' in entry;
       const from = capped && !entry.residual ? 'prior' : 'residual';
       out.ruled.push({
-        // The reviewer's security flag stays with the repeat, so recordFindings marks it whatever settled it.
-        title, file, line, severity, ...(security === true ? { security: true } : {}), already_ruled: entry.raised ?? entry.title, from,
+        // The reviewer's security flag stays with the repeat, true or false, so recordFindings marks it whatever settled it.
+        title, file, line, severity, ...securityMark(security), already_ruled: entry.raised ?? entry.title, from,
         ...(capped ? { settled_severity: entry.severity } : {}), ...(entry.settled_by ? { settled_by: entry.settled_by } : {}), ...(entry.accepted_by ? { accepted_by: entry.accepted_by } : {}), ...(entry.residual ? { residual: entry.residual } : {}),
       });
       continue;

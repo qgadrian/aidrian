@@ -52,7 +52,7 @@ import { mayFollowTeamDefault } from '../project.mjs';
 import { hostOf } from '../remotes.mjs';
 import { forgeRepo, repoName } from '../review-gate.mjs';
 import { localRefSolo, viewSolo } from '../solo.mjs';
-import { isFindingId, noHigher, severityOf } from './findings.mjs';
+import { isFindingId, noHigher, securityPassOf, severityOf } from './findings.mjs';
 import { boundedReads, holdToBase } from './in-force.mjs';
 import { botProblem, flowsFloor, readHumanSignoffs, recordedFlows, signoffProblem, unsignedFlows } from './merge-trust.mjs';
 import { postContext, readReading } from './dispatch.mjs';
@@ -127,13 +127,14 @@ const FLOW_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u;
 const PASS_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$/u;
 const findingName = (id) => (isFindingId(id) ? `finding ${id}` : 'a finding');
 
-// Why one open item keeps a verdict from standing, or null: `item` is { id, severity, security, stage, reviewer, pass }.
-function itemProblem(item, stageOf) {
+// Why one open item keeps a verdict from standing, or null: `item` is { id, severity, security, security_pass, stage,
+// reviewer, pass }. A finding of a security pass stays out whatever its own mark (`securityPass`, findings.mjs).
+function itemProblem(item, stageOf, securityPass) {
   const name = findingName(item.id);
   const stage = item.stage ?? stageOf(item.pass);
   if (!WAIVABLE_STAGES.has(stage) || item.reviewer === 'pr-bot') return `${name} is not one of this machine's reviewers' (stage ${shown(stage, PASS_NAME, 'unknown')}), and a verdict waives only theirs`;
   if (!noHigher(item.severity, WAIVER_CEILING)) return `${name} is ${severityOf(item.severity) ?? 'of no known severity'}, above ${WAIVER_CEILING}, which only the Human lets merge`;
-  if (item.security === true || SECURITY_REVIEWER.test(String(item.reviewer ?? '')) || SECURITY_REVIEWER.test(String(item.pass ?? ''))) return `${name} is a security finding, which only the Human lets merge`;
+  if (item.security === true || item.security_pass === true || securityPass(item.pass) || SECURITY_REVIEWER.test(String(item.reviewer ?? '')) || SECURITY_REVIEWER.test(String(item.pass ?? ''))) return `${name} is a security finding, which only the Human lets merge`;
   return null;
 }
 
@@ -199,13 +200,14 @@ export function capProblem(state, head) {
   if (listOf(cause.unrun) === null || cause.unrun.length) return `pass ${shown(cause.unrun?.[0], PASS_NAME, 'of this machine')} never reviewed this head`;
   if (cause.itemized !== true || !Number.isInteger(cause.counted)) return `${Number.isInteger(cause.counted) ? `${cause.counted} open findings are` : 'the open findings are'} counted, not each listed with its severity`;
   const stageOf = (pass) => state.planNote?.passes?.[pass]?.stage ?? state.dispatched?.[pass]?.stage ?? null;
+  const securityPass = (pass) => securityPassOf(state, pass);
   for (const item of listOf(cause.items) ?? []) {
-    const problem = itemProblem(isObject(item) ? item : {}, stageOf);
+    const problem = itemProblem(isObject(item) ? item : {}, stageOf, securityPass);
     if (problem) return problem;
   }
   for (const entry of Object.values(isObject(state?.index) ? state.index : {})) {
     if (!isObject(entry) || entry.state !== 'open') continue;
-    const problem = itemProblem(entry, stageOf);
+    const problem = itemProblem(entry, stageOf, securityPass);
     if (problem) return problem;
   }
   return null;

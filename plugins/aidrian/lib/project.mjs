@@ -535,9 +535,11 @@ function githubGroup(raw) {
   }
   const read = (key) => {
     if (!Object.hasOwn(raw.github, key)) return 'unset';
-    const given = raw.github[key];
-    const known = isObject(given) ? knownFields(given, ['enabled'], `github.${key}`, LOCAL, problems) : null;
-    const value = known ? (typeof known.enabled === 'boolean' ? (known.enabled ? 'on' : 'off') : null) : given;
+    let value = raw.github[key];
+    if (isObject(value)) {
+      const { enabled } = knownFields(value, ['enabled'], `github.${key}`, LOCAL, problems);
+      value = typeof enabled === 'boolean' ? (enabled ? 'on' : 'off') : null;
+    }
     if (value === 'on' || value === 'off') return value;
     problems.push(`${LOCAL}: "github.${key}" must be { "enabled": true } or { "enabled": false }`);
     return 'off';

@@ -177,10 +177,10 @@ test('the agent gate hook, run as the host runs it, refuses an issue session eac
 
 test('every command a first message names for an ended attempt\'s kept commits passes every Bash hook of an issue session', async (t) => {
   const fx = issueFixture(t);
-  const [line] = keptPrompt({ took: { attempt: 1, head: 'a'.repeat(40) }, count: 2 });
+  const [line] = keptPrompt({ took: { attempt: 1, head: 'a'.repeat(40) }, count: 2, from: 'b'.repeat(40) });
   // Each command the line names, and the removal it asks for.
   const commands = [...line.matchAll(/`(git [^`]+)`/gu)].map((match) => match[1]);
-  assert.deepEqual(commands, [`git merge --ff-only ${'a'.repeat(40)}`, `git diff --diff-filter=A --name-only HEAD ${'a'.repeat(40)}`, 'git restore .', 'git status']);
+  assert.deepEqual(commands, [`git merge --ff-only ${'a'.repeat(40)}`, `git diff --no-renames -z --diff-filter=A --name-only ${'b'.repeat(40)} ${'a'.repeat(40)}`, `git restore --source=${'b'.repeat(40)} --staged --worktree .`, 'git status']);
   for (const command of [...commands, 'rm -f -- added/one.js out/ignored.log']) {
     assert.equal(fx.ask(bash(command)), null, command);
     for (const script of ['hook-agent-gates.mjs', 'hook-bash.mjs']) {

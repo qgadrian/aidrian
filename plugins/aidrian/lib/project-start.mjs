@@ -809,6 +809,7 @@ export function unpushedHead({ folder, row, repository, forge }) {
   return null;
 }
 
+const CHANGED_FOLDER = 'lies below a folder that changed while it was read';
 const FULL_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 // A branch's ref name, as a loose ref file's path below the git folder: no part that climbs out, or that git refuses.
 const HEAD_REF = /^ref: (refs\/heads\/[^\s\0]+)$/u;
@@ -839,9 +840,10 @@ export function cloneRefs(gitFolder, branch, before = () => {}) {
   pins.pin(walk(`refs/heads/${branch}`));
   let folder;
   try {
+    before('.');
     folder = lstatSync(gitFolder);
   } catch (error) {
-    if (error.code === 'ENOENT') return { head: null, branch: null };
+    if (error.code === 'ENOENT') return pins.whole() ? { head: null, branch: null } : { problem: `the git folder ${CHANGED_FOLDER}` };
     return { problem: `the git folder cannot be read (${error.code ?? 'no code'})` };
   }
   if (!folder.isDirectory()) return { problem: 'the git folder is not a plain folder' };
@@ -873,7 +875,8 @@ export function cloneRefs(gitFolder, branch, before = () => {}) {
 // The trimmed text of the ref file at the path `relative` below the git folder `gitFolder`, a regular file of at most
 // `cap` bytes read without following a link, at the file or at any folder on its way there, or waiting on a FIFO:
 // { text }, { missing }, or { problem }. The session wrote that folder, so a link in it could lead the read anywhere. With
-// the file open, and before its read, `whole()` says whether the folders on the way are still the ones pinned.
+// the file open, and before its read, or before it counts as missing, `whole()` says whether the folders on the way are
+// still the ones pinned.
 function refFile(gitFolder, relative, cap, whole, before) {
   let fd;
   try {
@@ -881,14 +884,15 @@ function refFile(gitFolder, relative, cap, whole, before) {
     if (linked) return { problem: `lies below ${linked}, a link` };
     before(relative);
     fd = openSync(path.join(gitFolder, ...relative.split('/')), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-    if (!whole()) return { problem: 'lies below a folder that changed while it was read' };
+    if (!whole()) return { problem: CHANGED_FOLDER };
     const stat = fstatSync(fd);
     if (!stat.isFile()) return { problem: 'is not a regular file' };
     if (stat.size > cap) return { problem: 'is too large to read' };
     const buffer = Buffer.alloc(stat.size);
     return { text: buffer.subarray(0, readSync(fd, buffer, 0, stat.size, 0)).toString('utf8').trim() };
   } catch (error) {
-    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return { missing: true };
+    // A file is missing only while the folders are as pinned: one that went away may have held it.
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return whole() ? { missing: true } : { problem: CHANGED_FOLDER };
     return { problem: `cannot be read (${error.code ?? 'no code'})` };
   } finally {
     if (fd !== undefined) closeSync(fd);

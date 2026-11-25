@@ -1142,14 +1142,14 @@ test('next lists each settle report still owed, so a driver that takes the run o
 test('a start of one issue that settles another\'s orphan keeps its own outcome, and the next next lists the orphan\'s report', (t) => {
   const fx = runFixture(t, { config: { tracker: { provider: 'linear' } } });
   const lost = fakeClaude({ dir: fx.dir, start: () => ({ status: 1, stdout: '', stderr: 'timed out', listed: false }) });
-  // Two attempts of ENG-1 settled as orphans by `wait`; its last one is left for the start of ENG-4.
-  // The clock ends at the present, which the session proof of ENG-4's start reads.
-  let now = Date.now() - 3 * (PENDING_AGE + 60_000);
-  for (const attempt of [1, 2, 3]) {
-    assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { spawn: lost.run, now }).exitCode, 1, `attempt ${attempt}`);
-    now += PENDING_AGE + 60_000;
-    if (attempt < 3) assert.ok(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: lost.run, now }).out.includes(`orphan ENG-1 attempt ${attempt} none listed`));
-  }
+  // ENG-1's first two attempts settled as orphans before; its last one is left for the start of ENG-4, past its pending age.
+  const at = new Date(Date.now() - PENDING_AGE - 60_000).toISOString();
+  appendToRun(fx.state, 'launch', () => ({ rows: [1, 2].flatMap((attempt) => [
+    { event: 'start', key: 'ENG-1', attempt, session: DRIVER, name: `launch · ENG-1 · ${attempt}`, cwd: path.join(fx.root, `eng-1-${attempt}`), branch: 'feat/eng-1-export', outcome: 'uncertain', stopped: true, at },
+    { event: 'orphan', key: 'ENG-1', attempt, action: 'none', at },
+    { event: 'issue', key: 'ENG-1', state: 'open', at },
+  ]) }));
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { spawn: lost.run, now: Date.parse(at) }).exitCode, 1);
   const start = fx.cmd(['start', 'launch', 'ENG-4']);
   assert.equal(start.exitCode, 0, start.err.join('\n'));
   assert.ok(start.out.includes('orphan ENG-1 attempt 3 none listed') && start.out.some((line) => /^started ENG-4 attempt 1 session /u.test(line)), start.out.join('\n'));

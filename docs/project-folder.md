@@ -672,8 +672,8 @@ So is a marker with no `decision-new` line, and an old wording line below a new 
 `hasOldWording` true with `oldWording` null means the old wording cannot be read, and `hasNewWording` true with `newWording` null the same of the new.
 Two more problems compare the wording with the doc.
 An unconfirmed marker at the bottom of its stack has drifted when its new wording is not in its block exactly once.
-The remedy is to put the wording back as it was. A changed wording is the Human's to settle, with `aidrian decisions set` or `undo`:
-no command rewrites a `decision-new` line.
+The remedy is to put the wording back as it was. A changed wording is the Human's to settle, with `aidrian decisions set`:
+`undo` refuses it until the wording is back, and no command rewrites a `decision-new` line.
 A confirmed marker is exempt, since the Human may reword what they kept.
 A rejected marker is exempt too: `set rejected` changes no wording, so a later hand edit is expected.
 And in any stack that is not independent, each marker's old wording must be the new wording of the marker above it.
@@ -697,7 +697,7 @@ A problem the merge base already has, the same text on the same line, stays in t
 A change to a valid `status` or `pr` alone does not make a line new, and an invalid value does.
 So a branch that rewords an inherited rule sees the drift as its own.
 A new decision in a Markdown file no index lists is a `problem`: markers belong in an indexed doc.
-So is a new unconfirmed marker whose new wording says "not built", "not implemented", "not yet built", or "not yet implemented",
+So is a new unconfirmed marker whose new wording says "not yet built", "not yet implemented", "not built yet", or "not implemented yet",
 in any letter case and with any white space between the words. A build state worded another way passes.
 Plain `list` and `aidrian check` do not report it, and a marker the merge base has is never reported for it.
 Its JSON adds `settled`, each inherited marker whose status the branch changed, with `was`, the status at the merge base.

@@ -899,14 +899,14 @@ test('decisions list --added-since flags a wording the branch added that holds i
   const base = [stated('old', 'Old, not built yet.'), stated('renumbered', 'Renumbered, not yet built.')];
   const { dir, git } = decisionRepo(t, { 'a.md': `${base.join('\n\n')}\n` });
   git('checkout', '-q', '-b', 'feature');
-  const added = [stated('fresh', '- New,\n  not\n  Yet Implemented.'), stated('clean', 'Built as it says.'), stated('kept', 'Kept, not built.', 'confirmed')];
+  const added = [stated('fresh', '- New,\n  not\n  Yet Implemented.'), stated('clean', 'Built as it says.'), stated('kept', 'Kept, not built yet.', 'confirmed'), stated('status-501', 'Returns HTTP 501 Not Implemented when the export is off.')];
   writeFileSync(path.join(dir, 'docs/a.md'), `${[base[0], base[1].replace('pr=41', 'pr=42'), ...added].join('\n\n')}\n`);
   git('add', '.');
   git('commit', '-q', '-m', 'decide');
 
   const env = { ...process.env, PATH: noGh(t) };
   const { decisions, problems } = JSON.parse((await run(['decisions', 'list', '--added-since', 'main', '--json'], dir, env)).stdout);
-  assert.deepEqual(decisions.map(({ id }) => id), ['fresh', 'clean', 'kept']);
+  assert.deepEqual(decisions.map(({ id }) => id), ['fresh', 'clean', 'kept', 'status-501']);
   assert.deepEqual(problems, [{ doc: 'docs/a.md', line: 12, problem: '"fresh" wrote wording that says "not Yet Implemented": a wording states the rule as it holds, and its build state goes in the tracker issue or in text outside its block' }]);
   assert.deepEqual((await listDecisions(dir)).problems, [], 'plain list');
   assert.doesNotMatch((await run(['check'], dir, env)).stderr, /build state/u, 'check');

@@ -435,14 +435,15 @@ export function wordingProblems(text, { decisions, problems: parsed = [] } = par
     }
     if (decision.status !== 'unconfirmed' || decision.newWording === null) return;
     const count = findWording(lines, blockAbove(lines, fenced, decision.line - 1), decision.newWording).length;
-    if (count !== 1) problems.push({ line: decision.line, problem: `"${decision.id}" wrote wording found ${count} times in the block above it, and undo needs it exactly once: put the wording back as it was; a changed wording is the Human's to settle, with aidrian decisions set or undo` });
+    if (count !== 1) problems.push({ line: decision.line, problem: `"${decision.id}" wrote wording found ${count} times in the block above it, and undo needs it exactly once: put the wording back as it was; a changed wording is the Human's to settle, with aidrian decisions set` });
   });
   return problems;
 }
 
 // The words that say a rule is not built yet, so building it would make a wording that holds them wrong: a short fixed list.
-// A state worded another way passes, and "not built-in" is no state.
-const BUILD_STATE = /\bnot\s+(?:yet\s+)?(?:built|implemented)\b(?!-\w)/iu;
+// Each says "yet", since "not implemented" alone can be what the rule is about, as in HTTP 501 Not Implemented. A state
+// worded another way passes.
+const BUILD_STATE = /\bnot\s+(?:yet\s+(?:built|implemented)|(?:built|implemented)\s+yet)\b/iu;
 
 // What is wrong with an unconfirmed decision's new wording when it holds its build state, or null. Only for a decision a
 // branch added: one already on record keeps its wording until the Human settles it.

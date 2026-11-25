@@ -15,15 +15,18 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
+import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { checkBrief, chainOf, commands } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { BACKGROUND_HOPS, backgroundNotice, backgroundPrompt, continueBrief, deliverCleared, routeOf, STALL_HOPS, UNHOOKED, ownerLines, unattendedHere, unhookedLine } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { handoffEnvDenial } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { CHAIN_CEILING, chainOwner, CLAIM_AGE, claimStart, keepClaim, noteFollow, noteFrom, noteStarted, openStore, readArmed, readFrom, readHop, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { claudeOnPath, sessionEnded, sessionMode, startBackground, startIn } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
+import { claudeOnPath, readAsked, sessionEnded, sessionMode, sessionModel, startBackground, startChoice, startIn } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { startHeld } from '../plugins/aidrian/lib/session-start-gate.mjs';
 import { END_DELAY, endAfterTurn, terminalFolder } from '../plugins/aidrian/lib/terminal-replace.mjs';
+import { CONTINUATION_LEAD } from '../plugins/aidrian/lib/transcript.mjs';
 import { liftAttended, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { TEST_HOME } from './fixtures/test-home.mjs';
 
@@ -135,12 +138,12 @@ test('the background route starts the new session in this session\'s folder, rec
   const result = gate(setting, { run, env });
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   assert.equal(result.out[0], 'continue: background');
-  assert.equal(result.out[1], `say: The brief widget continues in the new background session abcd1234 'harness-handoff · 1', started in ${setting.dir}, with nothing to type: \`claude attach abcd1234\` opens it, or \`claude attach 'harness-handoff · 1'\` by its name, and \`claude agents\` lists it. It resumes from ${setting.file}. If that session hands off in turn, \`aidrian handoff owner abcd1234\`, run in ${setting.dir}, names the one that owns the work then. This session has ended its work; the new one is \`harness-handoff · 1\`, open it with \`claude attach abcd1234\`.`);
+  assert.equal(result.out[1], `say: The brief widget continues in the new background session abcd1234 'harness-handoff · 1', started in ${setting.dir}, with nothing to type: \`claude attach abcd1234\` opens it, or \`claude attach 'harness-handoff · 1'\` by its name, and \`claude agents\` lists it. The start asked for no model (the host's default) and the effort high (the handing-off session's). It resumes from ${setting.file}. If that session hands off in turn, \`aidrian handoff owner abcd1234\`, run in ${setting.dir}, names the one that owns the work then. This session has ended its work; the new one is \`harness-handoff · 1\`, open it with \`claude attach abcd1234\`.`);
 
   const [started] = bgCalls(calls);
   assert.equal(started.command, path.join(setting.bin, 'claude'), 'claude by its absolute path');
   const kept = path.join(setting.store.dir, `continued-${sha(brief())}.md`);
-  const prompt = backgroundPrompt({ marker: { brief: setting.file, slug: 'widget', chain: 0 }, kept, sha256: sha(brief()), maxChain: 3 });
+  const prompt = backgroundPrompt({ marker: { brief: setting.file, slug: 'widget', chain: 0 }, kept, sha256: sha(brief()), maxChain: 3, asked: 'The start asked for no model (the host\'s default) and the effort high (the handing-off session\'s).' });
   assert.deepEqual(started.args, ['--bg', '--name', 'harness-handoff · 1', '--agent', 'aidrian:orchestrator', '--effort', 'high', '--permission-mode', 'acceptEdits', '--', prompt], 'the session\'s own name and the count, agent, effort, and permission mode');
   assert.equal(started.cwd, setting.dir, 'the folder the host lists for this session');
   assert.equal(readFileSync(kept, 'utf8'), brief(), 'the store keeps the checked bytes');
@@ -1448,6 +1451,342 @@ test('the gate passes on the mode a transcript gives only on its user entries, a
     const unread = start(odd, [userEntry('auto')]);
     assert.equal(unread.args, null, `${JSON.stringify(odd)}: no session started`);
     assert.match(unread.result.out[1], /the permission mode of this session could not be read/u);
+  }
+});
+
+// The model and effort a background continuation asks for (docs/handoff.md#the-background-route, step 3).
+const FABLE = 'claude-fable-5-2';
+const OPUS = 'claude-opus-5-5';
+const HAIKU = 'claude-haiku-5-5';
+const OWN_LINE = (field, value) => `the ${field} ${value} (the handing-off session's)`;
+const TEAM_LINE = (field, value) => `the ${field} ${value} (the team's config)`;
+const HOST_LINE = (field) => `no ${field} (the host's default)`;
+const lineOf = (model, effort) => `The start asked for ${model} and ${effort}.`;
+const NONE_LINE = lineOf(HOST_LINE('model'), HOST_LINE('effort'));
+// An assistant entry whose message names the model that wrote it, as a Claude Code transcript holds it.
+const modelEntry = (model, extra = {}) => ({ ...assistantEntry(3), message: { role: 'assistant', model, content: [{ type: 'text', text: 'ok' }] }, ...extra });
+// A prompt as most carry it, with no mode: a `user` entry whose content is `content`.
+const promptEntry = (content = 'go on', extra = {}) => ({ parentUuid: null, isSidechain: false, type: 'user', message: { role: 'user', content }, uuid: 'p', sessionId: SESSION, ...extra });
+const toolResult = (extra = {}) => promptEntry([{ type: 'text', text: 'and' }, { type: 'tool_result', tool_use_id: 't', content: 'done' }], extra);
+
+// The gate's run on a session whose transcript holds `entries`, with the effort variable `effort` or none: { setting,
+// result, calls, args, prompt, say }, `args` those of the one start, its prompt apart, or null when none started.
+function modelRun(t, entries, { effort = '', start = null, ...options } = {}) {
+  const setting = setup(t, { mode: null, ...options });
+  transcript(setting, entries);
+  passCheck(setting);
+  setting.env = { ...setting.env, CLAUDE_EFFORT: effort };
+  const { run, calls } = fakeRun({ own: setting.dir, start, lag: start ? Infinity : 0 });
+  const result = gate(setting, { run });
+  const args = bgCalls(calls)[0]?.args ?? null;
+  return { setting, run, calls, result, args: args?.slice(0, -1) ?? null, prompt: args?.at(-1) ?? null, say: result.out[1] };
+}
+const flags = (...pairs) => ['--bg', '--name', 'harness-handoff · 1', ...pairs, '--permission-mode', 'auto', '--'];
+
+test('a continuation asks for the handing-off session\'s model and effort, and says so in the say line and the first message', (t) => {
+  const own = modelRun(t, [userEntry('auto'), modelEntry(FABLE)], { effort: 'xhigh' });
+  assert.deepEqual(own.args, flags('--effort', 'xhigh', '--model', FABLE), 'two argv items, once, before the permission mode');
+  assert.equal(own.args.filter((each) => each.includes('model')).length, 1);
+  const line = lineOf(OWN_LINE('model', FABLE), OWN_LINE('effort', 'xhigh'));
+  assert.ok(own.say.includes(`lists it. ${line} It resumes from `), own.say);
+  assert.equal(own.prompt.split('\n').at(-1), line);
+  assert.ok(own.prompt.startsWith(CONTINUATION_LEAD), 'the message still starts with the lead the transcript reader looks for');
+  assert.doesNotMatch(`${own.say}\n${line}`, /runs in/u);
+  const record = readStarted(own.setting.store, SESSION);
+  assert.deepEqual(record.asked, { model: FABLE, modelFrom: 'session', effort: 'xhigh', effortFrom: 'session' });
+  assert.deepEqual(gate(own.setting, { run: own.run }).out[1], own.say, 'a second run on the same bytes says the same from the record');
+
+  const none = modelRun(t, [userEntry('auto')]);
+  assert.deepEqual(none.args, flags(), 'neither told: today\'s argv');
+  assert.ok(none.say.includes(NONE_LINE));
+  assert.equal(none.prompt.split('\n').at(-1), NONE_LINE);
+});
+
+test('the choice is answered once, before the prompt, and the start reads nothing again: the line and the flags cannot differ', (t) => {
+  const setting = setup(t, { mode: null });
+  transcript(setting, [userEntry('auto'), modelEntry(OPUS)]);
+  passCheck(setting);
+  const { run, calls } = fakeRun({ own: setting.dir });
+  const handoff = claudeCode.capabilities.handoffContinue;
+  const { startChoice: original } = handoff;
+  t.after(() => {
+    handoff.startChoice = original;
+  });
+  let asks = 0;
+  handoff.startChoice = (ask) => {
+    asks += 1;
+    const answer = original(ask);
+    // The session switches between the answer and the start.
+    transcript(setting, [userEntry('auto'), modelEntry(FABLE)]);
+    return answer;
+  };
+  const result = gate(setting, { run, env: { ...setting.env, CLAUDE_EFFORT: 'low' } });
+  assert.equal(asks, 1);
+  const [{ args }] = bgCalls(calls);
+  const line = lineOf(OWN_LINE('model', args[args.indexOf('--model') + 1]), OWN_LINE('effort', args[args.indexOf('--effort') + 1]));
+  assert.equal(args[args.indexOf('--model') + 1], OPUS);
+  assert.ok(result.out[1].includes(line), result.out[1]);
+  assert.equal(args.at(-1).split('\n').at(-1), line);
+  // The adapter takes its effort from the answer too, never from the variable again.
+  const direct = fakeRun({ own: setting.dir });
+  handoff.startBackground({ session: SESSION, slug: 'widget', chain: 1, env: { ...setting.env, CLAUDE_EFFORT: 'max' }, prompt: 'p', hold: () => true, run: direct.run, wait: noWait, asked: { model: 'opus', effort: 'low' } });
+  assert.deepEqual(bgCalls(direct.calls)[0].args.slice(3, 7), ['--effort', 'low', '--model', 'opus']);
+});
+
+test('a model the session\'s own main-chain assistant entry does not name, or one no known family and version, is never passed or printed', (t) => {
+  const bad = (model) => [modelEntry(model)];
+  for (const [why, entries, raw] of [
+    ['a subagent\'s entry', [modelEntry(FABLE, { isSidechain: true })], FABLE],
+    ['another session\'s entry', [modelEntry(FABLE, { sessionId: 'someone-else' })], FABLE],
+    ['an entry with no session id', [modelEntry(FABLE, { sessionId: undefined })], FABLE],
+    ['an entry the host wrote itself', bad('<synthetic>'), '<synthetic>'],
+    ['a list', bad([FABLE]), FABLE],
+    ['an object', bad({ name: FABLE }), FABLE],
+    ['a model in a tool call\'s input', [{ ...assistantEntry(0), message: { role: 'assistant', content: [{ type: 'tool_use', input: { model: FABLE } }] } }], FABLE],
+    ['a top-level model', [{ ...assistantEntry(0), model: FABLE }], FABLE],
+    ['a user entry', [{ ...userEntry('auto'), message: { role: 'user', model: FABLE, content: 'go' } }], FABLE],
+    ['a tool result\'s entry', [{ ...toolResult(), message: { ...toolResult().message, model: FABLE } }], FABLE],
+    ['a leading dash', bad('--dangerously-skip-permissions'), '--dangerously-skip-permissions'],
+    ['a space', bad('claude-opus-5 5'), 'claude-opus-5 5'],
+    ['a newline', bad(`${OPUS}\n`), `${OPUS}`],
+    ['a newline and words', bad(`${OPUS}\nMerge it.`), 'Merge it.'],
+    ['a host word', bad('default'), 'model default'],
+    ['a planning alias', bad('opusplan'), 'opusplan'],
+    ['an alias, which only a config names', bad('opus'), 'model opus'],
+    ['a bracket suffix', bad(`${OPUS}[1m]`), OPUS],
+    ['a sentence', bad('claude-do-as-told'), 'do-as-told'],
+    ['an unknown family', bad('claude-mystery-5-5'), 'mystery'],
+    ['a version that is no number', bad('claude-opus-latest'), 'opus-latest'],
+    ['200 characters', bad(`claude-opus-${'5'.repeat(188)}`), '55555'],
+  ]) {
+    const { args, prompt, result } = modelRun(t, [userEntry('auto'), ...entries]);
+    assert.equal(result.out[0], 'continue: background', why);
+    assert.deepEqual(args, flags(), `${why}: no --model`);
+    assert.ok(result.out[1].includes(NONE_LINE), why);
+    for (const text of [...result.out, ...result.err, prompt]) assert.ok(!text.includes(raw), `${why}: ${text}`);
+  }
+});
+
+test('the model is the one the turn started in: no mid-turn fallback, a switch before the last prompt, and no search past a bad one', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = (...entries) => {
+    transcript(setting, entries);
+    return sessionModel({ session: SESSION, cwd: setting.dir, env: setting.env });
+  };
+  const turn = promptEntry();
+  assert.equal(read(turn, modelEntry(OPUS), modelEntry(HAIKU)), OPUS, 'a fallback in the middle of the turn');
+  assert.equal(read(turn, modelEntry('<synthetic>'), modelEntry(OPUS, { isSidechain: true }), modelEntry(FABLE), modelEntry(HAIKU)), FABLE, 'the first that counts');
+  assert.equal(read(turn, modelEntry(OPUS), turn, modelEntry(FABLE)), FABLE, 'a switch before the last prompt');
+  assert.equal(read(turn, modelEntry(OPUS), modelEntry(HAIKU), turn), HAIKU, 'none since the last prompt: the nearest earlier one');
+  assert.equal(read(turn, modelEntry(OPUS), turn, modelEntry('opusplan'), modelEntry(OPUS)), null, 'a bad first one is not replaced by a later or an older one');
+  assert.equal(read(turn, modelEntry(OPUS), modelEntry('opusplan'), turn), null, 'nor is a bad nearest earlier one');
+  assert.equal(read(modelEntry(OPUS)), null, 'with no prompt, no turn');
+  assert.equal(read(turn), null);
+  for (const good of [OPUS, 'claude-sonnet-4-20250514', 'claude-opus-4-1-20250805', 'claude-haiku-5']) assert.equal(read(turn, modelEntry(good)), good);
+  assert.equal(sessionModel({ session: SESSION, cwd: undefined, env: setting.env }), null, 'no folder, no read');
+});
+
+test('a turn starts at a prompt, whether or not it carries a mode, and at no other entry', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = (...entries) => {
+    transcript(setting, entries);
+    return sessionModel({ session: SESSION, cwd: setting.dir, env: setting.env });
+  };
+  // A message from a peer, say, carries no mode: the turn it starts is answered by the model the Human switched to.
+  const peer = modelRun(t, [userEntry('auto'), modelEntry(OPUS), promptEntry('a message'), modelEntry(FABLE)]);
+  assert.deepEqual(peer.args, flags('--model', FABLE), 'the mode is the last named one, and the model the turn\'s own');
+  const MARKER = '[Request interrupted by user]';
+  const text = (value) => ({ type: 'text', text: value });
+  // A text whose conversion to a string throws.
+  const malformed = text({ toString: null });
+  for (const [why, entry] of [
+    ['a prompt that begins with the marker', promptEntry(`${MARKER} is what the log says: why?`)],
+    ['a text block that begins with the marker', promptEntry([text(`${MARKER} is what the log says: why?`)])],
+    ['a prompt that quotes the marker', promptEntry(`The log says ${MARKER}`)],
+    ['a text of another form of the marker', promptEntry('[Request interrupted by user for a nap]')],
+    ['the marker and an image block', promptEntry([text(MARKER), { type: 'image', source: {} }])],
+    ['the marker and more text', promptEntry([text(MARKER), text('go on')])],
+    ['a malformed block beside text', promptEntry([malformed, text('go on')])],
+    ['text', promptEntry()],
+    ['a text block', promptEntry([{ type: 'text', text: 'go on' }])],
+    ['an image block', promptEntry([{ type: 'image', source: {} }])],
+    ['the Human\'s prompt', promptEntry('go on', { origin: { kind: 'human' } })],
+    ['a peer\'s message', promptEntry('a message', { origin: { kind: 'peer' } })],
+  ]) {
+    assert.equal(read(promptEntry(), modelEntry(OPUS), entry, modelEntry(FABLE)), FABLE, `${why} starts a turn`);
+  }
+  for (const [why, entry] of [
+    ['a tool result', toolResult()],
+    ['a tool result that carries a mode', toolResult({ permissionMode: 'auto' })],
+    ['an entry the host wrote itself', promptEntry('the skill\'s text', { isMeta: true })],
+    ['a compaction summary', promptEntry('This session is being continued from a previous conversation.', { isCompactSummary: true })],
+    ['a task notification', promptEntry('<task-notification>done</task-notification>', { origin: { kind: 'task-notification' } })],
+    ['an interruption marker', promptEntry([text(MARKER)])],
+    ['an interruption marker of a tool call', promptEntry([text('[Request interrupted by user for tool use]')])],
+    ['an interruption marker as the content, with space around it', promptEntry(` ${MARKER}\n`)],
+    ['a malformed block beside the marker', promptEntry([malformed, text(MARKER)])],
+    ['a block with an empty type beside the marker', promptEntry([{ type: '' }, text(MARKER)])],
+    ['a malformed block beside a tool result', promptEntry([malformed, { type: 'tool_result', tool_use_id: 't', content: 'done' }])],
+    ['a text that is an object alone', promptEntry([malformed])],
+    ['blocks that are no objects, and one with no type', promptEntry([null, 7, 'go on', [], { text: 'go on' }])],
+    ['an empty list', promptEntry([])],
+    ['a mode entry', { type: 'permission-mode', permissionMode: 'auto', sessionId: SESSION }],
+    ['a subagent\'s prompt', promptEntry('go on', { isSidechain: true })],
+    ['another session\'s prompt', promptEntry('go on', { sessionId: 'someone-else' })],
+    ['a system entry', { ...promptEntry(), type: 'system', role: 'user' }],
+    ['content that is no text and no list', promptEntry({ text: 'go on' })],
+    ['a user entry with no message', { type: 'user', message: null, sessionId: SESSION }],
+  ]) {
+    assert.equal(read(promptEntry(), modelEntry(OPUS), entry, modelEntry(FABLE)), OPUS, `${why} starts none`);
+  }
+  // A line too long to parse that may be the last prompt: the turn cannot be told.
+  const long = promptEntry('x'.repeat(33 * MB));
+  assert.equal(read(promptEntry(), modelEntry(OPUS), long, modelEntry(FABLE)), null);
+  assert.equal(read(promptEntry(), modelEntry(OPUS), long, promptEntry()), OPUS, 'one before the last prompt is no candidate, so it is skipped');
+});
+
+test('a model never changes a mode answer: a mode the gate refuses starts nothing beside a valid model, and a line too long gives none', (t) => {
+  const start = (...entries) => modelRun(t, entries);
+  for (const [why, mode, line] of [
+    ['bypass', userEntry('bypassPermissions'), /permission checks bypassed/u],
+    ['a mode that is no string', userEntry(7), /could not be read/u],
+    ['a long line with both keys', { ...modelEntry(OPUS), permissionMode: 'auto', pad: 'x'.repeat(33 * MB) }, /could not be read/u],
+  ]) {
+    const refused = start(userEntry('auto'), modelEntry(OPUS), mode, modelEntry(FABLE));
+    assert.equal(refused.args, null, `${why}: nothing starts`);
+    assert.match(refused.say, line, why);
+  }
+  const long = modelEntry(OPUS, { pad: 'x'.repeat(33 * MB) });
+  const after = start(userEntry('auto'), long, modelEntry(FABLE));
+  assert.deepEqual(after.args, flags(), 'a long line with the model key alone: the start runs, with no model');
+  assert.ok(after.say.includes(NONE_LINE));
+  const setting = setup(t, { mode: null });
+  const read = () => sessionModel({ session: SESSION, cwd: setting.dir, env: setting.env });
+  transcript(setting, [modelEntry(OPUS), long, userEntry('auto')]);
+  assert.equal(read(), null, 'nor one before the last prompt');
+  // The model key more than 32 MB from the line's end, split across two read chunks: 4 of its bytes before a chunk edge.
+  const key = '"model":"x"},"pad":"';
+  const tail = `","sessionId":"${SESSION}"}`;
+  writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify(modelEntry(OPUS))}\n${JSON.stringify(userEntry('auto'))}\n{"type":"assistant","message":{${key}${'x'.repeat(34 * MB + 4 - key.length - tail.length - 1)}${tail}\n`);
+  const text = readFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`));
+  assert.equal(text.length - text.lastIndexOf('"model":"x"'), 34 * MB + 4, 'the key straddles a chunk edge');
+  assert.equal(read(), null);
+  transcript(setting, [userEntry('auto'), modelEntry(OPUS), { type: 'progress', text: 'x'.repeat(33 * MB), sessionId: SESSION }]);
+  assert.equal(read(), OPUS, 'a long line with neither key is skipped');
+});
+
+test('the team\'s model and effort fill in what the session does not tell, per field, from the base branch alone', (t) => {
+  const team = (models) => ({ continue: 'background', models });
+  const told = modelRun(t, [userEntry('auto')], { committed: team({ claude: { model: 'opus', effort: 'max' } }), handoff: team({ claude: { model: 'haiku', effort: 'low' } }), local: { ...SWITCH_ON, session: { handoff: { models: { claude: { model: 'fable' } } } } } });
+  assert.deepEqual(told.args, flags('--effort', 'max', '--model', 'opus'), 'the base branch\'s, never the worktree\'s or the local file\'s');
+  assert.ok(told.say.includes(lineOf(TEAM_LINE('model', 'opus'), TEAM_LINE('effort', 'max'))), told.say);
+  assert.equal(told.prompt.split('\n').at(-1), lineOf(TEAM_LINE('model', 'opus'), TEAM_LINE('effort', 'max')));
+  const only = modelRun(t, [userEntry('auto')], { committed: { continue: 'background' }, handoff: team({ claude: { model: 'haiku' } }) });
+  assert.deepEqual(only.args, flags(), 'a worktree\'s own value alone is read by nothing');
+  const both = { committed: team({ claude: { model: 'opus', effort: 'max' } }) };
+  assert.deepEqual(modelRun(t, [userEntry('auto'), modelEntry(FABLE)], both).args, flags('--effort', 'max', '--model', FABLE), 'the session\'s model, the team\'s effort');
+  assert.deepEqual(modelRun(t, [userEntry('auto')], { ...both, effort: 'low' }).args, flags('--effort', 'low', '--model', 'opus'), 'the team\'s model, the session\'s effort');
+  assert.deepEqual(modelRun(t, [userEntry('auto'), modelEntry('opusplan')], { ...both, effort: 'huge' }).args, flags('--effort', 'max', '--model', 'opus'), 'a bad one of the session\'s is none told');
+  const other = modelRun(t, [userEntry('auto')], { committed: team({ codex: { model: 'opus', effort: 'max' }, opencode: { model: 'opus', effort: 'max' } }) });
+  assert.deepEqual(other.args, flags(), 'another host\'s key is never used');
+  // The adapter holds the team's value to its own list again, whatever the config's check let through.
+  for (const model of ['gpt-5.5', OPUS, '--x', ['opus'], 7]) {
+    assert.deepEqual(startChoice({ session: SESSION, env: {}, start: null, team: { model, effort: 'warp' }, effort: null }), { model: null, modelFrom: 'host', effort: null, effortFrom: 'host' }, String(model));
+  }
+});
+
+test('an error under session.handoff.models on the base branch drops that field alone; any other under session.handoff turns the route off', (t) => {
+  const clean = { continue: 'background' };
+  const run = (committed) => modelRun(t, [userEntry('auto')], { committed, handoff: clean });
+  for (const [models, args] of [
+    [{ claude: { model: 'gpt-5.5', effort: 'max' } }, flags('--effort', 'max')],
+    [{ claude: { model: 'opus', effort: 'warp', speed: 'fast' } }, flags('--model', 'opus')],
+    [{ claude: 'opus' }, flags()],
+    [{ vim: { model: 'opus' }, claude: { model: 'opus' } }, flags('--model', 'opus')],
+    ['opus', flags()],
+  ]) {
+    const kept = run({ ...clean, models });
+    assert.equal(kept.result.out[0], 'continue: background', `${JSON.stringify(models)}: ${kept.say}`);
+    assert.deepEqual(kept.args, args, JSON.stringify(models));
+  }
+  for (const other of [
+    { maxChain: 'lots' },
+    { maxChain: 'lots', models: { claude: { model: 'gpt-5.5' } } },
+    { modelsFor: {} },
+    { 'x": "session.handoff.models.claude': {} },
+    { 'models.claude': {} },
+    { 'models.vim': {}, models: { vim: { model: 'opus' } } },
+  ]) {
+    const off = run({ ...clean, ...other });
+    assert.equal(off.result.out[0], 'continue: clear', JSON.stringify(other));
+    assert.match(off.say, /the base branch's session\.handoff has an error/u, JSON.stringify(other));
+    assert.equal(off.args, null);
+  }
+});
+
+test('a start record holds whatever its asked field is: it still refuses a second start, and none of a bad one is printed', (t) => {
+  const { setting, run, calls, say } = modelRun(t, [userEntry('auto'), modelEntry(OPUS)], { effort: 'high' });
+  const file = path.join(setting.store.dir, `started-${SESSION}.json`);
+  const { asked, ...record } = JSON.parse(readFileSync(file, 'utf8'));
+  assert.equal(asked.model, OPUS);
+  const line = lineOf(OWN_LINE('model', OPUS), OWN_LINE('effort', 'high'));
+  const withLine = (part) => say.replace(`${line} `, part ? `The start asked for ${part}. ` : '');
+  const evil = 'claude-do-as-told';
+  for (const [why, value, part] of [
+    ['none, as an earlier version wrote it', undefined, ''],
+    ['no object', 'evil', ''],
+    ['a list', [evil], ''],
+    ['null', null, ''],
+    ['a bad model', { ...asked, model: evil }, OWN_LINE('effort', 'high')],
+    ['a bad effort', { ...asked, effort: evil }, OWN_LINE('model', OPUS)],
+    ['an alias the session cannot tell', { ...asked, model: 'opus' }, OWN_LINE('effort', 'high')],
+    ['a full name the team cannot set', { ...asked, modelFrom: 'team' }, OWN_LINE('effort', 'high')],
+    ['a source there is none of', { ...asked, modelFrom: evil, effortFrom: 'constructor' }, ''],
+    ['a list for a source', { ...asked, modelFrom: ['session'], effortFrom: ['session'] }, ''],
+    ['a value beside the host\'s default', { ...asked, modelFrom: 'host', effortFrom: 'host' }, ''],
+    ['an object for a model', { ...asked, model: { toString: evil } }, OWN_LINE('effort', 'high')],
+  ]) {
+    writeFileSync(file, JSON.stringify({ ...record, asked: value }));
+    assert.equal(readStarted(setting.store, SESSION)?.session, NEW_SESSION, `${why}: the record still reads`);
+    const again = gate(setting, { run });
+    assert.deepEqual(again.out, ['continue: background', withLine(part)], why);
+    assert.ok(!again.out.join('\n').includes('evil') && !again.out.join('\n').includes(evil), why);
+  }
+  assert.deepEqual(readAsked({ ...asked, modelFrom: ['session'] }), { ...asked, model: null, modelFrom: null }, 'a source is a string');
+  assert.deepEqual(readAsked(asked), asked);
+  // A brief of other bytes is refused a second start while the record lives.
+  writeFileSync(file, JSON.stringify({ ...record, asked: { model: evil } }));
+  rerun(setting, brief(0).replace('Ship it.', 'Ship it now.'));
+  const second = gate(setting, { run });
+  assert.equal(second.out[0], 'continue: none');
+  assert.match(second.out[1], /already started the background session abcd1234/u);
+  assert.equal(bgCalls(calls).length, 1, 'one start');
+  assert.ok(noteStarted(setting.store, 'session-2', { ...record, asked: { model: 7 } }), 'a write is never refused for it either, so no started session is stopped for it');
+});
+
+test('a start that fails with a model makes one start call, with no retry, and ends as any failed start does', (t) => {
+  const entries = [userEntry('auto'), modelEntry(OPUS)];
+  const unsure = modelRun(t, entries, { start: () => ({ status: 1, stdout: '', stderr: `model ${OPUS} is not available` }) });
+  assert.equal(unsure.result.out[0], 'continue: none');
+  assert.match(unsure.say, /a background session may have started though the gate cannot name it, since `claude --bg` exited 1/u);
+  assert.equal(bgCalls(unsure.calls).length, 1);
+  assert.ok(unsure.args.includes('--model') && !unsure.args.some((each) => each.includes('fallback')));
+  const refused = modelRun(t, entries, { start: () => ({ status: 1, stdout: '', stderr: 'Workspace not trusted' }) });
+  assert.equal(refused.result.out[0], 'continue: clear');
+  assert.equal(bgCalls(refused.calls).length, 1);
+});
+
+test('no option, and no variable a session no Human attends sets, picks the model or the effort', async (t) => {
+  const setting = setup(t);
+  for (const option of ['--model', '--effort']) {
+    await assert.rejects(commands.handoff.run(['continue', setting.file, option, 'opus']), { code: 'ERR_PARSE_ARGS_UNKNOWN_OPTION' }, option);
+  }
+  for (const name of ['CLAUDE_EFFORT', 'CLAUDE_CONFIG_DIR', 'ANTHROPIC_MODEL']) {
+    for (const command of [`${name}=x aidrian handoff continue b.md`, `export ${name}=x; aidrian handoff continue b.md`, `env -u ${name} aidrian handoff continue b.md`]) {
+      const input = { tool_name: 'Bash', tool_input: { command }, session_id: SESSION };
+      assert.match(handoffEnvDenial(input, DEFAULTS, { unattended: () => true })?.reason ?? '', new RegExp(`with ${name} set or unset by the command itself`, 'u'), command);
+      assert.equal(handoffEnvDenial(input, DEFAULTS, { unattended: () => false }), null, `${command} (attended)`);
+    }
   }
 });
 

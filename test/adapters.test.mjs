@@ -318,6 +318,8 @@ for (const host of HOSTS) {
     }
     if (routes.includes('background')) {
       assert.equal(typeof host.capabilities.handoffContinue.startBackground, 'function', 'background needs a way to start the new session');
+      const { startChoice, readAsked } = host.capabilities.handoffContinue;
+      assert.equal(typeof startChoice, typeof readAsked, 'a host that answers a start\'s model and effort reads that answer back');
     }
     const replace = host.capabilities.handoffContinue?.replaceTerminal;
     if (replace) {

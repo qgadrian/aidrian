@@ -132,7 +132,7 @@ test('both modes let the agent judge the handoff not worth it and say nothing; a
 });
 
 test('the default is ask, at a cost ratio of 2, with no token ceiling, no continue route, a chain of 3, and measured resume tokens', () => {
-  assert.deepEqual(DEFAULTS.session, { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3, resumeTokens: null } });
+  assert.deepEqual(DEFAULTS.session, { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3, resumeTokens: null, models: {} } });
 });
 
 function setup(t, session) {

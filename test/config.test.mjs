@@ -425,7 +425,7 @@ test('github.titleIssuePrefix: off by default, so pull request titles are plain 
 
 test('the handoff settings load as a group, and a project sets any of them', (t) => {
   const { config, errors } = loadConfig(project(t, { version: 1, session: { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000 } } }));
-  assert.deepEqual([errors, config.session], [[], { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000, continue: 'background', maxChain: 3, resumeTokens: null } }]);
+  assert.deepEqual([errors, config.session], [[], { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000, continue: 'background', maxChain: 3, resumeTokens: null, models: {} } }]);
   const pinned = loadConfig(project(t, { version: 1, session: { handoff: { resumeTokens: 60000 } } }));
   assert.deepEqual([pinned.errors, pinned.config.session.handoff.resumeTokens], [[], 60000]);
   const chain = loadConfig(project(t, { version: 1, session: { handoff: { continue: 'clear', maxChain: 5 } } }));
@@ -437,14 +437,34 @@ test('the handoff settings load as a group, and a project sets any of them', (t)
 });
 
 test('the handoff continue route is none by default, a chain is 3 handoffs, resume tokens are measured, and the schema takes every route', () => {
-  assert.deepEqual(DEFAULTS.session.handoff, { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3, resumeTokens: null });
+  assert.deepEqual(DEFAULTS.session.handoff, { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3, resumeTokens: null, models: {} });
   assert.deepEqual(CONTINUE_ROUTES, ['none', 'clear', 'compact', 'background']);
-  assert.deepEqual(SCHEMA.session.handoff, { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positiveOrUnlimited', resumeTokens: 'positiveOrNull' });
+  assert.deepEqual(SCHEMA.session.handoff, { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positiveOrUnlimited', resumeTokens: 'positiveOrNull', models: 'handoffModels' });
+});
+
+test('session.handoff.models names a model and an effort per host, each held to what the host takes', (t) => {
+  const load = (models) => loadConfig(project(t, { version: 1, session: { handoff: { models } } }));
+  const good = { claude: { model: 'opus', effort: 'max' }, codex: { model: 'gpt-5.5', effort: 'high' } };
+  const { config, errors } = load(good);
+  assert.deepEqual([errors, config.session.handoff.models], [[], good]);
+  for (const [models, kept, problem] of [
+    [{ claude: { model: 'claude-opus-5-5', effort: 'max' } }, { claude: { effort: 'max' } }, /"session\.handoff\.models\.claude\.model" must be "sonnet", "opus", "haiku", or "fable"$/u],
+    [{ claude: { model: 'opus', effort: 'warp' } }, { claude: { model: 'opus' } }, /"session\.handoff\.models\.claude\.effort" must be /u],
+    [{ claude: { agents: {} } }, { claude: {} }, /unknown key "session\.handoff\.models\.claude\.agents"$/u],
+    [{ vim: { model: 'opus' } }, {}, /unknown key "session\.handoff\.models\.vim"$/u],
+    [{ claude: 'opus' }, { claude: {} }, /"session\.handoff\.models\.claude" must be an object with "model", "effort", or both$/u],
+    [[], {}, /"session\.handoff\.models" must be an object$/u],
+  ]) {
+    const bad = load(models);
+    assert.equal(bad.errors.length, 1, JSON.stringify(models));
+    assert.match(bad.errors[0], problem);
+    assert.deepEqual(bad.config.session.handoff.models, kept, JSON.stringify(models));
+  }
 });
 
 test('a string session.handoff, the old shape, loads with the new continue defaults', (t) => {
   const { config } = loadConfig(project(t, { version: 1, session: { handoff: 'auto' } }));
-  assert.deepEqual(config.session.handoff, { mode: 'auto', costRatio: 2, maxTokens: 0, continue: 'background', maxChain: 3, resumeTokens: null });
+  assert.deepEqual(config.session.handoff, { mode: 'auto', costRatio: 2, maxTokens: 0, continue: 'background', maxChain: 3, resumeTokens: null, models: {} });
   assert.equal(loadConfig(project(t, { version: 1, session: { handoff: 'ask' } })).config.session.handoff.continue, 'none');
 });
 

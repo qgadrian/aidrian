@@ -1,5 +1,6 @@
 // Reads one file's values over the defaults, key by key, by config-schema.mjs: a value that fails its check is an error
-// and keeps the default. `models`, `agents`, and `tracker` have checks of their own here.
+// and keeps the default. `models`, `session.handoff.models`, `agents`, and `tracker` have checks of their own
+// here.
 
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -32,6 +33,11 @@ export function handoffContinueDefault(handoff, values) {
   return { ...handoff, continue: 'background' };
 }
 
+// For a list of config errors, the indexes of those the check of `session.handoff.models` added: what they name, not how
+// they read, since an unknown key such as "models.claude" beside it reads the same.
+const HANDOFF_MODEL_ERRORS = new WeakMap();
+export const handoffModelErrors = (errors) => HANDOFF_MODEL_ERRORS.get(errors) ?? new Set();
+
 export function merge(schema, defaults, values, prefix, file, errors, gateErrors = []) {
   for (const key of Object.keys(values)) {
     const name = `${prefix}${key}`;
@@ -49,6 +55,10 @@ export function merge(schema, defaults, values, prefix, file, errors, gateErrors
       else errors.push(`${file}: "${prefix}${key}" must be an object`);
     } else if (type === 'models') {
       out[key] = checkModels(value, file, errors, defaults[key]);
+    } else if (type === 'handoffModels') {
+      const before = errors.length;
+      out[key] = checkHandoffModels(value, `${prefix}${key}`, file, errors);
+      HANDOFF_MODEL_ERRORS.set(errors, new Set(errors.slice(before).map((_, at) => before + at)));
     } else if (type === 'review') {
       out[key] = checkReview(value, file, errors);
     } else if (type === 'agents') {
@@ -95,18 +105,41 @@ function checkAgentChoice(host, name, choice, agents, file, errors) {
     errors.push(`${file}: unknown agent ${quoteName(at)}; the plugin's agents are ${pluginAgents().join(', ')}`);
     return;
   }
+  const kept = keptChoice(host, at, choice, file, errors);
+  if (Object.keys(kept).length) agents[name] = { ...agents[name], ...kept };
+}
+
+// `session.handoff.models`, named `name`: { <host>: { model, effort } }. A bad host, field, or value is an error that names
+// its key, and is left out, so the rest still applies.
+function checkHandoffModels(value, name, file, errors) {
+  const out = {};
+  if (!isObject(value)) {
+    errors.push(`${file}: "${name}" must be an object`);
+    return out;
+  }
+  for (const [host, choice] of Object.entries(value)) {
+    const at = `${name}.${host}`;
+    if (Object.hasOwn(MODEL_CHOICES, host)) out[host] = keptChoice(host, at, choice, file, errors);
+    else errors.push(`${file}: unknown key ${quoteName(at)}`);
+  }
+  return out;
+}
+
+// The `model` and `effort` of the choice `choice` at `at` that `host` takes, as a new object; every other field or value is
+// an error.
+function keptChoice(host, at, choice, file, errors) {
+  const kept = {};
   if (!isObject(choice)) {
     errors.push(`${file}: "${at}" must be an object with "model", "effort", or both`);
-    return;
+    return kept;
   }
-  const kept = {};
   for (const [field, setting] of Object.entries(choice)) {
     const allowed = Object.hasOwn(MODEL_CHOICES[host], field) ? MODEL_CHOICES[host][field] : undefined;
     if (allowed === undefined) errors.push(`${file}: unknown key ${quoteName(`${at}.${field}`)}`);
     else if (allowed === null ? isText(setting) : allowed.includes(setting)) kept[field] = setting;
     else errors.push(`${file}: "${at}.${field}" must be ${allowed === null ? 'a non-empty string' : oneOf(allowed)}`);
   }
-  if (Object.keys(kept).length) agents[name] = { ...agents[name], ...kept };
+  return kept;
 }
 
 // `agents` from one file over `base`, per agent and list: { <name>: { deny, allow } }, each a list of tool patterns.

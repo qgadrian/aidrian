@@ -17,7 +17,7 @@ import path from 'node:path';
 
 import { pauseSync } from '../fs.mjs';
 import { recordTrust } from './claude-code-trust.mjs';
-import { configDir } from './claude-code-config.mjs';
+import { configDir, MODEL_CHOICES } from './claude-code-config.mjs';
 import { configFolder, mcpConfig, npmGlobalConfigs, sandboxSettings, secretVars } from './claude-code-sandbox.mjs';
 import { programNames, programOnPath, runCommand } from './process.mjs';
 
@@ -47,10 +47,30 @@ const BYPASS = 'bypassPermissions';
 // A transcript is read from its end in chunks of MODE_CHUNK bytes until an entry names the mode, so a long session
 // costs no more memory than a short one. A line longer than MODE_LINE is not parsed, so one huge entry cannot exhaust
 // memory; one that holds MODE_KEY may name a stricter mode than any line before it, so the read fails closed on it.
-// MODE_KEY picks the lines worth parsing.
+// MODE_KEY picks the lines worth parsing. The session's model is read the same way (sessionModel).
 const MODE_CHUNK = 1024 * 1024;
 const MODE_LINE = 32 * 1024 * 1024;
 const MODE_KEY = Buffer.from('"permissionMode"');
+// The key of an `assistant` entry's model, the word every `user` entry holds as its type, and the bytes of a long line
+// kept to find any of them across two pieces.
+const MODEL_KEY = Buffer.from('"model"');
+const USER_WORD = Buffer.from('"user"');
+const KEYS = [MODE_KEY, MODEL_KEY, USER_WORD];
+const KEY_TAIL = Math.max(...KEYS.map((key) => key.length)) - 1;
+// What the host writes as a `user` entry, as its whole text, when the Human interrupts the session. lib/names.mjs isPrompt
+// lists their common start alone, `[Request interrupted`, and reads it as a marker at the start of any text block.
+const INTERRUPTED = new Set(['[Request interrupted by user]', '[Request interrupted by user for tool use]']);
+// The model of an entry the host wrote itself, with no request to a model.
+const NO_MODEL = '<synthetic>';
+// A full model name as a transcript gives it: `claude-<family>-<version>`, with the families MODEL_CHOICES names and a
+// version of digits alone, so no sentence, flag, or host word such as `default` passes.
+const MODEL_NAME = new RegExp(String.raw`^claude-(?:${MODEL_CHOICES.model.join('|')})-\d{1,2}(?:-\d{1,2})?(?:-\d{8})?$`, 'u');
+// What a start takes for each field from each source, first to last: the session's own, then the team's config.
+const isEffort = (value) => MODEL_CHOICES.effort.includes(value);
+const TAKES = {
+  model: { session: (value) => typeof value === 'string' && MODEL_NAME.test(value), team: (value) => MODEL_CHOICES.model.includes(value) },
+  effort: { session: isEffort, team: isEffort },
+};
 // What the read gives for the session's own entry whose `permissionMode` is not a string: no mode the gate passes on.
 const UNREADABLE_MODE = '(unreadable)';
 // The count a name ends with, ` · <n>`.
@@ -135,7 +155,23 @@ function awaitSession({ run, claude, wait, ...want }) {
 // folder, as it does for Claude Code. On 2.1.326 neither the gate's shell nor `claude agents --json` gives the mode; the
 // transcript may hold `{"type":"permission-mode","permissionMode":<mode>,"sessionId":<id>}` entries, and its `user`
 // entries carry the mode as a top-level `permissionMode` field, which is all some transcripts have.
-export function sessionMode({ session, cwd, env }) {
+export const sessionMode = ({ session, cwd, env }) => readTranscript({ session, cwd, env }, lastMode);
+
+// The model the session `session` started its turn in, from the transcript sessionMode reads: the one the first assistant
+// entry after the last prompt gives, else the nearest earlier one, so neither a fallback the host took in the middle of
+// the turn nor a skill's own model is taken. Many prompts carry no mode, so no mode takes part. It is chosen first and
+// then held to MODEL_NAME, with no search for another that passes: the name, or null. null too with no folder `cwd`, or
+// a line too long to parse among those read that holds MODEL_KEY, or that may be the last prompt, as it holds USER_WORD.
+// No answer of it changes sessionMode's.
+export function sessionModel({ session, cwd, env }) {
+  if (typeof cwd !== 'string') return null;
+  const model = readTranscript({ session, cwd, env }, turnModel);
+  return TAKES.model.session(model) ? model : null;
+}
+
+// What `read(file, session)` answers for the session's transcript, the first file of that name it does not answer
+// undefined for, or null.
+function readTranscript({ session, cwd, env }, read) {
   if (typeof session !== 'string' || !ID.test(session)) return null;
   const projects = path.join(configDir(env), 'projects');
   const name = `${session}.jsonl`;
@@ -147,8 +183,8 @@ export function sessionMode({ session, cwd, env }) {
     return null;
   }
   for (const file of [first, ...folders.map((folder) => path.join(projects, folder, name))]) {
-    const mode = lastMode(file, session);
-    if (mode !== undefined) return mode;
+    const found = read(file, session);
+    if (found !== undefined) return found;
   }
   return null;
 }
@@ -169,14 +205,52 @@ function lineMode(line, session) {
   return typeof entry.permissionMode === 'string' ? entry.permissionMode : UNREADABLE_MODE;
 }
 
+// What a transcript line of the session's own, no sidechain entry, is to turnModel: { prompt, model } or null.
+function lineTurn(line, session) {
+  if (!line.includes(MODEL_KEY) && !line.includes(USER_WORD)) return null;
+  let entry;
+  try {
+    entry = JSON.parse(line.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (entry === null || typeof entry !== 'object' || entry.isSidechain === true || entry.sessionId !== session) return null;
+  if (entry.message === null || typeof entry.message !== 'object') return null;
+  return { prompt: startsTurn(entry), model: entryModel(entry) };
+}
+
+// Whether an entry is a prompt, which starts a turn: a `user` entry whose content is text, or a list that holds a block
+// and no tool result, and not the host's own bookkeeping: one marked isMeta, a compaction summary, a task notification,
+// or an interruption marker as the whole text. The marks are those of transcript.mjs humanPrompt, copied since that
+// file's imports lead back here; unlike it, this counts a message from any other origin. A block that is not well formed
+// counts for nothing.
+function startsTurn({ type, isMeta, isCompactSummary, origin, message: { content } }) {
+  if (type !== 'user' || isMeta === true || isCompactSummary === true || origin?.kind === 'task-notification') return false;
+  if (typeof content === 'string') return !isMarker(content);
+  if (!Array.isArray(content)) return false;
+  const blocks = content.filter(isBlock);
+  if (blocks.length === 0 || blocks.some((block) => block.type === 'tool_result')) return false;
+  return blocks.length > 1 || blocks[0].type !== 'text' || !isMarker(blocks[0].text);
+}
+
+const isMarker = (text) => INTERRUPTED.has(text.trim());
+// A content block as the read takes one: an object with a type, and, when it is text, a text that is a string.
+const isBlock = (block) => block !== null && typeof block === 'object' && typeof block.type === 'string' && block.type !== '' && (block.type !== 'text' || typeof block.text === 'string');
+
+// The model an `assistant` entry names: its message's own string, other than NO_MODEL; else null.
+function entryModel({ type, message }) {
+  if (type !== 'assistant' || !Object.hasOwn(message, 'model')) return null;
+  return typeof message.model === 'string' && message.model !== NO_MODEL ? message.model : null;
+}
+
 // The line of a transcript being read backwards, a piece at a time: `add` takes the bytes before those it holds, and
-// `mode` reads it once whole. Past MODE_LINE bytes it keeps only the first MODE_KEY.length - 1 of them, enough to find
-// MODE_KEY across the next piece, and notes whether MODE_KEY was in it.
+// `whole` gives it once whole. Past MODE_LINE bytes it keeps only the first KEY_TAIL of them, enough to find each of KEYS
+// across the next piece, and notes which of KEYS were in it.
 function backwardLine() {
   let parts = [];
   let size = 0;
   let over = false;
-  let keyed = false;
+  const keyed = new Set();
   let head = Buffer.alloc(0);
   return {
     add(piece) {
@@ -190,21 +264,42 @@ function backwardLine() {
       } else {
         head = Buffer.concat([piece, head]);
       }
-      keyed ||= head.includes(MODE_KEY);
-      head = Buffer.from(head.subarray(0, MODE_KEY.length - 1));
+      for (const key of KEYS) if (head.includes(key)) keyed.add(key);
+      head = Buffer.from(head.subarray(0, KEY_TAIL));
     },
-    // { mode } for a line that names one, { refuse } for a long line that may, or null.
-    mode(session) {
-      if (over) return keyed ? { refuse: true } : null;
-      const mode = lineMode(parts.length === 1 ? parts[0] : Buffer.concat(parts.reverse()), session);
-      return mode === null ? null : { mode };
-    },
+    // { bytes } of a line that may be parsed, or { long }, the keys a longer one holds.
+    whole: () => (over ? { long: keyed } : { bytes: parts.length === 1 ? parts[0] : Buffer.concat(parts.reverse()) }),
   };
 }
 
-// The mode the last line of the regular file `file` to name one names, read backwards in MODE_CHUNK chunks: the mode,
-// null when no line names one or a line too long to parse holds MODE_KEY, or undefined when the file cannot be read.
-function lastMode(file, session) {
+// The mode the last line of the regular file `file` to name one names: the mode, null when no line names one or a line
+// too long to parse holds MODE_KEY, or undefined when the file cannot be read.
+const lastMode = (file, session) => readBackwards(file, ({ long, bytes }) => {
+  if (long) return long.has(MODE_KEY) ? null : undefined;
+  return lineMode(bytes, session) ?? undefined;
+});
+
+// The model sessionModel chooses in the regular file `file`, before it is held to MODEL_NAME: its name, null when there is
+// none to choose, or undefined when the file cannot be read.
+function turnModel(file, session) {
+  let first = null;
+  let turn = false;
+  return readBackwards(file, ({ long, bytes }) => {
+    if (long) return long.has(MODEL_KEY) || (!turn && long.has(USER_WORD)) ? null : undefined;
+    const { prompt = false, model = null } = lineTurn(bytes, session) ?? {};
+    if (!turn && prompt) {
+      turn = true;
+      return first ?? undefined;
+    }
+    if (model !== null && turn) return model;
+    first = model ?? first;
+    return undefined;
+  });
+}
+
+// What `visit` answers for the last line of the regular file `file` it answers anything but undefined for, read backwards
+// in MODE_CHUNK chunks: null when it answers for none, or undefined when the file cannot be read.
+function readBackwards(file, visit) {
   let fd;
   try {
     // Not blocking, so a named pipe in a transcript's place answers at once, as no file, and never holds the gate.
@@ -222,15 +317,14 @@ function lastMode(file, session) {
       let stop = chunk.length;
       for (let cut = chunk.lastIndexOf(0x0a, stop - 1); cut !== -1; cut = cut === 0 ? -1 : chunk.lastIndexOf(0x0a, cut - 1)) {
         line.add(chunk.subarray(cut + 1, stop));
-        const found = line.mode(session);
-        if (found) return found.refuse ? null : found.mode;
+        const found = visit(line.whole());
+        if (found !== undefined) return found;
         line = backwardLine();
         stop = cut;
       }
       line.add(chunk.subarray(0, stop));
     }
-    const found = line.mode(session);
-    return found?.refuse ? null : found?.mode ?? null;
+    return visit(line.whole()) ?? null;
   } catch {
     return undefined;
   } finally {
@@ -286,6 +380,36 @@ export function startFolder({ session, env, run = runCommand, resolve = claudeOn
   const listing = claude ? listed(run, claude, undefined) : null;
   const cwd = ownFolder(listing, session);
   return cwd === null ? null : { cwd, listing };
+}
+
+// The model and effort startBackground asks for in the new session, per field: the handing-off session's own, the model
+// as sessionModel reads it and the effort the host's variable gave, `effort`; else the team's, `team`, as
+// session.handoff.models of the base branch names them; else null, the host's default. Each is held to TAKES:
+// { model, modelFrom, effort, effortFrom }, each `From` one of `session`, `team`, or `host`. It is read once, and
+// startBackground is handed this answer. `start` is startFolder's, whose folder sessionMode's read takes too.
+export function startChoice({ session, env, start, team, effort }) {
+  const told = { session: { model: sessionModel({ session, cwd: start?.cwd, env }), effort }, team };
+  const choice = {};
+  for (const [field, takes] of Object.entries(TAKES)) {
+    const from = Object.keys(takes).find((each) => takes[each](told[each]?.[field])) ?? 'host';
+    choice[field] = from === 'host' ? null : told[from][field];
+    choice[`${field}From`] = from;
+  }
+  return choice;
+}
+
+// A startChoice answer read back from a start record, whatever it holds: each field with its `From` when TAKES takes it
+// from that source, or it is null from the host, else both null.
+export function readAsked(asked) {
+  const read = {};
+  for (const [field, takes] of Object.entries(TAKES)) {
+    const value = asked?.[field];
+    const from = asked?.[`${field}From`];
+    const taken = typeof from === 'string' && Object.hasOwn(takes, from) && takes[from](value);
+    read[field] = taken ? value : null;
+    read[`${field}From`] = taken || (from === 'host' && value === null) ? from : null;
+  }
+  return read;
 }
 
 // Starts a session in the background in the folder `cwd`, by its real path, whose first message is `prompt`, under the name `name`, in
@@ -506,15 +630,17 @@ export function findSessions({ cwd, name, env, run = runCommand, resolve = claud
 // name it by, the short one when the output printed it; `session` its full id, or null when the listing did not name it
 // within about 5 seconds; `name` its name when it is plain text no other listed session has, else null. A start that
 // timed out or failed still counts when the listing then shows it. `uncertain` is true when `claude --bg` ran and what
-// it did is unknown: it may have started a session the listing never named (startProblem). `agent` and `effort` are the
+// it did is unknown: it may have started a session the listing never named (startProblem). `agent` is the
 // handing-off session's, passed on when known, and so is its permission mode (`readMode`, sessionMode by default), when
 // it is one of PERMISSION_MODES: `mode` in the result is the mode passed. A session whose mode is bypassPermissions, or
 // cannot be read, starts nothing: the host's default may bypass permission checks. `hold({ cwd, known })`, the gate's, files the pending mark that holds
 // every session the host had not listed, `known` being the ids it had, until the new session's own mark is written; it
 // runs before `claude --bg`, and a start it does not confirm is none. `run` and `wait` are a test's stand-ins, and
 // `resolve` finds `claude` from `env`. `start`, startFolder's answer the gate judged, gives the folder and the listing;
-// without it, the listing is read here. It is the handoff's wrapper of the launch startIn makes.
-export function startBackground({ session, slug, chain, agent, effort, efforts, prompt, env, hold, start, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
+// without it, the listing is read here. It is the handoff's wrapper of the launch startIn makes. `model`
+// and `effort` are startChoice's, passed on as they are when valid, with no second read; a start whose model the host
+// refuses ends as any start that failed, with no retry.
+export function startBackground({ session, slug, chain, agent, model, effort, efforts, prompt, env, hold, start, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
   const claude = resolve(env);
   if (!claude) return { problem: NO_CLAUDE };
   const before = start?.listing ?? listed(run, claude, undefined);
@@ -523,12 +649,12 @@ export function startBackground({ session, slug, chain, agent, effort, efforts, 
   if (read.problem) return { problem: read.problem };
   const { mode, own } = read;
   const name = sessionName(own.name, slug, chain);
-  return launch({ claude, before, cwd: own.cwd, prompt, name, mode, agent, effort, efforts, hold, run, wait });
+  return launch({ claude, before, cwd: own.cwd, prompt, name, mode, agent, model, effort, efforts, hold, run, wait });
 }
 
 // The start itself, once `before`, the listing read before it, is known: `hold` files the pending mark with the ids that
 // listing names, then `claude --bg` starts the session in `cwd`, and the listing is read until it names the new one.
-function launch({ claude, before, cwd, prompt, name, mode, agent, effort, efforts, settings = null, mcp = null, hold, run, wait }) {
+function launch({ claude, before, cwd, prompt, name, mode, agent, model, effort, efforts, settings = null, mcp = null, hold, run, wait }) {
   const known = before.map((each) => each.sessionId).filter((id) => typeof id === 'string' && ID.test(id));
   if (typeof hold !== 'function' || !hold({ cwd, known })) {
     return { problem: 'the gate could not record the pending mark that holds the new session as unattended until its own mark is written' };
@@ -536,6 +662,7 @@ function launch({ claude, before, cwd, prompt, name, mode, agent, effort, effort
   const args = ['--bg', '--name', name];
   if (typeof agent === 'string' && AGENT.test(agent)) args.push('--agent', agent);
   if (efforts.includes(effort)) args.push('--effort', effort);
+  if (Object.values(TAKES.model).some((takes) => takes(model))) args.push('--model', model);
   args.push('--permission-mode', mode);
   if (settings !== null) args.push('--setting-sources', 'user', '--settings', JSON.stringify(settings));
   if (mcp !== null) args.push('--strict-mcp-config', '--mcp-config', JSON.stringify(mcp));

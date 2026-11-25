@@ -359,7 +359,8 @@ export default {
     },
     // Nothing here says whether Codex would let a session push to the remote, so the answer is unknown and a run starts.
     pushPermission: () => ({ answer: 'unknown' }),
-    // No handoff continue route runs here: session.handoff.continue falls back to none on Codex.
+    // No handoff continue route runs here: session.handoff.continue falls back to none on Codex. So no start carries a
+    // model or an effort on, and session.handoff.models.codex is read by nothing yet.
     handoffContinue: { routes: [] },
     // A session the harness starts here is a `codex exec` process, which exits once its turn ends, so by design none
     // stays held after its work: one that still runs is lingering or overdue, which projectStart stops.

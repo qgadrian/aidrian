@@ -1895,13 +1895,41 @@ test('a Write or an Edit through a link and a `..` that lands outside the places
     write(`${fx.worktree}/a/out/./../x.txt`), write(`${fx.worktree}/a/out//../x.txt`),
     bash(`python3 -c "open('${fx.worktree}/a/out/../x.txt', 'w').write('x')"`), bash(`python3 -c "open('a/out./../x.txt', 'w')"`),
     bash(`python3 -c "open('a/out /../x.txt', 'w')"`), bash(`python3 -c "open('../../x.txt', 'w')"`),
-  ]) assert.match(ask(input)?.reason ?? '', /a path that climbs with `\.\.` from a folder it names.*name the path without `\.\.`/u, JSON.stringify(input));
+  ]) assert.match(ask(input)?.reason ?? '', /a path that climbs with `\.\.` from a folder it names.*name the path plainly, without `\.\.`/u, JSON.stringify(input));
   assert.equal(ask(write(path.join(fx.worktree, 'a', 'x.txt'))), null, 'the same file named without the link');
   // A path that climbs from the call's own folder, which the host names as the system resolves it, is placed as usual.
   assert.equal(ask(write('../wt/a/x.txt')), null);
   assert.equal(ask(bash('cat ../notes/a/../b > a/x.txt')), null, 'a climb in what the command reads, not writes');
   // In an interpreter's code, where an escape may spell a slash, any `/..` counts, a name that starts with two dots too.
   for (const code of ["open('a/..\\x2fb', 'w')", "open('a/..draft', 'w')"]) assert.match(ask(bash(`python3 -c "${code}"`))?.reason ?? '', /climbs with `\.\.`/u, code);
+});
+
+// An interpreter's code is judged whole, so a `/..` in text it only puts in a file is refused too: the refusal quotes
+// that text, never the script's start, and names the one way on.
+test('a script that writes an import of a parent folder is refused with the text that climbs and one remedy', (t) => {
+  const fx = fixture(t);
+  const ask = fx.steady();
+  const script = (line) => bash(`cd ${fx.worktree} && python3 - <<'PY'\nimport pathlib\np = pathlib.Path("src/page.ts")\np.write_text(p.read_text().replace("OLD", "${line}"))\nPY`);
+  assert.equal(ask(script("import { a } from '../name';"))?.reason, undefined, 'an import that holds no `/..`');
+  const quoted = (reason) => /names `([^`]*)`, a path/u.exec(reason ?? '')?.[1];
+  for (const [line, text] of [["import { a } from './x/../y';", './x/../y'], ["import { a } from '../../name';", '../../name'], ['see <a/../b>, c', 'a/../b'], ['at=a/../b;c', 'a/../b'], ['x\na/../b\nc', 'a/../b']]) {
+    assert.equal(quoted(ask(script(line))?.reason), text, line);
+  }
+  // At most 120 characters, the `/..` among them: a long run before it, and a long one after it.
+  const [before, after] = [quoted(ask(script(`${'a'.repeat(200)}/../b`))?.reason), quoted(ask(script(`a/../${'b'.repeat(200)}`))?.reason)];
+  assert.deepEqual([before, after], [`${'a'.repeat(117)}/..`, `a/../${'b'.repeat(115)}`]);
+  const { match, reason } = ask(script("import { a } from './x/../y';"));
+  assert.equal(match, 'unattended write through a climbing path');
+  assert.equal(reason, 'aidrian: Bash is blocked for the main session in this project: it writes a file and names `./x/../y`, a path that climbs'
+    + ' with `..` from a folder it names, which a link there would lead elsewhere than the text says, and no Human attends this session. This is a'
+    + ' project rule: name the path plainly, without `..`, in this command or through the host\'s file tool on a file this session may write; reach the same'
+    + ' result no other way, and otherwise stop and tell the Human to make that change, or where the work should go instead.');
+  // The way it names: the file tool on that file, whatever its text holds.
+  assert.equal(ask({ tool_name: 'Edit', tool_input: { file_path: path.join(fx.worktree, 'src', 'page.ts'), old_string: 'OLD', new_string: "import { a } from './x/../y';" } }), null);
+  // Every other refusal keeps the general line, and only that.
+  const other = ask(write(path.join(fx.root, 'elsewhere', 'notes.md')))?.reason ?? '';
+  assert.match(other, /\. This is a project rule: do not reach the same result with another tool; tell the Human to make that change, or where the work should go instead\.$/u);
+  assert.doesNotMatch(other, /name the path plainly|no other way/u);
 });
 
 // A folder that holds a checkout of the repository git lists, wherever it lies, is refused to a removal or move: the

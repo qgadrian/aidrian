@@ -833,7 +833,7 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   const own = `${cwd.endsWith(path.sep) ? cwd.slice(0, -1) : cwd}${path.sep}`;
   const climb = spelledTargets.map((each) => climbIn(each.startsWith(own) ? each.slice(own.length) : each)).find(Boolean)
     ?? names.filter((_, i) => code[i] === true).map((each) => climbIn(each, true)).find(Boolean);
-  if (climb) return say.deny('unattended write through a climbing path', `it ${say.verb} a file and names \`${climb.slice(0, 120)}\`, a path that climbs with \`..\` from a folder it names, which a link there would lead elsewhere than the text says, and no Human attends this session; name the path without \`..\``);
+  if (climb) return say.deny('unattended write through a climbing path', `it ${say.verb} a file and names \`${climb.slice(0, CLIMB_SHOWN)}\`, a path that climbs with \`..\` from a folder it names, which a link there would lead elsewhere than the text says, and no Human attends this session`, CLIMB_REMEDY);
   const found = places();
   if (!found) return say.unknown();
   say.hold(found);
@@ -864,7 +864,7 @@ function sayer(input, human, opaque, mark) {
   let suffix = '';
   let list = 'its own worktree or its attempt\'s folders, a task worktree `aidrian worktree new` made in it, the state folders it writes by hand (plans, tmp, handoffs, quorum, a review manifest or capture, and a persona audit\'s report, sidecar, or screenshots), and the temporary folder';
   let scratch = '';
-  const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}${suffix}`, human, 'to make that change, or where the work should go instead', { mark }) });
+  const deny = (match, why, remedy = null) => ({ match, reason: projectRuleReason(input, `${why}${suffix}`, human, 'to make that change, or where the work should go instead', { mark, remedy }) });
   const refusedWhy = (entry, shown) => `it ${verb} ${shown}, ${entry.what}, which a session no Human attends never changes; only ${human} does${entry.scratch ? scratch : ''}`;
   return {
     verb,
@@ -920,6 +920,10 @@ function pathDenial(spelled, found, say) {
   return null;
 }
 
+// How much of a climbing path a refusal shows, and the one way to the same result it allows.
+const CLIMB_SHOWN = 120;
+const CLIMB_REMEDY = 'name the path plainly, without `..`, in this command or through the host\'s file tool on a file this session may write';
+
 // A path in `text`, a target as a reader spells it, that climbs with `..` from a folder it names, as `a/link/../x`,
 // `a/./../x`, `a//../x`, or `$d/..`, as the text from the start to that `..`, or null: the system takes the `..` from
 // where a link there leads, and the guard's readers fold it as text, so a call that writes anything and names one is
@@ -927,9 +931,9 @@ function pathDenial(spelled, found, say) {
 // folder whose name holds a space or a quote counts. A path that starts with `..`, or `./..`, climbs from the call's own
 // folder, which the host names as the system resolves it. An interpreter's code (`code`) has no parts to compare, since
 // a quote, an escape, or other punctuation may end a path anywhere: any `/..` in it counts, `../../x` and `a/..draft`
-// included, so such code names a path without `..`, or an absolute one.
+// included, so such code names a path without `..`, or an absolute one, and the text is what codeClimb shows.
 function climbIn(text, code = false) {
-  if (code) return text.includes('/..') ? text.slice(0, text.indexOf('/..') + 3) : null;
+  if (code) return codeClimb(text);
   const parts = text.split('/');
   let before = null;
   for (const [i, part] of parts.entries()) {
@@ -937,6 +941,22 @@ function climbIn(text, code = false) {
     if (part !== '' && part !== '.') before = part;
   }
   return null;
+}
+
+// What ends the run of characters codeClimb shows: white space, a quote, a bracket, a comma, a semicolon, or `=`.
+const CODE_RUN_END = /[\p{White_Space}'"`()[\]{}<>,;=]/u;
+
+// The run of characters around the first `/..` of an interpreter's code `text`, or null with none: only what the agent
+// reads, on one line and at most CLIMB_SHOWN long with that `/..` in it, and never part of what is refused.
+function codeClimb(text) {
+  const at = text.indexOf('/..');
+  if (at === -1) return null;
+  const past = at + '/..'.length;
+  let start = at;
+  while (start > Math.max(0, past - CLIMB_SHOWN) && !CODE_RUN_END.test(text[start - 1])) start -= 1;
+  let end = past;
+  while (end < Math.min(text.length, start + CLIMB_SHOWN) && !CODE_RUN_END.test(text[end])) end += 1;
+  return text.slice(start, end);
 }
 
 // The shell's own writes (shellWrites): a target from a variable, a link, and a program's config.

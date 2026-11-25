@@ -124,10 +124,12 @@ function sinceResolution(problems, input) {
 
 function judgedAfter({ kind, subject, sample, lesson }, resolvedMs, input, later) {
   if (!Number.isFinite(resolvedMs)) return { n: null, status: UNAVAILABLE };
-  if (resolvedMs < (input.sinceMs ?? 0)) return { n: sample.n, status: PROBLEM };
-  // A sent-back lesson is judged by its own causes, whichever cause leads the runs since.
+  // A sent-back lesson is judged by its own causes, whichever cause leads, on the runs from the later of the window's
+  // start and the first instant after its resolution: the problem the window shows may be another cause's.
   const causes = kind === 'sent-back' ? lessonCauses(lesson?.key, subject) : null;
-  if (causes) return sentBackSince(input, subject, causes, resolvedMs + 1);
+  if (causes) return sentBackSince(input, subject, causes, Math.max(resolvedMs + 1, input.sinceMs ?? 0));
+  // Any other problem is the lesson's own: resolved before the window, it stands as judged on rows all after the fix.
+  if (resolvedMs < (input.sinceMs ?? 0)) return { n: sample.n, status: PROBLEM };
   // Strictly after, as an occurrence must be to count against a fix.
   if (!later.has(resolvedMs)) later.set(resolvedMs, judge({ ...input, sinceMs: resolvedMs + 1, reviews: null, lessons: [] }));
   const { problems, signals } = later.get(resolvedMs);
@@ -141,16 +143,11 @@ function judgedAfter({ kind, subject, sample, lesson }, resolvedMs, input, later
   return { n: part.n, status: part.status === NOT_ENOUGH || part.status === UNAVAILABLE ? part.status : OK };
 }
 
-// The send-back causes a sent-back lesson's key stands for (sentBackLesson), or null for a key it never gives.
-// `delivery-check:<agent>` is the delivery check's own lesson, filed for a missing file and for a handoff file alike,
-// and the key every sent-back problem held before rows named causes: it stands for those and a cause not recorded.
+// The send-back causes a sent-back lesson's key stands for: those sentBackLesson gives that key, so the two never
+// drift apart; null for a key it gives no cause.
 function lessonCauses(key, agentType) {
-  if (typeof key !== 'string') return null;
-  if (key === `idle-with-children:${agentType}`) return ['background'];
-  if (key === `delivery-check:${agentType}`) return ['missing_file', 'handoff', 'unrecorded'];
-  const prefix = 'health:sent-back:';
-  const cause = key.startsWith(prefix) && key.endsWith(`:${agentType}`) ? key.slice(prefix.length, -agentType.length - 1) : null;
-  return cause !== 'unrecorded' && Object.hasOwn(SEND_BACK_CAUSES, cause) ? [cause] : null;
+  const causes = Object.keys(SEND_BACK_CAUSES).filter((cause) => sentBackLesson(agentType, cause).key === key);
+  return causes.length ? causes : null;
 }
 
 // The share of `agentType`'s runs with a known send-back, among the stop rows from `fromMs` on, that one of `causes`
@@ -224,17 +221,16 @@ function docsSignal(rows, sinceMs, { indexed, tags }, { minSample, topDocPercent
   return { status: heavy || unread.length ? PROBLEM : OK, ...base };
 }
 
-// The lesson of a sent-back problem, by its leading cause (dispatch-log.mjs SEND_BACK_CAUSES): a cause the stop hook
-// already records as an automatic lesson takes that lesson's labels, the delivery check's or the background check's.
-// A cause not recorded keeps the delivery check's, the key this problem held before rows named causes, so a lesson
-// resolved then still holds it. The marker and evidence causes take a key of their own. Every one is owned by whoever
-// owns the agent (lesson-signals.mjs agentOwner), since the fix is to that agent's prompt. The background check's
-// lesson is the plugin's, so only a plugin agent shares its key; a project agent's background send-backs take a key
-// of their own, so one key never sits in two inboxes.
+// The lesson of a sent-back problem, by its leading cause (dispatch-log.mjs SEND_BACK_CAUSES): each recorded cause takes
+// a key of its own, `health:sent-back:<cause>:<agent>`, judged by that cause alone (lessonCauses), owned by whoever owns
+// the agent (lesson-signals.mjs agentOwner), since the fix is to that agent's prompt. Two exceptions share a stop-hook
+// lesson's key, each in the inbox that lesson is filed to: a plugin agent's background task, the background check's
+// `idle-with-children:<agent>`; and a cause not recorded, `delivery-check:<agent>`, the key every sent-back problem held
+// before rows named causes, so a lesson resolved then still holds it.
 function sentBackLesson(agentType, cause) {
   const target = agentOwner(agentType);
   if (cause === 'background' && target === 'plugin') return labels(idleChildrenSignal({ agentType, children: [] }));
-  if (['missing_file', 'handoff', 'unrecorded'].includes(cause)) return labels(deliverySignal({ agentType, missing: [] }));
+  if (cause === 'unrecorded') return labels(deliverySignal({ agentType, missing: [] }));
   return { tier: 'P2', kind: 'improvement', target, key: `health:sent-back:${cause}:${agentType}` };
 }
 

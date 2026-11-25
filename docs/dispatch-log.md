@@ -455,11 +455,11 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
 - **Agents**, per agent type, over its dispatches and its runs with a known send-back: a problem when over `redispatchPercent`
   of its dispatches repeat a task, or the stop hook sent back over `sentBackPercent` of those runs. Fix: `agent-prompt`.
   The signal names the leading [send-back cause](hooks.md#send-back-causes), as `most often background task` and in
-  `--json` as `leading`, and the problem names it with its check. Its lesson follows that cause: a background task
-  takes the key of the background check's automatic lesson, `idle-with-children:<agent>`, for a plugin agent, whose
-  inbox that lesson shares; a missing file, a handoff file, or a cause not recorded the delivery check's,
-  `delivery-check:<agent>`, the key the problem held before rows named causes; a handoff marker, a test claim with no
-  run, or a project agent's background task a key of its own, `health:sent-back:<cause>:<agent>`.
+  `--json` as `leading`, and the problem names it with its check. Its lesson follows that cause: each recorded cause
+  takes a key of its own, `health:sent-back:<cause>:<agent>`, a missing file and a handoff file apart. Two share a stop
+  hook lesson's key, each in the inbox that lesson is filed to: a plugin agent's background task takes the background
+  check's `idle-with-children:<agent>`, and a cause not recorded keeps `delivery-check:<agent>`, the key every sent-back
+  problem held before rows named causes.
   Each targets whoever owns the agent, as the delivery check's lesson does: the plugin for an `aidrian:` agent, else the project.
 - **Reviews**, over the reviewed pull requests merged in the window and the late findings checked: a problem when a pull request
   takes over `reviewRounds` rounds on average, or over `lateFindingPercent` of late findings sit on a line already reviewed.
@@ -505,13 +505,13 @@ or `null` when the problem is a lesson already), `resolved`, and `since_resoluti
 (`ok`, `problem`, `not_enough_data`, or `unavailable`) and its numbers; `thresholds`; and `coverage`, as the other views print it.
 When a resolved lesson holds the problem's `lesson.key`, in the [plugin's inbox](lessons.md#the-plugins-inbox) when its
 `lesson.target` is `plugin` and in the project's otherwise, `resolved` names it (`id`, `at`, `outcome`) and `since_resolution`
-judges the same problem on the rows dated after that resolution alone, as `n` and `status`. A sent-back lesson is
-judged by its own causes, whichever cause leads since: the share of the agent's runs sent back for them, against
-`sentBackPercent` and `minSample`. `delivery-check:<agent>`, the delivery check's own lesson and every sent-back
-problem's key before rows named causes, stands for a missing file, a handoff file, and a cause not recorded together: the window can hold the failures
-that led to the fix, which say nothing about whether it held. A resolution before the window leaves the problem as judged,
-and the reviews cannot be split by time, so after a resolution inside the window they are `unavailable`. Both are `null`
-when no resolved lesson holds the key.
+judges the same problem on the rows dated after that resolution alone, as `n` and `status`: the window can hold the
+failures that led to the fix, which say nothing about whether it held. A resolution before the window leaves the problem
+as judged, and the reviews cannot be split by time, so after a resolution inside the window they are `unavailable`.
+A sent-back lesson is judged by its own cause alone, whichever cause leads: the share of the agent's runs sent back for
+it, from the later of the window's start and the resolution, against `sentBackPercent` and `minSample`; so moving the
+window's start across the resolution never changes the verdict on the same runs. `delivery-check:<agent>` stands for a
+cause not recorded alone. Both are `null` when no resolved lesson holds the key.
 Every verdict compares unrounded numbers; the page rounds only what it prints, to a tenth of a percent where a whole one
 would read as the threshold, and a cost under ten cents to two significant digits.
 

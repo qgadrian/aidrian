@@ -77,7 +77,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, select a skill from
 | Planning | What it does |
 | --- | --- |
 | `planning-agent` | Writes or revises a local plan file. |
-| `plan-review` | Critiques a local plan. The Human approves each change. |
+| `plan-review` | Critiques a local plan. The Human approves each change. A gate stops re-running once it adds only minor findings, which go to the code review. |
 | `issue-plan` | Plans one issue before the build. |
 | `initiative-agent` | Breaks a broad goal into a project of ordered tracker issues. |
 | `agent-issue-writer` | Drafts or creates tracker issues for agents. |

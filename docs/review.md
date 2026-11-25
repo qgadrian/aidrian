@@ -2120,3 +2120,30 @@ due: with nothing to answer, it has no `replies` field.
   body or a fallback comment has no thread, and its outcome shows in the summary table alone.
 - An inline comment whose review the engine could not read back is mapped by its marker on a later step, so it is
   answered too.
+
+## Plan reviews
+
+The `plan-review` skill reviews a local plan before the build: its security and critical-flow gates and its quorum
+run first, then `planning-agent` critiques the plan and proposes a diff the Human approves. A gate runs again on each
+new revision of the plan, so the skill holds each re-run to a stop rule, in its `steps/reruns.md`:
+
+- **Stop rule.** A re-run with no blocking finding, whose findings are all severity `low` or narrower than the previous run's, approves.
+  A finding is narrower when it names a smaller surface than, or a sub-case of, a finding the previous run raised,
+  and adds no required invariant. A `critical` or `high` finding, a `blocking` quorum objection, or a new required
+  invariant is blocking, so it goes into the critique, as on a first run, even at severity `low`.
+- **Cap.** Each gate, and the quorum, runs at most 3 times in one plan review, the first run included, across its
+  restarts. The session counts the runs it made itself: nothing is written to the plan for the count, and a new plan
+  review counts from one again. A reused ledger counts no run; the stop rule applies to it as to a run, and it is the
+  next one's previous run. Past the cap, the findings that are not blocking are carried, and a blocking one escalates
+  to the Human, as does a plan changed after the last run.
+- **Carry-forward.** A carried finding is never revised for. The approved diff records it under
+  `Implementation notes from plan review:` in the plan's `## Risks`. When the critique proposes a diff, the session checks
+  before the report that it holds each carried finding; it sends the diff back to `planning-agent` once for a missing one,
+  and when one is still missing, it reports it and proposes no diff, so step 5 has nothing to apply.
+  The report after the apply names it as `recorded` or `not recorded in the plan`, whatever the cause, and stops nothing.
+  The `issue-implement` skill, which `plan-implement` runs, gives that list to each slice's `code-reviewer` and
+  `security-engineer`.
+
+The stop rule never drops a required invariant: the rule that a gate's required invariants bind the critique holds
+unchanged, and a `blocked` critical-flow sign-off still stops the run:
+the stop rule decides only where minor findings go. The cap is skill instruction, with no config key.

@@ -410,3 +410,10 @@ When this skill stops with `blocked`, `plan-review` stops with `blocked on quoru
 
 A `plan-review` re-critique of a plan it just applied does not run the quorum again. A restart of `plan-review` because
 the plan changed runs it under the new hash, with this run's answers as [settled answers](#settled-answers).
+Such a rerun follows the stop rule and cap of `plan-review`'s `steps/reruns.md`, as its gates do. When every accepted
+objection is narrower than one the immediately preceding run accepted, and none is `blocking` or adds a required invariant,
+the quorum approves, and its accepted objections are carried to implementation review as notes, never applied as a revision.
+The quorum runs at most 3 times in one `plan-review` run, the first included, as that run counts them.
+A reused ledger counts no run; the stop rule applies to it as to a run, and it is the next one's previous run.
+Past that, accepted objections that are not `blocking` are carried as notes, and a `blocking` one escalates to the Human.
+The Human's answers and the settled answers bind as before: the stop rule decides only where accepted objections go.

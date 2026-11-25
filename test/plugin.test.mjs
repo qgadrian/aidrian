@@ -1324,6 +1324,53 @@ test('each dispatcher of a deciding agent runs the resolve, and each deciding ag
   }
 });
 
+test('plan-review gates stop re-running on minor findings, cap their runs, and carry the rest to the slice reviews', () => {
+  // A plan once went through seven security-gate runs and three quorum rounds, each finding a smaller edge case than
+  // the last, and grew to about 1,180 lines with no code written (issue 269). A re-run that adds only low or narrower
+  // findings approves, a cap ends the loop, and the findings reach the per-slice code and security review instead.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const section = (text, from, to) => text.slice(text.indexOf(from), text.indexOf(to, text.indexOf(from) + from.length));
+  const skill = read('skills/plan-review/SKILL.md');
+  const gates = section(skill, '## 3. Gates', '## 3b. Quorum');
+  assert.match(gates, /A re-run with no blocking finding, and every finding `low` or narrower than the last run's, approves, its findings carried as implementation notes\./);
+  // Counting needs the first run's findings, so the file is read before the first dispatch, never from the second run on.
+  assert.match(gates, /Read \[steps\/reruns\.md\]\(steps\/reruns\.md\) before the first gate or quorum dispatch\./);
+  assert.match(section(skill, '## 3b. Quorum', '## 4. Critique'), /its reruns under step 3's stop rule and cap/);
+  assert.match(section(skill, '## 5. Apply', '## 6. Cap'), /follow its steps 5\.1 to 5\.5\./);
+  assert.match(section(skill, '## 6. Cap', '## Close'), /A gate or the quorum runs at most 3 times a review, the first included, across restarts; past that, non-blocking findings are carried, and a blocking one escalates\./);
+  const reruns = read('skills/plan-review/steps/reruns.md');
+  assert.match(reruns, /\*\*Narrower\*\*: it names a smaller surface than, or a sub-case of, a finding the previous run raised, and it adds no new required invariant\./);
+  assert.match(reruns, /\*\*Blocking\*\*: severity `critical` or `high`, a quorum objection of severity `blocking`, or any finding that adds a required invariant\. A blocking finding is never narrower/);
+  // A low finding that adds a required invariant is blocking, so it never approves the gate on its own severity.
+  assert.match(reruns, /When the re-run has no blocking finding, and every finding is low or narrower, the gate approves for this plan\./);
+  assert.match(reruns, /compare each finding with the immediately preceding run's findings/);
+  assert.match(reruns, /The stop rule never drops a required invariant: step 3's rule, that a gate's required invariants bind the critique, holds unchanged\./);
+  // A count written into the plan changed the hash the Human's apply is held to, so the session keeps it and writes nothing.
+  assert.match(reruns, /Count the runs this review made, each gate's and the quorum's\. The session keeps the counts and each run's findings itself, and writes neither to the plan\./);
+  assert.doesNotMatch(reruns, /revision.history/i);
+  assert.match(reruns, /A new `plan-review` run counts from one\. A reused ledger counts no run; the stop rule applies to it as to a run, and it is the next one's previous run\./);
+  assert.match(reruns, /in the `plan-review` skill's step 3, before the first gate or quorum dispatch\./);
+  assert.match(reruns, /A plan changed after it, which a gate would have to judge again, escalates to the Human too: no gate is skipped\./);
+  assert.match(reruns, /no authority covers that sign-off, and no stop rule clears it/);
+  assert.match(reruns, /A restart from step 5\.1 keeps the counts;/);
+  assert.match(reruns, /A blocking finding stops the run and escalates to the Human/);
+  assert.match(reruns, /under the line `Implementation notes from plan review:`/);
+  // The carry-forward holds only when the applied plan records the notes and the slice reviewers read them.
+  const apply = read('skills/plan-review/steps/apply.md');
+  assert.match(apply, /5\. When step 3 or 3b carried findings .* look for each one among the implementation notes in the saved plan's `## Risks`, under the line `Implementation notes from plan review:`\./);
+  // A repair or a blocked outcome needed its own retry and approval rules, so the step names what the plan holds and stops nothing.
+  assert.match(apply, /The report names each carried finding, .* says `recorded` or `not recorded in the plan`, whatever the cause\. This step only reports\./);
+  assert.doesNotMatch(apply, /\bpatch\b|`blocked`/i);
+  assert.match(section(skill, '## Close', '## Do not'), /an applied plan passed step 5\.4, the report names each carried finding,/);
+  // A note the proposed diff omitted is caught before the Human approves; findings-only proposes no diff, so it has no check.
+  assert.match(reruns, /When the critique proposes a diff, check before step 4's report that it holds each carried finding; send it back to `planning-agent` once for a missing one, and when one is still missing, report it and propose no diff, so step 5 has nothing to apply\./);
+  assert.match(reruns, /Step 5\.5 reports each one as `recorded` or `not recorded in the plan`\./);
+  assert.match(read('skills/quorum/references/ledger.md'), /narrower than one the immediately preceding run accepted/);
+  assert.match(read('skills/quorum/references/ledger.md'), /Such a rerun follows the stop rule and cap of `plan-review`'s `steps\/reruns\.md`, as its gates do\./);
+  assert.match(read('skills/quorum/references/ledger.md'), /The quorum runs at most 3 times in one `plan-review` run, the first included, as that run counts them\. A reused ledger counts no run; the stop rule applies to it as to a run, and it is the next one's previous run\./);
+  assert.match(read('skills/issue-implement/steps/phases-1-4-implement.md'), /When the plan's `## Risks` holds `Implementation notes from plan review:`, each reviewer's brief carries that list/);
+});
+
 test('autopilot parks a decision only under ask, and reports what an agent decided', () => {
   const autopilot = readFileSync(path.join(PLUGIN, 'skills/autopilot/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
   assert.ok(autopilot.includes(`as \`${DECISION_RULE}\` says. Under \`decide\`, follow its order to the end and record the \`decided_provisional\` in the report.`));

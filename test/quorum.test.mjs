@@ -1269,7 +1269,7 @@ test('plan-review gate briefs carry the plan, the trigger, and the knowledge, an
   assert.match(never, /Critique, rewrite, or restyle the plan yourself, in a report or in any brief/u, 'Do not covers every brief');
   // Step 5's items moved to steps/apply.md to keep SKILL.md under its size limit: the re-hash before an apply stays.
   const apply = flat(review.split('\n## 5. Apply\n')[1].split('\n## ')[0]);
-  assert.match(apply, /read \[steps\/apply\.md\]\(steps\/apply\.md\) and follow its steps 5\.1 to 5\.4/u, 'step 5 points to its items');
+  assert.match(apply, /read \[steps\/apply\.md\]\(steps\/apply\.md\) and follow its steps 5\.1 to 5\.5/u, 'step 5 points to its items');
   const items = flat(readFileSync(path.join(path.dirname(PLAN_REVIEW), 'steps/apply.md'), 'utf8'));
   assert.match(items, /1\. Hash the plan again\. When it changed since step 2, say so and start again at step 2/u, 'apply re-hashes first');
   assert.match(items, /4\. Read the plan again/u, 'apply keeps step 5.4');

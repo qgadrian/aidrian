@@ -485,7 +485,7 @@ test('an issue session pushes only from its own clone\'s repository, to the URL 
   const secret = 's3cr3t'.repeat(30);
   git(fx.work, 'remote', 'set-url', '--push', 'origin', `https://bot:${secret}@github.com/acme/widgets.git`);
   const masked = fx.ask(bash(EXACT))?.reason ?? '';
-  assert.match(masked, /it pushes to https:\/\/bot:\[redacted\]@github\.com\/acme\/widgets\.git, and origin pushes only to/u);
+  assert.match(masked, /it pushes to https:\/\/\*\*\*@github\.com\/acme\/widgets\.git, and origin pushes only to/u);
   assert.doesNotMatch(masked, /s3cr3t/u);
 });
 

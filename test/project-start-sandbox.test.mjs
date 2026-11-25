@@ -939,7 +939,7 @@ test('a clone that would push to another URL than the access check read, through
   writeFileSync(global, '[url "https://bot:s3cr3t-token@github.com/acme/"]\n\tpushInsteadOf = https://github.com/acme/\n');
   const tokened = runFixture(t);
   const result = tokened.cmd(['start', 'launch', 'ENG-1']);
-  halted(tokened, result, /the attempt's clone pushes to https:\/\/bot:\[redacted\]@github\.com\/acme\/widgets\.git, not https:\/\/github\.com\/acme\/widgets\.git/u);
+  halted(tokened, result, /the attempt's clone pushes to https:\/\/\*\*\*@github\.com\/acme\/widgets\.git, not https:\/\/github\.com\/acme\/widgets\.git/u);
   assert.doesNotMatch([...result.out, ...result.err].join('\n'), /s3cr3t/u);
 });
 

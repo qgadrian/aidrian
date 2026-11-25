@@ -85,8 +85,8 @@ async function settleRefusal(input) {
     if (refusal === null) return;
     const record = trackerRecord(input.session_id);
     if (record && existsSync(record)) return;
-    const { tool, agent_type: agent, cwd } = JSON.parse(refusal);
-    (await import('../lib/hook-deny.mjs')).recordBlock({ ...input, tool_name: tool, agent_type: agent, cwd: cwd ?? input.cwd }, 'tracker-guard', NO_READ_LANDED);
+    const { tool, agent_type: agent, agent_id: agentId, cwd } = JSON.parse(refusal);
+    (await import('../lib/hook-deny.mjs')).recordBlock({ ...input, tool_name: tool, agent_type: agent, agent_id: agentId, cwd: cwd ?? input.cwd }, 'tracker-guard', NO_READ_LANDED);
   } catch {
     // No marker, which is almost every session, or the row is lost.
   }

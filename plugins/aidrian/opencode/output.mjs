@@ -252,14 +252,21 @@ async function answer(steps, event, blocking) {
     if (!call || call.skip) return null;
     const subagent = typeof call.agent === 'string';
     if (blocking && subagent && event?.codemode === true) return { refusal: { status: 'codemode', reason: CODEMODE_REFUSAL } };
-    // A runner that throws or rejects is that script not starting, and never drops a peer's answer.
-    const results = await Promise.all(routes.map((route) => Promise.resolve().then(() => steps.run(route, call)).catch(() => ({ failed: true }))));
-    if (blocking && subagent && results.some((result) => result?.failed === true)) return { refusal: { status: 'spawn', reason: SPAWN_REFUSAL } };
-    const verdicts = results.map((result, at) => readHookResult({ ...result, event: routes[at].event }));
-    return { verdict: combineHookResults(verdicts), call, blocked: verdicts.some((one) => one.block) };
+    const { verdict, blocked, failed } = await answered(routes, (route) => steps.run(route, call));
+    if (blocking && subagent && failed) return { refusal: { status: 'spawn', reason: SPAWN_REFUSAL } };
+    return { verdict, call, blocked };
   } catch {
     return null;
   }
+}
+
+// What `routes` answer together, each run by `runRoute(route)`, in parallel: `verdict` their merged answer, `blocked`
+// whether one's own answer refused, and `failed` whether one did not start. A runner that throws or rejects is that
+// script not starting, and never drops a peer's answer.
+export async function answered(routes, runRoute) {
+  const results = await Promise.all(routes.map((route) => Promise.resolve().then(() => runRoute(route)).catch(() => ({ failed: true }))));
+  const verdicts = results.map((result, at) => readHookResult({ ...result, event: routes[at].event }));
+  return { verdict: combineHookResults(verdicts), blocked: verdicts.some((one) => one.block), failed: results.some((result) => result?.failed === true) };
 }
 
 // The refusal of a merged verdict, { status, reason }, or null: `hook` when a hook refused, `rewrite` when only two

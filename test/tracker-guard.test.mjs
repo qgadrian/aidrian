@@ -830,10 +830,10 @@ test('a session refused for no read whose read never lands writes one row at its
 
 test('the first refusal of a session keeps its marker, so the row names that call', async (t) => {
   const refused = project(t, TELEMETRY);
-  assert.equal((await refused.write({}, { agent_type: 'first' })).status, 2);
-  assert.equal((await refused.write({}, { agent_type: 'second' })).status, 2);
+  assert.equal((await refused.write({}, { agent_id: 'a1' })).status, 2);
+  assert.equal((await refused.write({}, { agent_type: 'second', agent_id: 'a2' })).status, 2);
   assertRuns(await refused.end());
-  assert.deepEqual(denyRows(refused).map((row) => row.agent_type), ['first']);
+  assert.deepEqual(denyRows(refused).map((row) => [row.agent_type, row.agent_id]), [['general-purpose', 'a1']], 'a subagent whose call names no agent is never the main thread');
 });
 
 test('with telemetry.enabled or telemetry.hookDenies off, a session stuck on the no-read refusal is refused and leaves no row and no lesson', async (t) => {

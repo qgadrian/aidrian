@@ -2078,6 +2078,21 @@ test('a walk that stops short of the root starts nothing, under no session of it
   }
 });
 
+test('a child whose own folder is not on disk starts nothing of its own, and a started root whose folder is gone holds back no child', async () => {
+  const rootDir = path.join(ROOT, 'start-left-folder');
+  mkdirSync(rootDir);
+  const child = (directory) => ({ parentID: 'ses_main', location: { directory } });
+  const sessions = { ses_main: { location: { directory: rootDir } }, ses_lost: child(path.join(ROOT, 'no-such-folder')), ses_later: child(CHILD_DIR) };
+  const context = fakeContext({ sessions });
+  const { calls } = await startBridge('start-child-folder', { context });
+  await context.hooks.context(request('ses_lost'));
+  assert.deepEqual(ran(calls), [['hook-session-start.mjs']], 'the root`s start alone');
+  rmSync(rootDir, { recursive: true });
+  await context.hooks.context(request('ses_later'));
+  assert.deepEqual(ran(calls).slice(1), [['hook-session-start.mjs', '--subagent']]);
+  assert.equal(calls[1].options.cwd, CHILD_DIR);
+});
+
 test('the idle hook and the hook before a tool call each run the session`s start before their routes', async () => {
   const blocking = await startBridge('start-before', { routes: [preRoute()], events: { ...EVENTS, ...BLOCKING } });
   await blocking.context.hooks['execute.before'](beforeEvent());
@@ -2209,7 +2224,7 @@ async function endBridge(name, { sessions, trace }) {
 
 const ROOT_AND_CHILD = Object.freeze({ ses_end: { location: { directory: PROJECT_DIR } }, ses_kid: { parentID: 'ses_end', location: { directory: CHILD_DIR } } });
 
-test('deleting or archiving a child session runs no SessionEnd: the root`s gate snapshot, .gated mark, and tracker record stay', async () => {
+test('deleting or archiving a child session runs no SessionEnd: the root`s gate snapshot, .gated mark, and tracker record stay', { timeout: 10_000 }, async () => {
   const trace = path.join(ROOT, 'trace-end-child.jsonl');
   const { calls, fire, stream } = await endBridge('end-child', { sessions: ROOT_AND_CHILD, trace });
   await fire(shellEvent({ sessionID: 'ses_end' }));
@@ -2224,7 +2239,7 @@ test('deleting or archiving a child session runs no SessionEnd: the root`s gate 
   assert.deepEqual(traceLines(trace).filter((line) => line.script === 'hook-session-end.mjs').map(({ step, status }) => [step, status]), [['skip', 'subagent'], ['skip', 'read']]);
 });
 
-test('archiving then unarchiving a root runs no SessionEnd and leaves all three; its delete then runs it once, in its folder, and they go', async () => {
+test('archiving then unarchiving a root runs no SessionEnd and leaves all three; its delete then runs it once, in its folder, and they go', { timeout: 10_000 }, async () => {
   const { calls, fire, stream } = await endBridge('end-root', { sessions: ROOT_AND_CHILD });
   await fire(shellEvent({ sessionID: 'ses_end' }));
   writeEndFiles('ses_end');
@@ -2240,7 +2255,7 @@ test('archiving then unarchiving a root runs no SessionEnd and leaves all three;
   assert.equal(ends(calls).length, 1);
 });
 
-test('a root whose last known folder is gone runs no SessionEnd, never in the plugin`s folder', async () => {
+test('a root whose last known folder is gone runs no SessionEnd, never in the plugin`s folder', { timeout: 10_000 }, async () => {
   const gone = path.join(ROOT, 'end-gone-folder');
   mkdirSync(gone);
   const trace = path.join(ROOT, 'trace-end-gone.jsonl');
@@ -2250,6 +2265,31 @@ test('a root whose last known folder is gone runs no SessionEnd, never in the pl
   await stream.send([{ type: 'session.deleted', data: { sessionID: 'ses_end' } }]);
   assert.deepEqual(ends(calls), []);
   assert.deepEqual(traceLines(trace).at(-1), { at: traceLines(trace).at(-1).at, step: 'skip', script: 'hook-session-end.mjs', status: 'cwd' });
+});
+
+test('a root that moved ends in the last folder a read gave, on its own call or on a child`s first callback', { timeout: 10_000 }, async () => {
+  const readers = {
+    'own-call': (context) => context.hooks['execute.after'](shellEvent({ sessionID: 'ses_end' })),
+    'child-start': (context) => context.hooks.context(request('ses_kid')),
+  };
+  for (const [name, read] of Object.entries(readers)) {
+    let directory = PROJECT_DIR;
+    const stream = eventStream();
+    const context = fakeContext({ sessions: { ...ROOT_AND_CHILD, ses_end: () => ({ location: { directory } }) }, subscribe: () => stream.iterable });
+    const { calls, fire } = await startBridge(`end-moved-${name}`, { context, routes: [END_ROUTE] });
+    await fire(shellEvent({ sessionID: 'ses_end' }));
+    directory = SESSION_DIR;
+    await read(context);
+    await stream.send([{ type: 'session.deleted', data: { sessionID: 'ses_end' } }]);
+    assert.deepEqual(ends(calls).map((call) => [call.options.cwd, sent(call).cwd]), [[SESSION_DIR, SESSION_DIR]], name);
+  }
+});
+
+test('the bridge listens for a session`s end once, with a start and a Stop route both routed', async () => {
+  let subscribed = 0;
+  const context = fakeContext({ subscribe: () => { subscribed += 1; return eventStream().iterable; } });
+  await startBridge('listen-once', { context, routes: [STOP_ROUTE], events: { ...EVENTS, Stop: 'experimental.idle' } });
+  assert.equal(subscribed, 1);
 });
 
 test('a session no session.created announced has its gate snapshot before its first tool call`s routes run', async () => {

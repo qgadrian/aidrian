@@ -19,15 +19,13 @@
 // session has started. Every hook here runs in the root session's own folder, from its session read, and a child's
 // `--subagent` start in the child's own; a session whose folder is not on disk runs nothing.
 //
-// It imports node: built-ins, the hook-result leaf, and its own folder, so it loads in OpenCode's Bun and under
-// `node --test` alike.
+// It imports node: built-ins and its own folder, so it loads in OpenCode's Bun and under `node --test` alike.
 
 import { Buffer } from 'node:buffer';
 import path from 'node:path';
 
-import { combineHookResults, readHookResult } from '../lib/hook-result.mjs';
 import { markOf, sessionCall, skipped } from './call.mjs';
-import { run, settle, transform } from './output.mjs';
+import { answered, run, settle, transform } from './output.mjs';
 
 const START = 'SessionStart';
 const SUBAGENT_START = 'SubagentStart';
@@ -79,8 +77,8 @@ async function start(runner, event, { root, agent, cwd }) {
     base: cwd,
     payload: (route) => ({ hook_event_name: route.event, opencode: mark, session_id: root, ...(agent ? { agent_id: agent } : {}), cwd }),
   };
-  const results = await Promise.all(routes.map((route) => run({ ...runner, env: runner.startEnv }, route, call, route.timeoutMs).catch(() => ({ failed: true }))));
-  return combineHookResults(results.map((result, at) => readHookResult({ ...result, event: routes[at].event }))).context;
+  const { verdict } = await answered(routes, (route) => run({ ...runner, env: runner.startEnv }, route, call, route.timeoutMs));
+  return verdict.context;
 }
 
 // The system parts each model step and compaction request of the session `sessionID` carries, once its start ran: the bridge's notices, and the

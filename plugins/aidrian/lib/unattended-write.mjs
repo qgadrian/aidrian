@@ -22,7 +22,7 @@ import { bashCall, writeTargets } from './config-guard.mjs';
 import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
-import { foldCase, isWithin, joinSpelled } from './fs.mjs';
+import { foldCase, foldPath, isWithin, joinSpelled } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
@@ -106,10 +106,14 @@ const issueHandoff = (issue) => (target, folder) => {
 const absolute = (each) => typeof each === 'string' && path.isAbsolute(each);
 // The time a git call may take: what the guards' budget leaves, or git's own default outside one.
 const gitBudget = () => (Number.isFinite(remainingMs()) ? { timeout: Math.max(1, Math.floor(remainingMs())) } : undefined);
-// A function that adds a refused entry to `list`: { path, spelled, what, folder, allows, always }, `allows(target, folder)`
-// the paths inside a refused folder that pass, and `always` an entry a write to a folder that holds it meets even when
-// that folder is a place itself, as a checkout nested in the session's worktree is met by `rm -rf` of the worktree.
-const refuser = (list) => (file, what, folder = false, allows = null, always = false) => list.push({ path: real(file), spelled: file, what, folder, allows, always });
+// A function that adds a refused entry to `list`: { path, fold, spelled, what, folder, allows, always }, `fold` the real
+// path's fold (foldPath), which refusedHit compares, `allows(target, folder)` the paths inside a refused folder that
+// pass, and `always` an entry a write to a folder that holds it meets even when that folder is a place itself, as a
+// checkout nested in the session's worktree is met by `rm -rf` of the worktree.
+const refuser = (list) => (file, what, folder = false, allows = null, always = false) => {
+  const at = real(file);
+  list.push({ path: at, fold: foldPath(at), spelled: file, what, folder, allows, always });
+};
 
 // The places a session no Human attends may write, for the session whose mark is `mark`, or null when they cannot be
 // told: { limited, pending, specific, reviews, worktree, temp, refused, later, home }, each path real and case-folded.
@@ -464,17 +468,17 @@ function partPattern(part) {
 function nestedGlob(prefix, rest, nested) {
   if (!nested.some(({ root }) => isWithin(root, prefix) || isWithin(prefix, root))) return false;
   if (nestedHit(prefix, nested)) return true;
-  const may = (part, name) => (GLOB_WORD.test(part) ? (!name.startsWith('.') || /^[.[{]/u.test(part)) && partPattern(part).test(name) : part.toLowerCase() === name);
+  const may = (part, name) => (GLOB_WORD.test(part) ? (!name.startsWith('.') || /^[.[{]/u.test(part)) && partPattern(foldPath(part)).test(name) : foldPath(part) === name);
   const last = rest.at(-1) ?? '';
   if (rest.some((part) => may(part, '.claude') || NESTED_NAMES.folders.some((name) => may(part, name)))) return true;
   return may(last, 'skill.md') || NESTED_NAMES.files.some((name) => may(last, name));
 }
 
-// The names, in lower case, the hosts' nested globs spell out (hosts/index.mjs nestedGlobs): `folders`, a plain part
+// The names, by their folds (foldPath), the hosts' nested globs spell out (hosts/index.mjs nestedGlobs): `folders`, a plain part
 // another part follows, as `.x` in `**/.x/**`, and `files`, a glob's plain last part, as `x.json` in `**/x.json`.
 const NESTED_NAMES = (() => {
   const plain = (part) => part !== '' && !GLOB_WORD.test(part);
-  const parts = nestedGlobs().map((glob) => glob.split('/').map((part) => part.toLowerCase()));
+  const parts = nestedGlobs().map((glob) => glob.split('/').map(foldPath));
   return Object.freeze({
     folders: [...new Set(parts.flatMap((each) => each.slice(0, -1).filter(plain)))],
     files: [...new Set(parts.map((each) => each.at(-1)).filter(plain))],
@@ -588,12 +592,16 @@ function dispatchAllows(target, folder) {
 
 // The refused entry of `entries` a write to `target`, spelled `spelled`, meets, or null: the entry, a path in a refused
 // folder it does not allow, or, with `holds`, an entry the target holds, as `rm -rf` of a folder above one does, unless
-// the target is a place itself (`own`); a file entry is also met through a hard link to it.
+// the target is a place itself (`own`); a file entry is also met through a hard link to it. Paths meet by their folds
+// (foldPath), as a disk that folds full Unicode case reads them, so `.github/workflowſ` meets `.github/workflows`. A
+// folder's `allows` judges only a target inside it as the places compare paths: one inside it by its fold alone is refused.
 function refusedHit(target, spelled, entries, { own, holds }) {
+  const folded = foldPath(target);
+  const meets = (dir, file, folder) => dir === file || (folder && isWithin(dir, file));
   for (const entry of entries) {
     checkDeadline();
-    const inside = (entry.path === target || (entry.folder && isWithin(entry.path, target))) && !entry.allows?.(target, entry.path);
-    if (inside || (holds && (!own || entry.always) && target !== entry.path && isWithin(target, entry.path)) || (!entry.folder && sameFile(entry.spelled, spelled))) return entry;
+    const inside = meets(entry.path, target, entry.folder) ? !entry.allows?.(target, entry.path) : meets(entry.fold, folded, entry.folder);
+    if (inside || (holds && (!own || entry.always) && folded !== entry.fold && isWithin(folded, entry.fold)) || (!entry.folder && sameFile(entry.spelled, spelled))) return entry;
   }
   return null;
 }
@@ -643,10 +651,10 @@ const TEMP_HOST = { what: 'a host file a session started below that temporary fo
 // so a link by either name counts, name one in any case. A review's exec reviewer starts in a base checkout under the
 // temporary folder (review/base-worktree.mjs), so one planted above it loads into that reviewer.
 function instructionHit(target, spelled, roots) {
-  const names = instructionNames().files.map((name) => name.toLowerCase().split('/'));
+  const names = instructionNames().files.map((name) => foldPath(name).split('/'));
   const ends = (parts) => names.some((name) => name.length <= parts.length && name.every((part, at) => parts[parts.length - name.length + at] === part));
-  const spelledParts = typeof spelled === 'string' ? path.normalize(spelled).split(path.sep).filter(Boolean).map((part) => part.toLowerCase()) : [];
-  return roots.some((root) => target !== root && isWithin(root, target) && ends(path.relative(root, target).split(path.sep).map((part) => part.toLowerCase())))
+  const spelledParts = typeof spelled === 'string' ? path.normalize(spelled).split(path.sep).filter(Boolean).map(foldPath) : [];
+  return roots.some((root) => target !== root && isWithin(root, target) && ends(path.relative(root, target).split(path.sep).map(foldPath)))
     || ends(spelledParts);
 }
 
@@ -658,7 +666,7 @@ function instructionHit(target, spelled, roots) {
 // that names no `.git`, such as `rm -rf vendor` or `mv vendor x` over a standalone repository nested there that no git
 // listing names, takes its `.git` along unrefused; a nested worktree's pointer is a refused entry (nestedRefused).
 const GIT_ENTRY = 'a nested checkout\'s git folder or pointer to one, which only git writes';
-const isGitPart = (part) => part.toLowerCase() === '.git';
+const isGitPart = (part) => foldPath(part) === '.git';
 function gitEntry(top, target, spelled) {
   const spelledParts = typeof spelled === 'string' ? path.normalize(spelled).split(path.sep) : [];
   return [...path.relative(top, target).split(path.sep), ...spelledParts].some(isGitPart) ? { refused: { what: GIT_ENTRY, spelled } } : null;

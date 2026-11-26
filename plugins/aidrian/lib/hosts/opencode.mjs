@@ -7,6 +7,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { foldPath } from '../fs.mjs';
 import { mcpToolName, NATIVE_NAMES, RAW_NAMES, standardToolName } from './opencode-names.mjs';
 import { setUp } from './opencode-setup.mjs';
 import { patchEdit } from './patch.mjs';
@@ -23,11 +24,11 @@ const payloadMark = (input) => isObject(input?.opencode);
 // all it holds, whose `skills` it loads. OpenCode 2.4.0 looks for `.claude`, `.agents`, `.opencode`, and both config
 // files in the folder a session starts in and in every folder above it up to `/`, with no stop at the git root
 // (ConfigDiscovery.discover, read as text from its binary), so a nested one loads into every session started below it.
-// Names are compared in lower case, as a disk that folds case reads them.
+// Names are compared by their folds (foldPath), as a disk that folds full Unicode case reads them, so `.agentſ` is `.agents`.
 function nestedProtected(segments) {
-  const lower = segments.filter(Boolean).map((each) => each.toLowerCase());
-  const last = lower.at(-1);
-  return lower.includes('.opencode') || lower.includes('.agents') || last === 'opencode.json' || last === 'opencode.jsonc';
+  const folded = segments.filter(Boolean).map(foldPath);
+  const last = folded.at(-1);
+  return folded.includes('.opencode') || folded.includes('.agents') || last === 'opencode.json' || last === 'opencode.jsonc';
 }
 
 // Its command line that starts, resumes, attaches to, or serves a session, which lib/handoff-guard.mjs

@@ -1659,6 +1659,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   alone may write there tried the same write three times in a run.
   A write through a hard link to a refused file counts as one to it, and a link a command makes (`ln`, `ln -s`,
   `cp -s`, `cp -l`) is judged by the path it points at: it is refused when that path is refused or outside the places.
+  A refused entry, host file, instruction file, or `.git` part is compared by its fold (`foldPath` in `lib/fs.mjs`), case and Unicode form folded.
+  A disk that folds full Unicode case, as macOS's does, reads `.github/workflowſ`, `.github/workﬂows`, or `.claude/ſkills` as the refused entry.
+  So each is refused on every platform, while the places that pass still compare in lower case on macOS and Windows and as spelled elsewhere.
   Accepted residuals of the host-file rules
   ([OpenCode residuals](providers/opencode.md#rules-for-the-other-hosts-sessions)): a copy, move, sync, archive
   extraction, or clone of a folder whose contents hold a host file, or one that names its sources by a glob, is judged

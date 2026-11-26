@@ -87,6 +87,13 @@ test('Claude Code declares an unverified, confined project start, and the host f
     assert.equal(anyHostNested(each.split('/')), true, each);
   }
   for (const each of ['a/.claude/CLAUDE.md', 'a/claude/skills/x.md', 'src/settings.json', 'a/.claude/notes.md', 'SKILLS.md']) assert.equal(nestedProtected(each.split('/')), false, each);
+  // By the fold a disk that folds full Unicode case reads, as macOS's reads `ſ` as `s`, which lower case keeps apart.
+  for (const each of ['pkg/.claude/ſkills/x.md', 'a/.claude/ſettings.json', 'a/.claude/ſcheduled_tasks.json', 'docs/ſKILL.md', 'a/.CLAUDE/Agentſ/x.md']) {
+    assert.equal(nestedProtected(each.split('/')), true, each);
+    assert.equal(anyHostNested(each.split('/')), true, each);
+  }
+  for (const each of ['pkg/.agentſ/x.sh', 'a/.opencodE/x', 'a/opencode.jſon', 'a/opencode.jſonc']) assert.equal(anyHostNested(each.split('/')), true, each);
+  for (const each of ['a/.claude/noteſ.md', 'src/straße.md', 'docs/ﬁle.md', 'a/agentſ/x.md']) assert.equal(anyHostNested(each.split('/')), false, each);
   // The placeholders: the settings files and .mcp.json as `{}`, the folders empty, and no scheduled tasks file.
   assert.deepEqual(PLACEHOLDERS.map((each) => [each.path, each.folder ? 'folder' : each.text]), [
     ['.claude/settings.json', '{}\n'], ['.claude/settings.local.json', '{}\n'], ['.mcp.json', '{}\n'], ['.claude/skills', 'folder'], ['.claude/agents', 'folder'],

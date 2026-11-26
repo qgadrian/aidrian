@@ -12,7 +12,7 @@ import path from 'node:path';
 import { anchorReaders } from './attempt-clone.mjs';
 import { loadConfig, pluginRepository } from './config.mjs';
 import { localForgeTokenKeychain, splitUnknownKeys } from './config-local.mjs';
-import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, knownFields, quoteName, readJson } from './fs.mjs';
+import { foldPath, insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, knownFields, quoteName, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, readOriginUrl, readPrefix, readRemoteUrls, repositoryCheckouts, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
@@ -118,11 +118,8 @@ export const knowledgeIn = (configFile) => `${path.posix.dirname(configFile)}/kn
 // paths it read on each branch (pr-auto-merge.mjs branchPolicies). Not configurable.
 export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|\.aidrian\.local\.json|\.aidrian)$/iu;
 
-// A path as a disk that ignores case and Unicode form names it, such as macOS's: two spellings with one fold may be one
-// file there. It may fold two a disk keeps apart, so a guard that refuses equal folds only holds more; a check that lets
-// equal paths through never compares folds. Lower case first, so two paths equal in lower case have one fold, the capital
-// sharp s among them, whose upper case is itself.
-export const foldPath = (file) => file.normalize('NFD').toLowerCase().toUpperCase().toLowerCase();
+// The fold every guard compares a refused path by, defined in fs.mjs, so the host adapters use it without this module.
+export { foldPath };
 
 // Whether `file` is a guarded path (GUARDED_PATHS), as it is or by its fold. Every guard asks this, never the pattern
 // itself (test/auto-merge-guard.test.mjs).

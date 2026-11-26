@@ -77,6 +77,12 @@ export function linksOutside(root, rel, within = '') {
 const FOLDS = process.platform === 'darwin' || process.platform === 'win32';
 export const foldCase = (file) => (FOLDS ? file.toLowerCase() : file);
 
+// A path as a disk that ignores case and Unicode form names it, such as macOS's: two spellings with one fold may be one
+// file there, as `ſkills`, `SKILLS`, and `skills` are, or `ﬁle` and `file`. It may fold two a disk keeps apart, so a guard
+// that refuses equal folds only holds more; a check that lets equal paths through never compares folds. Lower case
+// first, so two paths equal in lower case have one fold, the capital sharp s among them, whose upper case is itself.
+export const foldPath = (file) => file.normalize('NFD').toLowerCase().toUpperCase().toLowerCase();
+
 // Whether `file` is the folder `dir` or lies below it, by the paths as given: neither is resolved through symlinks.
 export function isWithin(dir, file) {
   const rel = path.relative(dir, file);

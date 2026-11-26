@@ -1461,7 +1461,7 @@ function limitLine({ state, run, store, cap, env, home, spawn, key, start, found
 // start row with no drop folder records nothing: no host starts one, so it can only be a ledger no gate wrote.
 // A failed, blocked, parked, or pr_open result first reads the clone's tree, in the session's own sandbox
 // (lib/project-tree.mjs treeOf): work no commit on the branch holds refuses it, with no drop, unless `uncommitted` hands
-// it over so; the drop carries the word as `tree`, which the sweep alone reads.
+// it over so, with no read; the drop carries the word as `tree`, which the sweep alone reads.
 export function recordResult({ project, config, run, key, file, uncommitted = false, env = process.env, home, now = Date.now() }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project result: ${why}`] });
   const { session } = sessionIdentity(env);
@@ -1489,12 +1489,20 @@ export function recordResult({ project, config, run, key, file, uncommitted = fa
   const start = latestStart(found, key);
   if (typeof start?.drop !== 'string') return refuse(`the start of ${key} names no drop folder to hand the result over to, and every start of a project run is confined`);
   // Work the clone holds and no commit on the branch does holds the result back, unless the session hands it over as
-  // it is; a tree git cannot read hands over as `unknown`, so no result becomes one that cannot be recorded.
-  const read = TREE_STATUSES.includes(checked.result.status) ? treeOf({ start, env }) : { skip: true };
+  // it is, which reads nothing; a tree git cannot read hands over as `unknown`, so no result becomes one that cannot be
+  // recorded.
+  const read = treeRead({ status: checked.result.status, uncommitted, start, env });
   if (read.tree === 'uncommitted' && !uncommitted) return { exitCode: 1, out: [], err: treeLines(read).map((line, at) => (at === 0 ? `aidrian project result: ${line}` : line)) };
   const tree = read.skip ? {} : { tree: read.tree };
   const handed = writeDrop(start.drop, { run, key, attempt: start.attempt, session, at: iso(now), ...checked.result, ...tree });
   return handed ? refuse(handed) : { exitCode: 0, out: [`handed ${key} ${checked.result.status}`], err: [] };
+}
+
+// What `result` reads of the clone's tree for a result of `status` (project-tree.mjs treeOf): nothing for a status the
+// check does not run for, and `uncommitted`, with no git run, when the session hands its work over as it is.
+function treeRead({ status, uncommitted, start, env }) {
+  if (!TREE_STATUSES.includes(status)) return { skip: true };
+  return uncommitted ? { tree: 'uncommitted' } : treeOf({ start, env });
 }
 
 // Records, for the driver of run `run`, the sha256 of the handoff brief `brief` it is about to continue from, so the

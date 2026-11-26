@@ -2093,7 +2093,7 @@ attempt's number for the next start, but once a `kept` row names that number, no
 folder went: recover the work and start the issue in a new run.
 An attempt's uncommitted files are kept the same way ([Handoff](handoff.md)).
 `aidrian project result` refuses a `failed`, `blocked`, `parked`, or `pr_open` result while the clone holds work no
-commit on the issue's branch has, unless `--uncommitted` hands it over so, and the drop records what it read as `tree`.
+commit on the issue's branch has, unless `--uncommitted` hands it over so, reading nothing; the drop records the word as `tree`.
 The sweep keeps an ended attempt's folder, with a `kept` row that names no commit, unless its result is `merged`, its
 `tree` is `clean`, it has neither a result nor an `ended` row, or it was offered kept commits it never took.
 So a timeout or a limit keeps it too: a run may hold up to 3 attempt folders an issue, and 24 more after limits.

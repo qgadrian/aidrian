@@ -688,10 +688,13 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   commit the work by path, remove the session's scratch, or run it again with `--uncommitted` to hand it over as it is.
   The drop carries the word as `tree`: `clean`, `uncommitted`, or `unknown` when git cannot answer, which hands over too.
   `--uncommitted` runs no git, and carries `uncommitted`.
+  A `.gitmodules` in the clone or a worktree it reads, or a `modules` folder in its git folder, reads `unknown` before any git
+  runs, since status does not read into a submodule.
   `wait` copies it into the `result` row, and only the sweep reads it.
   With no commit the forge lacks, the sweep decides by the ledger and runs no git in the clone.
   The folder goes after a `merged` result, a `tree` of `clean`, a start with neither a result nor an `ended` row,
-  or an offer of kept commits its session never took, which the forge still lacks.
+  or an offer of kept commits its session never took, which the forge still lacks,
+  unless its `tree` says `uncommitted` or `unknown`.
   Every other end keeps it with a `kept` row that names no commit: a timeout, a limit, no result, a refused result,
   or a `tree` of `uncommitted`, `unknown`, or none.
   `wait` then prints `kept ISSUE attempt N: <why>, …; copy any work out of <clone>, and run no git or program there`.

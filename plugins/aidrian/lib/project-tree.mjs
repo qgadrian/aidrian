@@ -10,7 +10,7 @@
 //     anything the clone configures, in a clone a session had. `tree` decides only that, and never over a commit the
 //     forge lacks (unpushedHead goes first).
 
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import path from 'node:path';
 
 import { cleanText, maskSecrets } from './clean-text.mjs';
@@ -28,12 +28,14 @@ const FULL_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 
 // The tree of the attempt the start row `start` made, read in its clone with `env`: { tree, files, others, commits,
 // names }, or { skip: true } for an attempt offered kept commits whose HEAD does not hold them (lib/project-kept.mjs):
-// its first message has it change nothing more, so its tree is not read. Any git call that fails, or a clone that is
-// not the attempt's own work folder, gives `unknown`.
+// its first message has it change nothing more, so its tree is not read. Any git call that fails, a clone that is
+// not the attempt's own work folder, and a submodule in the clone or a worktree it reads give `unknown`: status does
+// not read into a submodule (lib/git.mjs GATE_ARGS), so a dirty one would read clean.
 export function treeOf({ start, env = process.env }) {
   const unknown = { tree: 'unknown', files: 0, others: 0, commits: 0, names: [] };
   const work = start?.cwd;
   if (typeof start?.drop !== 'string' || typeof work !== 'string' || work !== path.join(path.dirname(start.drop), 'work')) return unknown;
+  if (submodules(work) || present(path.join(path.dirname(start.drop), 'git', 'modules'))) return unknown;
   const quiet = { ...env, GIT_OPTIONAL_LOCKS: '0' };
   const git = (args, cwd) => gateGit(args, cwd, { env: quiet, timeout: TREE_TIMEOUT_MS, maxBuffer: WHOLE_TREE_BUFFER });
   if (typeof start.took?.head === 'string' && FULL_ID.test(start.took.head)) {
@@ -48,35 +50,55 @@ export function treeOf({ start, env = process.env }) {
   if (listed.status !== 0) return unknown;
   const others = worktreesOf(listed.stdout).slice(1);
   if (others.length > MAX_WORKTREES) return unknown;
-  const theirs = [];
+  const theirs = { count: 0, sample: [] };
   for (const other of others.filter((each) => !each.prunable)) {
+    if (submodules(other.path)) return unknown;
     const files = changedFiles(git, other.path);
     if (files === null) return unknown;
-    theirs.push(...files);
+    theirs.count += files.count;
+    theirs.sample = theirs.sample.concat(files.sample).slice(0, MAX_NAMES);
   }
   const heads = [...new Set(others.map((each) => each.head).filter((head) => FULL_ID.test(head ?? '')))];
   const counted = git(['rev-list', '--count', '--branches', '--glob=refs/stash*', ...heads, '--not', 'HEAD', '--remotes'], work);
   const commits = counted.status === 0 ? Number(counted.stdout.trim()) : Number.NaN;
   if (!Number.isInteger(commits)) return unknown;
-  const names = [...own, ...theirs].slice(0, MAX_NAMES).map((name) => maskSecrets(cleanText(name, 120, { domains: false }) ?? ''));
-  const tree = own.length + theirs.length + commits > 0 ? 'uncommitted' : 'clean';
-  return { tree, files: own.length, others: theirs.length, commits, names };
+  const names = own.sample.concat(theirs.sample).slice(0, MAX_NAMES).map((name) => maskSecrets(cleanText(name, 120, { domains: false }) ?? ''));
+  const tree = own.count + theirs.count + commits > 0 ? 'uncommitted' : 'clean';
+  return { tree, files: own.count, others: theirs.count, commits, names };
 }
 
-// The paths `git status` lists as changed or untracked in the worktree at `cwd`, or null when git cannot answer. A
-// rename or copy names its new path, and its old one is skipped.
+// Whether anything, a link included, is at `file`.
+function present(file) {
+  try {
+    lstatSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Whether the worktree at `dir` declares submodules, by its `.gitmodules`.
+const submodules = (dir) => present(path.join(dir, '.gitmodules'));
+
+// What `git status` lists as changed or untracked in the worktree at `cwd` (statusPaths), or null when git cannot answer.
 function changedFiles(git, cwd) {
   const read = git(['status', '--porcelain', '-z', '--untracked-files=normal'], cwd);
-  if (read.status !== 0) return null;
-  const fields = read.stdout.split('\0');
-  const files = [];
+  return read.status === 0 ? statusPaths(read.stdout) : null;
+}
+
+// The paths of `git status --porcelain -z` output `out`: { count, sample }, how many, and the first MAX_NAMES of them.
+// A rename or copy names its new path, and its old one is skipped.
+export function statusPaths(out) {
+  const fields = out.split('\0');
+  const read = { count: 0, sample: [] };
   for (let at = 0; at < fields.length; at += 1) {
     const field = fields[at];
     if (field.length < 4) continue;
-    files.push(field.slice(3));
+    read.count += 1;
+    if (read.sample.length < MAX_NAMES) read.sample.push(field.slice(3));
     if (/[RC]/u.test(field.slice(0, 2))) at += 1;
   }
-  return files;
+  return read;
 }
 
 // The worktrees `git worktree list --porcelain -z` printed, `out`, in its order, the main one first: { path, head,
@@ -119,12 +141,15 @@ export function treeLines(read) {
 // forge lacks: { why }, a fixed text with nothing a session wrote; null when it goes; or { wait } when `forge` cannot
 // say now. It goes when its result is `merged`, or its result row says `clean`; when the attempt has neither a result
 // nor an `ended` row, as a start given back or settled as an orphan; or when it was offered kept commits its session
-// never took, as the forge lacks them still: its clone holds no work, and the older offer stands.
+// never took, as the forge lacks them still: its clone holds no work, and the older offer stands. A result that says
+// `uncommitted` or `unknown` keeps it whatever the offer: its session said it left work, or could not tell.
 export function ledgerKeep({ found, row, repository, forge }) {
   const mine = (each) => each.key === row.key && each.attempt === row.attempt;
   const result = found.rows.findLast((each) => each.event === 'result' && mine(each));
   const ended = found.rows.some((each) => each.event === 'ended' && mine(each));
   if (result?.status === 'merged' || result?.tree === 'clean' || (!result && !ended)) return null;
+  if (result?.tree === 'uncommitted') return { why: 'its session handed its result over with work left uncommitted' };
+  if (result?.tree === 'unknown') return { why: 'its session\'s result could not tell whether work was left uncommitted' };
   const head = row.took?.head;
   if (typeof head === 'string' && FULL_ID.test(head)) {
     if (!forge || typeof forge.hasCommit !== 'function' || !repository) return { wait: true };
@@ -138,7 +163,5 @@ export function ledgerKeep({ found, row, repository, forge }) {
     if (has !== true) return { wait: true };
   }
   if (!result) return { why: 'its session ended with no result that says its clone was left clean' };
-  if (result.tree === 'uncommitted') return { why: 'its session handed its result over with work left uncommitted' };
-  if (result.tree === 'unknown') return { why: 'its session\'s result could not tell whether work was left uncommitted' };
   return { why: 'its result does not say its clone was left clean' };
 }

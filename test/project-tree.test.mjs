@@ -18,7 +18,7 @@ import { DROP_FILE, ingestDrops } from '../plugins/aidrian/lib/project-result.mj
 import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { keptCandidate, keptLines } from '../plugins/aidrian/lib/project-kept.mjs';
 import { attemptFolder, cloneRefs, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
-import { ledgerKeep, treeLines, treeOf } from '../plugins/aidrian/lib/project-tree.mjs';
+import { ledgerKeep, statusPaths, treeLines, treeOf } from '../plugins/aidrian/lib/project-tree.mjs';
 import { DRIVER, ISSUES, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const CHILD = STARTED[0].session;
@@ -48,6 +48,15 @@ test('the tree check reads every way work can lie outside a commit, and `result`
   writeFileSync(path.join(work, 'out', 'build.log'), 'ignored\n');
   assert.ok(existsSync(path.join(work, '.claude', 'settings.json')), 'the placeholders are there');
   assert.deepEqual(tree(), { tree: 'clean', files: 0, others: 0, commits: 0, names: [] });
+  // A submodule the clone declares, or one its git folder holds, reads unknown, before any git runs: status does not
+  // read into one.
+  const unknownTree = { tree: 'unknown', files: 0, others: 0, commits: 0, names: [] };
+  writeFileSync(path.join(work, '.gitmodules'), '[submodule "lib"]\n\tpath = lib\n\turl = ./lib\n');
+  assert.deepEqual(tree(), unknownTree);
+  rmSync(path.join(work, '.gitmodules'));
+  mkdirSync(path.join(folder, 'git', 'modules'));
+  assert.deepEqual(tree(), unknownTree);
+  rmSync(path.join(folder, 'git', 'modules'), { recursive: true });
   // A changed tracked file, then an untracked one by a cleaned name.
   writeFileSync(path.join(work, 'src.js'), 'two\n');
   assert.deepEqual(tree(), { tree: 'uncommitted', files: 1, others: 0, commits: 0, names: ['src.js'] });
@@ -62,10 +71,13 @@ test('the tree check reads every way work can lie outside a commit, and `result`
   assert.deepEqual(tree(), { tree: 'uncommitted', files: 0, others: 1, commits: 0, names: ['src.js'] });
   execFileSync('git', ['-C', slice, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-am', 'slice'], { env: fx.env });
   assert.deepEqual(tree(), { tree: 'uncommitted', files: 0, others: 0, commits: 1, names: [] });
-  // Brought onto the issue branch, it counts no more; nor does the worktree, removed.
+  // Brought onto the issue branch, it counts no more, as the clean results below show; a submodule the linked worktree
+  // declares reads unknown; then the worktree is removed.
   git('merge', '-q', '--ff-only', 'slice');
+  writeFileSync(path.join(slice, '.gitmodules'), '[submodule "lib"]\n\tpath = lib\n\turl = ./lib\n');
+  assert.deepEqual(tree(), unknownTree);
+  rmSync(path.join(slice, '.gitmodules'));
   git('worktree', 'remove', slice);
-  assert.equal(tree().tree, 'clean');
   // The stash: one entry is two commits to git, its work and its index.
   writeFileSync(path.join(work, 'src.js'), 'stashed\n');
   git('stash', '-q');
@@ -210,9 +222,23 @@ test('the sweep keeps by the ledger: every end but a merge, a clean result, a st
   // An offer never taken: the forge still lacks the offered commit, so the clone holds no work by its first message.
   const took = { start: { took: { attempt: 1, head: 'b'.repeat(40) } } };
   assert.equal(keep([{ event: 'ended', reason: 'limit' }], { ...took, forge: { hasCommit: () => false } }), null);
+  assert.equal(keep([{ event: 'result', status: 'failed' }], { ...took, forge: { hasCommit: () => false } }), null, 'a result whose check did not run');
+  // A result that says it left work, or could not tell, keeps the folder whatever the offer, and asks the forge nothing.
+  const asked = { hasCommit: () => assert.fail('the forge is asked nothing') };
+  assert.deepEqual(keep([{ event: 'result', status: 'failed', tree: 'uncommitted' }], { ...took, forge: asked }), { why: 'its session handed its result over with work left uncommitted' });
+  assert.deepEqual(keep([{ event: 'result', status: 'failed', tree: 'unknown' }], { ...took, forge: asked }), { why: 'its session\'s result could not tell whether work was left uncommitted' });
   assert.deepEqual(keep([{ event: 'ended', reason: 'limit' }], { ...took, forge: { hasCommit: () => true } }), { why: ended });
   assert.deepEqual(keep([{ event: 'ended', reason: 'limit' }], { ...took, forge: { hasCommit: () => { throw new Error('gh: HTTP 502'); } } }), { wait: true });
   assert.deepEqual(keep([{ event: 'ended', reason: 'limit' }], { ...took, forge: null }), { wait: true });
+});
+
+test('a status of any size is counted, with a sample of ten paths kept, a rename by its new path', () => {
+  const many = 300_000;
+  const out = `R  new.js\0old.js\0${Array.from({ length: many }, (_, at) => `?? f${at}`).join('\0')}\0`;
+  const read = statusPaths(out);
+  assert.equal(read.count, many + 1);
+  assert.deepEqual(read.sample, ['new.js', ...Array.from({ length: 9 }, (_, at) => `f${at}`)]);
+  assert.deepEqual(statusPaths(''), { count: 0, sample: [] });
 });
 
 test('the refusal\'s lines count each kind of work and name at most ten files', () => {

@@ -98,6 +98,10 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   HTML, and a file or host name in backticks. When they do not answer, skip them: that never fails the issue, since the
   driver sets the started status too, and its report is the run's tracker record. No label, no done status, no new issue, and nothing on another issue: the
   tracker guard refuses those. A follow-up goes in the result's `stop` or `decisions`.
+- **Product feedback.** The Human's step: run only `aidrian pr product-feedback status <n> --json`, by the
+  `pr-product-feedback` skill's `references/in-a-flow.md`. While it is owed, the draft stays, and the result is
+  `pr_open` with the stop "product feedback is owed on #<n>, which an issue session does not run: the Human runs
+  pr-product-feedback on it, then marks it ready", never `environment`.
 - **Merges.** Only through the `pr-auto-merge` skill, never through a tracker tool. When the merge stops, follow
   `references/phases.md` § When the merge stops: run `aidrian project stop-action <run> <key>`, and do what its one line
   says, never acting on the bot, the checks, or the branch by hand.

@@ -21,6 +21,11 @@
 // product-manager read.
 //
 // Exit codes: `status` 0 clear, 2 owed, 3 error; every other action 0 done, 3 refused or failed, with the record untouched.
+//
+// In a project run's issue session, which the start's marker in the environment names (project-registries.mjs
+// ATTEMPT_ENV), every action that writes feedback or calls the forge to post is refused before it does either: the run's
+// product feedback is the Human's (docs/config.md#product-feedback). `status` and `items` still run. The marker is only
+// the message: the session's sandbox, which grants no feedback folder, is the control.
 
 import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -39,6 +44,7 @@ import { ACCESS_DOC, parsePersona, personaDocs, previewPatterns } from './person
 import { branchConfig, defaultBranch, ghError, notFound, readView, VIEW_FIELDS } from './pr-auto-merge.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
 import { pullRequestDiff } from './pr-diff.mjs';
+import { ATTEMPT_ENV } from './project-registries.mjs';
 import { changedFilesMatch, fromOutside, parseTarget, projectFolder } from './pr-resolve.mjs';
 import { committedConfigFile, repoRoot, stateDir, stateRoot, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
@@ -678,6 +684,12 @@ function diff({ argv: [value], project, forge, remotes }) {
 
 const localNote = (pr, { command, fetched }) => `gh refused the diff of #${pr.number} as too large, so it came from the local fallback: ${command} in this checkout${fetched.length ? `, after fetching ${fetched.join(' ')}` : ''}`;
 
+// The actions an issue session never runs, and the line each refusal prints for pull request `number`.
+export const HUMAN_ACTIONS = Object.freeze(['diff', 'record', 'answer', 'recheck', 'post']);
+// `number` is null when the argument names no pull request.
+export const issueRefusal = (number) => `a project run's issue session does not run product feedback; the Human runs the pr-product-feedback skill on ${number === null ? 'the pull request' : `#${number}`} in a session they attend`;
+const inIssueSession = (env) => typeof env?.[ATTEMPT_ENV] === 'string' && env[ATTEMPT_ENV] !== '';
+
 const TEXT = { type: 'string' };
 const ACTIONS = {
   status: { options: { json: { type: 'boolean' } }, operands: 1, run: status },
@@ -713,6 +725,10 @@ export function runProductFeedback(argv, project, {
     return fail(error.message);
   }
   if (parsed.positionals.length !== operands) return fail(USAGE);
+  if (HUMAN_ACTIONS.includes(name) && inIssueSession(env)) {
+    const target = parseTarget(parsed.positionals[0]);
+    return fail(issueRefusal(target.refusal ? null : target.number));
+  }
   try {
     return run({ argv: parsed.positionals, values: parsed.values, project, forge, remotes, env, access, now });
   } catch (error) {

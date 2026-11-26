@@ -860,6 +860,27 @@ machine opted out. Two limits follow, for `status` and the ready hold alike:
   `main` and a clone that never fetched.
 - A session that rewrites those refs and `HEAD` to say off turns `status` and the ready hold off. A follow-up keeps the
   session-start answer instead, as the session's gates do.
+  A project run's issue session is the exception: there the hold never reads git, as [In an issue session](#in-an-issue-session) says.
+
+### In an issue session
+
+In a [project run](#project-run)'s issue session, product feedback is the Human's step, never the session's.
+The session writes none of it: its sandbox grants no write to `<state>/product-feedback/`, `<state>/audits/`,
+`<state root>/feedback-folders/`, or the state folder itself.
+A record holds what the ready hold and the post rule trust, such as an answer's `by` and `limited`, so a session that could write it could forge them.
+After the draft opens, the session runs only `status <PR> --json`.
+On exit 2, for any reason, it runs nothing of the `pr-product-feedback` skill, keeps the line for its report, and goes on with the review rounds.
+On exit 3 it reports the line and goes on; this step never ends the issue `environment` or `failed`.
+`diff`, `record`, `answer`, `recheck`, and `post` exit 3 there, before any write, note, or forge call, with this line:
+"a project run's issue session does not run product feedback; the Human runs the pr-product-feedback skill on #<n> in a session they attend".
+`status` and `items` still run.
+The start's marker in the session's environment, `AIDRIAN_ATTEMPT_ENV`, names the session; it is only the message, and the sandbox is the control.
+While feedback is owed, the pull request stays a draft, and the session records `pr_open` with the stop
+"product feedback is owed on #<n>, which an issue session does not run: the Human runs pr-product-feedback on it, then marks it ready".
+Its report lists that under Decisions for the Human, with that command, and the pull request body gets one plain line:
+"Product feedback: owed, for the Human, before this leaves draft".
+With `auto` on, every user-facing pull request of a project run stops at a draft for the Human.
+The [ready hold](hooks.md#ready-hold) holds that draft there, since `pr-auto-merge` reads no product feedback and the forge merges no draft.
 
 ### With the key off
 

@@ -25,7 +25,7 @@ import { GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { ATTEMPT_ENV, cacheVars, ENV_NAME, isRegistries, REGISTRIES, REGISTRY_NAMES, registryHosts } from '../plugins/aidrian/lib/project-registries.mjs';
 import { CONFINE_PLAN } from '../plugins/aidrian/lib/project-confine.mjs';
-import { placeHolders, SHELL_VARS } from '../plugins/aidrian/lib/project-start.mjs';
+import { feedbackHeld, placeHolders, SHELL_VARS } from '../plugins/aidrian/lib/project-start.mjs';
 import { PENDING_AGE } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, OWN_PLUGIN, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
@@ -559,6 +559,13 @@ test('a start on Claude Code reaches the registries both reads of the default br
   assert.deepEqual(Object.keys(settings.env ?? {}), ['AIDRIAN_START_CLAIM'], 'no settings env but the start\'s claim, since the host\'s hooks and MCP servers get it');
   assert.doesNotMatch(text, /npm_config_cache|GOMODCACHE|PNPM_HOME/u);
   assert.ok(settings.sandbox.filesystem.allowWrite.includes(realpathSync(cache)), 'the cache folder is writable');
+  // No write the sandbox grants reaches a folder product feedback keeps, or is the state folder (docs/config.md#product-feedback).
+  const held = feedbackHeld(fx.state, { env: fx.env });
+  const state = realpathSync(fx.state);
+  for (const grant of settings.sandbox.filesystem.allowWrite) {
+    assert.notEqual(grant, state, 'not the state folder');
+    for (const folder of held) assert.ok(grant !== folder && !grant.startsWith(`${folder}${path.sep}`), `${grant} reaches ${folder}`);
+  }
   assert.equal(lstatSync(cache).mode & 0o777, 0o700, 'owner-only');
   assert.deepEqual(readdirSync(cache).sort(), ['.keep-attempt', 'npm-global.npmrc', 'npm-user.npmrc']);
   for (const name of ['npm-global.npmrc', 'npm-user.npmrc']) assert.equal(readFileSync(path.join(cache, name), 'utf8'), '', `${name} is empty`);

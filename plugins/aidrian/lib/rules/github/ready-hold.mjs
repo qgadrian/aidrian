@@ -25,6 +25,11 @@
 // one deadline cannot check.
 // `AIDRIAN_ALLOW_UNHELD_READY=1` in the hook's own environment, set by a person before the session, lets every one run. Only
 // this rule reads it, from `env`, so an inline setter in a command lifts nothing.
+//
+// In a project run's issue session (unattended-mark.mjs issueHeld) the session can write every ref of its clone, whose git
+// folder it is granted, so git alone never says off and never names the default branch there: every ready asks GitHub.
+// And it refuses what it lets through elsewhere for want of a read (strictReason): a call or target it cannot read, a ready
+// in no project, gh failing or past the deadline, and status exiting 3. The deny of an owed one names the stop the run records.
 
 import { forgeFor } from '../../forges/index.mjs';
 import { runGit } from '../../git.mjs';
@@ -33,6 +38,7 @@ import { feedbackStatus, localFeedback } from '../../pr-product-feedback.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo } from '../../review-gate.mjs';
 import { shellPlain, walkCommands } from '../../shell-lex.mjs';
+import { issueHeld, readUnattendedMark } from '../../unattended-mark.mjs';
 import { projectReader, UNKNOWN, unreadable } from '../product-feedback-answer.mjs';
 import { commandPath, readWords, switchValue } from './review-request.mjs';
 
@@ -146,13 +152,15 @@ export function deadlineForge({ forge = forgeFor, now = Date.now, deadlineMs = D
 // gh's answer when the rule viewed it, so status views it once. A bare number with no repository goes to status as it is;
 // any other target is viewed as written, with `-R` as written, so gh reads every spelling it accepts. An id that names no
 // pull request marks none the rule can check.
-function marked(call, forge) {
+// In an issue session (`strict`), a node read that fails throws, as a view that fails does.
+function marked(call, forge, strict = false) {
   if (call.ids) {
     return call.ids.flatMap((id) => {
       try {
         const url = forge.nodeChange(id)?.data?.node?.url;
         return typeof url === 'string' ? [{ value: url, view: null }] : [];
-      } catch {
+      } catch (error) {
+        if (strict) throw error;
         return [];
       }
     });
@@ -173,8 +181,15 @@ const mainBranchOf = (project) => (pr) => {
 
 const owedLine = ({ title, command }) => `${JSON.stringify(title)}: \`${command}\``;
 
-// The deny for a pull request status says is owed.
-function owedReason({ pr, reason, why, owed }) {
+// The stop an issue session records while product feedback is owed on `pr`, which it does not run.
+export const issueStop = (pr) => `product feedback is owed on #${pr}, which an issue session does not run: the Human runs pr-product-feedback on it, then marks it ready`;
+
+// The deny for a pull request status says is owed. In an issue session it names the stop the run records instead.
+function owedReason({ pr, reason, why, owed }, strict = false) {
+  if (strict) {
+    return `Blocked: this marks pull request #${pr} ready, and its product feedback is still owed: ${why}. ` +
+      `A project run's issue session does not run product feedback: leave the draft, and record the result pr_open with the stop "${issueStop(pr)}".`;
+  }
   const what = reason === 'not_run'
     ? `${why}. Run the \`pr-product-feedback\` skill on it`
     : `${why}: ${owed.map(owedLine).join('; ')}`;
@@ -191,46 +206,80 @@ export const MANY_REASON =
   'Blocked: this marks more than one pull request ready in one command, and the ready hold checks the product feedback of each ' +
   'within one time limit, which one command shares. Run one `gh pr ready <n>` per command.';
 
-// The deny reason for `calls`, each { call, projects }, or null. Any failure to read the state lets a call run.
-function judgeCalls(calls, seams) {
+// The deny an issue session gets for a ready the hold could not read, `why` naming what it could not read.
+export const strictReason = (why) =>
+  `Blocked: this marks a pull request ready in a project run's issue session, and the ready hold could not read ${why}, ` +
+  'so it cannot tell whether product feedback is owed. Run `aidrian pr product-feedback status <PR>`, then `gh pr ready <PR>` with the ' +
+  'number written out, as its own command, from the attempt\'s clone; when gh keeps failing, leave the draft and say so in the report.';
+// What an issue session reads in place of git alone: never off, so GitHub decides (localFeedback).
+const ASK_GITHUB = Object.freeze({ state: 'maybe', team: false });
+
+// The deny reason for `calls`, each { call, projects }, or null. Any failure to read the state lets a call run, but in an
+// issue session (`strict`), where each failure refuses and git's answer is never read.
+function judgeCalls(calls, seams, strict = false) {
   const local = new Map();
   const localOf = (project) => {
-    if (!local.has(project.root)) local.set(project.root, localFeedback(project));
+    if (!local.has(project.root)) local.set(project.root, strict ? ASK_GITHUB : localFeedback(project));
     return local.get(project.root);
   };
   const may = (project) => ['on', 'maybe'].includes(localOf(project).state);
-  if (calls.some(({ call, projects }) => call.fed && projects.some((project) => localOf(project).state === 'on'))) return FED_REASON;
+  if (calls.some(({ call, projects }) => call.fed && (strict || projects.some((project) => localOf(project).state === 'on')))) return FED_REASON;
   const marks = calls.filter(({ call }) => !call.fed).reduce((sum, { call }) => sum + (call.ids?.length || 1), 0);
-  if (marks > 1 && calls.some(({ projects }) => projects.some(may))) return MANY_REASON;
+  if (marks > 1 && (strict || calls.some(({ projects }) => projects.some(may)))) return MANY_REASON;
   let forgeAt = null;
   for (const { call, projects } of calls) {
-    if (call.fed || call.unreadable) continue;
+    if (call.fed) continue;
+    if (call.unreadable) {
+      if (strict) return strictReason(call.unreadable);
+      continue;
+    }
     const judged = projects.filter(may);
-    if (!judged.length) continue;
+    if (!judged.length) {
+      if (strict) return strictReason('the project of the folder gh runs in');
+      continue;
+    }
     forgeAt ??= deadlineForge(seams);
     let pulls;
     try {
-      pulls = marked(call, forgeAt(judged[0].root));
-    } catch {
+      pulls = marked(call, forgeAt(judged[0].root), strict);
+    } catch (error) {
+      if (strict) return strictReason(`the pull request with gh (${firstLine(error)})`);
       continue;
     }
+    if (strict && !pulls.length) return strictReason('which pull request the call marks');
     for (const project of judged) {
       for (const { value, view } of pulls) {
         try {
-          const { exit, result } = feedbackStatus(value, project, { forge: forgeAt(project.root), view, local: localOf(project), mainBranch: mainBranchOf(project) });
-          if (exit === 2) return owedReason(result);
-        } catch {}
+          const mainBranch = strict ? () => null : mainBranchOf(project);
+          const { exit, result } = feedbackStatus(value, project, { forge: forgeAt(project.root), view, local: localOf(project), mainBranch });
+          if (exit === 2) return owedReason(result, strict);
+        } catch (error) {
+          if (strict) return strictReason(`its product feedback (${firstLine(error)})`);
+        }
       }
     }
   }
   return null;
 }
 
+const firstLine = (error) => String(error?.message ?? error).split('\n')[0].slice(0, 200);
+
+// Whether the session the hook's payload `input` names works an issue of a project run (unattended-mark.mjs issueHeld).
+// A mark it cannot read holds no issue: the sandbox still holds the session.
+function issueSession(unattendedMark) {
+  try {
+    return issueHeld(unattendedMark());
+  } catch {
+    return false;
+  }
+}
+const markReader = (input, home) => () => readUnattendedMark(input?.session_id, home ? { home } : {});
+
 const named = (call) => Boolean(call.ids || call.repo || call.url);
 
-// The deny reason for `command`, or null. `cwd` is the session's folder, `env` the hook's own environment; the rest are the
-// seams of deadlineForge.
-export function check(command, { cwd = process.cwd(), env = process.env, ...seams } = {}) {
+// The deny reason for `command`, or null. `cwd` is the session's folder, `env` the hook's own environment, `input` the hook's
+// payload, whose session's mark `unattendedMark` reads (the seam); the rest are the seams of deadlineForge.
+export function check(command, { cwd = process.cwd(), env = process.env, input = {}, home, unattendedMark = markReader(input, home), ...seams } = {}) {
   if (env[OVERRIDE] === '1' || !mayMarkReady(command)) return null;
   const found = walkCommands(command, cwd).flatMap((entry) => {
     const text = fedText(entry);
@@ -251,17 +300,18 @@ export function check(command, { cwd = process.cwd(), env = process.env, ...seam
     const projects = list.filter((project, at) => project && list.findIndex((other) => other?.root === project.root) === at);
     return { call, projects };
   });
-  return judgeCalls(calls, seams);
+  return judgeCalls(calls, seams, issueSession(unattendedMark));
 }
 
 // The deny reason for one MCP call that marks ready, `given` as { owner, repo, pullNumber, draft }, or null. A number it
-// cannot read lets it run, as a target the shell fills in does.
-export function checkMcp(given, { cwd = process.cwd(), env = process.env, ...seams } = {}) {
+// cannot read lets it run, as a target the shell fills in does, but in an issue session, as check's reads.
+export function checkMcp(given, { cwd = process.cwd(), env = process.env, input = {}, home, unattendedMark = markReader(input, home), ...seams } = {}) {
   if (env[OVERRIDE] === '1' || given?.draft === true || given?.draft === undefined) return null;
+  const strict = issueSession(unattendedMark);
   const project = findProject(cwd);
-  if (!project) return null;
+  if (!project) return strict ? strictReason('the project of the session\'s folder') : null;
   const n = Number(given.pullNumber);
-  if (!(Number.isInteger(n) && n > 0)) return null;
+  if (!(Number.isInteger(n) && n > 0)) return strict ? strictReason('the pull request number') : null;
   const repo = typeof given.owner === 'string' && typeof given.repo === 'string' ? `${given.owner}/${given.repo}` : null;
-  return judgeCalls([{ call: { target: String(n), repo, url: false }, projects: [project] }], seams);
+  return judgeCalls([{ call: { target: String(n), repo, url: false }, projects: [project] }], seams, strict);
 }

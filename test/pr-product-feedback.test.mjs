@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,7 +9,8 @@ import test from 'node:test';
 import { auditNudge, readTriage, recordDecision, today } from '../plugins/aidrian/lib/audits.mjs';
 import { heldFolders, itemState } from '../plugins/aidrian/lib/feedback-record.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
-import { accessTerms, deriveKind, neutralized, refusalContext, refusedKind, runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
+import { accessTerms, deriveKind, HUMAN_ACTIONS, issueRefusal, neutralized, refusalContext, refusedKind, runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
+import { ATTEMPT_ENV } from '../plugins/aidrian/lib/project-registries.mjs';
 import { configPathIn, projectAt, stateRoot, strictConfigPathIn } from '../plugins/aidrian/lib/project.mjs';
 import { check } from '../plugins/aidrian/lib/rules/product-feedback-answer.mjs';
 
@@ -436,6 +437,47 @@ test('record cleans every title, of any length, and a forged title with a hidden
   assert.equal(status(t, r).code, 3, 'a control character in a record');
   rewrite(r, (value) => { value.items[0].title = 'Forged \u202Eformat character'; });
   assert.equal(status(t, r).code, 3, 'a format character in a record');
+});
+
+test('in a project run\'s issue session, diff, record, answer, recheck, and post exit 3 with the line, and write and call nothing', (t) => {
+  const r = repo(t);
+  recorded(t, r, [finding('F1', 'The save button hides')]);
+  const issue = { env: { [ATTEMPT_ENV]: 'launch/ENG-1.1/0123456789abcdef' } };
+  // Every file under the state folder and the state root's notes, with its text, so any write shows.
+  const files = (dir) => (existsSync(dir) ? readdirSync(dir, { recursive: true }).sort().map((name) => {
+    const file = path.join(dir, name);
+    let text = null;
+    try {
+      text = readFileSync(file, 'utf8');
+    } catch {}
+    return [name, text];
+  }) : []);
+  const notes = path.join(stateRoot(), 'feedback-folders');
+  const before = [files(r.state), files(notes)];
+  const items = itemsFile(r, [{ source: 'product-manager', title: 'The list loses its filter', kind: 'defect' }]);
+  const forms = [
+    ['diff', '7'],
+    ['record', '7', '--items', items],
+    ['record', URL7, '--none-found', '--read-by', 'product-manager'],
+    ['answer', '7', 'PF1', 'fix-now'],
+    ['answer', '7', 'PF1', 'decided', '--by', 'human', '--reason', 'Ship it'],
+    ['recheck', '7', 'PF1', 'confirmed'],
+    ['post', '7', '--body-file', path.join(r.state, 'tmp/body.md')],
+  ];
+  assert.deepEqual([...new Set(forms.map(([name]) => name))].sort(), [...HUMAN_ACTIONS].sort(), 'every action the Human runs');
+  for (const argv of forms) {
+    const result = run(t, r, argv, {}, issue);
+    assert.equal(result.code, 3, argv.join(' '));
+    assert.deepEqual(result.err, [`aidrian pr product-feedback: ${issueRefusal(7)}`], argv.join(' '));
+    assert.match(result.err[0], /a project run's issue session does not run product feedback; the Human runs the pr-product-feedback skill on #7 in a session they attend/u);
+    assert.deepEqual(result.calls, [], `${argv.join(' ')}: no forge call`);
+    assert.deepEqual(result.writes, []);
+  }
+  assert.deepEqual([files(r.state), files(notes)], before, 'nothing under product-feedback/, the audits, or feedback-folders/ changed');
+  // status and items still run there; an empty marker is no issue session.
+  assert.equal(run(t, r, ['status', '7', '--json'], {}, issue).code, 2);
+  assert.equal(run(t, r, ['items', '7', '--json'], {}, issue).code, 0);
+  assert.equal(run(t, r, ['answer', '7', 'PF1', 'fix-now'], {}, { env: { [ATTEMPT_ENV]: '' } }).code, 0, 'without the marker, as today');
 });
 
 test('record and recheck read the repository, the number, and the head from gh, never from an argument', (t) => {

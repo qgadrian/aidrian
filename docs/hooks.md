@@ -934,6 +934,21 @@ A gh call that fails, one past the deadline, `status` exiting 3, or anything els
 command run. The deny never names the override or the local opt-out as a route. A choice is the Human's, so an unattended
 run leaves the draft.
 
+### In an issue session
+
+In a project run's issue session, which the session's mark names (`issueHeld` in `lib/unattended-mark.mjs`), the hold reads more strictly.
+The session can write every ref of its clone, whose git folder it is granted, so the hold never reads git there.
+Step 3 never says off, and every ready asks GitHub.
+`status` asks GitHub for the default branch too, never the clone's `origin/HEAD`.
+It refuses every case it lets through elsewhere for want of a read: a target or graphql id it cannot read, a ready in no project,
+a gh call that fails or passes the deadline, and `status` exiting 3.
+Text fed to a shell that names a ready, and more than one ready in a command, are refused whatever git says.
+The GitHub MCP hook reads the same mark, and refuses a call whose number it cannot read or whose folder is in no project.
+The deny of an owed pull request names the stop the run records, `pr_open` with "product feedback is owed on #<n>, which an issue session does not run: …",
+never the skill: the step is the Human's ([In an issue session](config.md#in-an-issue-session)).
+A project without product feedback pays the gh calls of each ready there.
+`AIDRIAN_ALLOW_UNHELD_READY=1` still lets every one run, and outside issue sessions nothing changes.
+
 What it cannot read runs, by the Human's decision, and is out of its sight:
 
 - A word the shell fills in or expands where gh's program, `pr`, `ready`, or the pull request goes: `"$GH" pr ready 7`,

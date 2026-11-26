@@ -311,6 +311,57 @@ test('the hold lets the command run when clear, when a read fails, for another r
   assert.match(check(`export ${OVERRIDE}=1; gh pr ready 7`, { now: FROZEN, cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u);
 });
 
+test('in a project run\'s issue session the hold asks GitHub past refs the session wrote, and refuses each read it lets through elsewhere', (t) => {
+  // The clone's origin refs and HEAD all say off, as a session that rewrote them would leave them; GitHub says on.
+  const dir = repo(t, { feedback: null });
+  const issue = () => ({ project: 'proj', issue: 'ENG-1', root: null });
+  const plain = () => null;
+  const judge = (command, spec, mark, more = {}) => {
+    const { calls, exec } = seam(spec);
+    return { calls, reason: check(command, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec), unattendedMark: mark, ...more }) };
+  };
+  const off = judge('gh pr ready 7', { head: HEAD }, plain);
+  assert.deepEqual([off.reason, off.calls.length], [null, 0], 'no issue mark: git says off, as today');
+  const owed = judge('gh pr ready 7', { head: HEAD }, issue);
+  assert.match(owed.reason ?? '', /still owed/u, 'an issue mark asks GitHub, which says owed');
+  assert.match(owed.reason, /record the result pr_open with the stop "product feedback is owed on #7, which an issue session does not run: the Human runs pr-product-feedback on it, then marks it ready"/u);
+  assert.doesNotMatch(owed.reason, /Run the `pr-product-feedback` skill/u, 'an issue session is never told to run it');
+  // The default branch's name comes from GitHub too, never from the clone's origin/HEAD.
+  assert.ok(owed.calls.some(({ args }) => args.at(-1) === 'repos/acme/notes'), 'the default branch read from GitHub');
+  assert.equal(judge('gh pr ready 7', { head: HEAD, config: configText({ auto: false, files: ['src/**'] }) }, issue).reason, null, 'clear on GitHub runs');
+  // Each read the hold lets through for want of it, refused under an issue mark and let through with none, as today.
+  const failing = () => {
+    throw Object.assign(new Error('gh failed'), { stderr: 'gh: HTTP 502\n', status: 1 });
+  };
+  const stalled = () => {
+    throw Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  };
+  const on = repo(t);
+  const cases = [
+    ['a gh failure', (mark) => check('gh pr ready 7', { now: FROZEN, cwd: on, env: {}, forge: forgeOver(failing), unattendedMark: mark })],
+    ['the deadline', (mark) => check('gh pr ready 7', { cwd: on, env: {}, forge: forgeOver(stalled), now: () => 5_000, startedAt: 1_100, unattendedMark: mark })],
+    ['status exit 3', (mark) => check('gh pr ready 7', { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD, config: '{ not json' }).exec), unattendedMark: mark })],
+    ['an unreadable target', (mark) => check('gh pr ready "$PR"', { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: mark })],
+    ['a graphql id with no literal', (mark) => check('gh api graphql -f id="$ID" -f query=\'mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }\'', { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: mark })],
+    ['a repository that is no remote', (mark) => check('gh pr ready 7 -R someone/else', { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: mark })],
+  ];
+  for (const [what, ask] of cases) {
+    assert.match(ask(issue) ?? '', /in a project run's issue session, and the ready hold could not read/u, what);
+    assert.equal(ask(plain), null, `${what}: no issue mark, as today`);
+  }
+  // Fed text and more than one ready are refused there whatever git says.
+  assert.equal(judge("echo 'gh pr ready 7' | bash", { head: HEAD }, issue).reason, FED_REASON);
+  assert.equal(judge('gh pr ready 7; gh pr ready 8', { head: HEAD }, issue).reason, MANY_REASON);
+  assert.equal(judge("echo 'gh pr ready 7' | bash", { head: HEAD }, plain).reason, null);
+  // The MCP form alike, and the override still lets every one run.
+  const { exec } = seam({ head: HEAD });
+  const mcp = (given, mark) => checkMcp(given, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec), unattendedMark: mark });
+  assert.match(mcp({ owner: 'acme', repo: 'notes', pullNumber: 7, draft: false }, issue) ?? '', /still owed/u);
+  assert.match(mcp({ owner: 'acme', repo: 'notes', pullNumber: 'x', draft: false }, issue) ?? '', /could not read the pull request number/u);
+  assert.equal(mcp({ owner: 'acme', repo: 'notes', pullNumber: 7, draft: false }, plain), null);
+  assert.equal(judge('gh pr ready 7', { head: HEAD }, issue, { env: { [OVERRIDE]: '1' } }).reason, null, 'the override');
+});
+
 test('every gh call shares one deadline, and a gh that stalls past it lets the command run', (t) => {
   assert.ok(DEADLINE_MS < 4000 && HOOK_BUDGET_MS < 5000, 'inside the hook\'s 5 s');
   const dir = repo(t);

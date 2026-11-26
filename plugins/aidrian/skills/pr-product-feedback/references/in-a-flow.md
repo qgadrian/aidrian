@@ -20,6 +20,12 @@ aidrian pr product-feedback status <n> --json   # 0 clear, 2 owed, 3 error
 - Exit 2 with any other `reason`: go on. Nothing is re-checked here, mid-round: the ready step owns the re-check.
 - Exit 3: report its line and go on. The ready step leaves the draft.
 
+In a project run's issue session, the step is the Human's, and the session writes no feedback:
+on exit 2, for any reason, run nothing of the `pr-product-feedback` skill, no walk, diff, product-manager read, record,
+answer, re-check, or post. Keep the line for the report, and go on with the review rounds.
+On exit 3, report the line and go on. This step never ends the issue `environment` or `failed`.
+The other commands exit 3 there, and say so: never work around that.
+
 After the skill runs, run `status <n> --json` again; on `unanswered`, use the output already in hand. Answer each
 `unanswered` item with the command it prints in `owed`:
 each `defect` with `fix-now`, and each `minor` with `defer` and a `--reason`, or as a question to the Human.
@@ -40,5 +46,12 @@ finding, by the `orchestration` skill's § 4, and push the fix with the next rou
 A product choice is the Human's. In a run with the Human present, ask as the `pr-product-feedback` skill's step 5 says.
 In an unattended run, ask nothing: the draft stays a draft, and the report lists each question with its command, as a
 decision for the Human. When `reason` is `opted_out`, say in the report that this machine opted out.
+
+In a project run's issue session, mark it ready only on exit 0, and run no re-check. On exit 2, for any reason, leave
+the draft, and record the result `pr_open` with the stop "product feedback is owed on #<n>, which an issue session does
+not run: the Human runs pr-product-feedback on it, then marks it ready". The report lists it under Decisions for the
+Human: run the `pr-product-feedback` skill on `<n>` in a session they attend, then `gh pr ready <n>`. The pull request
+body gets one plain line, through `pr-write`: "Product feedback: owed, for the Human, before this leaves draft", with
+no local path or state folder. On exit 3, leave the draft and report the line, as step 3 says.
 
 A hook holds marking ready while `status` says owed. Never work around it: answer the item, or leave the draft.

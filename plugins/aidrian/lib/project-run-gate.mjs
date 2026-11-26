@@ -54,7 +54,7 @@
 // started, cut, or reset (lib/project-start.mjs prepareAttempt).
 
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
@@ -163,18 +163,31 @@ export function guardedStore({ env, home }) {
 }
 
 // The folders product feedback keeps (project-start.mjs feedbackHeld), which a confined session's sandbox denies, made
-// first as guardedStore makes its own: owner-only, and only once the folders from the real parent of the folder that holds
-// each, the state folder or the state root, down pass storePathProblem, so a deny names a path there at launch and none
-// is made through a link.
+// first as guardedStore makes its own, owner-only, once the folders from the real parent of the folder that holds each,
+// the state folder or the state root, down pass storePathProblem: { folders }, their real paths, each a plain folder there
+// at launch, so no sandbox skips a deny of a path that is not there; or { problem }, which halts the start, when one
+// cannot be made so, as through a link or in a folder another user may write.
 export function guardedFeedback(state, { env }) {
+  const real = (folder) => resolvedPath(folder) ?? path.resolve(folder);
   const [records, audits, notes] = feedbackHeld(state, { env });
-  for (const [folder, root] of [[records, state], [audits, state], [notes, stateRoot(env)]]) {
-    if (storePathProblem(path.join(folder, 'entry'), root) !== null) continue;
+  for (const [folder, root] of [[records, real(state)], [audits, real(state)], [notes, real(stateRoot(env))]]) {
+    const unsafe = (why) => ({ problem: `the folder product feedback keeps, ${folder}, cannot be made safely before the session's sandbox denies it (${why}): fix that, then start again` });
+    const problem = storePathProblem(path.join(folder, 'entry'), root);
+    if (problem !== null) return unsafe(problem);
     try {
       mkdirSync(folder, { recursive: true, mode: 0o700 });
-    } catch {}
+    } catch (error) {
+      return unsafe(`it cannot be made: ${error.code ?? 'no code'}`);
+    }
+    const after = storePathProblem(path.join(folder, 'entry'), root);
+    if (after !== null) return unsafe(after);
+    try {
+      if (!lstatSync(folder).isDirectory()) return unsafe('it is not a plain folder');
+    } catch (error) {
+      return unsafe(`it cannot be read: ${error.code ?? 'no code'}`);
+    }
   }
-  return feedbackHeld(state, { env });
+  return { folders: feedbackHeld(state, { env }) };
 }
 
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
@@ -690,6 +703,9 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, policyFiles, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
+  // The folders product feedback keeps, made before the sandbox denies them, or the start halts.
+  const feedback = guardedFeedback(state, { env });
+  if (feedback.problem) return { halt: feedback.problem };
   const clone = prepareAttempt({ project, state, run, found, key, attempt, branch, recorded, tip, reviewed, guards, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.retry) return { retry: clone.retry };
@@ -744,7 +760,7 @@ function confinedRoom({ project, state, run, key, branch, resumed, recorded, rev
   if (decision.problem) return { problem: decision.problem };
   const baseCopies = clone.overlay ? writeBaseCopies(clone.folder, clone.overlay.files) : null;
   if (baseCopies?.problem) return { problem: baseCopies.problem };
-  return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, decision, pushUrl: url || null, claim, branch: clone.branch,
+  return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], feedbackFolders: feedback.folders, drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, decision, pushUrl: url || null, claim, branch: clone.branch,
     head: clone.head, overlay: clone.overlay?.sha ?? null, baseCopies: baseCopies?.file ?? null, policyFiles,
     // The earlier run's work goes on only on its branch as the forge has it: a branch deleted since starts afresh.
     resumed: clone.onForge ? resumed : null, onForge: clone.onForge, kept: clone.kept };
@@ -837,7 +853,7 @@ function decisionLines(decision) {
 function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
   // `policy`: the one the start read once the base was pinned (startPlace), which the launch takes every value from.
-  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, decision, pushUrl, claim, head, overlay, baseCopies, policyFiles, resumed, policy, kept } = place;
+  const { feedbackFolders, folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, decision, pushUrl, claim, head, overlay, baseCopies, policyFiles, resumed, policy, kept } = place;
   const localBinding = policy.localBinding === true;
   // Whether the team's switch reaches this machine's loopback on this host and platform, as the host declares it: one
   // that keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
@@ -906,7 +922,7 @@ function launchStart(context, place) {
           runs: runsFolder(state),
           // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
           // Nor the folders product feedback keeps (feedbackHeld), even where a temporary folder's grant holds the state root.
-          guarded: [...guardedStore({ env, home }), ...guardedFeedback(state, { env })],
+          guarded: [...guardedStore({ env, home }), ...feedbackFolders],
           // Every host's files, from the clone's root and at any depth, whose writes the host's sandbox denies too, so the
           // session plants nothing another host would load there.
           hostFiles: { paths: protectedPaths(), globs: nestedGlobs() },

@@ -953,8 +953,9 @@ So a ready from a folder outside the clone, or one naming a repository, is refus
 A graphql call names its pull request by node id, so it is judged from any folder.
 Every ready there is judged in the project of that clone.
 It refuses a ready it cannot read as one with the same deny: gh's `pr` and `ready` around a word the shell fills in, such as `gh pr "$X" ready 7`,
-and the words `gh` and later `ready` among another program's words, as `xargs gh pr ready`, `parallel`, `watch`, or `sh -c` hand them on.
-That also refuses `echo gh pr ready 7`, a cheap over-block; `xargs gh pr list` and a program the shell fills in, such as `"$PY" -m pytest`, run.
+and `gh pr ready` in the command a launcher runs, as `xargs`, `parallel`, `find -exec`, `watch`, `nohup`, or `sh -c` hand it on.
+gh whose own subcommand is another, as `gh pr create --title ready`, holds no ready, nor does a program that runs no command its words name,
+as `echo gh pr ready 7`; `xargs gh pr list` and a program the shell fills in, such as `"$PY" -m pytest`, run.
 The GitHub MCP hook reads the same mark and judges in the same clone.
 It refuses a call whose number it cannot read, and one whose `owner` and `repo` are not both given and equal to the clone's origin repository.
 A pull request opened as no draft skips this hold, so there the [agent gates](#agent-gates) refuse it: every pull request opens as a draft.
@@ -1822,11 +1823,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     read from a file or the input, or built at run time.
   - A shell the lexer cannot read, or a command word built at run time, whose text names a push, a release, a workflow,
     or the API.
-  - A pull request opened as no draft (`forgeUndraftedCreate`), since one opened ready skips the [ready hold](#ready-hold).
-    On GitHub that is `gh pr create` or `gh pr new` whose last draft word is not `--draft`, `--draft=true`, or `-d`,
-    or that has a word the shell fills in where an option may go, and a `gh api` write to `repos/<owner>/<name>/pulls`.
-    The GitHub MCP server's `create_pull_request` without `draft: true` is refused too, under a plugin's name as well,
-    and so is a shell the lexer cannot read whose text opens a pull request and asks no draft.
+  - A pull request opened as no draft, since one opened ready skips the [ready hold](#ready-hold).
+    That is `gh pr create` or `gh pr new` whose own last draft setting is not on, as the pull request body rule reads its options:
+    each option takes its value as gh reads it, so in `--attach --draft` the file is `--draft`, and `--draft --draft=false` is off.
+    A word the shell fills in where an option may go refuses too, and so does a write to `repos/<owner>/<name>/pulls` (`forgeApiOpensPull`).
+    The GitHub MCP server's `create_pull_request` without `draft: true` is refused, under a plugin's name and as Codex's connector too.
+    A shell the lexer cannot read, such as PowerShell, opens no pull request at all, with a draft word or without, since the
+    hook cannot tie that word to the create; its refusal sends the session to the Bash tool.
     The refusal names the fix: `gh pr create --draft ...`, or the MCP call with `draft: true`.
 
   An attended session, a run's driver, and a session a pending mark holds are not held by it. Its residual: a script or

@@ -361,60 +361,11 @@ function apiCall(program, tokens) {
   return { route, sent, writes: method === null ? fields : method !== 'GET' && method !== 'HEAD' };
 }
 
-// gh pr create's options that take a value, long and short; any other short one is a switch.
-const CREATE_VALUES = new Set(['--title', '--body', '--body-file', '--base', '--head', '--assignee', '--label', '--milestone', '--project', '--reviewer', '--template', '--repo', '--recover']);
-const CREATE_SHORT_VALUES = new Set([...'tbFBHalmprTR']);
-
-// Why a call opens a pull request that is not a draft, which a project run's issue session never does, or null: `gh pr
-// create` (or its alias `new`) whose last word on the draft is not `--draft`, `--draft=true`, `-d`, or a cluster ending
-// a draft switch on, as pflag reads them, and a REST call that opens one, which may open it ready. A word built at run
-// time where an option may go could turn the draft off, so it refuses too. `tokens` are the words past `gh`.
-export function undraftedCreate(program, tokens) {
+// Why a `gh api` call opens a pull request, a REST write to a repository's pulls, which may open it ready, or null. A
+// project run's issue session opens one only with `gh pr create --draft` (lib/issue-forge-guard.mjs).
+export function apiOpensPull(program, tokens) {
   const api = apiCall(program, tokens);
-  if (api) {
-    const opens = api.writes && api.route !== null && /^repos\/[^/]+\/[^/]+\/pulls$/u.test(api.route);
-    return opens ? 'it opens a pull request through the forge API, which may open it ready' : null;
-  }
-  if (program !== 'gh') return null;
-  const words = [];
-  let at = 0;
-  for (; at < tokens.length && words.length < 2; at += 1) {
-    const { text, dynamic } = tokens[at];
-    if (dynamic) return null;
-    if (GH_VALUES.includes(text)) at += 1;
-    else if (!text.startsWith('-')) words.push(text);
-  }
-  if (words[0] !== 'pr' || !['create', 'new'].includes(words[1])) return null;
-  let draft = false;
-  for (let i = at; i < tokens.length; i += 1) {
-    const { text, dynamic } = tokens[i];
-    if (text === '--' && !dynamic) break;
-    if (dynamic) {
-      // A value the shell fills in after an option that takes it, as `--title="$T"` or `-t"$T"`, sets no draft.
-      const long = /^(--[\w-]+)=/u.exec(text)?.[1];
-      if ((long && long !== '--draft' && CREATE_VALUES.has(long)) || CREATE_SHORT_VALUES.has(/^-([A-Za-z])/u.exec(text)?.[1])) continue;
-      return 'it opens a pull request with a word built at run time where an option may go, which may turn the draft off';
-    }
-    if (text.startsWith('--')) {
-      const [name, value] = text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
-      if (name === '--draft') draft = value === null || value === 'true';
-      else if (value === null && CREATE_VALUES.has(name)) i += 1;
-    } else if (/^-[^-]/u.test(text)) {
-      const letters = text.slice(1);
-      for (let k = 0; k < letters.length; k += 1) {
-        if (letters[k + 1] === '=') {
-          if (letters[k] === 'd') draft = letters.slice(k + 2) === 'true';
-          break;
-        }
-        if (letters[k] === 'd') draft = true;
-        if (CREATE_SHORT_VALUES.has(letters[k])) {
-          if (k === letters.length - 1) i += 1;
-          break;
-        }
-      }
-    }
-  }
-  return draft ? null : 'it opens a pull request that is not a draft';
+  return api?.writes && api.route !== null && /^repos\/[^/]+\/[^/]+\/pulls$/u.test(api.route) ? 'it opens a pull request through the forge API, which may open it ready' : null;
 }
 
 // An option word of gh api as [name, attached value]: `--name=value`, a short option glued to its value, as `-XPOST`,

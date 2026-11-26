@@ -689,6 +689,15 @@ test('a start halts unless the default branch sets projectRun.unverifiedHosts', 
   assert.deepEqual(fx.claude.starts(), []);
 });
 
+test('a start halts when a folder product feedback keeps cannot be made a plain folder before the sandbox denies it', (t) => {
+  // A link where the records folder goes: the deny would name a folder the start cannot vouch for, so nothing starts.
+  const fx = runFixture(t);
+  const elsewhere = mkdtempSync(path.join(tmpdir(), 'aidrian-feedback-elsewhere-'));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  symlinkSync(elsewhere, path.join(fx.state, 'product-feedback'));
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /the folder product feedback keeps, .* cannot be made safely before the session's sandbox denies it/u);
+});
+
 test('a host whose project start is not confined halts', (t) => {
   const cap = claudeCode.capabilities.projectStart;
   cap.confined = false;

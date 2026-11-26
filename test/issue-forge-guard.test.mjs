@@ -15,6 +15,7 @@ import test from 'node:test';
 
 import { checkDelivery, unwrittenHandoffs } from '../plugins/aidrian/lib/delivery-check.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
+import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
 import { rawPaths, statusEntries } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { findingsFile, sessionIssue } from '../plugins/aidrian/lib/review/dispatch.mjs';
@@ -145,13 +146,14 @@ test('an issue session opens every pull request as a draft, by gh, the forge API
   const remedy = /opens every pull request as a draft, which the ready hold then holds\. This is a project rule: open it as a draft: `gh pr create --draft \.\.\.`, or the GitHub MCP create_pull_request call with `draft: true`/u;
   for (const command of [
     `gh pr create --head ${BRANCH} --title x --body y`, 'gh pr create -t x -b y', 'gh pr new -t x -b y', 'gh pr create --draft=false -t x', 'gh pr create -d --draft=false -t x',
-    'gh pr create --draft=1 -t x', 'gh pr create -d=false -t x', 'gh pr create -t -d -b y', 'gh pr create --title --draft -b y', 'gh -R acme/widgets pr create -t x',
+    'gh pr create -d=false -t x', 'gh pr create --attach --draft -t x', 'gh pr create --draft --draft=false -t x', 'gh pr create -t -d -b y', 'gh pr create --title --draft -b y', 'gh -R acme/widgets pr create -t x',
     'gh pr create -d $MORE', 'gh pr create -d "$@"', 'timeout 30 gh pr create -t x', 'npm test && gh pr create -t x', 'gh pr create -t x -- --draft',
     'gh api repos/acme/widgets/pulls -f title=x -f head=b -f base=main', 'gh api -X POST repos/acme/widgets/pulls -F draft=true -f title=x',
   ]) {
     assert.match(ask(bash(command))?.reason ?? '', remedy, command);
   }
-  for (const command of ['gh pr create --draft -t x -b y', 'gh pr create -d -t x', 'gh pr create --draft=true -t x', 'gh pr new -d -t x', 'gh pr create -fd', 'gh pr create -dt x',
+  // The create's own last draft setting decides, each option taking its value as gh reads it (rules/github/pr-body.mjs).
+  for (const command of ['gh pr create --draft -t x -b y', 'gh pr create -d -t x', 'gh pr create --draft=true -t x', 'gh pr create --draft=1 -t x', 'gh pr create --attach x.png --draft -t x', 'gh pr new -d -t x', 'gh pr create -fd', 'gh pr create -dt x',
     'gh pr create -d --title "$T" --body "$(cat body.md)" --body-file="$F" -t"$X"', `gh -R acme/widgets pr create --draft --head ${BRANCH} -t x`, 'gh pr create -d --base main -B main -H x',
     'gh pr view 3', 'gh pr list', 'gh api repos/acme/widgets/pulls', 'gh api -X PATCH repos/acme/widgets/pulls/3 -f title=x', 'echo gh pr create']) {
     assert.equal(ask(bash(command)), null, command);
@@ -163,9 +165,17 @@ test('an issue session opens every pull request as a draft, by gh, the forge API
   const plugin = claudeCode.hookInput({ tool_name: 'mcp__plugin_github_github__create_pull_request', tool_input: { title: 'x' } });
   assert.equal(plugin.tool_name, 'mcp__github__create_pull_request');
   assert.match(ask(plugin)?.reason ?? '', remedy, 'a plugin\'s GitHub server');
-  // A shell the guard cannot read.
-  assert.match(ask({ tool_name: 'PowerShell', tool_input: { command: 'gh pr create -t x -b y' } })?.reason ?? '', remedy);
-  assert.equal(ask({ tool_name: 'PowerShell', tool_input: { command: 'gh pr create --draft -t x -b y' } }), null);
+  // Codex's GitHub connector, whose `draft` defaults to false, as its adapter reads the name Codex sends.
+  const connector = (given) => ask(codex.hookInput({ tool_name: 'mcp__codex_apps__github__create_pull_request', tool_input: { repository_full_name: 'acme/widgets', title: 'x', head: BRANCH, base: 'main', ...given } }));
+  for (const given of [{}, { draft: false }]) assert.match(connector(given)?.reason ?? '', remedy, `the connector ${JSON.stringify(given)}`);
+  assert.equal(connector({ draft: true }), null, 'the connector with draft: true');
+  // A shell the guard cannot read: any opening of a pull request there, a draft word or none, since it cannot tie the word
+  // to the create; the refusal sends the session to Bash.
+  const opaque = /in words that open a pull request, whose draft setting it cannot read, .*open it from the Bash tool as a draft, `gh pr create --draft \.\.\.`/u;
+  for (const command of ['gh pr create -t x -b y', 'gh pr create --draft -t x -b y', 'gh pr new -d', 'gh api repos/acme/widgets/pulls -f title=x']) {
+    assert.match(ask({ tool_name: 'PowerShell', tool_input: { command } })?.reason ?? '', opaque, `PowerShell: ${command}`);
+  }
+  assert.equal(ask({ tool_name: 'PowerShell', tool_input: { command: 'Get-ChildItem' } }), null);
   // No issue mark: the session opens what it likes, as before.
   for (const input of [bash('gh pr create -t x -b y'), { tool_name: 'mcp__github__create_pull_request', tool_input: { title: 'x' } }]) assert.equal(ask(input, null), null);
 });

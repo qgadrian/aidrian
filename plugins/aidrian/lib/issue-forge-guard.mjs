@@ -20,8 +20,10 @@
 //     GIT_COMMANDS, such as an alias or `subtree`, but for `git lfs`'s forms that push nothing (LFS_READS).
 //   - The forge CLI: the subcommands forges/index.mjs forgeRefCommands lists, and a raw API call forgeApiWrite reads
 //     as a write the session never makes.
-//   - A pull request opened as no draft (forgeUndraftedCreate), by the CLI, the forge API, the GitHub MCP server's
-//     create_pull_request without `draft: true`, or a shell it cannot read, since one opened ready skips the ready hold.
+//   - A pull request opened as no draft, since one opened ready skips the ready hold: `gh pr create` whose own last
+//     draft setting is not on (rules/github/pr-body.mjs undraftedCreate), a raw API call that opens one
+//     (forgeApiOpensPull), the GitHub MCP server's create_pull_request without `draft: true`, and any opening of one in
+//     a shell it cannot read, whose draft words it cannot tie to the create.
 //   - git or the forge CLI run through a program the shared lexer does not unwrap, `xargs`, `xcrun`, or `find -exec`,
 //     or a command git runs for a subcommand, as `git submodule foreach` or `git rebase --exec`, that names them.
 // It reads only the command, as the shared lexer reads it, and asks git once or twice, for an exact push only, which
@@ -30,11 +32,12 @@
 import { projectRuleReason } from './agent-gates.mjs';
 import { bashCall, opaqueTexts } from './config-guard.mjs';
 import { checkDeadline } from './deadline.mjs';
-import { forgeApiWrite, forgeRefCommands, forgeUndraftedCreate } from './forges/index.mjs';
+import { forgeApiOpensPull, forgeApiWrite, forgeRefCommands } from './forges/index.mjs';
 import { isWithin } from './fs.mjs';
 import { changesGitTarget, plainGlobals } from './git-push.mjs';
 import { githubCall, opaqueShellCommand } from './hosts/index.mjs';
 import { pushCheckoutProblem } from './issue-push-checkout.mjs';
+import { undraftedCreate } from './rules/github/pr-body.mjs';
 import { changedVariables, changesVariable, GIT_VALUE_GLOBALS, readShortOptions, walkCommands } from './shell-lex.mjs';
 import { issueHeld } from './unattended-mark.mjs';
 import { runsDeclared } from './unattended-shell.mjs';
@@ -106,13 +109,14 @@ export function issueForgeDenial(input, { names: { human } }, { mark = null, iss
   if (!issueHeld(mark)) return null;
   const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}, and a project run's issue session never does that: only ${human} does`, human, 'to make that change, or record the issue parked with the decision it needs', { mark }) });
   // A pull request opened ready skips the ready hold, so the session opens each one as a draft (DRAFT_REMEDY).
-  const undrafted = (why) => ({ match: 'issue session pull request not a draft', reason: projectRuleReason(input, `${why}, and a project run's issue session opens every pull request as a draft, which the ready hold then holds`, human, 'why it cannot open a draft', { mark, remedy: DRAFT_REMEDY }) });
+  const undrafted = (why, remedy = DRAFT_REMEDY) => ({ match: 'issue session pull request not a draft', reason: projectRuleReason(input, `${why}, and a project run's issue session opens every pull request as a draft, which the ready hold then holds`, human, 'why it cannot open a draft', { mark, remedy }) });
   const { tool, given } = githubCall(input.tool_name, input.tool_input ?? {});
   if (tool === CREATE_TOOL) return given?.draft === true ? null : undrafted('it opens a pull request without `draft: true`');
   const opaque = opaqueShellCommand(input);
   if (opaque !== null) {
     const texts = opaqueTexts(opaque);
-    if (texts.some((text) => OPENS_PULL.test(text) && !ASKS_DRAFT.test(text))) return undrafted('it runs a shell the guard cannot read, in words that open a pull request and ask no draft');
+    // Whether a draft word there belongs to the create cannot be read, so any opening of a pull request is refused.
+    if (texts.some((text) => OPENS_PULL.test(text))) return undrafted('it runs a shell the guard cannot read, in words that open a pull request, whose draft setting it cannot read', OPAQUE_REMEDY);
     return texts.some((text) => FORGE_WORD.test(text)) ? deny('issue session forge call it cannot read', 'it runs a shell the guard cannot read, in words that may push, release, or call the forge') : null;
   }
   const command = bashCall(input) && typeof input.tool_input?.command === 'string' ? input.tool_input.command : null;
@@ -122,7 +126,7 @@ export function issueForgeDenial(input, { names: { human } }, { mark = null, iss
   const beside = entries.find((entry) => !besidePush(entry)) ?? null;
   for (const entry of entries) {
     checkDeadline();
-    const opens = entry.invocation.dynamic ? null : forgeUndraftedCreate(entry.invocation.program, entry.invocation.args ?? []);
+    const opens = entry.invocation.dynamic ? null : undraftedCreate(entry.segment) ?? forgeApiOpensPull(entry.invocation.program, entry.invocation.args ?? []);
     if (opens) return undrafted(opens);
     const found = entryProblem(entry, { moved, issue, roots, fold, beside });
     if (found) return deny(found.match, found.why);
@@ -133,9 +137,9 @@ export function issueForgeDenial(input, { names: { human } }, { mark = null, iss
 // The GitHub MCP server's tool that opens a pull request, as a host's connector reaches it too (hosts githubCall).
 const CREATE_TOOL = 'mcp__github__create_pull_request';
 const DRAFT_REMEDY = 'open it as a draft: `gh pr create --draft ...`, or the GitHub MCP create_pull_request call with `draft: true`';
-// Text a shell the guard cannot read is fed that opens a pull request, and the words that ask for a draft in it.
-const OPENS_PULL = /\bgh\b[\s\S]*\bpr\b[\s\S]*\b(?:create|new)\b/u;
-const ASKS_DRAFT = /--draft\b(?!=)|--draft=true\b|(?<!\S)-d(?!\S)/u;
+const OPAQUE_REMEDY = 'open it from the Bash tool as a draft, `gh pr create --draft ...`, or with the GitHub MCP create_pull_request call and `draft: true`';
+// Text a shell the guard cannot read is fed that opens a pull request: `pr create`, `pr new`, or a pulls route.
+const OPENS_PULL = /\bpr\b[\s\S]*\b(?:create|new)\b|\bpulls\b/iu;
 
 // Whether one walked command (shell-lex walkCommands) may run in the call of the exact push: a git push, whose own words
 // and variables pushProblem holds, a read of BESIDE_GIT, `git branch --show-current`, or a program of BESIDE_PROGRAMS,

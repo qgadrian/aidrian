@@ -443,7 +443,18 @@ export function readPrCall(segment) {
   return call?.noun === 'pr' && ['create', 'edit'].includes(call.subcommand) ? call : null;
 }
 
-// { noun, subcommand, fill, draft, body, bodyFile, title, repo, target, head, base, dryRun, deleteLast } for a segment
+// Why the walked command `segment` opens a pull request that is not a draft, or null when it opens none or a draft: `gh pr
+// create` or `gh pr new` whose own last draft setting, as readBodyCall reads its options with their values, is not on, or
+// that holds a word the shell fills in where an option may go (`loose`). A project run's issue session opens none
+// (lib/issue-forge-guard.mjs).
+export function undraftedCreate(segment) {
+  const call = readBodyCall(segment);
+  if (call?.noun !== 'pr' || call.subcommand !== 'create' || call.help) return null;
+  if (call.loose) return 'it opens a pull request with a word the shell fills in where an option may go, which may turn the draft off';
+  return call.draft ? null : 'it opens a pull request that is not a draft';
+}
+
+// { noun, subcommand, fill, draft, body, bodyFile, title, repo, target, head, base, dryRun, deleteLast, loose } for a segment
 // of `gh [-R repo] pr|issue create|edit|comment|close|reopen …` or `gh pr merge …`, else null. Later flags win, as in gh.
 // `title`, `repo`, `head`, and `base` are tokens; `target` is the first positional (the issue or pull request named). A
 // closing comment is the `body`, and the subject of a merge the `title`.
@@ -475,6 +486,9 @@ export function readBodyCall(segment) {
       call.target ??= args[i + 1] ?? null;
       break;
     }
+    // A word the shell fills in that is no option's attached value, such as `--title="$T"` or `-t"$T"`, may be any
+    // option, a draft switch turned off among them (undraftedCreate).
+    if (dynamic && !(/^--[\w-]+=/u.test(text) && !text.startsWith('--draft')) && !(/^-[A-Za-ce-z]/u.test(text) && shorts.has(text.slice(0, 2)))) call.loose = true;
     let [flag, inline] = text.startsWith('--') && text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
     if (/^-[^-]/u.test(text)) {
       // A short word as gh reads it: `-dF body.md`, `-Fbody.md`, and `-F=body.md`. A switch ending a cluster takes an

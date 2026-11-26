@@ -267,12 +267,15 @@ function quotaStop(s, pass, stage, reason, extra = {}) {
 // publishes the record to the pull request.
 function settle({ project, root, repo, n, state, deletes }, result) {
   // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it. So is
-  // what another write on this machine closed or mapped in the finding index.
+  // what another write on this machine closed or mapped in the finding index. The write takes in the rest another
+  // command recorded meanwhile, such as a pass `aidrian pr attest` recorded (state.mjs writeState), never mapping again
+  // a post this step deleted.
   const local = readLocalState(project, n, repo);
+  const removed = removedPosts(deletes);
   state.pending = mergePending(local?.pending, state.pending);
-  mergeIndex(state, local, removedPosts(deletes));
+  mergeIndex(state, local, removed);
   noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
-  writeLocalState(project, state, { repo });
+  writeLocalState(project, state, { repo, removed });
   return result;
 }
 

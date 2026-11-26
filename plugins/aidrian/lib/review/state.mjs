@@ -33,7 +33,7 @@ import { withGitFacts } from '../git.mjs';
 import { recordsFolder, remoteStateDirs, stateDir } from '../project.mjs';
 import { originRepo, repoName } from '../remotes.mjs';
 import { isClosed, isFindingId, isMint, recordedFindings, recordFindings } from './findings.mjs';
-import { keepHuman, keepWork, sameReview } from './record-merge.mjs';
+import { keepHuman, keepRecorded, keepWork, sameReview } from './record-merge.mjs';
 import { escapeLines, fillWithheld, findingsTable, flagName, isPostId, isPrivate, JUDGE_RULING, plainChecker, postedCopy, untextedBlocking, WITHHELD } from './publish.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { ruledLines } from './settled.mjs';
@@ -519,17 +519,49 @@ function absorb(base, other) {
 // finding the record holds takes the mark (findings.mjs recordFindings), so the copy it posts carries both.
 // With `repo`, the repository of the command that writes, a state that names another is refused, and one that names none
 // takes `repo`: a command writes its own repository's record alone.
+// A write first takes in what another command recorded in the same file since `state` was read (takeRecorded), so a
+// review step that held its copy for minutes never loses an `attest`, a sign-off, or an extension recorded meanwhile.
+// `removed` names the posts this write deleted or found gone (delete.mjs removedPosts), which that merge never maps again.
 // One call reads each folder's roots, prefix, and remote URLs once (lib/git.mjs withGitFacts), or as the open call does.
 export function writeLocalState(project, state, options) {
   return withGitFacts(() => writeState(project, state, options));
 }
 
-function writeState(project, state, { repo = null } = {}) {
+function writeState(project, state, { repo = null, removed = new Set() } = {}) {
   ownedBy(state, repo);
+  takeRecorded(state, readFile(file(project, state.pr, state.repo), state.pr), removed);
   recordFindings(state, null, null);
   state.revision = (state.revision ?? 0) + 1;
   state.updatedAt = new Date().toISOString();
   writeAt(project, state);
+}
+
+// Takes into `state` what another write of its file, `disk`, recorded since `state` was read, by mergeRecords' rule for
+// two copies of one review, with `state` as the base, so this write's own changes stand: every Human entry `state` lacks
+// (keepHuman), and of an extension both hold, the one decided last; the owed entries (mergePending); the passes recorded
+// after the read (keepRecorded), where a pass both hold counts as recorded last; each finding index entry `state` lacks,
+// such as one an `attest` minted, but an id `state` moved to a fresh one (findings.mjs freshId, which lists it in
+// `aliases`); what `disk` closed, marked, or mapped in the index (mergeIndex); and the higher id counter and revision.
+// Nothing is taken when `disk` is the record `state` was read from or an older one, or another review: a write with no
+// other writer since its read writes what it holds. A `disk` written at the time `state` holds is `state`'s own write,
+// such as the review step's running mark, which raised the revision on disk alone (step.mjs). No entry of `state` is
+// dropped, and no open finding of `disk`.
+// Accepted limits: no lock spans the read and the write, so a write landing between this read and the write below is
+// still lost, a window of one write's length, not a review step's minutes; and an id both minted for different findings
+// keeps `state`'s entry, as keepWork accepts.
+export function takeRecorded(state, disk, removed = new Set()) {
+  if (!disk || newer(state, disk) !== disk || disk.updatedAt === state.updatedAt || !sameReview(state, disk)) return;
+  keepHuman(state, disk);
+  state.pending = mergePending(disk.pending, state.pending);
+  keepRecorded(state, disk, state.updatedAt);
+  const index = isObject(state.index) ? state.index : (state.index = {});
+  const moved = new Set(Object.values(index).flatMap((entry) => (Array.isArray(entry?.aliases) ? entry.aliases : [])));
+  for (const [id, entry] of Object.entries(isObject(disk.index) ? disk.index : {})) {
+    if (isFindingId(id) && isObject(entry) && !isObject(index[id]) && !moved.has(id)) index[id] = structuredClone(entry);
+  }
+  mergeIndex(state, disk, removed);
+  if (Number.isSafeInteger(disk.idCounter) && disk.idCounter > (Number.isSafeInteger(state.idCounter) ? state.idCounter : 0)) state.idCounter = disk.idCounter;
+  state.revision = Math.max(state.revision ?? 0, disk.revision ?? 0);
 }
 
 // Holds `state` to the repository `repo` of the command that writes it (writeLocalState): a record that names none

@@ -1,12 +1,15 @@
 // A step's write keeps what another write of the record closed or mapped in the finding index (lib/review/state.mjs
-// mergeIndex, docs/review.md#finding-ids, Two writers), as `pending` is merged.
+// mergeIndex, docs/review.md#finding-ids, Two writers), as `pending` is merged, and what another command recorded
+// while the step held the record (state.mjs writeState).
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { removedPosts } from '../plugins/aidrian/lib/review/delete.mjs';
-import { emptyState, mergeIndex } from '../plugins/aidrian/lib/review/state.mjs';
+import { recordVerdict } from '../plugins/aidrian/lib/review/extension.mjs';
+import { parseFindings, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
+import { emptyState, mergeIndex, takeRecorded } from '../plugins/aidrian/lib/review/state.mjs';
 
 const FROM = 'a'.repeat(40);
 const TO = 'b'.repeat(40);
@@ -87,4 +90,110 @@ test('mergeIndex: the replies another write set aside when the finding opened ag
   const known = record(entry('R1-1', { thread: { commentId: 61 } }));
   assert.deepEqual(mergeIndex(known, record(entry('R1-1', { thread: { commentId: 61, earlier: [71] } })), new Set(), { closed: false, strict: true }), ['R1-1']);
   assert.deepEqual(known.index['R1-1'].thread.earlier, [71]);
+});
+
+// A review step holds the record it read for minutes, as while a visual capture runs, and another command records into
+// the same record meanwhile. The step's write takes in what that command recorded since the read (state.mjs writeState
+// and takeRecorded, docs/review.md, A command while a step runs), so nothing recorded is lost. Each writer's change is
+// made by the function the command records with, on the copy the step did not read.
+const HEAD = 'c'.repeat(40);
+const PASS = 'agent:code-reviewer';
+const AT = '2026-11-25T10:00:00.000Z';
+const LATER = '2026-11-25T10:05:00.000Z';
+const finding = (title) => ({ title, state: 'open', severity: 'high', likelihood: 'plausible', affects: 'internal', cost: 'bounded' });
+
+// The record a review step on HEAD read: its round open, the pass dispatched, and a check at the cap waiting for its
+// judge. `step` is the step's copy; `wrote(change)` is the record on disk once another command made `change` and wrote,
+// now.
+function stepping() {
+  const read = {
+    ...emptyState(7, 'o/r'), revision: 3, updatedAt: AT, floored: true, rounds: [{ head: HEAD, at: AT }], dispatched: { [PASS]: { stage: 'local' } },
+    extensions: [{ source: 'plan', round: 2, head: HEAD, at: AT, mode: 'ask', status: 'judging', by: null, reasons: [] }],
+  };
+  const wrote = (change) => {
+    const disk = structuredClone(read);
+    change(disk);
+    recordFindings(disk, null, null);
+    return Object.assign(disk, { revision: read.revision + 1, updatedAt: new Date().toISOString() });
+  };
+  return { step: structuredClone(read), wrote };
+}
+
+// `aidrian pr attest --findings-file`: the findings read one by one, and the result recorded, with ids minted.
+const attest = (list) => (state) => {
+  const { findings, fixed, accepted, list: items } = parseFindings(JSON.stringify(list), [], { round: 1 });
+  recordFindings(state, PASS, { head: HEAD, reviewer: 'code-reviewer', files: null, findings, open: findings - fixed - accepted, verdicts: [], list: items, itemized: true }, { mint: true, stage: 'local' });
+};
+
+test('an attest that lands while a review step runs is in the record the step saves, with its findings', () => {
+  const { step, wrote } = stepping();
+  takeRecorded(step, wrote(attest([finding('One'), finding('Two')])));
+  const pass = step.passes[PASS];
+  assert.deepEqual([pass?.head, pass?.findings, pass?.open], [HEAD, 2, 2], 'the pass is on the head, so the next round does not dispatch it again');
+  const ids = pass.list.map((each) => each.id);
+  assert.deepEqual(ids, ['R1-1', 'R1-2']);
+  assert.deepEqual(ids.map((id) => step.index?.[id]?.state), ['open', 'open'], 'its findings, open in the index');
+  assert.deepEqual([step.idCounter, step.revision], [2, 4], 'no id is minted twice, and the write is past the other`s');
+});
+
+test('a sign-off that lands while a review step runs is in the record the step saves', () => {
+  const { step, wrote } = stepping();
+  takeRecorded(step, wrote((state) => (state.signoffs.checkout = { head: HEAD, by: 'the Human', at: LATER })));
+  assert.deepEqual(step.signoffs.checkout, { head: HEAD, by: 'the Human', at: LATER });
+});
+
+test('an extend that lands while a review step runs is in the record the step saves', () => {
+  const { step, wrote } = stepping();
+  takeRecorded(step, wrote((state) => recordVerdict(state, { verdict: 'extend', reason: 'the findings converge', current: HEAD, at: LATER })));
+  const [check] = step.extensions;
+  assert.deepEqual([step.extensions.length, check.status, check.judge?.verdict], [1, 'asking', 'extend'], 'the judge`s verdict, not the step`s stale copy of the waiting check');
+  // A step that decided the check after the judge, as a catch-up retiring it does, keeps its own decision.
+  const again = stepping();
+  Object.assign(again.step.extensions[0], { status: 'stopped', by: 'catch_up', decided_at: '2026-11-25T10:09:00.000Z' });
+  takeRecorded(again.step, again.wrote((state) => recordVerdict(state, { verdict: 'extend', reason: 'r', current: HEAD, at: LATER })));
+  assert.equal(again.step.extensions[0].status, 'stopped');
+});
+
+test('a write with no other writer since its read takes nothing: a pass it dropped stays dropped', () => {
+  const { step, wrote } = stepping();
+  const disk = wrote(attest([]));
+  // The step read the record after the attest, then dropped the pass.
+  const own = structuredClone(disk);
+  delete own.passes[PASS];
+  takeRecorded(own, disk);
+  assert.equal(own.passes[PASS], undefined);
+  // Its own write, the review step's running mark, raised the revision on disk alone: still its own.
+  const marked = structuredClone(disk);
+  marked.revision -= 1;
+  delete marked.passes[PASS];
+  takeRecorded(marked, disk);
+  assert.deepEqual([marked.passes[PASS], marked.revision], [undefined, disk.revision - 1]);
+  // A pass in the record the step read, which the step dropped, is not taken back from a later write either.
+  const read = stepping();
+  const before = read.wrote(attest([]));
+  const dropping = structuredClone(before);
+  delete dropping.passes[PASS];
+  takeRecorded(dropping, { ...before, revision: before.revision + 1, updatedAt: new Date(Date.now() + 1000).toISOString() });
+  assert.equal(dropping.passes[PASS], undefined);
+  assert.equal(step.passes[PASS], undefined, 'and a copy no write followed holds what it held');
+});
+
+test('a pass both writers hold: the one recorded last counts, and an open finding stays in the index', () => {
+  // The step records its own result after the attest: the step's counts.
+  const first = stepping();
+  const attested = first.wrote(attest([finding('One')]));
+  recordFindings(first.step, PASS, { head: HEAD, reviewer: 'code-reviewer', findings: 0, open: 0, list: [] });
+  first.step.passes[PASS].at = '2026-11-25T10:09:00.000Z';
+  attested.passes[PASS].at = LATER;
+  takeRecorded(first.step, attested);
+  assert.equal(first.step.passes[PASS].open, 0);
+  assert.equal(first.step.index?.['R1-1']?.state, 'open', 'the attest`s open finding is never dropped by the merge');
+  // The attest records after the step's result: the attest's counts.
+  const second = stepping();
+  recordFindings(second.step, PASS, { head: HEAD, reviewer: 'code-reviewer', findings: 0, open: 0, list: [] });
+  second.step.passes[PASS].at = '2026-11-25T10:01:00.000Z';
+  const later = second.wrote(attest([finding('One')]));
+  later.passes[PASS].at = LATER;
+  takeRecorded(second.step, later);
+  assert.equal(second.step.passes[PASS].open, 1);
 });

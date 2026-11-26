@@ -567,7 +567,10 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
     return { ...out, ...(file !== null ? { file } : {}), ...(line !== null ? { line } : {}) };
   };
   const groups = Object.fromEntries(GROUPS.filter((key) => Array.isArray(result[key])).map((key) => [key, result[key].filter(isObject).map(one)]));
-  const recorded = { ...result, ...groups, ...(dropped.length ? { dropped: [...(Array.isArray(result.dropped) ? result.dropped : []), ...dropped] } : {}) };
+  // `at` is when the result was recorded, which a write that merges another's copy of the pass compares (state.mjs
+  // writeState): a result read again (`kept`) keeps its own.
+  const stamp = checked ? {} : { at: new Date().toISOString() };
+  const recorded = { ...result, ...groups, ...(dropped.length ? { dropped: [...(Array.isArray(result.dropped) ? result.dropped : []), ...dropped] } : {}), ...stamp };
   const raised = [...(groups.list ?? []).filter((each) => isFindingId(each.id)), ...raisedBefore];
   for (const ruling of [...(groups.ruled ?? []), ...(groups.carried ?? [])]) {
     if (!trimmed(ruling.already_ruled)) continue;

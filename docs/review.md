@@ -363,8 +363,10 @@ repository it names, and moved to that repository's file by its next write; one 
 origin alone. When both files of one pull request exist, as when a session on an older plugin keeps writing the old name
 while a newer one writes the repository's file, and both are copies of one review (the same first round, which a quiet push moves to a new head without making it
 another review), the record is
-their merge: the newer of the two, with every Human entry of the other (sign-offs, overrules, acceptances, waivers, delegations, extensions, and stage sign-offs), each pass and round it lacks,
-its owed entries, and the higher id counter. Each merged list ends in time order, so an older waive the other copy holds
+their merge: the newer of the two, with every Human entry of the other
+(sign-offs, overrules, acceptances, waivers, delegations, extensions, and stage sign-offs), each pass and round it lacks,
+its owed entries, and the higher id counter; of an extension both hold, the one decided last (`decided_at`).
+Each merged list ends in time order, so an older waive the other copy holds
 lands before a newer refuse, and the refuse still stands. A stage sign-off travels with its quota stop's choice: a signed or chosen stop
 only the other holds is added, the later choice of a stop both hold wins with its own sign-off, and a stop the newer one
 recorded again on that head, or let go as older than the latest ten, stays gone. The next write keeps that merge, past the old file's revision, before it removes
@@ -1866,6 +1868,19 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   private by the step's reading is never built on ([The posted copy](#the-posted-copy)): from it the step takes only
   what a restart takes, the security mark, the posts, and the engine's resolve of a finding this machine recorded, by
   its id and mint mark, and never a closed state.
+- *A command while a step runs.* Every write of the record, the step's and each command's, first reads this machine's
+  record file again (`plugins/aidrian/lib/review/state.mjs` writeState). When another write landed there since its
+  own read, of the same review, it takes that write in by the merge two record files get above, with its own record as
+  the base, so its own changes stand: the Human entries, and of an extension both hold the one decided last, the owed
+  entries, each pass recorded after its read, each finding index entry it lacks, what the index merge above keeps, and
+  the higher id counter. Each pass result carries `at`, when it was recorded; of a pass both hold, the one recorded
+  last counts, on any head, as two writes one after the other would leave it. A pass in the record it read that it
+  dropped, such as a slice of a replaced packing, is not taken back, nor is an id it moved to a fresh one. So an
+  `aidrian pr attest`, `aidrian pr signoff`, or `aidrian pr extend` that lands during a step of several minutes, such as
+  a visual capture, is in the record after the step, with its findings, and the next round does not dispatch that pass
+  again. A write with no other write since its read writes what it holds. No lock spans the read and the write, so a
+  write landing between them is still lost; that window is one write, not a step. Two writes that mint one id for
+  different findings keep the first entry the writer holds.
 
 ### The posted copy
 

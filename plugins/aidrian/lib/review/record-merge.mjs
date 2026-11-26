@@ -5,7 +5,8 @@
 // waiver, an extension, a delegation at the round limit, or a stage sign-off is the Human's word, and nothing in the
 // engine takes one back.
 // keepHuman adds those; keepWork adds the review's own progress, the passes, rounds, and id counter, for two copies of
-// one record on one machine. Each mutates and returns `base`, so a caller that writes or posts it carries the result.
+// one record on one machine; keepRecorded adds the passes another command recorded while a writer held the copy it read
+// (state.mjs writeState). Each mutates `base`, so a caller that writes or posts it carries the result.
 // Both act only on two copies of one review, the same first round (sameReview): a review that started over, from an
 // empty record, dropped the earlier review's entries on purpose, as an override line is filled only into its own review.
 
@@ -51,10 +52,9 @@ export function keepHuman(base, other) {
   keepLatest(base, other, 'acceptances', ['flow', 'invariant', 'head']);
   keepEach(base, other, 'waivers', ['head', 'kind', 'at']);
   keepEach(base, other, 'delegations', ['head', 'kind', 'at']);
-  // Accepted limit: an extension both copies hold keeps `base`'s decision fields, so one the other copy approved may be
-  // asked again. Only two copies a mixed set of plugin versions let grow apart are merged, which is rare, and a second
-  // ask costs the Human one answer, never a grant they did not give.
-  keepEach(base, other, 'extensions', ['source', 'round', 'head', 'at']);
+  // An extension both copies hold is the one decided last, by `decided_at`: a judge's verdict or the Human's answer
+  // recorded while a review step held the record it read is not undone by the step's copy of the waiting check.
+  keepDecided(base, other, 'extensions', ['source', 'round', 'head', 'at']);
   const overrides = Array.isArray(other.overrides) ? other.overrides.filter((line) => typeof line === 'string') : [];
   if (overrides.length) base.overrides = [...new Set([...(Array.isArray(base.overrides) ? base.overrides : []), ...overrides])];
   keepStops(base, other);
@@ -137,6 +137,33 @@ function keepLatest(base, other, key, keys) {
     if (!out.has(at) || later(out.get(at), entry)) out.set(at, { ...entry });
   }
   base[key] = inTimeOrder([...out.values()]);
+}
+
+// `base[key]` with each entry of `other[key]` whose `keys` it does not hold, and, where both hold one, `other`'s when it
+// was decided later; in time order (inTimeOrder).
+function keepDecided(base, other, key, keys) {
+  const theirs = list(other, key);
+  if (!theirs.length) return;
+  const out = new Map(list(base, key).map((entry) => [keyOf(entry, keys), entry]));
+  for (const entry of theirs) {
+    const at = keyOf(entry, keys);
+    if (!out.has(at) || String(entry.decided_at ?? '') > String(out.get(at).decided_at ?? '')) out.set(at, structuredClone(entry));
+  }
+  base[key] = inTimeOrder([...out.values()]);
+}
+
+// The passes `other` recorded after `since`, the time of the write `base` was read from, into `base`: each `base` lacks,
+// and each `base` holds recorded earlier, by their `at` (findings.mjs recordResult). A pass in the record `base` was read
+// from, which `base` dropped on purpose, is never taken back; nor is one with no `at`.
+export function keepRecorded(base, other, since) {
+  if (!isObject(base) || !isObject(other) || !sameReview(base, other)) return;
+  if (!isObject(base.passes)) base.passes = {};
+  for (const [id, pass] of Object.entries(isObject(other.passes) ? other.passes : {})) {
+    if (!isObject(pass) || typeof pass.at !== 'string') continue;
+    const ours = base.passes[id];
+    const fresh = isObject(ours) ? pass.at > String(ours.at ?? '') : pass.at > String(since ?? '');
+    if (fresh) base.passes[id] = structuredClone(pass);
+  }
 }
 
 // `base[key]` with each entry of `other[key]` whose `keys` it does not hold, in time order (inTimeOrder).

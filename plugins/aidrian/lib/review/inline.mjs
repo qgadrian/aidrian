@@ -16,7 +16,7 @@ import { loadTable } from '../finding-disposition.mjs';
 import { isObject } from '../fs.mjs';
 import { showPrefix } from '../git.mjs';
 import { diffLines } from './diff.mjs';
-import { blocks, FINDING_ID, freshId, isFindingId, severityOf } from './findings.mjs';
+import { blocks, FINDING_ID, freshId, isFindingId, severityBadge, severityOf } from './findings.mjs';
 import { attributionLine, entries, idsOf, KINDS, leadingMarkers, mappedPosts, memberMarked, withMarkers } from './markers.mjs';
 import { capped, LINE_BREAK, POST_CAP, securityIds, TEXT_CAP, TITLE_CAP, WITHHELD } from './publish.mjs';
 
@@ -124,11 +124,14 @@ function newBlocking(state, open, shown) {
   return [...seen.values()].sort((a, b) => order(a.entry, b.entry));
 }
 
-// The section of one finding in a post, as raw lines, each { text, quoted }: the attribution line, the severity with
-// its location when `place` is given, and the reviewer's title and body quoted, or `text withheld` when `withheld`.
+// The badge line of a finding's section: the severity's badge and word in bold, then `rest` when given.
+const badgeLine = (severity, rest = null) => ({ text: `**${severityBadge(severity)}**${rest ? ` · ${rest}` : ''}` });
+
+// The section of one finding in a post, as raw lines, each { text, quoted }: the attribution line, the severity's badge
+// with its location when `place` is given, and the reviewer's title and body quoted, or `text withheld` when `withheld`.
 // The title and body are capped first, each with one line counting what was cut.
 function section({ id, severity, place, title, body, withheld }) {
-  const lines = [{ text: attributionLine(id) }, { text: `**${severity}**${place ? ` at \`${place.replaceAll('`', '')}\`` : ''}` }];
+  const lines = [{ text: attributionLine(id) }, badgeLine(severity, place ? `\`${place.replaceAll('`', '')}\`` : null)];
   if (withheld) return [...lines, { text: WITHHELD }];
   const head = capped(title, TITLE_CAP);
   const text = capped(body, TEXT_CAP);
@@ -245,7 +248,7 @@ export function postInline(s, open) {
   const comments = drafted.filter((comment) => comment.body.length <= MAX_BODY);
   const tooLong = drafted.filter((comment) => comment.body.length > MAX_BODY).map((comment) => comment.part.id);
   const overflow = listed.length ? [{ text: '' }, { text: `${findings(listed.length)} on the diff, posted by a later step: ${idList(listed.map((part) => part.id))}` }] : [];
-  const onDiff = (part) => ({ id: part.id, lines: [{ text: attributionLine(part.id) }, { text: `**${part.severity}**, on the diff at \`${part.shownPlace.replaceAll('`', '')}\`` }] });
+  const onDiff = (part) => ({ id: part.id, lines: [{ text: attributionLine(part.id) }, badgeLine(part.severity, `on the diff at \`${part.shownPlace.replaceAll('`', '')}\``)] });
   const review = fitBody([...comments.map(({ part }) => onDiff(part)), ...inBody.map((part) => full(part, part.shownPlace))], overflow);
   const result = { posted: false, threads: [], in_body: [], listed: [...listed.map((part) => part.id), ...tooLong, ...review.left], ...(unminted.length ? { unminted } : {}) };
   // An inline comment whose section did not fit the review body is not posted with it: a later step posts it.

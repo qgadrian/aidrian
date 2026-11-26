@@ -30,7 +30,7 @@ import { isObject } from '../fs.mjs';
 import { runGit } from '../git.mjs';
 import { NAME } from './config.mjs';
 import { fileAt } from './diff.mjs';
-import { blocks, FINDING_STATES, isClosed, isFindingId, isMint, MAX_PATH, recordedFindings, securitySeverity, severityOf, twinClosure } from './findings.mjs';
+import { blocks, FINDING_STATES, isClosed, isFindingId, isMint, MAX_PATH, recordedFindings, securitySeverity, severityBadge, severityOf, twinClosure } from './findings.mjs';
 import { DEPTHS, ONLY_NON_BEHAVIOUR } from './plan.mjs';
 
 // The words that report a withholding, whatever matched: never the matched text, its pattern, or the list it is on.
@@ -1047,8 +1047,8 @@ const FINDING_ID_PARTS = /^R(\d+)-(\d+)$/u;
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 // The summary's findings table, from the posted copy `copy`, its finding index: a heading, then at most MAX_ROWS rows,
-// blocking findings first, then by severity, then by id, each with the id, the location, the severity, the disposition,
-// and the outcome (`open`, `fixed in` or `not reported again in` its closing range, `accepted as` its disposition), and
+// blocking findings first, then by severity, then by id, each with the id, the location, the severity's badge
+// (findings.mjs severityBadge), the disposition, and the outcome (`open`, `fixed in` or `not reported again in` its closing range, `accepted as` its disposition), and
 // no finding text; then one line for the rows left out. A location is printed only from a file that is at most
 // MAX_PATH characters and named by git at the entry's head or by the pull request's diff, and a line within that file:
 // the File and line check, which runs here too, as for a record an older release wrote. A closing range is a link only
@@ -1091,7 +1091,7 @@ export function findingsTable(copy, post = {}) {
     if (entry.state === 'accepted') return tableCell(disposition(entry) ? `accepted as ${disposition(entry)}` : 'accepted');
     return tableCell(entry.state === 'open' ? 'open' : 'unknown');
   };
-  const row = (entry) => `| ${[tableCell(entry.id), tableCell(place(entry)), tableCell(severityOf(entry.severity) ?? ''), tableCell(disposition(entry)), outcome(entry)].join(' | ')} |`;
+  const row = (entry) => `| ${[tableCell(entry.id), tableCell(place(entry)), tableCell(severityBadge(severityOf(entry.severity) ?? 'unknown')), tableCell(disposition(entry)), outcome(entry)].join(' | ')} |`;
   const lines = ['', TABLE_HEADING];
   if (rows.length) lines.push('', '| Finding | Location | Severity | Disposition | Outcome |', '| --- | --- | --- | --- | --- |', ...rows.slice(0, MAX_ROWS).map(row));
   if (rows.length > MAX_ROWS) lines.push(`- ${plural(rows.length - MAX_ROWS, 'more finding')}, not listed: the table holds ${MAX_ROWS}.`);

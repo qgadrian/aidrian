@@ -505,7 +505,7 @@ test('summary "findings": the step`s comment lists each finding and its outcome,
   const h1 = r.git('rev-parse', 'HEAD');
   let body = summaryOf(r);
   assert.match(body, /\*\*Findings:\*\*/u);
-  assert.match(body, /\| R1-1 \| src\/app\.js:1 \| medium \|  \| open \|/u);
+  assert.match(body, /\| R1-1 \| src\/app\.js:1 \| 🟡 P2 · medium \|  \| open \|/u);
   assert.match(body, /- 1 open security finding, counted and not listed/u);
   assert.doesNotMatch(body, /SENTINEL|R1-3/u);
   r.write('src/app.js', lines(3));
@@ -513,8 +513,8 @@ test('summary "findings": the step`s comment lists each finding and its outcome,
   answer = [];
   await r.step({ exec });
   body = summaryOf(r);
-  assert.ok(body.includes(`| R1-2 | src/app.js:2 | medium |  | not reported again in [${h1.slice(0, 7)}...${h2.slice(0, 7)}](https://github.com/o/r/compare/${h1}...${h2}) |`), body);
-  assert.ok(body.includes(`| R1-3 |  | low |  | not reported again in [${h1.slice(0, 7)}...${h2.slice(0, 7)}]`), 'the closed security finding: its id, severity, outcome, and range only');
+  assert.ok(body.includes(`| R1-2 | src/app.js:2 | 🟡 P2 · medium |  | not reported again in [${h1.slice(0, 7)}...${h2.slice(0, 7)}](https://github.com/o/r/compare/${h1}...${h2}) |`), body);
+  assert.ok(body.includes(`| R1-3 |  | 🟢 P3 · low |  | not reported again in [${h1.slice(0, 7)}...${h2.slice(0, 7)}]`), 'the closed security finding: its id, severity, outcome, and range only');
   assert.doesNotMatch(body, /SENTINEL/u);
 });
 

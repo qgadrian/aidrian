@@ -938,8 +938,23 @@ export function summaryBody(state, plan, status, post = {}) {
     const human = !flow.humanSigned ? 'needed' : signoff?.head === plan.head ? 'recorded (an audit entry, not proof)' : `recorded on \`${String(signoff?.head).slice(0, 7)}\` and kept: nothing since touches the flow`;
     return `- flow **${flow.id}**${flow.unspecified ? ' (unspecified: no invariants stated)' : ''}: ${flow.signed ? 'signed by its reviewer' : 'not signed'}${flow.signoff === 'human' ? `; Human sign-off ${human}` : ''}`;
   });
-  return assemble({ header: `### Review: ${status}`, planLines, flowLines, outsideHead: plan?.head ?? null }, state, post);
+  return assemble({ header: summaryHeader(status), planLines, flowLines, outsideHead: plan?.head ?? null }, state, post);
 }
+
+// The emoji a summary header shows for a step's status (lib/review/run.mjs lists them): done, a fix to make, a wait on a
+// person or a step, or a failure. Any other status, such as a record command's own (`waiver ...`, `extension ...`), gets ℹ️.
+const STATUS_EMOJI = new Map([
+  ...['received', 'none_needed'].map((status) => [status, '✅']),
+  ['fix_required', '🛠️'],
+  ...['dispatch', 'running', 'human_required', 'checks_pending', 'blocked_quota', 'round_limit', 'too_large', 'extension_check', 'extension_ask'].map((status) => [status, '⏸️']),
+  ...['error', 'incomplete', 'stuck', 'unsatisfied', 'timed_out'].map((status) => [status, '⚠️']),
+]);
+
+// The summary's header for `status`, and the status a header names, in this layout or the one before the emoji
+// (`### Review: <status>`), so a summary posted by either still refreshes under its status.
+export const summaryHeader = (status) => `### ${STATUS_EMOJI.get(status) ?? 'ℹ️'} Review: ${status}`;
+const HEADER = /^### (?:\S+ )?Review: (.*)$/u;
+export const headerStatus = (line) => HEADER.exec(line)?.[1] ?? null;
 
 // The record-fed lines, from the posted copy `copy`, and the summary's whole text around them.
 function assemble({ header, planLines, flowLines, outsideHead }, state, post) {
@@ -961,17 +976,18 @@ function assemble({ header, planLines, flowLines, outsideHead }, state, post) {
     lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : `${reviewed ? `; ${REVIEWED_WITHOUT}` : ''}${reason ? ` (${clip(reason)})` : ''}`}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${clip(visual.error)}` : ''}`);
   }
   lines.push(...outsideLines(copy, outsideHead, open));
-  lines.push(...quotaLines(copy));
-  lines.push(...ruledLines(copy));
-  lines.push(...carriedLines(copy));
-  lines.push(...extensionLines(copy));
-  lines.push(...waiverLines(copy));
-  lines.push(...delegationLines(copy));
+  // The secondary sections fold into one Details block. GitHub renders the Markdown inside it only after a blank line,
+  // and each section starts with one. No reader parses where they sit: refreshSummary reads only the plan-fed lines.
+  const details = [...quotaLines(copy), ...ruledLines(copy), ...carriedLines(copy), ...extensionLines(copy), ...waiverLines(copy), ...delegationLines(copy)];
   const overrides = [...(Array.isArray(copy.overrides) ? copy.overrides : []), ...(open ? [] : overruleLines(copy))];
-  if (overrides.length) lines.push('', OVERRIDES_HEADING, ...overrides.map((each) => `- ${clip(each)}`));
-  lines.push('', CITATION_LINE);
+  if (overrides.length) details.push('', OVERRIDES_HEADING, ...overrides.map((each) => `- ${clip(each)}`));
+  details.push('', CITATION_LINE);
+  lines.push('', DETAILS_OPEN, ...details, '', DETAILS_CLOSE);
   return withRecord(lines, copy, withheld, post, state);
 }
+
+const DETAILS_OPEN = '<details><summary>Details</summary>';
+const DETAILS_CLOSE = '</details>';
 
 const OVERRIDES_HEADING = '**Overrides used:**';
 const ENGINE_LINE = '- engine: ';
@@ -1139,12 +1155,13 @@ export function carriedLines(state) {
 }
 
 // A summary comment's text with `state` in place of the record it carried. It keeps only the lines the step's plan
-// feeds, which no other writer holds: the status, the plan line and its reasons, the engine, and the flows. Every block
-// the record feeds is rendered again from the posted copy (assemble), the Outside evidence block while its head is the
-// outcome's, so a string an earlier body showed does not survive this write.
+// feeds, which no other writer holds: the status, the plan line and its reasons, the engine, and the flows. The header
+// is written again from its status (summaryHeader), from a summary of either layout. Every block the record feeds is
+// rendered again from the posted copy (assemble), the Outside evidence block while its head is the outcome's, so a
+// string an earlier body showed does not survive this write.
 export function refreshSummary(body, state, post = {}) {
   const lines = String(body).split('\n');
-  const header = lines.find((line) => line.startsWith('### Review: ')) ?? '### Review: unknown';
+  const header = summaryHeader(lines.map(headerStatus).find((status) => status !== null) ?? 'unknown');
   const planLines = [];
   const at = lines.findIndex((line) => line.startsWith('Head `'));
   if (at !== -1) {

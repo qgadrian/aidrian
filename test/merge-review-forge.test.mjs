@@ -201,34 +201,28 @@ test('a pull request opened ready whose product feedback is owed is refused by t
   const r = repo(t, configOf({ review: { productFeedback: { auto: true, files: ['src/**'] } } }));
   r.record(forged());
   const owed = /^Blocked: no Human attends this session, and this merges pull request #7, but product feedback is owed on #7 \(.*\): run the pr-product-feedback skill on #7 in a session the Human attends/u;
-  assert.match(merge(r, MERGE) ?? '', owed, 'gh pr merge');
+  // Read from the review trail the guard already took: no other forge call.
+  const calls = [];
+  assert.match(merge(r, MERGE, { calls }) ?? '', owed, 'gh pr merge');
+  assert.deepEqual(calls.map(([name]) => name), ['reviewTrail'], 'the trail serves the check');
   assert.match(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }) ?? '', owed, 'the GitHub MCP merge');
   const gate = autoMerge(t, r);
   assert.deepEqual([gate.code, gate.result.reason], [1, 'feedback'], 'auto-merge holds it for the same reason');
-  // Read from the review trail the guard already took: no other forge call.
-  const calls = [];
-  merge(r, MERGE, { calls });
-  assert.deepEqual(calls.map(([name]) => name), ['reviewTrail'], 'the trail serves the check');
-  // With it off on the default branch, both allow the merge.
-  const off = repo(t);
-  off.record(forged());
-  assert.equal(merge(off, MERGE), null);
-  assert.equal(mcp(off, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }), null);
-  assert.equal(autoMerge(t, off).code, 0);
-});
-
-test('the merge guard finds completed product feedback under GitHub`s spelling of the repository, not the origin`s', (t) => {
-  // The origin is acme/notes; GitHub spells it Acme/Notes, and the feedback commands keep the record under that spelling.
-  const r = repo(t, configOf({ review: { productFeedback: { auto: true, files: ['src/**'] } } }));
-  r.record(forged());
+  // With it off on the default branch, both allow the merge: the same repository, its branches' config as GitHub gives it.
+  const offText = JSON.stringify(configOf());
+  const offTrail = trailOf(offText);
+  assert.equal(merge(r, MERGE, { trail: offTrail, head: offText }), null);
+  assert.equal(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }, { trail: offTrail }), null);
+  assert.equal(autoMerge(t, { ...r, text: offText }).code, 0);
+  // Done feedback is found under GitHub's spelling of the repository, Acme/Notes, which the feedback commands keep the
+  // record under, not the origin's acme/notes (merge-review.mjs trailView).
   const folder = path.join(r.root, 'state/product-feedback/Acme/Notes/pr-7');
   mkdirSync(folder, { recursive: true });
   writeFileSync(path.join(folder, 'record.json'), JSON.stringify({ version: 1, pr: 7, repo: 'Acme/Notes', head: HEAD, report: null, read_by: 'product-manager', comment_id: null, recorded_at: '2026-11-18T09:00:00.000Z', items: [] }));
   const trail = trailOf(r.text, { url: 'https://github.com/Acme/Notes/pull/7' });
   // The view the check reads takes GitHub's spelling, on any disk.
   assert.equal(trailView(trail, { number: 7, repo: 'acme/notes', host: 'github.com' })?.url, 'https://github.com/Acme/Notes/pull/7');
-  assert.equal(merge(r, MERGE, { trail }), null, 'gh pr merge');
-  assert.equal(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }, { trail }), null, 'the GitHub MCP merge');
+  assert.equal(merge(r, MERGE, { trail }), null, 'done feedback under GitHub`s spelling');
   // A trail address of another pull request, or none, gives no view: the check then views it once.
   assert.equal(trailView(trailOf(r.text, { url: 'https://github.com/acme/notes/pull/8' }), { number: 7, repo: 'acme/notes', host: 'github.com' }), null);
   assert.equal(trailView(trailOf(r.text, { url: 'https://github.com/other/notes/pull/7' }), { number: 7, repo: 'acme/notes', host: 'github.com' }), null);

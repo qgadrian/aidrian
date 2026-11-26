@@ -431,48 +431,15 @@ export function hostFileLinks(listing) {
   return links;
 }
 
-// The most words a glob part's braces may spell before the part matches every name.
-const BRACE_WORDS = 64;
-
-// The words the braces of a glob part spell, as a shell expands `{a,b}` and `x{a,{b,c}}`, or null when they spell more
-// than BRACE_WORDS. A `{` that never closes stays a plain character, as it does in a shell, so `[{]` is a class.
-function braceWords(part) {
-  const open = part.indexOf('{');
-  if (open < 0) return [part];
-  const cuts = [open];
-  let depth = 0;
-  let close = -1;
-  for (let i = open; i < part.length && close < 0; i += 1) {
-    if (part[i] === '{') depth += 1;
-    else if (part[i] === '}' && (depth -= 1) === 0) close = i;
-    else if (part[i] === ',' && depth === 1) cuts.push(i);
-  }
-  if (close < 0) return [part];
-  cuts.push(close);
-  const tails = braceWords(part.slice(close + 1));
-  if (tails === null) return null;
-  const words = [];
-  for (let at = 0; at + 1 < cuts.length; at += 1) {
-    const inner = braceWords(part.slice(cuts[at] + 1, cuts[at + 1]));
-    if (inner === null) return null;
-    for (const each of inner) for (const tail of tails) words.push(`${part.slice(0, open)}${each}${tail}`);
-    if (words.length > BRACE_WORDS) return null;
-  }
-  return words;
-}
-
-// Whether the glob part or plain name `part` may name `name`, in any case: `*`, `?`, a bracket class, and braces, by
-// fs.mjs globParts, whose steps grow with the name's length squared at most, so no part runs a guard out of time. A
-// part whose braces spell more than BRACE_WORDS words may name every name.
-function partMay(part, name) {
-  const words = braceWords(part);
-  return words === null || words.some((word) => globParts(word, [], 'i').pattern.test(name));
-}
+// Whether the glob part or plain name `part` may name `name`, in any case: `*`, `?`, and a bracket class, by fs.mjs
+// globParts, whose steps grow with the name's length squared at most, so no part runs a guard out of time.
+const partMay = (part, name) => globParts(part, [], 'i').pattern.test(name);
 
 // The one compare of every refusal-side glob part, `part` against the name `name` at its depth: as written, or by both
 // their folds (foldPath), as a disk that folds full Unicode case reads them. Each part chooses for itself, and a fold
-// only adds names, as `[!ß]` names an `s` that its fold `[!ss]` does not.
-const foldMatch = (part, name) => partMay(part, name) || partMay(foldPath(part), foldPath(name));
+// only adds names, as `[!ß]` names an `s` that its fold `[!ss]` does not. A part that holds a brace may name every
+// name, unparsed: a shell may expand it to any word, and a refusal fails closed.
+const foldMatch = (part, name) => /[{}]/u.test(part) || partMay(part, name) || partMay(foldPath(part), foldPath(name));
 
 // Whether a glob, by its folder `prefix` and its later parts `rest`, may reach a NESTED entry of one of the clones
 // `nested`: it lies in one and a later part may name a `.claude` folder, a glob whose own text starts with a dot or is a

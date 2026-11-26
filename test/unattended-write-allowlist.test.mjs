@@ -1825,12 +1825,18 @@ test('a host file spelled with a long s, which a disk that folds full Unicode ca
   assert.match(ask(bash(`rm -f ${fx.worktree}/.c*/ſkills/x.md`))?.reason ?? '', /a host file a later session in that checkout loads/u, 'a wildcard, then a folded part');
   // A negated class its fold would narrow, as `[!ß]` to `[!ss]`, still names a SKILL.md as written.
   assert.match(ask(bash(`rm -f ${work}/docs/[!ß]kill.md`))?.reason ?? '', /a host file a later session in that clone loads from any depth/u, 'a class its fold narrows');
-  // Braces spell each word a shell would, and each is judged as written or by its fold.
-  assert.match(ask(bash(`rm -f ${fx.worktree}/.{claude,x}*/ſkills/x.md`))?.reason ?? '', /a host file a later session in that checkout loads/u, 'braces, then a folded part');
+  // A part that holds a brace may name any name, unparsed: braces a shell expands, a negated class of braces, and a
+  // nesting deep enough to run a parser out of stack each reach a refused entry, the first the guard lists, and none throws.
+  const deep = `${'{'.repeat(20000)}x${'}'.repeat(20000)}`;
+  for (const glob of ['.{claude,x}*/ſkills/x.md', `.c*/${deep}/x.md`, '.claude/[!{}]kills/x.md']) {
+    assert.match(ask(bash(`rm -f ${fx.worktree}/${glob}`))?.reason ?? '', /unattended|which a session no Human attends never changes/u, `a brace part: ${glob.slice(0, 40)}`);
+  }
   // A checkout nested in the worktree that git lists nowhere, reached by a wildcard part whose fold names `.git`.
   mkdirSync(path.join(fx.worktree, 'vendor', 'lib', '.git'), { recursive: true });
   assert.match(ask(bash(`rm -rf ${fx.worktree}/vendor/*/.gı?`))?.reason ?? '', /a nested checkout's git folder or pointer to one/u, 'a folded .git through a wildcard');
-  assert.equal(ask(bash(`rm -f ${fx.worktree}/src/[{]*.js`)), null, 'a class that holds a brace names no host file');
+  // A brace part may name `.git`, which the nested git rule looks for at any depth of a place: the stated over-block.
+  assert.match(ask(bash(`rm -f ${fx.worktree}/src/[{]*.js`))?.reason ?? '', /a nested checkout's git folder or pointer to one/u, 'a class that holds a brace');
+  assert.equal(ask(bash(`rm -f ${fx.worktree}/src/[a]*.js`)), null, 'a class with no brace passes');
   // At any depth of the clone, and in a temporary folder, by the hosts' nestedProtected and instruction names.
   for (const file of ['pkg/.claude/ſkills/x.md', 'docs/ſKILL.md', 'a/.claude/ſettings.local.json', 'pkg/.agentſ/x.sh', 'pkg/opencode.jſon']) {
     assert.match(ask(write(path.join(work, file)))?.reason ?? '', /a host file a later session in that clone loads from any depth/u, file);

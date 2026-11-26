@@ -1663,6 +1663,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   A disk that folds full Unicode case, as macOS's does, reads `.github/workflowſ`, `.github/workﬂows`, or `.claude/ſkills` as the refused entry.
   So each is refused on every platform, while the places that pass still compare in lower case on macOS and Windows and as spelled elsewhere.
   A glob part counts as written or by its fold, so a fold never narrows a class such as `[!ß]`.
+  A glob part that holds `{` or `}` is not parsed: it may name any name, so it is refused wherever its folder holds a refused entry.
+  A nested `.git` counts at any depth of a place, so such a glob in the session's worktree, as `rm -f src/[{]*.js`, is refused.
   Accepted residual: git's case-insensitive pathspec folds no long s, so the index-link rule misses a tracked link such as `pkg/.agentſ`.
   A link below a `.claude` folder is still listed, through `**/.claude/**`; the miss is a folded name that a pathspec itself spells.
   Accepted residuals of the host-file rules

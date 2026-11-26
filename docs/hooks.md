@@ -940,19 +940,24 @@ In a project run's issue session, which the session's mark names (`issueHeld` in
 The session can write every ref of its clone, whose git folder it is granted, so the hold never reads git there.
 Step 3 never says off, and every ready asks GitHub.
 `status` asks GitHub for the default branch too, never the clone's `origin/HEAD`.
-It refuses every case it lets through elsewhere for want of a read: a target or graphql id it cannot read, a ready in no project,
-a gh call that fails or passes the deadline, and `status` exiting 3.
-A `-R` or `--repo` value or a `GH_REPO` assignment the shell fills in, and a folder gh runs in that the hook cannot read,
-keep the target unknown there, and refuse.
+It refuses each read that fails there: a graphql id it cannot read, a gh call that fails or passes the deadline, and `status` exiting 3.
 `status` takes the same reads there (`issueReads` in `lib/pr-product-feedback.mjs`), so it never says clear from the clone's refs either.
 Text fed to a shell that names a ready, and more than one ready in a command, are refused whatever git says.
-So is a ready it cannot read as one: a program, `pr`, or `ready` word the shell fills in, such as `$G pr ready 7` or `gh pr $(echo ready) 7`,
-and gh run by another program, such as `xargs gh pr ready` or `parallel`.
-Every ready there is judged in the project of the clone the session's mark records, never the folder the call runs in,
-and a ready from another project's folder, such as one nested in the clone or a temporary one, is refused.
-A ready that names no pull request written out, such as `gh pr ready` alone or a branch name, is refused, and the deny asks for the number or URL.
+It guesses no repository there: it checks `gh pr ready` in one form alone, and refuses every other with one deny.
+That form is `gh pr ready <number or URL>`, every word written out, as the first command of the line, behind no wrapper that sets a folder or a variable.
+The command, and the hook's environment, hold no `-R`, `--repo`, `GH_REPO`, `GIT_DIR`, or `GIT_WORK_TREE`, in any spelling.
+The hook's folder is the clone the session's mark records, or a folder inside it with no other checkout's `.git` on the way.
+No `cd`, `pushd`, `env -C`, or other command runs before it, except a `cd` that lands in that same folder.
+The deny asks for `gh pr ready <PR>` from the clone, with no repository option.
+So a ready from a folder outside the clone, or one naming a repository, is refused even when it would mark the right pull request.
+A graphql call names its pull request by node id, so it is judged from any folder.
+Every ready there is judged in the project of that clone.
+It refuses a ready it cannot read as one with the same deny: gh's `pr` and `ready` around a word the shell fills in, such as `gh pr "$X" ready 7`,
+and the words `gh` and later `ready` among another program's words, as `xargs gh pr ready`, `parallel`, `watch`, or `sh -c` hand them on.
+That also refuses `echo gh pr ready 7`, a cheap over-block; `xargs gh pr list` and a program the shell fills in, such as `"$PY" -m pytest`, run.
 The GitHub MCP hook reads the same mark and judges in the same clone.
-It refuses a call whose number it cannot read, or that comes from another project's folder.
+It refuses a call whose number it cannot read, and one whose `owner` and `repo` are not both given and equal to the clone's origin repository.
+A pull request opened as no draft skips this hold, so there the [agent gates](#agent-gates) refuse it: every pull request opens as a draft.
 The deny of an owed pull request names the stop the run records,
 `pr_open` with "product feedback is owed on #<n>, which an issue session does not run: …", never the skill:
 the step is the Human's ([In an issue session](config.md#in-an-issue-session)).
@@ -964,6 +969,8 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
 - A word the shell fills in or expands where gh's program, `pr`, `ready`, or the pull request goes: `"$GH" pr ready 7`,
   `gh pr {ready,} 7`, `gh pr ready "$PR"`, `gh pr ready {7,}`, a loop such as `for n in 7 8; do gh pr ready $n; done`.
   A repository the shell fills in or expands (`-R "$REPO"`) counts as the session's own, as the merge guard reads it.
+  In an issue session each of these is refused, but a ready a variable spells, such as `X="pr ready"; gh $X 7` or `$G pr ready 7`,
+  which no hook that reads words can see ([What this does not stop](config.md#in-an-issue-session)).
 - A graphql call with no literal pull request id (`$id` from `-f id="$ID"`, `@file`, or `--input`), and an id that resolves to
   no pull request.
 - A script, an interpreter, `xargs`, a variable set in an earlier Bash call, a `gh alias` such as `gh rd 7`, and `curl` to the
@@ -978,7 +985,7 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
   on its own branch, chooses both branches whose config is read.
 - An off read from stale or rewritten git refs: [The commands](config.md#the-commands) names both limits, which the hold
   shares with `status`.
-- A pull request opened as no draft is never held. A person's own shell outside a session is never held.
+- Outside an issue session, a pull request opened as no draft is never held. A person's own shell outside a session is never held.
 
 ### Where the ready hold is verified
 
@@ -1815,6 +1822,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     read from a file or the input, or built at run time.
   - A shell the lexer cannot read, or a command word built at run time, whose text names a push, a release, a workflow,
     or the API.
+  - A pull request opened as no draft (`forgeUndraftedCreate`), since one opened ready skips the [ready hold](#ready-hold).
+    On GitHub that is `gh pr create` or `gh pr new` whose last draft word is not `--draft`, `--draft=true`, or `-d`,
+    or that has a word the shell fills in where an option may go, and a `gh api` write to `repos/<owner>/<name>/pulls`.
+    The GitHub MCP server's `create_pull_request` without `draft: true` is refused too, under a plugin's name as well,
+    and so is a shell the lexer cannot read whose text opens a pull request and asks no draft.
+    The refusal names the fix: `gh pr create --draft ...`, or the MCP call with `draft: true`.
 
   An attended session, a run's driver, and a session a pending mark holds are not held by it. Its residual: a script or
   program the session runs, or `curl` with the token, can still push or call the forge, a command an earlier call left

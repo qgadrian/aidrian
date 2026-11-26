@@ -317,6 +317,18 @@ const ISSUE_MUTATIONS = new Set([
 // the call's words past `gh`, each { text, dynamic } as the shell lexer gives them: a word built at run time may name
 // any route or method, so a route or a method so built that may write is refused. Null for any other `program`.
 export function apiWrite(program, tokens) {
+  const call = apiCall(program, tokens);
+  if (call === null) return null;
+  const { route, sent, writes } = call;
+  if (route === 'graphql') return graphqlWrite(sent);
+  if (!writes) return null;
+  if (route === null) return 'a forge API route built at run time, with a method that writes';
+  return ISSUE_ROUTES.test(route.replace(/^repos\/\{owner\}\/\{repo\}\//u, 'repos/o/r/')) ? null : `the forge API route ${route.slice(0, 120)}, which only the Human writes`;
+}
+
+// A `gh api` call as { route, sent, writes }: `route` as written, or null when built at run time, `sent` its fields, and
+// `writes` whether its method writes. Null for any other call.
+function apiCall(program, tokens) {
   if (program !== 'gh') return null;
   let at = 0;
   while (at < tokens.length && tokens[at].text.startsWith('-') && !tokens[at].dynamic) at += GH_VALUES.includes(tokens[at].text) ? 2 : 1;
@@ -346,11 +358,63 @@ export function apiWrite(program, tokens) {
       route = dynamic ? null : word.replace(/^\/+/u, '').split('?')[0];
     }
   }
-  if (route === 'graphql') return graphqlWrite(sent);
-  const writes = method === null ? fields : method !== 'GET' && method !== 'HEAD';
-  if (!writes) return null;
-  if (route === null) return 'a forge API route built at run time, with a method that writes';
-  return ISSUE_ROUTES.test(route.replace(/^repos\/\{owner\}\/\{repo\}\//u, 'repos/o/r/')) ? null : `the forge API route ${route.slice(0, 120)}, which only the Human writes`;
+  return { route, sent, writes: method === null ? fields : method !== 'GET' && method !== 'HEAD' };
+}
+
+// gh pr create's options that take a value, long and short; any other short one is a switch.
+const CREATE_VALUES = new Set(['--title', '--body', '--body-file', '--base', '--head', '--assignee', '--label', '--milestone', '--project', '--reviewer', '--template', '--repo', '--recover']);
+const CREATE_SHORT_VALUES = new Set([...'tbFBHalmprTR']);
+
+// Why a call opens a pull request that is not a draft, which a project run's issue session never does, or null: `gh pr
+// create` (or its alias `new`) whose last word on the draft is not `--draft`, `--draft=true`, `-d`, or a cluster ending
+// a draft switch on, as pflag reads them, and a REST call that opens one, which may open it ready. A word built at run
+// time where an option may go could turn the draft off, so it refuses too. `tokens` are the words past `gh`.
+export function undraftedCreate(program, tokens) {
+  const api = apiCall(program, tokens);
+  if (api) {
+    const opens = api.writes && api.route !== null && /^repos\/[^/]+\/[^/]+\/pulls$/u.test(api.route);
+    return opens ? 'it opens a pull request through the forge API, which may open it ready' : null;
+  }
+  if (program !== 'gh') return null;
+  const words = [];
+  let at = 0;
+  for (; at < tokens.length && words.length < 2; at += 1) {
+    const { text, dynamic } = tokens[at];
+    if (dynamic) return null;
+    if (GH_VALUES.includes(text)) at += 1;
+    else if (!text.startsWith('-')) words.push(text);
+  }
+  if (words[0] !== 'pr' || !['create', 'new'].includes(words[1])) return null;
+  let draft = false;
+  for (let i = at; i < tokens.length; i += 1) {
+    const { text, dynamic } = tokens[i];
+    if (text === '--' && !dynamic) break;
+    if (dynamic) {
+      // A value the shell fills in after an option that takes it, as `--title="$T"` or `-t"$T"`, sets no draft.
+      const long = /^(--[\w-]+)=/u.exec(text)?.[1];
+      if ((long && long !== '--draft' && CREATE_VALUES.has(long)) || CREATE_SHORT_VALUES.has(/^-([A-Za-z])/u.exec(text)?.[1])) continue;
+      return 'it opens a pull request with a word built at run time where an option may go, which may turn the draft off';
+    }
+    if (text.startsWith('--')) {
+      const [name, value] = text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
+      if (name === '--draft') draft = value === null || value === 'true';
+      else if (value === null && CREATE_VALUES.has(name)) i += 1;
+    } else if (/^-[^-]/u.test(text)) {
+      const letters = text.slice(1);
+      for (let k = 0; k < letters.length; k += 1) {
+        if (letters[k + 1] === '=') {
+          if (letters[k] === 'd') draft = letters.slice(k + 2) === 'true';
+          break;
+        }
+        if (letters[k] === 'd') draft = true;
+        if (CREATE_SHORT_VALUES.has(letters[k])) {
+          if (k === letters.length - 1) i += 1;
+          break;
+        }
+      }
+    }
+  }
+  return draft ? null : 'it opens a pull request that is not a draft';
 }
 
 // An option word of gh api as [name, attached value]: `--name=value`, a short option glued to its value, as `-XPOST`,

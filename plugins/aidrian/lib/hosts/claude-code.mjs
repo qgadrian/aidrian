@@ -68,7 +68,9 @@ const WORD = '[A-Za-z0-9-]';
 const SEGMENT = `(?:${WORD}+_)*${WORD}*[Gg][Ii][Tt][Hh][Uu][Bb]${WORD}*(?:_${WORD}+)*`;
 // hooks.json's matcher for these names, as written there; test/host-plugin-github.test.mjs holds the two equal.
 export const PLUGIN_GITHUB_MATCHER = `^mcp__plugin_${SEGMENT}__(?:${GITHUB_TOOLS.join('|')})$`;
-const PLUGIN_GITHUB_TOOL = new RegExp(PLUGIN_GITHUB_MATCHER, 'u');
+// The names read as the standard one: those, and create_pull_request, which the agent gate hook, matching every tool,
+// judges for a project run's issue session (lib/issue-forge-guard.mjs), and no hook of that matcher reads.
+const PLUGIN_GITHUB_TOOL = new RegExp(`^mcp__plugin_${SEGMENT}__(?:${[...GITHUB_TOOLS, 'create_pull_request'].join('|')})$`, 'u');
 
 const toolName = (name) => (typeof name === 'string' && PLUGIN_GITHUB_TOOL.test(name) ? `mcp__github__${name.slice(name.lastIndexOf('__') + 2)}` : name);
 

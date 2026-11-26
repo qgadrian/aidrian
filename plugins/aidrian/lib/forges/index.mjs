@@ -5,7 +5,7 @@
 // is forgeFor's methods, and the helpers below. repoIdentity is the facade's; the others are GitHub's today, as the
 // payloads are: a second forge reshapes them with its adapter.
 
-import { apiWrite, changeNotFound, CONFIG_COMMANDS, createGithubForge, diffTooLarge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REF_COMMANDS, REVIEWS_PAGE, servedRepository, TOKEN_VARS, WORKFLOW_FOLDERS } from './github.mjs';
+import { apiWrite, changeNotFound, CONFIG_COMMANDS, createGithubForge, diffTooLarge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REF_COMMANDS, REVIEWS_PAGE, servedRepository, TOKEN_VARS, undraftedCreate, WORKFLOW_FOLDERS } from './github.mjs';
 import { gitHelperValue, loginStep, tokenNote, tokenVarFor } from './github-token.mjs';
 import { remoteIdentity, repoIdentity } from './identity.mjs';
 
@@ -30,11 +30,13 @@ export const forgeConfigCommands = () => ADAPTER_CONFIG_COMMANDS.flat();
 // What a project run's issue session never asks of any forge, whichever serves its checkout, since it may run any
 // forge's CLI (lib/issue-forge-guard.mjs): forgeRefCommands(), the CLI subcommands that release, run a workflow, or
 // change the repository's settings, secrets, or keys, each { programs, subcommands, valueOptions, what };
-// forgeApiWrite(program, tokens), what a call of the CLI's raw API writes that the session never writes, or null; and
+// forgeApiWrite(program, tokens), what a call of the CLI's raw API writes that the session never writes, or null;
+// forgeUndraftedCreate(program, tokens), why a call of the CLI opens a pull request that is not a draft, or null; and
 // forgeWorkflowFolders(), the folders of a repository whose files the forge runs with its secrets on a push.
 const ADAPTER_REF_COMMANDS = Object.freeze([REF_COMMANDS]);
 export const forgeRefCommands = () => ADAPTER_REF_COMMANDS.flat();
 export const forgeApiWrite = (program, tokens) => apiWrite(program, tokens);
+export const forgeUndraftedCreate = (program, tokens) => undraftedCreate(program, tokens);
 export const forgeWorkflowFolders = () => [...WORKFLOW_FOLDERS];
 
 // The network hosts a session must reach to push to, and read from, the forge serving `repository`, { host, ... } as a

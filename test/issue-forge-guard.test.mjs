@@ -14,6 +14,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkDelivery, unwrittenHandoffs } from '../plugins/aidrian/lib/delivery-check.mjs';
+import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
 import { rawPaths, statusEntries } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { findingsFile, sessionIssue } from '../plugins/aidrian/lib/review/dispatch.mjs';
@@ -67,7 +68,7 @@ const REFUSED = [
 const PASSED = [
   EXACT, `git push -u origin HEAD:refs/heads/${BRANCH}`, `git push origin +HEAD:refs/heads/${BRANCH}`, `git push --force-with-lease=${BRANCH} origin HEAD:refs/heads/${BRANCH}`,
   `git push -q origin -- HEAD:refs/heads/${BRANCH}`, 'git status', 'git log --oneline -3', 'git -C . diff', 'gh release list', 'gh release view v1', 'gh workflow list',
-  'gh run view 123', `gh pr create --head ${BRANCH} --title x --body y`, 'gh api repos/acme/widgets/releases', 'gh api repos/acme/widgets/git/refs/tags',
+  'gh run view 123', `gh pr create --draft --head ${BRANCH} --title x --body y`, 'gh api repos/acme/widgets/releases', 'gh api repos/acme/widgets/git/refs/tags',
   'gh api -X POST repos/acme/widgets/pulls/3/comments/4/replies -f body=ok', 'gh api -X DELETE repos/acme/widgets/issues/comments/5',
   'gh api repos/{owner}/{repo}/issues/3/comments -f body="$BODY"', 'gh api -X GET repos/acme/widgets/actions/runs -f branch=main',
   'gh api graphql -f query=\'mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }\' -F id="$ID"',
@@ -136,6 +137,37 @@ test('an issue session pushes only its own branch to origin, and asks the forge 
   // An issue whose start the ledger does not name as running pushes nothing: its branch cannot be told.
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'parked', at: new Date().toISOString() }] }));
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /no running start of its issue names the branch it may push/u);
+});
+
+test('an issue session opens every pull request as a draft, by gh, the forge API, the GitHub MCP server, or a shell it cannot read', () => {
+  const mark = { root: '/r', cwd: '/r', project: 'launch', issue: 'ENG-1' };
+  const ask = (input, held = mark) => issueForgeDenial({ session_id: SESSION, cwd: '/r', ...input }, NAMES, { mark: held, cwd: '/r' });
+  const remedy = /opens every pull request as a draft, which the ready hold then holds\. This is a project rule: open it as a draft: `gh pr create --draft \.\.\.`, or the GitHub MCP create_pull_request call with `draft: true`/u;
+  for (const command of [
+    `gh pr create --head ${BRANCH} --title x --body y`, 'gh pr create -t x -b y', 'gh pr new -t x -b y', 'gh pr create --draft=false -t x', 'gh pr create -d --draft=false -t x',
+    'gh pr create --draft=1 -t x', 'gh pr create -d=false -t x', 'gh pr create -t -d -b y', 'gh pr create --title --draft -b y', 'gh -R acme/widgets pr create -t x',
+    'gh pr create -d $MORE', 'gh pr create -d "$@"', 'timeout 30 gh pr create -t x', 'npm test && gh pr create -t x', 'gh pr create -t x -- --draft',
+    'gh api repos/acme/widgets/pulls -f title=x -f head=b -f base=main', 'gh api -X POST repos/acme/widgets/pulls -F draft=true -f title=x',
+  ]) {
+    assert.match(ask(bash(command))?.reason ?? '', remedy, command);
+  }
+  for (const command of ['gh pr create --draft -t x -b y', 'gh pr create -d -t x', 'gh pr create --draft=true -t x', 'gh pr new -d -t x', 'gh pr create -fd', 'gh pr create -dt x',
+    'gh pr create -d --title "$T" --body "$(cat body.md)" --body-file="$F" -t"$X"', `gh -R acme/widgets pr create --draft --head ${BRANCH} -t x`, 'gh pr create -d --base main -B main -H x',
+    'gh pr view 3', 'gh pr list', 'gh api repos/acme/widgets/pulls', 'gh api -X PATCH repos/acme/widgets/pulls/3 -f title=x', 'echo gh pr create']) {
+    assert.equal(ask(bash(command)), null, command);
+  }
+  // The GitHub MCP server's tool, under its own name and a plugin's, which the host adapter reads as the standard one.
+  const mcp = (given, name = 'mcp__github__create_pull_request') => ask({ tool_name: name, tool_input: { owner: 'acme', repo: 'widgets', title: 'x', head: BRANCH, base: 'main', ...given } });
+  for (const given of [{}, { draft: false }, { draft: 'true' }]) assert.match(mcp(given)?.reason ?? '', remedy, JSON.stringify(given));
+  assert.equal(mcp({ draft: true }), null);
+  const plugin = claudeCode.hookInput({ tool_name: 'mcp__plugin_github_github__create_pull_request', tool_input: { title: 'x' } });
+  assert.equal(plugin.tool_name, 'mcp__github__create_pull_request');
+  assert.match(ask(plugin)?.reason ?? '', remedy, 'a plugin\'s GitHub server');
+  // A shell the guard cannot read.
+  assert.match(ask({ tool_name: 'PowerShell', tool_input: { command: 'gh pr create -t x -b y' } })?.reason ?? '', remedy);
+  assert.equal(ask({ tool_name: 'PowerShell', tool_input: { command: 'gh pr create --draft -t x -b y' } }), null);
+  // No issue mark: the session opens what it likes, as before.
+  for (const input of [bash('gh pr create -t x -b y'), { tool_name: 'mcp__github__create_pull_request', tool_input: { title: 'x' } }]) assert.equal(ask(input, null), null);
 });
 
 test('an attended session, a run\'s driver, a pending hold, and an unattended session no issue names are not held by the issue session\'s forge rule', async (t) => {

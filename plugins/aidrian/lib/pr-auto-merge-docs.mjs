@@ -66,13 +66,21 @@ export const startUnreadable = (loaded) =>
 // parent of it or of such a doc, where a changed path can only be a link, a file, or a submodule, which puts other files
 // in their place. Compared by the fold of the path (project.mjs foldPath), as the policy files are, since a disk that
 // ignores case or Unicode form loads either spelling.
-export function startLoadProblem(file, loaded) {
-  const folded = foldPath(file);
-  const named = JSON.stringify(file);
-  if (loaded.docs.some((doc) => foldPath(doc) === folded)) return `it changes ${named}, a knowledge doc the start hook loads into every session`;
-  if (loaded.folder && folded.startsWith(`${foldPath(loaded.folder)}/`)) return `it changes ${named}, in the default branch's knowledge folder, which decides what the start hook loads`;
-  if ([...loaded.docs, ...(loaded.folder ? [`${loaded.folder}/`] : [])].some((each) => foldPath(each).startsWith(`${folded}/`))) return `it changes ${named}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`;
-  return null;
+export const startLoadProblem = (file, loaded) => startLoadRule(loaded)(file);
+
+// startLoadProblem for one `loaded`, its names folded once, for a caller that judges many paths against it.
+export function startLoadRule(loaded) {
+  const docs = new Set(loaded.docs.map(foldPath));
+  const folder = loaded.folder ? foldPath(loaded.folder) : null;
+  const held = [...docs, ...(folder ? [`${folder}/`] : [])];
+  return (file) => {
+    const folded = foldPath(file);
+    const named = JSON.stringify(file);
+    if (docs.has(folded)) return `it changes ${named}, a knowledge doc the start hook loads into every session`;
+    if (folder && folded.startsWith(`${folder}/`)) return `it changes ${named}, in the default branch's knowledge folder, which decides what the start hook loads`;
+    if (held.some((each) => each.startsWith(`${folded}/`))) return `it changes ${named}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`;
+    return null;
+  };
 }
 
 // Whether a tree entry is whole: a name, a sha, a mode, and the type git gives that mode.

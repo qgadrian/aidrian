@@ -12,8 +12,8 @@ import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { runGit, WHOLE_TREE_BUFFER } from './git.mjs';
 import { INDEX_RECIPE, PLAIN_FILE } from './index-edits.mjs';
-import { startLoadProblem } from './pr-auto-merge-docs.mjs';
-import { foldPath, isGuardedPath, isPolicyPath, spellingRule } from './project.mjs';
+import { startLoadRule } from './pr-auto-merge-docs.mjs';
+import { foldPath, isGuardedPath, policyRule, spellingRule } from './project.mjs';
 import { namedFiles } from './project-trust.mjs';
 
 // The refs a push's commits are compared with, the first that git resolves: origin's default branch, as config-committed.mjs
@@ -62,7 +62,9 @@ function ownCloneProblem(folder, root, pushUrl, fold) {
 function overlayProblem(folder, overlay, { policyFiles, startLoaded, indexFiles }) {
   if (!overlay) return null;
   const editable = new Set(indexFiles.map((each) => each.path));
-  const held = (file) => file !== '' && (isGuardedPath(file) || isPolicyPath(file, policyFiles) || (startLoaded !== null && startLoadProblem(file, startLoaded) !== null));
+  // The held names folded once for the call, never once a path.
+  const [policy, loaded] = [policyRule(policyFiles), startLoaded === null ? () => null : startLoadRule(startLoaded)];
+  const held = (file) => file !== '' && (isGuardedPath(file) || policy(file) || loaded(file) !== null);
   const guarded = (file) => held(file) && !editable.has(file);
   const diff = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', overlay, 'HEAD', '--'], folder, true);
   if (diff.status !== 0) return `it pushes, and ${SLOW} which files its commits change from ${overlay.slice(0, 7)}, the head its attempt started from on the base branch's copies of the host config and instruction files`;
@@ -213,11 +215,20 @@ function spent() {
   }
 }
 
-// Calls `visit` on each of `list` until it returns a truthy value, asking the time budget every 1,000 items and once
-// more before it answers: false when the budget ran out first, so the list is never judged in part, else true.
+// Calls `visit` on each path of `list` until it returns a truthy value, asking the time budget by the work done, every
+// 1,000 paths or 256 KiB of path text, whichever comes first, and once more before it answers: false when the budget ran
+// out first, so the list is never judged in part, else true.
+const BUDGET_PATHS = 1000;
+const BUDGET_TEXT = 256 * 1024;
 function inBudget(list, visit) {
-  for (const [at, item] of list.entries()) {
-    if (at % 1000 === 0 && spent()) return false;
+  let [paths, text] = [BUDGET_PATHS, BUDGET_TEXT];
+  for (const item of list) {
+    if (paths >= BUDGET_PATHS || text >= BUDGET_TEXT) {
+      if (spent()) return false;
+      [paths, text] = [0, 0];
+    }
+    paths += 1;
+    text += item.length;
     if (visit(item)) return true;
   }
   return !spent();
@@ -284,7 +295,8 @@ const shellWord = (file) => (/^[\w./@%+=:,-]+$/u.test(file) ? file : `'${file.re
 export function pushCheckoutProblem(folder, { root, pushUrl, fold, overlay = null, policyFiles = [], startLoaded = null, indexFiles = [] }) {
   const paths = workflowPaths();
   // The names the push guard holds by their exact spelling: the workflow folders always, and the start's policy files and
-  // what its start hook loads when its row keeps them, with base copies. The start holds the rest (spellingAt).
-  const spelling = spellingRule([...paths.names, ...policyFiles, ...(startLoaded ? [...startLoaded.docs, `${startLoaded.folder}/`] : [])], { guarded: false });
+  // what its start hook loads when its row keeps them, with base copies; and a guarded path by its fold alone. The start
+  // holds the rest (spellingAt).
+  const spelling = spellingRule([...paths.names, ...policyFiles, ...(startLoaded ? [...startLoaded.docs, `${startLoaded.folder}/`] : [])]);
   return ownCloneProblem(folder, root, pushUrl, fold) ?? overlayProblem(folder, overlay, { policyFiles, startLoaded, indexFiles }) ?? committedProblem(folder, paths, spelling) ?? uncommittedProblem(folder, paths, spelling);
 }

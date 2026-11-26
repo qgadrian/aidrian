@@ -438,17 +438,22 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   const clock = performance.now;
   // Still at its start while git reads, then a step each time the loop asks.
   const start = 1e9;
+  let listing = Array.from({ length: 1500 }, (_, at) => `src/${at}.js\0`).join('');
   performance.now = () => (listed ? start + (tick += 1) : 0);
   stubGitSpawn((program, args, options) => {
     if (!(args.includes('--name-only') && (args.some((each) => each.endsWith('...HEAD')) || args.includes(fx.head)))) return spawnSync(program, args, options);
     listed = true;
-    return { status: 0, signal: null, stdout: Array.from({ length: 1500 }, (_, at) => `src/${at}.js\0`).join(''), stderr: '' };
+    return { status: 0, signal: null, stdout: listing, stderr: '' };
   });
   try {
     const past = 'it pushes commits that change 1500 paths, more than the guards can judge within their time budget, so the push is refused, never judged in part';
     assert.equal(withinDeadline(start + 2, () => fx.push(fx.work, plainPush)), past);
     [listed, tick] = [false, 0];
     assert.equal(withinDeadline(start + 2, () => fx.push()), past, 'the overlay\'s scan');
+    // About 8 MiB of path text in fewer than 1,000 paths: the walk asks the budget every 256 KiB of it.
+    [listed, tick] = [false, 0];
+    listing = Array.from({ length: 900 }, (_, at) => `src/${String(at).padStart(9000, 'x')}\0`).join('');
+    assert.equal(withinDeadline(start + 2, () => fx.push()), past.replace('1500', '900'), 'by the text');
   } finally {
     stubGitSpawn();
     performance.now = clock;
@@ -521,10 +526,10 @@ test('an edit of a knowledge index lifts the push guard for no other file: an in
   execFileSync('git', ['init', '-q', path.join(fx.work, '.GITHUB')], { stdio: 'pipe' });
   assert.match(fx.push(fx.work, plain) ?? '', /^it pushes from a checkout that holds an uncommitted change to "\.GITHUB" is "\.github" in another spelling/u);
   rmSync(path.join(fx.work, '.GITHUB'), { recursive: true });
-  // Another spelling of a guarded path that is no workflow folder: the push guard leaves it to the next start.
+  // Another spelling of a guarded path that is no workflow folder, by its fold alone, refuses too.
   mkdirSync(path.join(fx.work, '.github', 'in\ufb06ructions'), { recursive: true });
   writeFileSync(path.join(fx.work, '.github', 'in\ufb06ructions', 'x.md'), 'rules\n');
-  assert.equal(fx.push(fx.work, plain), null);
+  assert.match(fx.push(fx.work, plain) ?? '', /^it pushes from a checkout that holds an uncommitted change to "\.github\/in\ufb06ructions\/x\.md" is a guarded path in another spelling/u);
   rmSync(path.join(fx.work, '.github'), { recursive: true });
   assert.deepEqual(['.github/work\ufb02ows/ci.yml', '.GitHub', '.github/workflows', '.github/other.yml', 'x/.github/workflows/ci.yml'].map(workflowPaths().counts), [true, true, true, false, false], 'the forge\'s workflow folder, by its fold');
   // A link in their folder's place, and a submodule, whose own `ignore` setting hides no entry of it from the guard.

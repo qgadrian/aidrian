@@ -2249,8 +2249,8 @@ Residuals of the base copies:
   one that rewrites a policy file refuses a first attempt too.
 - A hand write by the session, a first attempt, and a base that renames a host file the branch changed are not held.
 - A push or a merge of another spelling of a name the start holds, such as `docs/RULES.md` beside an always
-  `docs/rules.md`, is not refused by the push guard or the merge gate: the push guard holds the workflow folders, and
-  the base copies' names when its row keeps them, alone. Every later start on that head refuses it, so it can cost the
+  `docs/rules.md`, is not refused by the push guard or the merge gate: the push guard holds the workflow folders, the
+  base copies' names when its row keeps them, and a guarded path by its fold alone. Every later start on that head refuses it, so it can cost the
   run's progress, but no session loads it.
 
 Every park row names the recorded head.

@@ -13,6 +13,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { deflateSync, inflateSync } from 'node:zlib';
 
+import { stubGitSpawn } from '../plugins/aidrian/lib/git.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { copyLoose, keptCandidate, keptLines, keptPrompt, takeKept } from '../plugins/aidrian/lib/project-kept.mjs';
 import { isPolicyPath } from '../plugins/aidrian/lib/project.mjs';
@@ -357,6 +358,14 @@ test('kept commits that change a host, policy, or workflow file are not taken, a
     assert.equal(room.kept.why.includes(path.basename(file)), false, `${file}: no file name of the clone reaches the driver`);
     assert.equal(inClone(fx, 2)('diff', '--name-only', forgeHead, 'HEAD'), '');
     assert.throws(() => inClone(fx, 2)('cat-file', '-e', head), `${file}: no refused commit in the clone, under any id`);
+  }
+  // A list of their files git cut at its buffer, with status 0 and an error, is no list: they are not taken.
+  fresh();
+  stubGitSpawn((program, args, options) => (args.includes('log') && args.includes('-m') ? { status: 0, signal: null, stdout: 'src.js\0', stderr: '', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : spawnSync(program, args, options)));
+  try {
+    notTaken(setting, prepare({ guards }), /^git cannot say which files its commits change$/u, 'a cut list');
+  } finally {
+    stubGitSpawn();
   }
 });
 

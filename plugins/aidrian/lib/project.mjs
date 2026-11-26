@@ -167,9 +167,15 @@ export const spellingProblem = (file, names) => spellingRule(names)(file);
 // Whether `file`, from the top of the repository, is a policy file: a POLICY_PATHS name, or one of `policyFiles`, the
 // paths pr-auto-merge.mjs branchPolicies read the gate's policy from, as a config.json a pointer file relocates, each by
 // its fold (foldPath).
-export function isPolicyPath(file, policyFiles = []) {
-  const folded = foldPath(file);
-  return POLICY_PATHS.test(folded) || policyFiles.some((each) => typeof each === 'string' && foldPath(each) === folded);
+export const isPolicyPath = (file, policyFiles = []) => policyRule(policyFiles)(file);
+
+// isPolicyPath for one list `policyFiles`, folded once, for a caller that judges many paths against it.
+export function policyRule(policyFiles = []) {
+  const folds = new Set(policyFiles.filter((each) => typeof each === 'string').map(foldPath));
+  return (file) => {
+    const folded = foldPath(file);
+    return POLICY_PATHS.test(folded) || folds.has(folded);
+  };
 }
 
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.

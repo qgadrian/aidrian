@@ -786,16 +786,11 @@ export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge 
     const forgotten = !token || forgetToken({ cap, folder, row, env, home });
     if (stays || waits || !forgotten) continue;
     const unpushed = unpushedHead({ folder, row, repository: found.init?.repository, forge });
-    if (unpushed?.wait) continue;
-    if (unpushed) {
-      lines.push(...keepClone({ state, run, row, folder, unpushed }));
-      continue;
-    }
     // Nothing unpushed: the ledger says whether the tree may hold uncommitted work (project-tree.mjs ledgerKeep).
-    const left = ledgerKeep({ found, row, repository: found.init?.repository, forge });
+    const left = unpushed ?? ledgerKeep({ found, row, repository: found.init?.repository, forge });
     if (left?.wait) continue;
     if (left) {
-      lines.push(...keepClone({ state, run, row, folder, unpushed: { head: null, why: left.why }, files: true }));
+      lines.push(...keepClone({ state, run, row, folder, unpushed: { head: left.head ?? null, why: left.why }, files: !unpushed }));
       continue;
     }
     // The stop history goes to the run's archive first, so the caps hold across attempts; one that cannot be kept

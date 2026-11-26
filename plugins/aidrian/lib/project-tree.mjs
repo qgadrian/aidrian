@@ -101,10 +101,11 @@ function worktreesOf(out) {
 // The lines a result held back on `read` (treeOf, `uncommitted`) prints: the counts, at most MAX_NAMES cleaned names,
 // and the three ways on. None says to discard work, or to stage everything.
 export function treeLines(read) {
+  const commits = read.commits === 1 ? 'commit' : 'commits';
   const parts = [
     `${read.files} changed or untracked ${read.files === 1 ? 'file' : 'files'} in the clone`,
     ...(read.others ? [`${read.others} in its other worktrees`] : []),
-    ...(read.commits ? [`${read.commits} ${read.commits === 1 ? 'commit' : 'commits'} only a local branch, another worktree, or the stash holds`] : []),
+    ...(read.commits ? [`${read.commits} ${commits} only a local branch, another worktree, or the stash holds`] : []),
   ];
   return [
     `the clone holds work no commit on the issue's branch has: ${parts.join(', ')}`,

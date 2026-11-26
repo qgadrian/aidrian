@@ -467,7 +467,12 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
     [listed, tick] = [false, 0];
     listing = Array.from({ length: 1500 }, (_, at) => `?? src/${at}.js\0`).join('');
     statusList = true;
-    assert.equal(withinDeadline(start + 2, () => fx.push(fx.work, plainPush)), 'it pushes from a checkout that holds 1500 uncommitted entries, more than the guards can judge within their time budget, so the push is refused, never judged in part');
+    assert.equal(withinDeadline(start + 2, () => fx.push(fx.work, plainPush)), 'it pushes from a checkout that holds 1500 uncommitted paths, more than the guards can judge within their time budget, so the push is refused, never judged in part');
+    // 600 renames, a short new path and a long old one each: 1,200 paths in 600 entries, each path charged, so the
+    // budget runs out after 1,000 paths, not 1,000 entries.
+    [listed, tick] = [false, 0];
+    listing = Array.from({ length: 600 }, (_, at) => `R  n${at}.js\0${'o'.repeat(300)}${at}.js\0`).join('');
+    assert.equal(withinDeadline(start + 2, () => fx.push(fx.work, plainPush)), 'it pushes from a checkout that holds 1200 uncommitted paths, more than the guards can judge within their time budget, so the push is refused, never judged in part');
   } finally {
     stubGitSpawn();
     performance.now = clock;
@@ -583,6 +588,11 @@ test('an edit of a knowledge index lifts the push guard for no other file: an in
   appendToRun(fx.state, 'launch', () => ({ rows: [launch(['first.json'], ['docs/first.md']), { ...settled, outcome: 'void' }, launch(['retry.json'], ['docs/retry.md'])].map((row) => ({ ...row, at: new Date().toISOString() })) }));
   const retried = own({ ...settled, outcome: 'started' });
   assert.deepEqual([retried.policyFiles, retried.startLoaded.docs], [['retry.json'], ['docs/retry.md']]);
+  // A first launch with no base copies, given back, then a retake with them: the retake's own row.
+  const { overlay, ...bare } = settled;
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ ...bare, outcome: 'uncertain', pending: true }, { ...bare, outcome: 'void' }, launch(['retake.json'], ['docs/retake.md'])].map((row) => ({ ...row, at: new Date().toISOString() })) }));
+  const retaken = own({ ...settled, outcome: 'started' });
+  assert.deepEqual([retaken.overlay, retaken.policyFiles, retaken.startLoaded.docs], [overlay, ['retake.json'], ['docs/retake.md']]);
 });
 
 test('an issue session merges a moved base, which may give an index the base\'s own copy, then edits one, and pushes no merge whose index conflicted', (t) => {

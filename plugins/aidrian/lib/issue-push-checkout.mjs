@@ -199,19 +199,22 @@ function committedProblem(folder, { counts }, spelling) {
 function uncommittedProblem(folder, { counts }, spelling) {
   const status = budgeted(['status', '--porcelain', '-z', '--untracked-files=all', '--ignored=no', '--'], folder, true);
   if (status.status !== 0) return `it pushes, and ${SLOW} whether its checkout holds a change to the forge's workflow files`;
-  // One walk over the status entries, in the guards' budget, parses each, judges its paths' spelling and workflow
+  // One walk over the status entries, in the guards' budget, each path charged, the one a rename or copy came from too,
+  // parses each, judges its paths' spelling and workflow
   // folders, and keeps the first workflow one. A folder git lists whole, as an embedded repository, ends with a slash,
   // which no name it may be spelled as has.
   const fields = status.stdout.split('\0');
   const budget = walkBudget();
   let found = null;
   for (let at = 0; at < fields.length; at += 1) {
-    if (!budget.step(fields[at])) return pastLine(`from a checkout that holds ${fields.length - 1} uncommitted entries`);
+    if (!budget.step(fields[at])) return pastLine(`from a checkout that holds ${fields.length - 1} uncommitted paths`);
     if (fields[at].length < 4) continue;
     const code = fields[at].slice(0, 2);
     const paths = [fields[at].slice(3)];
     if (/[RC]/u.test(code) && fields[at + 1]) {
       at += 1;
+      // The path a rename or copy came from is judged too, so it is charged to the budget as its own path.
+      if (!budget.step(fields[at])) return pastLine(`from a checkout that holds ${fields.length - 1} uncommitted paths`);
       paths.push(fields[at]);
     }
     for (const file of paths.map((each) => each.replace(/\/+$/u, ''))) {
@@ -220,7 +223,7 @@ function uncommittedProblem(folder, { counts }, spelling) {
       if (!found && counts(file)) found = { file, untracked: code === '??' };
     }
   }
-  if (!budget.done()) return pastLine(`from a checkout that holds ${fields.length - 1} uncommitted entries`);
+  if (!budget.done()) return pastLine(`from a checkout that holds ${fields.length - 1} uncommitted paths`);
   if (!found) return null;
   const { file } = found;
   const undo = found.untracked ? `git clean -f -- ${shellWord(file)}` : `git restore --staged --worktree -- ${shellWord(file)}`;

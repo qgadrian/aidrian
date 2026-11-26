@@ -803,8 +803,9 @@ test('an attempt on base copies fast-forwards to its offered commits with the co
   inClone(fx, 1)('rm', '-q', '.claude/skills/x/SKILL.md');
   const forgeHead = commit(fx, 1, { 'CLAUDE.md': '# branch rules\n' });
   push(fx, 1);
-  assert.equal(limited(fx, 1), null);
-  assert.equal(startAgain(fx), null);
+  // A limit end with nothing unpushed keeps its folder too, since no result read its tree: it holds no commit to offer.
+  assert.match(limited(fx, 1), /^kept ENG-1 attempt 1: its session ended with no result that says its clone was left clean, /u);
+  assert.equal(startAgain(fx), 'not taken ENG-1 attempt 1: its `kept` row names no commit');
   const head = commit(fx, 2, { 'src.js': 'two\n', '.gitignore': 'out/\n' });
   assert.match(limited(fx, 2), /^kept ENG-1 attempt 2: /u);
   assert.equal(startAgain(fx), `offered ENG-1 attempt 2: 1 unpushed commit, ${head.slice(0, 12)}`);
@@ -824,6 +825,14 @@ test('an attempt on base copies fast-forwards to its offered commits with the co
   assert.equal(readFileSync(path.join(clone, 'src.js'), 'utf8'), 'two\n');
   held();
   assert.equal(pushProblem(fx, 3), null);
+  // The base copies, skip-worktree or ignored, never count as uncommitted work at the result.
+  const file = path.join(fx.root, 'result.json');
+  writeFileSync(file, JSON.stringify({ status: 'failed', pr: null, decisions: [], stop: 'out of time' }));
+  const handed = fx.cmd(['result', 'launch', 'ENG-1', '--file', file], { session: STARTED[2].session });
+  assert.equal(handed.exitCode, 0, handed.err.join('\n'));
+  const drop = path.join(folderOf(fx, 3), 'drop', 'result.json');
+  assert.equal(JSON.parse(readFileSync(drop, 'utf8')).tree, 'clean');
+  rmSync(drop);
   // Kept commits that change the host file are not taken, and the next attempt holds base copies over the forge's head.
   git('update-index', '--no-skip-worktree', '--', 'CLAUDE.md');
   writeFileSync(path.join(clone, 'CLAUDE.md'), '# rules the session wrote\n');

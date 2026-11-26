@@ -9,7 +9,8 @@
 //   aidrian project end RUN                # the driver records the run's end, which releases its driver mark
 //   aidrian project start RUN ISSUE        # the driver starts the issue's session in a fresh clone (lib/project-run-gate.mjs)
 //   aidrian project wait RUN [--max-wait S] # the driver waits for an issue's session to settle, at most S seconds
-//   aidrian project result RUN ISSUE --file PATH   # the issue's own session records how it ended
+//   aidrian project result RUN ISSUE --file PATH   # the issue's own session records how it ended, held back while
+//                    [--uncommitted]       # its clone holds work no commit has, unless it hands that work over so
 //   aidrian project handoff RUN BRIEF      # the driver records the brief its background continuation starts from
 //   aidrian project resume RUN             # an attended session lifts the run's halt, such as a failed start proof's or a
 //                                          # limit's, or takes custody of a run whose driver's sessions ended
@@ -58,7 +59,7 @@ import { endRun, recordHandoff, recordResult, resumeRun, RETRY_EXIT, runParallel
 import { usageLines } from './usage.mjs';
 
 const USAGE = 'init RUN --file PATH [--check] [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
-  'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--custody] [--project DIR] | end RUN [--project DIR] | ' +
+  'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--uncommitted] [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--custody] [--project DIR] | end RUN [--project DIR] | ' +
   'report RUN [--json] [--project DIR] | recorded RUN ISSUE [--project DIR] | preflight [RUN] [--project DIR] | stop-action RUN ISSUE [--catch-up] [--project DIR] | confine RUN ISSUE | decision ISSUE --heading TEXT [--record] [--project DIR] | decision ISSUE --forget [--project DIR]';
 // The actions the command takes; lib/project-run-guard.mjs holds a rule for each (test/project-start-guard.test.mjs).
 export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff', 'resume', 'end', 'report', 'recorded', 'preflight', 'stop-action', 'confine', 'decision'];
@@ -69,7 +70,7 @@ export const commands = {
   project: {
     usage: USAGE,
     about: 'keep the record of a project run that works through a tracker project: init validates the snapshot input the driver session wrote from the tracker and starts run RUN, from the attended main session only; next prints the issue or issues to start, by blockers, then priority, then key, or done; summary writes the run\'s summary.md from its ledger; ' +
-      'start, for the run\'s driver, starts the issue\'s own session in the background in a fresh clone of its own, under the caps; wait waits for an issue\'s session to end or record its result; result records it, from that session only; handoff records the brief the driver\'s background continuation takes the run on with; ' +
+      'start, for the run\'s driver, starts the issue\'s own session in the background in a fresh clone of its own, under the caps; wait waits for an issue\'s session to end or record its result; result records it, from that session only, and refuses while the clone holds uncommitted work unless --uncommitted hands it over so; handoff records the brief the driver\'s background continuation takes the run on with; ' +
       'resume, from an attended session only, lifts the run\'s halt, such as a failed start proof\'s or a usage limit\'s, or takes custody of a run whose driver\'s sessions ended, and with --custody takes custody only, which under projectRun.fullAuto the host\'s continuation of the driver takes with no person; end, for the run\'s driver at the end of its loop, records the run\'s end, which releases the driver\'s hold; ' +
       'report, for the driver, prints the status, label, and comment the run owes each settled issue, and recorded closes one once written; preflight runs every check a start would refuse or halt on, before init; ' +
       'stop-action, for the issue\'s own session only, prints the one action for an issue whose pull request did not merge, takes the forge\'s part of it, and records it against its cap, and with --catch-up, at an attempt\'s start, the one way it merges a base its pull request conflicts with; ' +
@@ -119,6 +120,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     options: {
       project: word,
       ...(['init', 'result'].includes(action) ? { file: word } : {}),
+      ...(action === 'result' ? { uncommitted: { type: 'boolean' } } : {}),
       ...(action === 'init' ? { check: { type: 'boolean' } } : {}),
       ...(['next', 'report'].includes(action) ? { json: { type: 'boolean' } } : {}),
       ...(action === 'wait' ? { 'max-wait': word } : {}),
@@ -171,7 +173,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   if (action === 'start') return startIssue({ ...gate, key: second, spawn, wait, recheck, ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
   if (action === 'result') {
     if (!values.file) return fail('project result needs --file');
-    return recordResult({ ...gate, key: second, file: path.resolve(cwd, values.file) });
+    return recordResult({ ...gate, key: second, file: path.resolve(cwd, values.file), uncommitted: values.uncommitted === true });
   }
   if (action === 'handoff') return recordHandoff({ ...gate, brief: path.resolve(cwd, second) });
   if (action === 'resume') return resumeRun({ ...gate, custody: values.custody === true, spawn });

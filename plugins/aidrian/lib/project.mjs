@@ -72,7 +72,7 @@ const GUARDED_LIB = [
   'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose', 'markdown-sections', 'markdown-wrap',
   'model-prices', 'names', 'override-guard', 'package-runner', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-diff', 'pr-product-feedback',
   'pr-ready-wait', 'pr-resolve', 'project', 'project-confine', 'project-decision', 'project-decision-store', 'project-forge-holds', 'project-full-auto', 'project-human-merges', 'project-issue-text', 'project-kept', 'project-limit', 'project-linger', 'project-preflight', 'project-recheck', 'project-registries', 'project-report',
-  'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-setup-doc', 'project-start', 'project-stops', 'project-token', 'project-trust', 'push-preflight',
+  'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-setup-doc', 'project-start', 'project-stops', 'project-token', 'project-tree', 'project-trust', 'push-preflight',
   'remotes', 'resume-tokens', 'review-gate', 'run-driver', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins',
   'session-prs', 'session-rows', 'session-start-gate', 'shell-init', 'shell-lex', 'solo', 'stop-announce', 'stop-handback', 'stop-history', 'stop-review-loop',
   'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'transcript-guard', 'unattended-mark', 'unattended-shell',

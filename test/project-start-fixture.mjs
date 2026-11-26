@@ -47,6 +47,12 @@ export const ISSUES = [
 export const noWait = () => {};
 // Appends an issue row to run `run`'s ledger, as the gate's own writes do (appendToRun).
 export const recordIssue = (state, run, row) => appendToRun(state, run, () => ({ rows: [{ event: 'issue', key: row.key, state: row.state, ...(row.decision ? { decision: row.decision } : {}), at: new Date().toISOString() }] }));
+// The line of the driver's sweep that keeps the folder of issue `key`'s latest attempt in run `launch` of the fixture
+// `fx`, or of its attempt `attempt`, whose end recorded no result that read its tree clean (lib/project-tree.mjs ledgerKeep).
+export function keptFiles(fx, key = 'ENG-1', attempt = fx.rows().filter((row) => row.event === 'start' && row.key === key).at(-1).attempt) {
+  const work = path.join(runFolder(fx.state, 'launch'), 'attempts', `${key}.${attempt}`, 'work');
+  return `kept ${key} attempt ${attempt}: its session ended with no result that says its clone was left clean, so its folder stays for the run's life; copy any work out of ${work}, and run no git or program there`;
+}
 // This plugin's id as the host's installed plugins name it, and its folder.
 export const OWN_PLUGIN = 'aidrian@aidrian-harness';
 

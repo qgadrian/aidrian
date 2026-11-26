@@ -27,7 +27,7 @@ import { appendToRun, HOST_DENIED_MERGE, readRun, runFolder, summaryText } from 
 import { CAUSE_CHECKS, ENVIRONMENT_CAUSES, NO_TRUST_RECORD, recheckHalt } from '../plugins/aidrian/lib/project-recheck.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { decidedFixture, DRIVER, ISSUES, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { decidedFixture, DRIVER, ISSUES, keptFiles, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const CHILD = STARTED[0].session;
 
@@ -376,7 +376,7 @@ test('a result of a wrong shape, too large, not JSON, or behind a symlink is ref
 test('an issue\'s session that stops with no result is sent back once; after its result, or for another session, nothing holds', (t) => {
   const fx = started(t);
   const stop = (session) => resultHoldReason({ session_id: session, stop_hook_active: false }, { home: fx.home, env: fx.env });
-  assert.match(stop(CHILD), /^This session works the issue ENG-1 of the project run launch, and it has not recorded the issue's result.*aidrian project result launch ENG-1 --file/u);
+  assert.match(stop(CHILD), /^This session works the issue ENG-1 of the project run launch, and it has not recorded the issue's result.*commit the issue's work first, by path, .*aidrian project result launch ENG-1 --file/u);
   assert.equal(stop(DRIVER), null);
   assert.equal(stop(OTHER), null);
   markUnattended(OTHER, { root: fx.dir, env: fx.env, tags: { project: 'launch', issue: 'ENG-1' } });
@@ -391,7 +391,7 @@ test('wait stops and records an issue past issueHours, and names one it cannot s
   // One past issueHours that cannot be stopped is named with the host's own command that stops it by hand.
   const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : late.claude.run(command, args, options));
   assert.deepEqual(late.cmd(['wait', 'launch', '--max-wait', '0'], { now: later, spawn: failing }).out, [`overdue ENG-1 attempt 1: a session of it, ${STARTED[0].id}, could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`, 'running ENG-1']);
-  assert.deepEqual(late.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, ['ended ENG-1 timeout -> open', 'idle']);
+  assert.deepEqual(late.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, ['ended ENG-1 timeout -> open', keptFiles(late), 'idle']);
   assert.deepEqual(stops(late), [STARTED[0].id]);
 });
 
@@ -521,7 +521,7 @@ test('wait records an issue whose sessions all ended with no result, and stops e
   assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['running ENG-1']);
   fx.claude.states[CHILD] = 'done';
   fx.claude.held.add(CHILD);
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, ['ended ENG-1 no_result -> open', stuck, 'idle'], 'the line keeps no wait from idle');
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, ['ended ENG-1 no_result -> open', keptFiles(fx), stuck, 'idle'], 'the line keeps no wait from idle');
   assert.deepEqual(fx.rows().filter((row) => row.event === 'gone').map((row) => [row.key, row.attempt, row.how]), [['ENG-1', 1, 'ended']]);
   assert.match(fx.cmd(['wait', 'launch'], { session: OTHER }).err[0], /this session is not the driver/u);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
@@ -732,7 +732,7 @@ test('result text loses format and tag characters by category, and every mention
 test('wait records a failed issue session as ended with no result', (t) => {
   const fx = started(t);
   fx.claude.states[CHILD] = 'failed';
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', 'idle']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', keptFiles(fx), 'idle']);
 });
 
 test('result text loses character references that spell a mention marker, before the mention pass', () => {

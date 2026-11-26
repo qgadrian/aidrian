@@ -2091,6 +2091,12 @@ have, whatever its result, with a `kept` row and a `kept` line from `wait` ([Han
 crash that ends a session mid-work never loses what it committed and did not push. A start given back (`void`) frees its
 attempt's number for the next start, but once a `kept` row names that number, no start of the run takes it, wherever the
 folder went: recover the work and start the issue in a new run.
+An attempt's uncommitted files are kept the same way ([Handoff](handoff.md)).
+`aidrian project result` refuses a `failed`, `blocked`, `parked`, or `pr_open` result while the clone holds work no
+commit on the issue's branch has, unless `--uncommitted` hands it over so, and the drop records what it read as `tree`.
+The sweep keeps an ended attempt's folder, with a `kept` row that names no commit, unless its result is `merged`, its
+`tree` is `clean`, it has neither a result nor an `ended` row, or it was offered kept commits it never took.
+So a timeout or a limit keeps it too: a run may hold up to 3 attempt folders an issue, and 24 more after limits.
 The issue's next attempt is offered the commits a kept clone holds (`lib/project-kept.mjs`) when its attempt ended on a
 usage or rate limit, no other attempt ran since but ones offered that very commit that ended on a limit too and whose
 folders the sweep removed, the clone's HEAD and its issue branch, each read as a file, both resolve to the one commit
@@ -2373,7 +2379,7 @@ After its first read, which always runs, it starts no read that the slowest read
 It then prints the last read's lines, such as `running ISSUE`, and the driver runs it again.
 One read slower than every earlier one can still run past S.
 The Stop hook holds the result: when the newest session of a running issue's chain ends a turn before it handed its
-result over, it is sent back once, before any other Stop check, to run `aidrian project result`, or to go on with the
+result over, it is sent back once, before any other Stop check, to commit the issue's work and run `aidrian project result`, or to go on with the
 work (`lib/project-run-guard.mjs resultHoldReason`, run by `scripts/hook-stop.mjs`); a session that handed the work on,
 or whose mark, run, or ledger cannot be read, stops. It runs on Claude Code, the host whose project start is confined;
 Codex runs the same Stop hook, [not verified live](providers/codex.md#hooks).

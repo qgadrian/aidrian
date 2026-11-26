@@ -120,6 +120,20 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   needs; or a host tool that will not run. Its `stop` names the command and its error, with no token or password in
   it, and its `cause` names the class. A failing test, a review finding, or a merge rule is the work's own outcome,
   never `environment`.
+- **Commit before the result, whichever way the attempt ends.** Let every subagent and background command finish,
+  bring each slice branch and worktree onto the issue's branch, and commit the issue's work by named paths; then run `result`.
+  `result` refuses a `failed`, `blocked`, `parked`, or `pr_open` result while the clone holds work no commit on the branch has.
+  Never clean, restore, reset, stash, or ignore work to pass it: hand the work over with `--uncommitted` instead.
+  A finished slice is committed and pushed as always.
+  A work-in-progress commit says so in its subject, and is pushed only when the result is `failed` and the issue has no
+  pull request or a draft one; after `gh pr ready`, and for `parked`, `pr_open`, or `blocked`, it stays unpushed, since
+  it would move the head the Human is asked about. A refused push is never worked around.
+  Commit nothing this attempt could not push: a limit after the commit offers it to the next attempt.
+  Never commit, and never with `-f`: an ignored file, a file this session did not write for the issue, an env file,
+  key, token, certificate, log, dump, database, download, screenshot, recording, test output, result or report file,
+  text of `issue.md` or `decision.md`, personal data, a base copy, marked skip-worktree or not, a file this attempt may
+  not write, a nested repository or submodule, or a link out of the clone. No `--no-verify`, amend, rebase, or force.
+  A work-in-progress commit an earlier attempt left on the branch is unreviewed: its slice's review covers it first.
 - **The result is the report's last step.** After the report, write the result as JSON to a file in the temporary
   folder (`mktemp`), and run `aidrian project result <run> <key> --file <that file>`. On exit 1, fix what it lists and
   run it again. The fields:

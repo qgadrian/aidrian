@@ -224,7 +224,9 @@ The one-time steps before a run are in [Project run setup](../project-run-setup.
   pinned forge URL, and work moves only through the forge. The session pushes with a full refspec and names the branch
   to every forge command, as its prompt says.
 - Its `aidrian project result` writes `result.json` in the drop folder and prints `handed <issue> <status>`; it writes
-  no ledger row and calls no forge. The driver's `wait` reads the file without following a link, as a regular file of
+  no ledger row and calls no forge.
+  It runs in the session's sandbox, where it reads the clone's tree first and holds back a result over uncommitted work
+  ([Handoff](../handoff.md#a-project-run)). The driver's `wait` reads the file without following a link, as a regular file of
   the user with one link, checks every field again, and, for `merged` or `pr_open`, that the pull request is the
   issue's own on the forge. Anything else ends the attempt `bad_result`.
 - Codex must run every hook of this plugin unasked: each handler hooks.json lists, of every event, needs a trusted

@@ -41,11 +41,12 @@ export const KEPT_CAPS = Object.freeze({ file: 64 * 1024 * 1024, bytes: 256 * 10
 // head, folder }, that attempt's number, its one commit, and its folder (`folderOf(attempt)`). `refs(gitFolder,
 // branch)` reads a clone's refs as files (project-start.mjs cloneRefs): its HEAD and its issue branch must each be at
 // that commit. An attempt made since is one that was offered that very commit, ended on a limit too, and left no
-// folder: its clone, once swept, held no commit to keep. One that ended otherwise, as one whose fast-forward failed, is
-// the last they are offered to. While such a folder is there, which the sweep may never remove, it may hold newer work,
-// so none older is offered.
+// folder, or one of files alone: a `kept` row with `files` (project-start.mjs keepClone), never one of refs that could
+// not be read, holds no commit, so the offer looks past it. One that ended otherwise, as one whose fast-forward failed,
+// is the last they are offered to. While any other folder is there, it may hold newer work, so none older is offered.
 export function keptCandidate({ found, key, branch, folderOf, refs }) {
-  const row = found.rows.findLast((each) => each.event === 'kept' && each.key === key && Number.isInteger(each.attempt));
+  const kept = (files) => (each) => each.event === 'kept' && each.key === key && Number.isInteger(each.attempt) && (each.files === true && each.head === null) === files;
+  const row = found.rows.findLast(kept(false));
   if (!row) return null;
   const { attempt, head } = row;
   const not = (why) => ({ attempt, why });
@@ -58,7 +59,8 @@ export function keptCandidate({ found, key, branch, folderOf, refs }) {
   const since = ran.slice(own + 1);
   if (since.some((each) => each.took?.head !== head)) return not('another attempt ran since');
   if (!since.every((each) => limited(each.attempt))) return not('an attempt since did not end on a limit');
-  if (since.some((each) => existsSync(folderOf(each.attempt)))) return not('an attempt since is not swept yet');
+  const files = new Set(found.rows.filter(kept(true)).map((each) => each.attempt));
+  if (since.some((each) => !files.has(each.attempt) && existsSync(folderOf(each.attempt)))) return not('an attempt since is not swept yet');
   const folder = folderOf(attempt);
   const read = refs(path.join(folder, 'git'), branch);
   if (read.head !== head || read.branch !== head) return not(`its clone's HEAD and branch are not both at ${head.slice(0, 12)}`);

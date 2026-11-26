@@ -699,6 +699,26 @@ test('the lines of an offer', () => {
   assert.deepEqual([keptPrompt(null), keptPrompt({ attempt: 2, why: 'because' })], [[], []]);
 });
 
+test('a kept row of files alone hides no older commit row, and blocks no offer by its folder, but the limit rule still holds', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-kept-files-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const head = 'c'.repeat(40);
+  const folderOf = (attempt) => path.join(dir, `ENG-1.${attempt}`);
+  for (const attempt of [1, 2]) mkdirSync(folderOf(attempt));
+  const at = now();
+  const start = (attempt, more = {}) => ({ event: 'start', key: 'ENG-1', attempt, outcome: 'started', session: STARTED[0].session, id: STARTED[attempt].session, child: STARTED[attempt].session, cwd: folderOf(attempt), name: `ENG-1 ${attempt}`, branch: BRANCH, at, ...more });
+  const ended = (attempt, reason) => ({ event: 'ended', key: 'ENG-1', attempt, reason, at });
+  const rows = (second) => [start(1), ended(1, 'limit'), { event: 'kept', key: 'ENG-1', attempt: 1, head, why: 'commits', at },
+    start(2, { took: { attempt: 1, head } }), ended(2, second), { event: 'kept', key: 'ENG-1', attempt: 2, head: null, why: 'files', files: true, at }];
+  const refs = () => ({ head, branch: head });
+  const candidate = (second) => keptCandidate({ found: { rows: rows(second) }, key: 'ENG-1', branch: BRANCH, folderOf, refs });
+  assert.deepEqual(candidate('limit'), { attempt: 1, head, folder: folderOf(1) });
+  assert.deepEqual(candidate('no_result'), { attempt: 1, why: 'an attempt since did not end on a limit' });
+  // A row with no commit for a clone whose refs could not be read may hide newer work: it is read as before.
+  const unread = rows('limit').map((row) => (row.files ? { event: 'kept', key: 'ENG-1', attempt: 2, head: null, why: 'refs', at } : row));
+  assert.deepEqual(keptCandidate({ found: { rows: unread }, key: 'ENG-1', branch: BRANCH, folderOf, refs }), { attempt: 2, why: 'its `kept` row names no commit' });
+});
+
 // Starts ENG-1 again as the driver: what it printed of the kept commits.
 function startAgain(fx) {
   const { exitCode, out, err } = fx.cmd(['start', 'launch', 'ENG-1']);
@@ -710,9 +730,10 @@ test('a second limit with nothing taken is offered the same commits again, past 
   const { fx, forge: forgeHead, head } = keptRun(t);
   const again = `offered ENG-1 attempt 1: 2 unpushed commits, ${head.slice(0, 12)}`;
   assert.equal(startAgain(fx), again);
-  // Its session never took them: its clone holds the forge's head, and the sweep removes it as any other.
-  assert.equal(limited(fx, 2), null);
-  assert.deepEqual([existsSync(folderOf(fx, 2)), existsSync(folderOf(fx, 1))], [false, true]);
+  // Its session never took them: its clone holds the forge's head, and no result read its tree, so the sweep keeps its
+  // folder for its files alone, which hides no offer.
+  assert.equal(limited(fx, 2), `kept ENG-1 attempt 2: its session ended with no result that says its clone was left clean, so its folder stays for the run's life; copy any work out of ${path.join(folderOf(fx, 2), 'work')}, and run no git or program there`);
+  assert.deepEqual([existsSync(folderOf(fx, 2)), existsSync(folderOf(fx, 1))], [true, true]);
   // A start given back between frees its number: its clone, which no session moved, is removed for the next.
   assert.equal(startAgain(fx), again);
   const { id, child, ...ahead } = lastStart(fx);
@@ -789,8 +810,9 @@ test('a fast-forward that fails ends its attempt, whose clone the sweep removes 
   assert.equal(fx.cmd(['result', 'launch', 'ENG-1', '--file', file], { session: STARTED[1].session }).exitCode, 0);
   fx.claude.states[STARTED[1].session] = 'done';
   const { out } = fx.cmd(['wait', 'launch', '--max-wait', '0']);
-  assert.deepEqual(out.filter((line) => /^(?:result|kept) /u.test(line)), ['result ENG-1 failed -> open']);
-  assert.deepEqual([existsSync(folderOf(fx, 2)), existsSync(folderOf(fx, 1))], [false, true], 'the failed clone is swept, the kept one stays');
+  // That result skipped the tree check, so the failed clone is kept for its files, beside the kept one.
+  assert.deepEqual(out.filter((line) => /^(?:result|kept) /u.test(line)), ['result ENG-1 failed -> open', `kept ENG-1 attempt 2: its result does not say its clone was left clean, so its folder stays for the run's life; copy any work out of ${path.join(folderOf(fx, 2), 'work')}, and run no git or program there`]);
+  assert.deepEqual([existsSync(folderOf(fx, 2)), existsSync(folderOf(fx, 1))], [true, true], 'the failed clone and the kept one both stay');
   assert.equal(startAgain(fx), 'not taken ENG-1 attempt 1: an attempt since did not end on a limit');
   assert.deepEqual([inClone(fx, 3)('rev-parse', 'HEAD'), Object.hasOwn(lastStart(fx), 'took')], [forgeHead, false]);
 });
@@ -803,9 +825,10 @@ test('an attempt on base copies fast-forwards to its offered commits with the co
   inClone(fx, 1)('rm', '-q', '.claude/skills/x/SKILL.md');
   const forgeHead = commit(fx, 1, { 'CLAUDE.md': '# branch rules\n' });
   push(fx, 1);
-  // A limit end with nothing unpushed keeps its folder too, since no result read its tree: it holds no commit to offer.
+  // A limit end with nothing unpushed keeps its folder too, since no result read its tree; it holds no commit, and its
+  // row of files alone offers nothing.
   assert.match(limited(fx, 1), /^kept ENG-1 attempt 1: its session ended with no result that says its clone was left clean, /u);
-  assert.equal(startAgain(fx), 'not taken ENG-1 attempt 1: its `kept` row names no commit');
+  assert.equal(startAgain(fx), null);
   const head = commit(fx, 2, { 'src.js': 'two\n', '.gitignore': 'out/\n' });
   assert.match(limited(fx, 2), /^kept ENG-1 attempt 2: /u);
   assert.equal(startAgain(fx), `offered ENG-1 attempt 2: 1 unpushed commit, ${head.slice(0, 12)}`);

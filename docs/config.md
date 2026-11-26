@@ -2095,7 +2095,7 @@ An attempt's uncommitted files are kept the same way ([Handoff](handoff.md)).
 `aidrian project result` refuses a `failed`, `blocked`, `parked`, or `pr_open` result while the clone holds work no
 commit on the issue's branch has, unless `--uncommitted` hands it over so, reading nothing; the drop records the word as `tree`.
 The sweep keeps an ended attempt's folder, with a `kept` row that names no commit, unless its result is `merged`, its
-`tree` is `clean`, it has neither a result nor an `ended` row, or it was offered kept commits it never took.
+`tree` is `clean`, or it has neither a result nor an `ended` row.
 So a timeout or a limit keeps it too: a run may hold up to 3 attempt folders an issue, and 24 more after limits.
 The issue's next attempt is offered the commits a kept clone holds (`lib/project-kept.mjs`) when its attempt ended on a
 usage or rate limit, no other attempt ran since but ones offered that very commit that ended on a limit too and whose
@@ -2123,8 +2123,10 @@ since none of the commits changes one.
 A start that offers them prints `offered ISSUE attempt N: <count> unpushed commits, <commit>` and records `took`, the
 attempt and the commit, in its start row, whose `head` stays the forge's. Any other start of an issue with a kept clone
 prints `not taken ISSUE attempt N: <why>`; the row and the folder stay, and nothing parks. The sweep judges an attempt
-they were offered to as any other: it removes a clone that never took them, and keeps one that did and pushed nothing,
-whose commits the next attempt is offered then.
+they were offered to as any other: it keeps one that took them and pushed nothing, whose commits the next attempt is
+offered then, and one that never took them unless its result read its tree clean, for its files alone.
+Such a row of files (`files`, with no commit) hides no offer: the next start looks past it to the latest row that names
+a commit, and its folder does not count as one not swept yet; every other rule of the offer holds.
 Not offered, and left for a person in the kept folder: uncommitted files, a first attempt that never pushed, a clone
 whose objects a session packed, commits that change such a file, a merge of a moved base that brings such a change in,
 and the work of an earlier run.

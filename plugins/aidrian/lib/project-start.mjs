@@ -763,9 +763,8 @@ function linkedPart(top, relative) {
 // not (forgetToken). A clone whose HEAD or issue branch holds a commit the forge does not have keeps its folder for the
 // run's life, with a `kept` row and a line saying where to recover it (unpushedHead): a run never discards work that
 // exists only there. With none, the ledger decides (project-tree.mjs ledgerKeep): the folder goes after a merged result,
-// a result whose session read its tree clean, a start that ended with neither a result nor an `ended` row, or an offer
-// of kept commits never taken; any other end keeps it the same way, with no head, since the tree may hold uncommitted
-// work, which no gate reads. The lines, in order.
+// a result whose session read its tree clean, or a start that ended with neither a result nor an `ended` row; any other
+// end keeps it the same way, with no head, since the tree may hold uncommitted work, which no gate reads. The lines, in order.
 export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge = null }) {
   const lines = [];
   const settled = new Set(found.rows.filter((row) => row.event === 'orphan').map((row) => `${row.key}#${row.attempt}`));
@@ -787,7 +786,7 @@ export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge 
     if (stays || waits || !forgotten) continue;
     const unpushed = unpushedHead({ folder, row, repository: found.init?.repository, forge });
     // Nothing unpushed: the ledger says whether the tree may hold uncommitted work (project-tree.mjs ledgerKeep).
-    const left = unpushed ?? ledgerKeep({ found, row, repository: found.init?.repository, forge });
+    const left = unpushed ?? ledgerKeep({ found, row });
     if (left?.wait) continue;
     if (left) {
       lines.push(...keepClone({ state, run, row, folder, unpushed: { head: left.head ?? null, why: left.why }, files: !unpushed }));
@@ -818,12 +817,12 @@ function folderHolds(found, row) {
 
 // The `kept` row of the attempt the start row `row` made, whose clone in `folder` holds `unpushed` (unpushedHead), once,
 // under the ledger's lock: its line, or none when the row could not be written, so the next wait tries again.
-// With `files`, a keep of uncommitted files the ledger cannot rule out (ledgerKeep): a person copies them out, and runs
-// no git or program in a clone a session had.
+// With `files`, a keep of uncommitted files the ledger cannot rule out (ledgerKeep), whose row says so (`files`, which
+// the kept-commit offer looks past): a person copies them out, and runs no git or program in a clone a session had.
 function keepClone({ state, run, row, folder, unpushed, files = false }) {
   const mine = (each) => each.event === 'kept' && each.key === row.key && each.attempt === row.attempt;
   const kept = appendToRun(state, run, (fresh) => (fresh.rows.some(mine) ? { rows: [] }
-    : { rows: [{ event: 'kept', key: row.key, attempt: row.attempt, head: unpushed.head, why: unpushed.why, at: new Date().toISOString() }] }));
+    : { rows: [{ event: 'kept', key: row.key, attempt: row.attempt, head: unpushed.head, why: unpushed.why, ...(files ? { files: true } : {}), at: new Date().toISOString() }] }));
   const work = path.join(folder, 'work');
   const recover = files ? `copy any work out of ${work}, and run no git or program there` : `recover the work from ${work}`;
   return kept.problem ? [] : [`kept ${row.key} attempt ${row.attempt}: ${unpushed.why}, so its folder stays for the run's life; ${recover}`];

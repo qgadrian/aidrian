@@ -48,8 +48,8 @@ test('the tree check reads every way work can lie outside a commit, and `result`
   writeFileSync(path.join(work, 'out', 'build.log'), 'ignored\n');
   assert.ok(existsSync(path.join(work, '.claude', 'settings.json')), 'the placeholders are there');
   assert.deepEqual(tree(), { tree: 'clean', files: 0, others: 0, commits: 0, names: [] });
-  // A submodule the clone declares, or one its git folder holds, reads unknown, before any git runs: status does not
-  // read into one.
+  // A submodule the clone declares, or one its git folder holds, reads unknown before any git call: status does not read
+  // into one. A linked worktree's own probe runs before that worktree's status, below.
   const unknownTree = { tree: 'unknown', files: 0, others: 0, commits: 0, names: [] };
   writeFileSync(path.join(work, '.gitmodules'), '[submodule "lib"]\n\tpath = lib\n\turl = ./lib\n');
   assert.deepEqual(tree(), unknownTree);
@@ -203,13 +203,13 @@ test('a result read clean over a commit the forge lacks keeps that head, which t
 });
 
 // ledgerKeep over hand-made rows: attempt 1 of ENG-1, started with `start` fields, then `rows`.
-const keep = (rows, { start = {}, forge = { hasCommit: () => true } } = {}) => {
+const keep = (rows, { start = {} } = {}) => {
   const row = { event: 'start', key: 'ENG-1', attempt: 1, outcome: 'started', ...start };
   const found = { rows: [row, ...rows.map((each) => ({ key: 'ENG-1', attempt: 1, ...each }))] };
-  return ledgerKeep({ found, row, repository: { owner: 'acme', name: 'widgets', host: 'github.com' }, forge });
+  return ledgerKeep({ found, row });
 };
 
-test('the sweep keeps by the ledger: every end but a merge, a clean result, a start that never ran, and an offer never taken', () => {
+test('the sweep keeps by the ledger: every end but a merge, a clean result, and a start that never ran', () => {
   const ended = 'its session ended with no result that says its clone was left clean';
   for (const reason of ['timeout', 'no_result', 'limit', 'bad_result', 'cycle']) assert.deepEqual(keep([{ event: 'ended', reason }]), { why: ended }, reason);
   assert.equal(keep([]), null, 'a start given back or settled as an orphan, with no result or ended row');
@@ -219,17 +219,14 @@ test('the sweep keeps by the ledger: every end but a merge, a clean result, a st
   for (const tree of [undefined, 'dirty', 7, null]) assert.deepEqual(keep([{ event: 'result', status: 'failed', tree }]), { why: 'its result does not say its clone was left clean' }, String(tree));
   assert.deepEqual(keep([{ event: 'result', status: 'parked', tree: 'uncommitted' }]), { why: 'its session handed its result over with work left uncommitted' });
   assert.deepEqual(keep([{ event: 'result', status: 'pr_open', tree: 'unknown' }]), { why: 'its session\'s result could not tell whether work was left uncommitted' });
-  // An offer never taken: the forge still lacks the offered commit, so the clone holds no work by its first message.
+  // An attempt offered kept commits keeps its folder as any other: a session that never took them may still have left
+  // files, and the forge is asked nothing.
   const took = { start: { took: { attempt: 1, head: 'b'.repeat(40) } } };
-  assert.equal(keep([{ event: 'ended', reason: 'limit' }], { ...took, forge: { hasCommit: () => false } }), null);
-  assert.equal(keep([{ event: 'result', status: 'failed' }], { ...took, forge: { hasCommit: () => false } }), null, 'a result whose check did not run');
-  // A result that says it left work, or could not tell, keeps the folder whatever the offer, and asks the forge nothing.
-  const asked = { hasCommit: () => assert.fail('the forge is asked nothing') };
-  assert.deepEqual(keep([{ event: 'result', status: 'failed', tree: 'uncommitted' }], { ...took, forge: asked }), { why: 'its session handed its result over with work left uncommitted' });
-  assert.deepEqual(keep([{ event: 'result', status: 'failed', tree: 'unknown' }], { ...took, forge: asked }), { why: 'its session\'s result could not tell whether work was left uncommitted' });
-  assert.deepEqual(keep([{ event: 'ended', reason: 'limit' }], { ...took, forge: { hasCommit: () => true } }), { why: ended });
-  assert.deepEqual(keep([{ event: 'ended', reason: 'limit' }], { ...took, forge: { hasCommit: () => { throw new Error('gh: HTTP 502'); } } }), { wait: true });
-  assert.deepEqual(keep([{ event: 'ended', reason: 'limit' }], { ...took, forge: null }), { wait: true });
+  assert.deepEqual(keep([{ event: 'ended', reason: 'limit' }], took), { why: ended });
+  assert.deepEqual(keep([{ event: 'result', status: 'failed' }], took), { why: 'its result does not say its clone was left clean' }, 'a result whose check did not run');
+  assert.deepEqual(keep([{ event: 'result', status: 'failed', tree: 'uncommitted' }], took), { why: 'its session handed its result over with work left uncommitted' });
+  assert.deepEqual(keep([{ event: 'result', status: 'failed', tree: 'unknown' }], took), { why: 'its session\'s result could not tell whether work was left uncommitted' });
+  assert.equal(keep([{ event: 'result', status: 'failed', tree: 'clean' }], took), null);
 });
 
 test('a status of any size is counted, with a sample of ten paths kept, a rename by its new path', () => {

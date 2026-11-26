@@ -138,30 +138,17 @@ export function treeLines(read) {
 }
 
 // Why the folder of the ended attempt the start row `row` of `found` made stays, once unpushedHead found no commit the
-// forge lacks: { why }, a fixed text with nothing a session wrote; null when it goes; or { wait } when `forge` cannot
-// say now. It goes when its result is `merged`, or its result row says `clean`; when the attempt has neither a result
-// nor an `ended` row, as a start given back or settled as an orphan; or when it was offered kept commits its session
-// never took, as the forge lacks them still: its clone holds no work, and the older offer stands. A result that says
-// `uncommitted` or `unknown` keeps it whatever the offer: its session said it left work, or could not tell.
-export function ledgerKeep({ found, row, repository, forge }) {
+// forge lacks: { why }, a fixed text with nothing a session wrote, or null when it goes. It goes only when its result is
+// `merged`, or its result row says `clean`, or the attempt has neither a result nor an `ended` row, as a start given
+// back or settled as an orphan. Every other end keeps it, an attempt offered kept commits too: a session that never
+// took them may still have left files.
+export function ledgerKeep({ found, row }) {
   const mine = (each) => each.key === row.key && each.attempt === row.attempt;
   const result = found.rows.findLast((each) => each.event === 'result' && mine(each));
   const ended = found.rows.some((each) => each.event === 'ended' && mine(each));
   if (result?.status === 'merged' || result?.tree === 'clean' || (!result && !ended)) return null;
   if (result?.tree === 'uncommitted') return { why: 'its session handed its result over with work left uncommitted' };
   if (result?.tree === 'unknown') return { why: 'its session\'s result could not tell whether work was left uncommitted' };
-  const head = row.took?.head;
-  if (typeof head === 'string' && FULL_ID.test(head)) {
-    if (!forge || typeof forge.hasCommit !== 'function' || !repository) return { wait: true };
-    let has;
-    try {
-      has = forge.hasCommit(`${repository.owner}/${repository.name}`, head, { host: repository.host });
-    } catch {
-      return { wait: true };
-    }
-    if (has === false) return null;
-    if (has !== true) return { wait: true };
-  }
   if (!result) return { why: 'its session ended with no result that says its clone was left clean' };
   return { why: 'its result does not say its clone was left clean' };
 }

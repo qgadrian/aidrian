@@ -53,6 +53,7 @@ Record the pull request's number, link, and head commit.
 Then, before round 1, run its product feedback step: the `pr-product-feedback` skill's `references/in-a-flow.md`
 § After the draft opens. Its `fix-now` items are findings of round 1, and step 3 routes them. Ask the Human nothing:
 each open product choice is a Decision for the Human.
+In a project run's issue session, run only its `status` there, as that section says: the step is the Human's.
 
 ## 3. Review rounds
 
@@ -111,6 +112,8 @@ Then:
    § Before `gh pr ready`. On exit 0, mark it ready with `gh pr ready <n>`.
    Pending, failing, or any other exit: leave it a draft and say why. The report lists each owed item with its command,
    and each open product choice as a Decision for the Human.
+   In a project run's issue session, run no re-check: on exit 2, the draft stays, and the result and the body line are
+   that file's § Before `gh pr ready`.
    After `gh pr ready`, push nothing more: a later finding belongs in a new pull request.
 2. Once step 1 marked it ready in this run, run the `pr-auto-merge` skill.
    Keep the line it stops on for the report. Merge only through that step, never otherwise.

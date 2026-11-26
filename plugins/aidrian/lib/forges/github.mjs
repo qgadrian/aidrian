@@ -465,6 +465,7 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
       target { ... on Commit { ${POLICY_FILES} knowledge: file(path: $knowledge) { object { ... on Tree { entries { name type object { ${BLOB} } } } } } } }
     }
     pullRequest(number: $n) {
+      url
       headRefOid
       headRefName
       baseRefName
@@ -1269,7 +1270,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const [owner, name] = repo.split('/');
       return json(['api', 'graphql', '-f', `query=${THREADS_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${number}`, ...(after ? ['-f', `after=${after}`] : [])]);
     },
-    // What an unattended merge of pull request `n` of `repo` confirms on the forge, in the facade's shape: { viewer, head,
+    // What an unattended merge of pull request `n` of `repo` confirms on the forge, in the facade's shape: { viewer, url, head,
     // base, author, draft, reviewDecision, latestReviews: [{ author: { login }, state }], checks: { head, rows, complete },
     // closingIssues: [{ number, repo }], closingIssuesComplete,
     // files: [{ path, changeType }], filesTotal, filesComplete, reviews: [{ login, bot, association, state, commit, at }], reviewsComplete,
@@ -1314,6 +1315,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const association = (each) => (typeof each?.authorAssociation === 'string' ? each.authorAssociation : null);
       return {
         viewer: typeof data?.viewer?.login === 'string' ? data.viewer.login : null,
+        // The pull request's address as GitHub spells it, for the product feedback check (merge-review.mjs trailView).
+        url: typeof pr.url === 'string' ? pr.url : null,
         head: typeof pr.headRefOid === 'string' ? pr.headRefOid : null,
         headRef: typeof pr.headRefName === 'string' ? pr.headRefName : null,
         title: typeof pr.title === 'string' ? pr.title : null,

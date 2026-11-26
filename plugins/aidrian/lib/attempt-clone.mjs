@@ -139,7 +139,7 @@ function linkOf(at) {
   return { ...at, unlinked: true, ...(machine ? { machine } : {}) };
 }
 
-// The machine facts the start row of the attempt `at` recorded, { autoMerge }, for a session the sandbox denies the main
+// The machine facts the start row of the attempt `at` recorded, { autoMerge, feedbackAuto? }, for a session the sandbox denies the main
 // checkout the ledger's `init` row names, or null: the start row names this work folder, the main checkout is denied
 // to this process (a read refused, never one that is gone), the attempt's git folder sends git nowhere else
 // (gitExtraProblem), and the anchored session's mark, not pending, names the run, the issue, that main checkout as its
@@ -160,7 +160,8 @@ function confinedMachine(at, rows, init) {
     return null;
   }
   const own = mark && !mark.pending && mark.root === main && mark.project === at.run && mark.issue === at.key && typeof mark.cwd === 'string' && real(mark.cwd) === at.work;
-  return own ? { autoMerge } : null;
+  const feedbackAuto = start.machine.feedbackAuto;
+  return own ? { autoMerge, ...(typeof feedbackAuto === 'boolean' ? { feedbackAuto } : {}) } : null;
 }
 
 // Whether this process is refused a read of the folder `folder`, as a confined session's sandbox refuses the main

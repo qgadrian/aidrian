@@ -43,7 +43,8 @@ export async function handle(input, { start = 0 } = {}) {
     return;
   }
   if (READY_TOOLS.has(tool)) {
-    const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), startedAt: performance.timeOrigin + start };
+    // `input`: the ready hold reads the session's mark, which makes it refuse what it cannot read in an issue session.
+    const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), input, startedAt: performance.timeOrigin + start };
     const reason = checkReady(toolInput, context);
     if (reason) return block(input, 'ready-hold', reason);
     const pending = checkChecks(toolInput, context);

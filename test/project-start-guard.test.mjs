@@ -6,7 +6,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -16,7 +16,9 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { baseReader, continueStoreWriteDenial, handoffEnvDenial, mainCheckoutWriteDenial, PROJECT_SUB, PROJECT_WORD, projectRunWriteDenial, remoteChangeDenial, RUNS_FOLDER, stateFolders, stateFoldersWriteDenial } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { decisionStoreFolders } from '../plugins/aidrian/lib/project-decision-store.mjs';
-import { stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
+import { feedbackHeld, stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
+import { stateRoot } from '../plugins/aidrian/lib/project.mjs';
+import { resolvedPath } from '../plugins/aidrian/lib/fs.mjs';
 import { ISSUE_PART, RUN_PART } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
@@ -118,6 +120,29 @@ test('the recorded-decision store is written by no subagent, unattended session,
   assert.ok(folders.includes(path.join(fx.home, '.local/state/aidrian/recorded-decisions')), 'the home folder\'s own too');
   const works = stateWorkFolders(fx.state, { env: fx.env, home: fx.home });
   assert.ok(works.folders, works.problem);
+});
+
+test('no state work folder a confined session is granted is, holds, or lies in a folder product feedback keeps, nor the state folder', (t) => {
+  const fx = runFixture(t, { init: false });
+  const state = realpathSync(fx.state);
+  const held = feedbackHeld(fx.state, { env: fx.env });
+  assert.deepEqual(held, [path.join(state, 'product-feedback'), path.join(state, 'audits'), path.join(resolvedPath(stateRoot(fx.env)), 'feedback-folders')]);
+  const { folders, problem } = stateWorkFolders(fx.state, { env: fx.env, home: fx.home });
+  assert.ok(folders, problem);
+  const reaches = (grant, folder) => grant === folder || grant.startsWith(`${folder}${path.sep}`) || folder.startsWith(`${grant}${path.sep}`);
+  for (const grant of folders) {
+    assert.notEqual(grant, state, 'not the state folder');
+    for (const folder of held) assert.ok(!reaches(grant, folder), `${grant} and ${folder}`);
+  }
+  // A work folder named for any of them, inside one, or the state folder itself, is refused before anything is made.
+  for (const names of [['product-feedback'], ['audits'], ['product-feedback/acme'], ['.'], ['tmp', 'audits']]) {
+    const refused = stateWorkFolders(fx.state, { env: fx.env, home: fx.home, names });
+    assert.match(refused.problem ?? '', /is the state folder, or is, holds, or lies in a folder product feedback keeps/u, names.join(','));
+  }
+  assert.ok(!existsSync(path.join(state, 'product-feedback')), 'no feedback folder was made');
+  // A state folder at the state root: its feedback-folders notes are held too.
+  const root = stateWorkFolders(stateRoot(fx.env), { env: fx.env, home: fx.home, names: ['feedback-folders'] });
+  assert.match(root.problem ?? '', /a folder product feedback keeps/u);
 });
 
 test('a dynamic subcommand word after project is refused to every session', (t) => {

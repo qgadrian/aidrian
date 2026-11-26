@@ -20,7 +20,7 @@ import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 import { botProblem, flowsFloor, NO_BOT, readHumanSignoffs, recordHumanSignoff, signoffFile, signoffFolder, signoffFolders, unsignedFlows } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { recordSignoff } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, readLocalState, RECORD_LIST_CAP, recordFile, recordNames, recordProblem, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { check as checkAt, checkMcp as checkMcpAt, endpointOf, MERGE_MUTATIONS } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { check as checkAt, checkMcp as checkMcpAt, endpointOf, MERGE_MUTATIONS, trailView } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { markDriver, markFolder, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { check as signoffCheck, SUBAGENT_REASON, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 import { DRIVER, ISSUES, OTHER, recordIssue, runFixture, STARTED } from './project-start-fixture.mjs';
@@ -59,7 +59,7 @@ const card = (sha = HEAD, { unresolved = false, any = unresolved, ...extra } = {
 // The forge's review trail of #7 at HEAD, by default one the policy and the bot both pass: the gh user's own pull
 // request, its checks passed, the bot's card on the head, and both branches' config `text` from the forge.
 const trailOf = (text, over = {}) => ({
-  viewer: 'adrian', head: HEAD, base: 'main', baseOid: 'b'.repeat(40), author: 'adrian', draft: false, reviewDecision: '', latestReviews: [],
+  viewer: 'adrian', url: 'https://github.com/acme/notes/pull/7', head: HEAD, base: 'main', baseOid: 'b'.repeat(40), author: 'adrian', draft: false, reviewDecision: '', latestReviews: [],
   checks: { head: HEAD, rows: [{ name: 'e2e', state: 'SUCCESS' }], complete: true },
   files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], filesTotal: 1, filesComplete: true,
   reviews: [], reviewsComplete: true, comments: [card()], commentsComplete: true,
@@ -68,6 +68,8 @@ const trailOf = (text, over = {}) => ({
   closingIssues: [], closingIssuesComplete: true,
   ...over,
 });
+// The trail's address for a project run fixture's pull request, in acme/widgets.
+const WIDGETS = { url: 'https://github.com/acme/widgets/pull/7' };
 // The bot's clean receipt as it posts one on every clean pass, its footer quoting the trigger, by the bot, every edit
 // the bot's: it names a 10-hex short commit, and its 👍 follows a few seconds later. Neither is a verdict.
 const RECEIPT_TEXT = (short) => `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** \`${short}\`\n\n<details> <summary>About Codex in GitHub</summary>\n\nComment "@codex review" to ask for another review.\n</details>`;
@@ -192,6 +194,39 @@ test('a forged review record with outcome received on the head, and no bot revie
   // The bot's passing card on that head lets both through.
   assert.equal(autoMerge(t, r).code, 0);
   assert.equal(merge(r, MERGE), null);
+});
+
+test('a pull request opened ready whose product feedback is owed is refused by the merge guard as by auto-merge; with it off, both allow it', (t) => {
+  // The default branch runs product feedback on src/, which the pull request changes, and no record says it ran.
+  const r = repo(t, configOf({ review: { productFeedback: { auto: true, files: ['src/**'] } } }));
+  r.record(forged());
+  const owed = /^Blocked: no Human attends this session, and this merges pull request #7, but product feedback is owed on #7 \(.*\): run the pr-product-feedback skill on #7 in a session the Human attends/u;
+  // Read from the review trail the guard already took: no other forge call.
+  const calls = [];
+  assert.match(merge(r, MERGE, { calls }) ?? '', owed, 'gh pr merge');
+  assert.deepEqual(calls.map(([name]) => name), ['reviewTrail'], 'the trail serves the check');
+  assert.match(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }) ?? '', owed, 'the GitHub MCP merge');
+  const gate = autoMerge(t, r);
+  assert.deepEqual([gate.code, gate.result.reason], [1, 'feedback'], 'auto-merge holds it for the same reason');
+  // With it off on the default branch, both allow the merge: the same repository, its branches' config as GitHub gives it.
+  const offText = JSON.stringify(configOf());
+  const offTrail = trailOf(offText);
+  assert.equal(merge(r, MERGE, { trail: offTrail, head: offText }), null);
+  assert.equal(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }, { trail: offTrail }), null);
+  assert.equal(autoMerge(t, { ...r, text: offText }).code, 0);
+  // Done feedback is found under GitHub's spelling of the repository, Acme/Notes, which the feedback commands keep the
+  // record under, not the origin's acme/notes (merge-review.mjs trailView).
+  const folder = path.join(r.root, 'state/product-feedback/Acme/Notes/pr-7');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(path.join(folder, 'record.json'), JSON.stringify({ version: 1, pr: 7, repo: 'Acme/Notes', head: HEAD, report: null, read_by: 'product-manager', comment_id: null, recorded_at: '2026-11-18T09:00:00.000Z', items: [] }));
+  const trail = trailOf(r.text, { url: 'https://github.com/Acme/Notes/pull/7' });
+  // The view the check reads takes GitHub's spelling, on any disk.
+  assert.equal(trailView(trail, { number: 7, repo: 'acme/notes', host: 'github.com' })?.url, 'https://github.com/Acme/Notes/pull/7');
+  assert.equal(merge(r, MERGE, { trail }), null, 'done feedback under GitHub`s spelling');
+  // A trail address of another pull request, or none, gives no view: the check then views it once.
+  assert.equal(trailView(trailOf(r.text, { url: 'https://github.com/acme/notes/pull/8' }), { number: 7, repo: 'acme/notes', host: 'github.com' }), null);
+  assert.equal(trailView(trailOf(r.text, { url: 'https://github.com/other/notes/pull/7' }), { number: 7, repo: 'acme/notes', host: 'github.com' }), null);
+  assert.equal(trailView(trailOf(r.text, { url: null }), { number: 7, repo: 'acme/notes', host: 'github.com' }), null);
 });
 
 test('attended merges are unchanged: auto-merge reads no trail and needs no bot, and the guard asks the forge nothing', (t) => {
@@ -476,7 +511,7 @@ test('a project run`s issue session merges only in the repository its run pinned
   writeLocalState(fx.project, record);
   const text = JSON.stringify({ ...fx.committed, github: { ...CHECKS, autoMerge: TEAM } });
   const calls = [];
-  const run = (command, mark) => check(command, { cwd: fx.dir, env: {}, input: { session_id: 'issue-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(text, trailOf(text), calls) });
+  const run = (command, mark) => check(command, { cwd: fx.dir, env: {}, input: { session_id: 'issue-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(text, trailOf(text, WIDGETS), calls) });
   const mark = { root: fx.dir, project: 'launch', issue: 'ENG-1' };
   assert.equal(run(MERGE, mark), null);
   assert.deepEqual(calls.map((call) => call.slice(0, 4)), [['reviewTrail', 'acme/widgets', 7, 'github.com']]);
@@ -1034,9 +1069,9 @@ function closingRun(t, { teams } = {}) {
   writeLocalState(fx.project, record);
   const text = JSON.stringify({ ...fx.committed, github: { ...CHECKS, autoMerge: TEAM } });
   const run = (command, { mark = { root: fx.dir, project: 'launch', issue: 'ENG-1' }, over = {} } = {}) =>
-    check(command, { cwd: fx.dir, env: {}, input: { session_id: 'issue-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(text, trailOf(text, over)) });
+    check(command, { cwd: fx.dir, env: {}, input: { session_id: 'issue-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(text, trailOf(text, { ...WIDGETS, ...over })) });
   const mcpRun = (toolInput, { mark = { root: fx.dir, project: 'launch', issue: 'ENG-1' }, over = {} } = {}) =>
-    checkMcp(toolInput, { cwd: fx.dir, input: { session_id: 'issue-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(text, trailOf(text, over)) });
+    checkMcp(toolInput, { cwd: fx.dir, input: { session_id: 'issue-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(text, trailOf(text, { ...WIDGETS, ...over })) });
   return { fx, run, mcpRun };
 }
 
@@ -1163,7 +1198,7 @@ function waivedRun(t) {
   judgeDispatched(fx.project);
   const text = JSON.stringify({ ...fx.committed, github: { ...CHECKS, autoMerge: TEAM, unattendedWaiver: { allow: true } } });
   const run = (mark, over = {}) => {
-    const forge = () => ({ ...guardForge(text, trailOf(text, over))(), change: () => ({ number: 7, headRefOid: HEAD, baseRefName: 'main', url: 'https://github.com/acme/widgets/pull/7' }) });
+    const forge = () => ({ ...guardForge(text, trailOf(text, { ...WIDGETS, ...over }))(), change: () => ({ number: 7, headRefOid: HEAD, baseRefName: 'main', url: 'https://github.com/acme/widgets/pull/7' }) });
     return check(MERGE, { cwd: fx.dir, env: {}, input: { session_id: 'issue-1' }, viewPr: viewer, unattendedMark: () => mark, waiverForge: forge, trustForge: forge });
   };
   const taken = () => fx.rows().filter((row) => row.event === 'waived').map((row) => row.pr);

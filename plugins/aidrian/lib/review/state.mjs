@@ -480,6 +480,8 @@ export function owedElsewhere(project, pr, repo) {
 export function readLocalState(project, pr, repo) {
   return withGitFacts(() => {
     const state = localState(project, pr, repo);
+    // Accepted residual: the snapshot is a second read of the repository's file, so a write landing between the state's
+    // read and this one counts as already read, and its next write does not take it in.
     return noteRead(state, writtenFile(project, pr, state?.repo ?? repo));
   });
 }
@@ -709,6 +711,8 @@ function writeAt(project, state) {
   const legacy = target !== plain && legacyFor(project, old, state.repo);
   if (legacy && sameReview(state, legacy)) {
     // Past the old record's revision, so the merge is the newer record even where `state` was built on an older one.
+    // Accepted residual: an answer a session on an older plugin wrote to the old-name file while this command ran is
+    // absorbed here with this command's own decision kept (keepHuman), with no conflict raised.
     const revision = Math.max(state.revision ?? 0, (legacy.revision ?? 0) + 1);
     absorb(state, legacy).revision = revision;
   }

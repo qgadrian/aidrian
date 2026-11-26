@@ -25,7 +25,10 @@ export const RECHECKS = Object.freeze({
 // The causes an environment result names (project-result.mjs validateResult), each with the preflight checks that can see
 // it cleared: `commit` the commit check; `host`, a host or host tool that will not run, the host's start and its trust;
 // `sign_in`, `push`, and `network`, the forge token's access; `sandbox_refused`, a path, port, or domain the sandbox
-// refused, and `other`, none, so their halt waits on a person.
+// refused, and `other`, none, so their halt waits on a person. The table is rule 5 of issue 745's security contract.
+// Accepted residual: a covered cause's checks are the driver's, so a host tool, push, or network path that fails only
+// inside the issue session can pass them. That costs one more attempt at most, since the one-self-lift backstop
+// (liftedBefore) then keeps the halt for a person.
 export const CAUSE_CHECKS = Object.freeze({
   commit: Object.freeze(['commit']),
   host: Object.freeze(['host', 'trust']),

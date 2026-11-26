@@ -1878,9 +1878,12 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   Each pass result carries `at`, when it was recorded; of a pass both
   hold, the one recorded last counts, on any head, as two writes one after the other would leave it, and a pass taken
   is taken as written. A pass in the record it read that it dropped, such as a slice of a replaced packing, is not
-  taken back. The extension checks are the one exception to that merge: when the file's are not the ones the writer
-  read, the file's are kept whole, so a judge's verdict or the Human's answer recorded meanwhile stands over any change
-  of the writer's, such as a step reading a check again on a new head.
+  taken back. The extension checks are the one exception to that merge, when the file's are not the ones the writer
+  read. The review step's write keeps the file's whole, so a judge's verdict or the Human's answer recorded meanwhile
+  stands over the step's own change, such as reading a check again on a new head; so does a command that did not change
+  them, as an attest. A command that did change them, such as `aidrian pr extend` recording a judge's verdict or the
+  Human's answer, writes nothing: it exits non-zero, saying the record changed while it ran and to run it again on the
+  current record, and it prints no `recorded` and logs no entry to the dispatch log.
   So an `aidrian pr attest`, `aidrian pr signoff`, or `aidrian pr extend` that lands during a step of several minutes,
   such as a visual capture, is in the record after the step, with its findings.
   The review step sets its outcome from that same read, after the merge and before the write: when the merge took a

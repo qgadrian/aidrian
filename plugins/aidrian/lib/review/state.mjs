@@ -581,9 +581,12 @@ function sinceRead(state, disk, read) {
 // recorded after the read (keepRecorded), where a pass both hold counts as recorded last, each taken as written; each
 // finding index entry `state` lacks, such as one an `attest` minted; what `disk` closed, marked, or mapped in the index
 // (mergeIndex); and the higher id counter and revision, so the next write is past both. The extension checks are the
-// one exception: when the file's are not the ones `state` was read with (none, for a state no reader returned, such as
-// a new record's), the file's are kept whole, a judge's verdict or the Human's answer over any change of `state`'s, and `extensions` is
-// among the ids taken, so the review step saves the retry and its next step reads the checks again from the record.
+// one exception, when the file's are not the ones `state` was read with (none, for a state no reader returned, such as
+// a new record's). The review step's write, the one that passes `decide`, keeps the file's whole, a judge's verdict or
+// the Human's answer over the step's change, and `extensions` is among the ids taken, so the step saves the retry and
+// its next step reads the checks again. Any other write keeps them too when it did not change them itself, as an
+// attest; one that did, such as `aidrian pr extend` recording a verdict, throws (extensionsConflict) before it changes
+// `state`, so nothing is written and its caller reports nothing as recorded.
 // A write with no other writer since its read writes what it holds. No entry of `state` is dropped, and no open
 // finding of `disk`. Then `decide(taken)` runs, with the ids of the passes taken and `extensions`, [] when none.
 // Returns those ids.
@@ -591,21 +594,27 @@ function sinceRead(state, disk, read) {
 // still lost, a window of one write's length, not a review step's minutes; an id both minted for different findings
 // keeps `state`'s entry, as keepWork accepts; and a finding `state` moved to a fresh id (findings.mjs freshId) while
 // another command recorded it under the old one holds both ids, one more open finding, which fails closed.
-export function takeRecorded(state, disk, { removed = new Set(), read = undefined, decide = () => {} } = {}) {
-  const taken = mergeSince(state, disk, removed, read);
-  decide(taken);
+export function takeRecorded(state, disk, { removed = new Set(), read = undefined, decide = undefined } = {}) {
+  const taken = mergeSince(state, disk, removed, read, typeof decide === 'function');
+  decide?.(taken);
   return taken;
 }
 
-function mergeSince(state, disk, removed, read) {
+// The refusal of a command whose own change to the extension checks meets another write's (takeRecorded).
+export const extensionsConflict = (pr) =>
+  `the review record of #${pr} changed while this command ran: another write changed its extension checks, so nothing was recorded. Run the command again on the current record`;
+
+function mergeSince(state, disk, removed, read, step) {
   const gate = sinceRead(state, disk, read);
   if (!gate) return [];
+  const json = (list) => JSON.stringify(Array.isArray(list) ? list : []);
+  const changed = json(disk.extensions) !== json(read?.extensions);
+  if (changed && !step && json(state.extensions) !== json(read?.extensions)) throw new Error(extensionsConflict(state.pr));
   keepHuman(state, disk, { lineage: true, extensions: false });
   state.pending = mergePending(disk.pending, state.pending);
   const taken = keepRecorded(state, disk, gate.since, { lineage: true });
-  const theirs = Array.isArray(disk.extensions) ? disk.extensions : [];
-  if (JSON.stringify(theirs) !== JSON.stringify(Array.isArray(read?.extensions) ? read.extensions : [])) {
-    state.extensions = structuredClone(theirs);
+  if (changed) {
+    state.extensions = structuredClone(Array.isArray(disk.extensions) ? disk.extensions : []);
     taken.push('extensions');
   }
   const index = isObject(state.index) ? state.index : (state.index = {});

@@ -1263,3 +1263,42 @@ test('await-review at the cap never decides on another repository`s record of th
   assert.equal(capped.out.status, 'extension_check', 'acme/notes#42 gets its own check, not other/x`s ask');
   assert.equal(JSON.parse(readFileSync(recordFile(project, 42), 'utf8')).repo, 'other/x', 'other/x`s record is left as it was');
 });
+
+test('a Human`s deny that lands after a review step retired the check is refused, and neither the record nor the log holds it', async (t) => {
+  const { logPath } = await import('../plugins/aidrian/lib/dispatch-log.mjs');
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-extend-conflict-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  const project = projectAt(dir);
+  const config = loadConfig(project).config;
+  const head = 'c'.repeat(40);
+  const next = 'e'.repeat(40);
+  writeLocalState(project, { ...emptyState(7, 'o/r'), rounds: [{ head, at: '2026-11-25T10:00:00.000Z' }], extensions: [{ source: 'plan', round: 2, head, at: '2026-11-25T10:00:00.000Z', mode: 'ask', status: 'asking', by: 'judge', reasons: ['r'] }] }, { repo: 'o/r' });
+  // `aidrian pr extend` has read the record; a review step on a head that only caught up with the base retires the
+  // check and saves before the extend writes.
+  let retired = false;
+  const env = new Proxy({}, { get: (_target, key) => {
+    if (!retired) {
+      retired = true;
+      const step = readLocalState(project, 7, 'o/r');
+      retireChecks(step, { source: 'plan', head: next });
+      writeLocalState(project, step, { repo: 'o/r' });
+    }
+    return undefined;
+  } });
+  const printed = [];
+  t.mock.method(console, 'log', (line) => printed.push(line));
+  await assert.rejects(runExtend(['7', '--human', 'deny'], project, config, { repo: 'o/r', env, forge: { change: () => ({ headRefOid: next }) } }), /changed while this command ran: another write changed its extension checks, so nothing was recorded\. Run the command again on the current record/u);
+  t.mock.restoreAll();
+  assert.equal(retired, true, 'the step saved between the extend`s read and its write');
+  assert.deepEqual(printed, [], 'never `recorded`');
+  const [check] = readLocalState(project, 7, 'o/r').extensions;
+  assert.deepEqual([check.status, check.by, check.human], ['stopped', 'catch_up', undefined], 'the step`s retirement stands, with no denial');
+  const log = logPath(project, config);
+  let rows = '';
+  try {
+    rows = readFileSync(log, 'utf8');
+  } catch {}
+  assert.doesNotMatch(rows, /deny|denied/u, 'no denial in the dispatch log');
+});

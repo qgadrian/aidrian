@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { checkoutRoots, currentRoot, gateGit, gitFolders, GIT_TIMEOUT_MS, isIgnored, isRefName, knownPrefix, mainRoot, memoGit, readOriginUrl, readPrefix, readRemoteUrls, REF_NAME_MAX_BYTES, repositoryCheckouts, resetGitStall, runGit, showPrefix, underGit, withGitFacts, withoutGitFacts } from '../plugins/aidrian/lib/git.mjs';
+import { checkoutRoots, currentRoot, gateGit, gitFolders, GIT_TIMEOUT_MS, isIgnored, isRefName, knownPrefix, mainRoot, memoGit, readOriginUrl, readPrefix, readRemoteUrls, REF_NAME_MAX_BYTES, repositoryCheckouts, resetGitStall, runGit, showPrefix, underGit, WHOLE_TREE_BUFFER, withGitFacts, withoutGitFacts } from '../plugins/aidrian/lib/git.mjs';
 
 // A repository with one commit, an ignored folder, and a worktree inside that folder.
 function repo(t) {
@@ -403,4 +403,13 @@ test('withoutGitFacts asks git inside it, and the open scope asks again after it
   });
   assert.equal(git.count('remote.origin.url'), 4, 'one before the wait, two in it, one after');
   assert.equal(withoutGitFacts(() => readPrefix(dir).status), 0, 'with no scope open it runs the body as it is');
+});
+
+// A whole tree's paths may outgrow spawnSync's default output buffer: the readers give WHOLE_TREE_BUFFER, and runGit hands
+// its maxBuffer to spawnSync, so a read past it fails, as git not answering, and refuses, though git itself exits 0.
+test('runGit hands its maxBuffer to spawnSync, and the whole-tree readers give 8 MiB', () => {
+  assert.equal(WHOLE_TREE_BUFFER, 8 * 1024 * 1024);
+  const short = runGit(['--version'], process.cwd(), { maxBuffer: 4 });
+  assert.deepEqual([short.error?.code, short.status], ['ENOBUFS', null]);
+  assert.equal(runGit(['--version'], process.cwd(), { maxBuffer: WHOLE_TREE_BUFFER }).status, 0);
 });

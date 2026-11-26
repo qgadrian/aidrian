@@ -92,7 +92,7 @@ import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { knownPrefix } from './git.mjs';
 import { indexedAlways } from './knowledge.mjs';
 import { entryKind, FILE_MODES, noneNeededProblem, RELEASE_SCRIPT, startLoadProblem, startUnreadable, treeLookup } from './pr-auto-merge-docs.mjs';
-import { configPathIn, GUARDED_PATHS, isPluginRepository, isPolicyPath, knowledgeIn, strictConfigPathIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, POLICY_PATHS, trailPaths } from './project.mjs';
+import { configPathIn, foldPath, isGuardedPath, isPluginRepository, isPolicyPath, knowledgeIn, strictConfigPathIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, trailPaths } from './project.mjs';
 import { hostOf } from './remotes.mjs';
 import { feedbackOwed } from './pr-product-feedback.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
@@ -393,6 +393,7 @@ export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
   if (config === null) return `it changes a policy file, and head ${at} has no config, so the checks that judge the next merge cannot be told`;
   const located = headEntryProblem(lookup, pr, seen.at(-1));
   if (located) return located;
+  // Never by foldPath: two paths equal here pass, so a wider equality would let more through.
   if (seen.at(-1)?.toLowerCase() !== String(policies.configFile).toLowerCase()) return `its config at head ${at} is ${JSON.stringify(seen.at(-1))}, not ${JSON.stringify(policies.configFile)} where ${pr.repo} ${policies.main} keeps it, which includePolicyFiles never lets a pull request move by itself`;
   const { github: policy, state } = policies.policy;
   const same = (a, b) => new Set(a).size === new Set(b).size && a.every((each) => b.includes(each));
@@ -404,10 +405,10 @@ export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
 }
 
 // The changed file of `files` ({ path }, from the top of the repository) that is the pointer file of the project folder
-// `prefix` (trailPaths' `pointer`), in any case, or undefined: the includePolicyFiles lift never lets one through.
+// `prefix` (trailPaths' `pointer`), by its fold (foldPath), or undefined: the includePolicyFiles lift never lets one through.
 export const movedPointer = (files, prefix = '') => {
-  const pointer = trailPaths(prefix).pointer.toLowerCase();
-  return files.find(({ path }) => path.toLowerCase() === pointer);
+  const pointer = foldPath(trailPaths(prefix).pointer);
+  return files.find(({ path }) => foldPath(path) === pointer);
 };
 const movedLine = (moved) => `it changes ${JSON.stringify(moved.path)}, the pointer file that locates the config, which includePolicyFiles never lets a pull request change by itself`;
 
@@ -500,7 +501,7 @@ export function wholeFiles(forge, pr) {
 // with no change type, may hide the path it replaced, so those are off too.
 // A project below the root reviews only its own folder, so a file outside it has had no review, and its own folder's files
 // are guarded by their path from the project root. `policyFiles` are the paths branchPolicies read, the files the gate
-// reads its policy from, including a folder the pointer file names: a change to one, in any case, is off with the key on
+// reads its policy from, including a folder the pointer file names: a change to one, by its fold (foldPath), is off with the key on
 // or off, after the guarded-path refusal so that refusal keeps its message. `startDocs` is what the start hook loads, as
 // startDocs read it: a doc or index file of it is guarded too, and an unreadable answer is off, as no list would be
 // whole. `pluginRepository` is whether the project is the plugin's own repository, whose release script is guarded too
@@ -514,16 +515,16 @@ export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuar
   if (hidden) return `gh lists ${JSON.stringify(hidden.path)} as ${hidden.changeType || 'no change type'}, which may hide the path it replaced`;
   const outside = files.find(({ path }) => !path.startsWith(prefix));
   if (outside) return `it changes ${JSON.stringify(outside.path)}, outside this project's folder, which its review does not cover`;
-  const read = new Set(policyFiles.map((each) => each.toLowerCase()));
-  const policyRead = files.find(({ path }) => read.has(path.toLowerCase()));
+  const read = new Set(policyFiles.map(foldPath));
+  const policyRead = files.find(({ path }) => read.has(foldPath(path)));
   const readLine = policyRead && `it changes ${JSON.stringify(policyRead.path)}, a file the gate reads its policy from`;
   if (includeGuardedPaths) {
     if (includePolicyFiles) return null;
-    const policy = files.find(({ path }) => POLICY_PATHS.test(path));
+    const policy = files.find(({ path }) => isPolicyPath(path));
     if (policy) return `it changes ${JSON.stringify(policy.path)}, a policy file of aidrian, which includeGuardedPaths never lets through`;
     return readLine || null;
   }
-  const guarded = files.find(({ path }) => GUARDED_PATHS.test(path) || GUARDED_PATHS.test(path.slice(prefix.length)));
+  const guarded = files.find(({ path }) => isGuardedPath(path) || isGuardedPath(path.slice(prefix.length)));
   if (guarded) return `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions, or decides CI's verdict or auto-merge`;
   const release = pluginRepository && files.find(({ path }) => PLUGIN_REPOSITORY_PATHS.test(path));
   if (release) return `it changes ${JSON.stringify(release.path)}, ${RELEASE_SCRIPT}`;

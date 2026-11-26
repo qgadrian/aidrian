@@ -699,7 +699,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   that same host session, which keeps its id; on a halted run, it lifts the halt and the driver stays.
 - **Host files no review saw.** A run never discards or rebuilds existing work unless a person asks.
   A later attempt goes on on the issue's branch.
-  When that branch's head changes a host config or instruction file, the session loads the branch's own copies only
+  When that branch's head changes a host config or instruction file, or what the start hook loads (the knowledge folder
+  and each `always` doc), as the base tip has them, the session loads the branch's own copies only
   when the review bot, github.reviewer on the default branch, passed exactly that head on the forge, with the Human's
   sign-off where [Project run](config.md#project-run) asks for one; otherwise its clone holds the base branch's copies,
   git leaves them out of its commits, and a push that changes one is refused.
@@ -708,6 +709,9 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   while [`github.autoMerge.includePolicyFiles`](config.md#auto-merge) is off.
   With it on, the first message says so, and the session may write the host instruction files and the policy files,
   but no base copy; the host settings, skills, agents, commands, hooks, MCP servers, and workflow files stay refused.
+  The exception, with both keys on, is a knowledge index file the branch changes: the session edits it in git's index
+  alone, as the first message says, and the disk keeps the base copy ([Project run](config.md#project-run)).
+  Such a file counts as one the attempt may write.
   One rule decides a review finding in a host file: one in a file the attempt may write is fixed as any other finding.
   A low or medium review finding whose fix lies in one the attempt may not write, that the review step does not mark as a
   [security finding](review.md#reviewers), and that has the engine's own [id](review.md#finding-ids), is a stated
@@ -730,8 +734,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
   It parks a pull request into another branch than the default.
   On a conflict its line names the one route, on the branch the clone is on, its commits kept, once HEAD holds the forge's branch.
-  A host file `git merge-tree` names as conflicting records `pr_open` with that path in its stop; else `git merge origin/<base>`, never a rebase.
-  It never edits a host file: git merges the base copies in the index alone and leaves them on disk.
+  A host file or a base copy `git merge-tree` names as conflicting records `pr_open` with that path in its stop; else `git merge origin/<base>`, never a rebase.
+  It never edits a host file or a base copy by hand: git merges the base copies in the index alone and leaves them on disk.
   The push guard lets that merge's host files through only as git merges them ([agent gates](hooks.md#agent-gates)).
   A branch the run's ledger cannot account for, or base copies that cannot be made safely, park the issue as
   unreconciled, with the branch and pull request untouched ([Project run](config.md#project-run) lists each case).

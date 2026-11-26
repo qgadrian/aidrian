@@ -1,6 +1,6 @@
 {
   "name": "aidrian",
-  "version": "0.99.0",
+  "version": "0.100.0",
   "private": true,
   "description": "The aidrian plugin as a package for OpenCode 2.0 and later: the bridge that runs aidrian's hooks on OpenCode's events.",
   "license": "Apache-2.0",

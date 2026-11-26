@@ -1791,15 +1791,28 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `pushUrl` pinned, read from the clone before its session started (a start that recorded none pushes nothing),
     so a second `remote.origin.pushurl` refuses the push; when that start row names an `overlay`, the branch head whose
     clone took the base branch's copies of the host files it changed, its commits change no host config or instruction
-    file (`GUARDED_PATHS`), nor a policy file the row's `policyFiles` names, the pinned base tip's, from that head
+    file (`GUARDED_PATHS`), nor a policy file the row's `policyFiles` names, the pinned base tip's, nor what the start hook
+    loads, as the row's `startLoaded` names it (`startLoadProblem`), from that head
     (`git diff --name-only --no-renames --no-relative -z <overlay> HEAD`), or it is
     refused with "it pushes commits that change <count> host config or instruction files, and this attempt runs on the
     base branch's copies of them, so it may change none but as git merges the base into the branch", and a diff git cannot give refuses it too.
-    The one exception is a merge of the base: each such file in HEAD equals git's clean merge of `<overlay>`
+    One exception is a merge of the base: each such file in HEAD equals git's clean merge of `<overlay>`
     and HEAD's merge base with origin's default branch (`git merge-tree --write-tree`).
     Once HEAD holds a newer base, every such file is compared, one HEAD keeps as `<overlay>` holds it too.
     A file that conflicts in a merge of a newer base is refused whatever bytes HEAD keeps, even the recorded head's own.
     So is one HEAD holds otherwise; the refusal names the file as one clean, bounded line.
+    Every path its commits change from origin's default branch, and every uncommitted one, is held to the one spelling
+    rule (`spellingRule`): another spelling of a workflow folder, or of the row's policy files or what the start hook
+    loads, which a start row with an `overlay` keeps, or a guarded path by its fold alone, refuses the push. A folder git
+    lists whole, as an embedded repository, is judged without its trailing slash, and a read whose output outgrows its
+    8 MiB buffer refuses, as does a list it cannot judge within its time budget, which each walk over the push's paths, its
+    committed and uncommitted lists and the base copies' checks, asks every 1,000 paths or 256 KiB of path text, and once
+    more before a pass. The uncommitted entries are parsed and judged, spelling and workflow together, in that one walk.
+    The other exception is an exact path of the row's `indexFiles`, the knowledge index files the attempt may edit in
+    git's index ([Project run](config.md#project-run)). One that differs from `<overlay>`, and from git's clean merge of a
+    newer base, must be a plain file (`git ls-tree -z HEAD`, `100644 blob`) that is not the base's blob the row names. A
+    deletion, a link, another mode, or the base copy committed over the branch's version is refused, naming the file and
+    the recipe, and so is one that conflicts in a merge of a newer base. No `always` doc is such a path.
     Origin's remote-tracking ref is the session's own copy; the pull request's review of host files stands behind it. Its
     commits change no file of the forge's workflow folders (`forgeWorkflowFolders`), nor a folder that holds them, as a
     `.github` made a link, from their merge base with origin's default branch (`refs/remotes/origin/HEAD`, else

@@ -100,7 +100,7 @@ export const ORIGIN = 'https://github.com/acme/widgets.git';
 const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, ...args], { encoding: 'utf8', stdio: 'pipe' });
 
 // A stand-in for the forge facade: the default branch `main` at the commit `head()` gives, the committed config at
-// `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, the pull requests in `views`, by number, the push
+// `.aidrian/config.json` (`config`, as text), or at `configFile`, with the text of each file of `texts` (none by default), the pull requests in `views`, by number, the push
 // permission `push()` gives, and the forge CLI's login token `token()` gives, a fine-grained one by default; a `token`
 // that throws is a CLI with no login. The push probe with a token, as the start checks the issue session's, answers what
 // `tokenPush(token)` gives: true, false (the forge's 403), or a throw. `trails` holds each pull request's review trail by
@@ -113,7 +113,7 @@ export const HELD_REFS = Object.freeze({
   refs: { branch: 'main', protected: true, why: null, tags: [{ name: 'tags', all: true, creation: true, update: true, bypass: 'never' }] },
   secrets: { secrets: 0, workflowPush: false },
 });
-export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true, has = () => true } = {}) {
+export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true, has = () => true, configFile = '.aidrian/config.json', texts = {} } = {}) {
   const calls = [];
   const missing = () => Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
   const forge = {
@@ -132,8 +132,9 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
     },
     contents: (repo, file, ref, options) => {
       calls.push(['contents', repo, file, ref, options]);
-      if (file !== '.aidrian/config.json') throw missing();
-      return { type: 'file', encoding: 'base64', content: Buffer.from(config()).toString('base64') };
+      const text = file === configFile ? config() : texts[file];
+      if (text === undefined) throw missing();
+      return { type: 'file', encoding: 'base64', content: Buffer.from(text).toString('base64') };
     },
     authToken: (options) => {
       calls.push(['authToken', options]);
@@ -252,9 +253,9 @@ export function handVerdict(work, session, confine = passVerdict) {
 // written over the committed one; `local` the machine's git-ignored file; `forgeConfig` the config the forge answers
 // with, the committed one by default, which the fixture's `serveConfig` changes; `bootstrap` the worktrees' bootstrap command; `ignore` more .gitignore lines;
 // `files` more files committed with the config, by path; `links` symbolic links committed with it, each path to its
-// target; `inRepo` keeps the worktrees in `.worktrees` of the checkout;
+// target; `folder` the project folder, which a pointer file names when it is not the default one; `inRepo` keeps the worktrees in `.worktrees` of the checkout;
 // `config` more keys of the committed config.json, its `git` group merged with the worktrees folder.
-export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: true }, solo, local = { handoff: { background: 'on' } }, forgeConfig, bootstrap, ignore = [], issues = ISSUES, init = true, files = {}, links = {}, inRepo = false, config: extra = {} } = {}) {
+export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: true }, solo, local = { handoff: { background: 'on' } }, forgeConfig, bootstrap, ignore = [], issues = ISSUES, init = true, files = {}, links = {}, folder = '.aidrian', inRepo = false, config: extra = {} } = {}) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, 'project');
@@ -265,8 +266,11 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
   const claudeConfig = path.join(root, 'claude-config');
   for (const each of [dir, state, ...(inRepo ? [] : [worktrees]), home, bin]) mkdirSync(each, { recursive: true, mode: 0o700 });
   const committed = { version: 1, state: { dir: state }, projectRun, ...(solo === undefined ? {} : { solo }), ...extra, git: { ...extra.git, worktrees: { dir: inRepo ? '.worktrees' : worktrees, ...(bootstrap ? { bootstrap } : {}) } } };
-  mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify(committed));
+  const pointer = folder === '.aidrian' ? {} : { '.aidrian.json': `${JSON.stringify({ dir: folder })}\n` };
+  for (const [file, text] of [[`${folder}/config.json`, JSON.stringify(committed)], ...Object.entries(pointer)]) {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), text);
+  }
   writeFileSync(path.join(dir, '.gitignore'), ['.aidrian.local.json', '*.input', ...(inRepo ? ['.worktrees/'] : []), ...ignore, ''].join('\n'));
   for (const [file, text] of Object.entries(files)) {
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
@@ -322,7 +326,7 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
       return false;
     }
   };
-  const forge = fakeForge(text, () => execFileSync('git', ['-C', bare, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim(), {}, { has: onForge });
+  const forge = fakeForge(text, () => execFileSync('git', ['-C', bare, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim(), {}, { has: onForge, configFile: `${folder}/config.json`, texts: pointer });
   const claude = fakeClaude({ dir, env });
   const store = openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
   if (init) {

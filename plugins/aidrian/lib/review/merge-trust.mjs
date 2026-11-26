@@ -16,7 +16,7 @@
 // A review stays the record's for every merge the Human asks for: the store adds to it, and no attended read changes.
 
 import { isObject } from '../fs.mjs';
-import { POLICY_PATHS } from '../project.mjs';
+import { isPolicyPath } from '../project.mjs';
 import { cardState, isReviewSummaryCard } from './bot-card.mjs';
 import { citedDocs } from './cited.mjs';
 import { classify, HARNESS_FLOW, pathPattern } from './plan.mjs';
@@ -95,8 +95,8 @@ export const policyFilesLifted = (configs) => configs.length > 0
 //   `review.ignore` and `review.nonBehaviour` as the plan sorts them (plan.mjs classify, detectFlows); or that a command
 //   of the project's (runsCommand), its `added` patterns, or its `content` tracing may select;
 // - any flow whose `tests` match a deleted file: the review asks the Human to accept the deletion;
-// - the built-in harness-config flow when a changed file is a policy file of aidrian (POLICY_PATHS), one the configs
-//   were read from, unless every config lifts that (policyFilesLifted), or a doc a flow cites, or a command of the
+// - the built-in harness-config flow when a changed file is a policy file of aidrian, or one the configs were read from,
+//   each by its fold (project.mjs isPolicyPath), unless every config lifts that (policyFilesLifted), or a doc a flow cites, or a command of the
 //   project's may name the files that decide the review;
 // - every one of those flows when the list is not whole, or a change type hides a path (a rename).
 export function flowsFloor({ files, complete = true, configs, prefix = '', policyFiles = [] }) {
@@ -109,7 +109,6 @@ export function flowsFloor({ files, complete = true, configs, prefix = '', polic
   const known = complete && files.every((file) => ['ADDED', 'MODIFIED', 'DELETED', 'CHANGED', 'COPIED'].includes(file.changeType));
   const changed = files.map((file) => ({ ...file, rel: fromRoot(file.path, prefix) }));
   const matches = (globs, rel) => rel !== null && (globs ?? []).map(pathPattern).some((pattern) => pattern.test(rel));
-  const read = new Set(policyFiles.map((each) => each.toLowerCase()));
   const lifted = policyFilesLifted(configs);
   for (const config of configs) {
     const review = config?.review ?? {};
@@ -128,7 +127,7 @@ export function flowsFloor({ files, complete = true, configs, prefix = '', polic
     const cited = [...citedDocs(flowsOf).keys()];
     if (!known) add(HARNESS_FLOW, 'the forge did not give every changed file with its path');
     if (commanded) add(HARNESS_FLOW, 'a command of the project\'s review may name the files that decide the review');
-    if (!lifted && changed.some((file) => POLICY_PATHS.test(file.path) || read.has(file.path.toLowerCase()))) add(HARNESS_FLOW, 'it changes the review config');
+    if (!lifted && changed.some((file) => isPolicyPath(file.path, policyFiles))) add(HARNESS_FLOW, 'it changes the review config');
     if (changed.some((file) => file.rel !== null && cited.includes(file.rel))) add(HARNESS_FLOW, 'it changes a doc a flow\'s invariants cite');
   }
   return { flows, reasons };

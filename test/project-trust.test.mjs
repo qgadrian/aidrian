@@ -5,13 +5,14 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { deflateSync } from 'node:zlib';
 
-import { gateGit } from '../plugins/aidrian/lib/git.mjs';
-import { ancestorProblem, commitFiles, overlayGuarded, rawMismatch, repositoryProblem, reviewedMismatch, trustProblem } from '../plugins/aidrian/lib/project-trust.mjs';
+import { gateGit, stubGitSpawn } from '../plugins/aidrian/lib/git.mjs';
+import { ancestorProblem, commitFiles, isGuarded, overlayGuarded, rawMismatch, repositoryProblem, reviewedMismatch, trustProblem } from '../plugins/aidrian/lib/project-trust.mjs';
 import { runFixture, testGlobalConfig } from './project-start-fixture.mjs';
 
 const LIB = path.resolve(import.meta.dirname, '../plugins/aidrian/lib');
@@ -136,6 +137,36 @@ test('trustProblem holds the overlaid paths to the tip\'s bytes on disk, and eve
   rmSync(path.join(fx.dir, '.claude/agents'), { recursive: true });
   writeFileSync(path.join(fx.dir, '.claude/skills/x/other.md'), 'untracked\n');
   assert.match(trustProblem(fx.dir, tip, overlaid) ?? '', /git does not track, which no review saw: \.claude\/skills\/x\/other\.md/u);
+});
+
+// Files the caller's own `guards` takes beside the host files, each way the disk may differ from the tip.
+test('trustProblem holds what the caller\'s guards take too: changed, changed where git is told not to look, untracked, or ignored', (t) => {
+  const fx = runFixture(t, { init: false, local: null, ignore: ['docs/ignored.md'], files: { 'docs/rules.md': 'Review everything.\n' } });
+  const tip = fx.git('rev-parse', 'HEAD').trim();
+  // The default takes a guarded path by its fold too, a folder listed with its slash included.
+  assert.deepEqual(['.github/work\ufb02ows/ci.yml', '.github/work\ufb02ows/', 'docs/rules.md'].map(isGuarded), [true, true, false]);
+  const guards = (file) => /^docs\//u.test(file);
+  const cases = { 'docs/new.md': /git does not track, which no review saw: docs\/new\.md$/u, 'docs/ignored.md': /git does not track, which no review saw: docs\/ignored\.md$/u, 'docs/rules.md': /differ from the base tip: docs\/rules\.md$/u };
+  assert.equal(trustProblem(fx.dir, tip, [], guards), null);
+  // Its mode alone, which only git's own list shows.
+  chmodSync(path.join(fx.dir, 'docs/rules.md'), 0o755);
+  assert.match(trustProblem(fx.dir, tip, [], guards) ?? '', /differ from the base tip: docs\/rules\.md$/u, 'its mode');
+  chmodSync(path.join(fx.dir, 'docs/rules.md'), 0o644);
+  for (const [file, why] of Object.entries(cases)) {
+    writeFileSync(path.join(fx.dir, file), 'Skip review.\n');
+    assert.match(trustProblem(fx.dir, tip, [], guards) ?? '', why, file);
+    assert.equal(trustProblem(fx.dir, tip), null, `${file}: no host file`);
+    if (file !== 'docs/rules.md') rmSync(path.join(fx.dir, file));
+  }
+  fx.git('update-index', '--assume-unchanged', '--', 'docs/rules.md');
+  assert.match(trustProblem(fx.dir, tip, [], guards) ?? '', /differ from the base tip: docs\/rules\.md$/u, 'its bytes decide, whatever the index says');
+  // A list git cut at its buffer, with status 0 and an error, is no list: the start refuses.
+  stubGitSpawn((program, args, options) => (args.includes('ls-files') && args.includes('--others') ? { status: 0, signal: null, stdout: 'docs/a.md\0', stderr: '', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : spawnSync(program, args, options)));
+  try {
+    assert.equal(trustProblem(fx.dir, tip, [], guards), 'git cannot list the worktree\'s changed, untracked, and ignored files');
+  } finally {
+    stubGitSpawn();
+  }
 });
 
 test('the tip\'s files are read from hash-checked objects, whatever the index says', (t) => {

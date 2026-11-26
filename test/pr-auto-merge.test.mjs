@@ -8,10 +8,10 @@ import test from 'node:test';
 
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
-import { headPolicyProblem, pathsProblem, reviewProblem, runAutoMerge, runAutoMergeCommand } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { headPolicyProblem, movedPointer, pathsProblem, reviewProblem, runAutoMerge, runAutoMergeCommand } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { markOnce } from '../plugins/aidrian/lib/closing-words.mjs';
 import { configFromText, loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { isPolicyPath, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { classify, evaluateRules } from '../plugins/aidrian/lib/review/plan.mjs';
 import { emptyState, noteOutcome, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
@@ -793,6 +793,7 @@ test('reviewProblem: a none_needed is judged on the forge\'s files from the proj
   assert.match(judged(['apps/web/src/a.md']) ?? '', /it changes "apps\/web\/src\/a\.md", which the default branch's review\.nonBehaviour does not list/u);
   assert.match(judged(['apps/web/docs/.github/a.md']) ?? '', /starts with "\."/u, 'a dot folder below the project root');
   assert.match(judged(['apps/web/docs/AGENTS.override.md']) ?? '', /which instructs AI sessions/u, 'a host name below the project root');
+  assert.match(judged(['apps/web/.github/in\ufb06ructions/a.md']) ?? '', /which instructs AI sessions/u, 'a guarded folder by its fold');
   assert.match(judged(['apps/web/docs/rules.md']) ?? '', /a knowledge doc the start hook loads into every session/u, 'an always doc');
   assert.match(judged(['apps/web/docs/a.md'], { startDocs: 'x.json: invalid JSON' }) ?? '', /the default branch's knowledge cannot say which docs the start hook loads into every session \(x\.json: invalid JSON\)/u);
   assert.match(judged(['apps/web/docs/a.md'], { startDocs: undefined }) ?? '', /has not read what the start hook loads/u, 'no start docs: off');
@@ -1141,6 +1142,7 @@ const pointing = (branch, dir, autoMerge, root = '') => ({
   [`acme/notes@${branch}:${root}${dir}/config.json`]: configText(autoMerge),
 });
 const readLine = (file) => `auto-merge off for #7: it changes ${JSON.stringify(file)}, a file the gate reads its policy from`;
+const standsLine = (file) => `auto-merge off for #7: it changes ${JSON.stringify(file)}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`;
 
 test('a folder the pointer file names holds policy too: a change to the config.json the gate read is off (paths), with the key on or off', (t) => {
   const r = repo(t);
@@ -1152,7 +1154,8 @@ test('a folder the pointer file names holds policy too: a change to the config.j
     const edit = run(t, r, ['7'], changing(files, 'src/app.js', 'tools/policy/config.json'));
     assert.deepEqual([edit.code, edit.out[0]], [1, readLine('tools/policy/config.json')], `${name}: an edit`);
     const swap = run(t, r, ['7'], changing(files, { path: 'tools/policy', changeType: 'ADDED' }, { path: 'tools/policy/config.json', changeType: 'DELETED' }));
-    assert.deepEqual([swap.code, swap.out[0]], [1, readLine('tools/policy/config.json')], `${name}: the folder replaced by a file`);
+    // With the key off, what holds the knowledge folder refuses first.
+    assert.deepEqual([swap.code, swap.out[0]], [1, name === 'key on' ? readLine('tools/policy/config.json') : standsLine('tools/policy')], `${name}: the folder replaced by a file`);
     assert.deepEqual(reasonOf(t, r, changing(files, 'Tools/Policy/CONFIG.json')), [1, 'paths'], `${name}: in any case`);
     assert.deepEqual(reasonOf(t, r, changing(files, 'tools/policy/notes.md')), [0, null], `${name}: a file beside it is no policy`);
   }
@@ -1472,7 +1475,7 @@ test('a project below the root reads its own auto-merge setting, and a file outs
   const edited = run(t, r, ['7'], below({ path: 'apps/web/tools/policy/config.json', changeType: 'MODIFIED' }));
   assert.deepEqual([edited.code, edited.out[0]], [1, readLine('apps/web/tools/policy/config.json')], 'an edit of that config.json');
   const swapped = run(t, r, ['7'], below({ path: 'apps/web/tools/policy', changeType: 'ADDED' }, { path: 'apps/web/tools/policy/config.json', changeType: 'DELETED' }));
-  assert.deepEqual([swapped.code, swapped.out[0]], [1, readLine('apps/web/tools/policy/config.json')], 'its folder replaced by a file');
+  assert.deepEqual([swapped.code, swapped.out[0]], [1, standsLine('apps/web/tools/policy')], 'its folder replaced by a file');
   const rootAllows = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) };
   const lost = { project: { ...project, root: path.join(dir, 'gone') } };
   assert.equal(reasonOf(t, lost, { files: rootAllows, view: changing('apps/api/a.js').view })[0], 1, 'a folder git cannot read is never taken for the root');
@@ -1602,6 +1605,28 @@ test('the knowledge folder a pointer file names is guarded whole, and a project 
   assert.deepEqual([added.code, added.out[0]], [1, 'auto-merge off for #7: it changes "harness/knowledge/20-new.json", in the default branch\'s knowledge folder, which decides what the start hook loads']);
   assert.deepEqual(reasonOf(t, r, changes(moved, 'docs/rules.md')), [1, 'paths'], 'its always doc');
   assert.deepEqual(reasonOf(t, r, changes(moved, 'harness/notes.md')), [0, null], 'beside the folder');
+  // Where that folder, or one that holds it or an always doc, is now a link, a file, or a submodule.
+  const loaded = { docs: ['apps/web/docs/rules.md'], folder: 'harness/knowledge' };
+  for (const file of ['harness/knowledge', 'harness', 'Harness', 'apps', 'apps/web/docs']) {
+    assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: loaded }), `it changes ${JSON.stringify(file)}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`);
+  }
+  // By the fold of a path, as a disk that ignores case or Unicode form reads it: a long s, a Kelvin sign, a sharp s, a ligature, and each form of an accent.
+  const spelled = { docs: ['docs/stra\u00dfe.md', 'docs/caf\u00e9.md', 'docs/rules.md', 'docs/fig.md'], folder: 'ma\u00df/knowledge' };
+  for (const file of ['docs/STRASSE.md', 'docs/cafe\u0301.md', 'docs/CAFE\u0301.md', 'docs/rule\u017f.md', 'docs/\ufb01g.md', 'ma\u00df/\u212anowledge/x.json', 'MASS/knowledge/x.json', 'mass/knowledge', 'MASS']) {
+    assert.match(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: spelled }) ?? '', /the start hook loads/u, file);
+  }
+  for (const file of ['docs/strase.md', 'docs/cafe.md', 'docs/g.md']) assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: spelled }), null, file);
+  for (const file of ['.AIDRIAN.json', 'x/.aidrian/con\ufb01g.json', 'harne\u017f\u017f/CON\ufb01G.json', 'harne\u00df/config.json']) assert.equal(isPolicyPath(file, ['harness/config.json']), true, file);
+  const one = (file, options) => pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', options);
+  assert.match(one('.github/work\ufb02ows/ci.yml') ?? '', /which instructs AI sessions, or decides CI's verdict/u, 'a ligature in the workflow folder');
+  for (const [file, policy] of [['harne\u00df/config.json', 'harness/config.json'], ['STRA\u1e9eE/config.json', 'stra\u00dfe/config.json']]) {
+    for (const includeGuardedPaths of [false, true]) assert.equal(one(file, { policyFiles: [policy], includeGuardedPaths }), `it changes ${JSON.stringify(file)}, a file the gate reads its policy from`, file);
+  }
+  assert.match(one('x/.aidrian/con\ufb01g.json', { includeGuardedPaths: true }) ?? '', /a policy file of aidrian/u, 'a policy name, with the key on');
+  assert.equal(movedPointer([{ path: 'harne\u00df/.aidrian.json' }], 'harness/')?.path, 'harne\u00df/.aidrian.json');
+  assert.equal(movedPointer([{ path: 'other/.aidrian.json' }], 'harness/'), undefined);
+  for (const file of ['harness/config.jso', 'x/harness/config.json']) assert.equal(isPolicyPath(file, ['harness/config.json']), false, file);
+  for (const file of ['harness/know', 'app', 'apps/web/docs/rules.md.bak']) assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: loaded }), null, file);
 
   const below = projectBelow(t, 'apps/web', configText(TEAM));
   const own = { 'acme/notes@main:apps/web/.aidrian/config.json': configText(TEAM), ...knowledge(undefined, 'apps/web/.aidrian/knowledge') };

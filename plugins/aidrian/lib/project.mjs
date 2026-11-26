@@ -68,7 +68,7 @@ const GUARDED_LIB = [
   'child-send-backs', 'clean-text', 'cli', 'closing-words', 'code-words', 'config', 'config-committed', 'config-defaults', 'config-guard',
   'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version', 'confine-guard', 'deadline', 'decisions',
   'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git',
-  'git-push', 'glob-links', 'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io', 'hook-result', 'issue-forge-guard', 'issue-push-checkout',
+  'git-push', 'glob-links', 'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io', 'hook-result', 'index-edits', 'issue-forge-guard', 'issue-push-checkout',
   'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose', 'markdown-sections', 'markdown-wrap',
   'model-prices', 'names', 'override-guard', 'package-runner', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-diff', 'pr-product-feedback',
   'pr-ready-wait', 'pr-resolve', 'project', 'project-confine', 'project-decision', 'project-decision-store', 'project-forge-holds', 'project-full-auto', 'project-human-merges', 'project-issue-text', 'project-kept', 'project-limit', 'project-linger', 'project-preflight', 'project-recheck', 'project-registries', 'project-report',
@@ -118,10 +118,67 @@ export const knowledgeIn = (configFile) => `${path.posix.dirname(configFile)}/kn
 // paths it read on each branch (pr-auto-merge.mjs branchPolicies). Not configurable.
 export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|\.aidrian\.local\.json|\.aidrian)$/iu;
 
+// A path as a disk that ignores case and Unicode form names it, such as macOS's: two spellings with one fold may be one
+// file there. It may fold two a disk keeps apart, so a guard that refuses equal folds only holds more; a check that lets
+// equal paths through never compares folds. Lower case first, so two paths equal in lower case have one fold, the capital
+// sharp s among them, whose upper case is itself.
+export const foldPath = (file) => file.normalize('NFD').toLowerCase().toUpperCase().toLowerCase();
+
+// Whether `file` is a guarded path (GUARDED_PATHS), as it is or by its fold. Every guard asks this, never the pattern
+// itself (test/auto-merge-guard.test.mjs).
+export const isGuardedPath = (file) => GUARDED_PATHS.test(file) || GUARDED_PATHS.test(foldPath(file));
+
+// The most folders a path may lie below, and the most bytes it may take, for the spelling rule to judge it.
+const [PATH_DEPTH, PATH_BYTES] = [64, 4096];
+
+// The one spelling rule, for `names`, the paths the harness holds by their exact spelling, a folder's with a trailing
+// `/`: (file) => why `file` is one of them in another spelling, or null. That is when its fold (foldPath) is a name's,
+// a file's in a folder name, or a folder's that holds a name, and either its own spelling is none of them or two
+// spellings share that fold; or when it is a guarded path (isGuardedPath) by its fold alone. Each path is folded once, a
+// part at a time: a path's fold is its parts' folds joined by `/`, so each folder's fold is a join of the first parts'. A disk that ignores case or
+// Unicode form reads it as that name, so the rule refuses each such path wherever the harness reads one.
+export function spellingRule(names) {
+  const [files, folders, parents] = [new Map(), new Map(), new Map()];
+  const add = (map, exact) => map.set(foldPath(exact), new Set([...(map.get(foldPath(exact)) ?? []), exact]));
+  for (const name of names) {
+    const exact = name.replace(/\/$/u, '');
+    add(name.endsWith('/') ? folders : files, exact);
+    exact.split('/').slice(0, -1).forEach((_, at, parts) => add(parents, parts.slice(0, at + 1).join('/')));
+  }
+  const line = (file, spellings) => `${JSON.stringify(file).slice(0, 200)} is ${JSON.stringify([...spellings].find((each) => each !== file) ?? file).slice(0, 200)} in another spelling, which a disk that ignores case or Unicode form reads as the same path`;
+  const other = (map, key, spelled) => {
+    const spellings = map.get(key);
+    return spellings && (spellings.size > 1 || !spellings.has(spelled)) ? spellings : null;
+  };
+  return (file) => {
+    // A path past these bounds is refused before it is folded, never judged in part.
+    if (Buffer.byteLength(file) > PATH_BYTES || file.split('/').length > PATH_DEPTH + 1) return `${JSON.stringify(file.slice(0, 200))} is deeper than ${PATH_DEPTH} folders or longer than ${PATH_BYTES} bytes, which no guard judges`;
+    const parts = file.split('/');
+    const foldedParts = parts.map(foldPath);
+    const folded = foldedParts.join('/');
+    let at = other(files, folded, file) ?? other(parents, folded, file) ?? other(folders, folded, file);
+    for (let end = 1; !at && end < parts.length; end += 1) at = other(folders, foldedParts.slice(0, end).join('/'), parts.slice(0, end).join('/'));
+    if (at) return line(file, at);
+    return isGuardedPath(file) && !GUARDED_PATHS.test(file) ? `${JSON.stringify(file).slice(0, 200)} is a guarded path in another spelling, which a disk that ignores case or Unicode form reads as one` : null;
+  };
+}
+
+// spellingRule's answer for one path.
+export const spellingProblem = (file, names) => spellingRule(names)(file);
+
 // Whether `file`, from the top of the repository, is a policy file: a POLICY_PATHS name, or one of `policyFiles`, the
-// paths pr-auto-merge.mjs branchPolicies read the gate's policy from, as a config.json a pointer file relocates, in any
-// case, as the auto-merge gate matches them.
-export const isPolicyPath = (file, policyFiles = []) => POLICY_PATHS.test(file) || policyFiles.some((each) => typeof each === 'string' && each.toLowerCase() === file.toLowerCase());
+// paths pr-auto-merge.mjs branchPolicies read the gate's policy from, as a config.json a pointer file relocates, each by
+// its fold (foldPath).
+export const isPolicyPath = (file, policyFiles = []) => policyRule(policyFiles)(file);
+
+// isPolicyPath for one list `policyFiles`, folded once, for a caller that judges many paths against it.
+export function policyRule(policyFiles = []) {
+  const folds = new Set(policyFiles.filter((each) => typeof each === 'string').map(foldPath));
+  return (file) => {
+    const folded = foldPath(file);
+    return POLICY_PATHS.test(folded) || folds.has(folded);
+  };
+}
 
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.
 // In a git checkout the search stops at its top folder, so a worktree whose branch has no project folder has no project,

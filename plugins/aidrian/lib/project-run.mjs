@@ -59,7 +59,7 @@ export const MAX_OUTSIDE = 1000;
 export const BRANCH_CAP = 120;
 // The largest snapshot.json and ledger.jsonl a run reads. snapshot.json keeps a subset of an input under INPUT_CAP.
 const SNAPSHOT_CAP = 2 * INPUT_CAP;
-const LEDGER_CAP = 8 * 1024 * 1024;
+export const LEDGER_CAP = 8 * 1024 * 1024;
 // A part of a repository's host, owner, or name.
 const PLAIN = /^[\w.-]{1,100}$/u;
 const plainPart = (part) => typeof part === 'string' && PLAIN.test(part) && part !== '.' && part !== '..';
@@ -770,7 +770,9 @@ export function latestHalt(found) {
 }
 
 // Appends to the ledger of run `run`, under its lock, the rows `build(found)` returns for the run as readRun reads it under
-// that lock: { rows } appended in order, in one write, or { problem } appending none, which is what it returns. The run's folder must
+// that lock: { rows } appended in order, in one write, or { problem } appending none, which is what it returns. An append
+// that would take the ledger past LEDGER_CAP, the most readRun reads, with `reserve` bytes more that `build` may ask to
+// keep free for rows a later append must write, is refused, so no row the readers cannot read is ever written. The run's folder must
 // hold snapshot.json before the lock is taken, so a missing run gets no folder or lock file. Throws jsonl.mjs's LOCKED when another holds the lock
 // past `waitMs`, jsonl.mjs's wait by default. With `lock: false` it reads and appends with no lock, for a row no other
 // writer's rows depend on, so it never meets a ledger another process holds.
@@ -783,6 +785,9 @@ export function appendToRun(state, run, build, { waitMs, lock = true } = {}) {
     if (found.problem) return { problem: found.problem };
     const built = build(found);
     if (built.problem) return built;
+    const size = entryAt(file)?.size ?? 0;
+    const adding = built.rows.reduce((sum, row) => sum + Buffer.byteLength(`${JSON.stringify(row)}\n`), 1) + (built.reserve ?? 0);
+    if (size + adding > LEDGER_CAP) return { problem: `the ledger of run ${run} would pass ${LEDGER_CAP} bytes, the most a run reads, so nothing is written` };
     // One write for every row, so a transition's rows land together (an issue's result and its state).
     appendRowsAtOnce(file, built.rows);
     return built;

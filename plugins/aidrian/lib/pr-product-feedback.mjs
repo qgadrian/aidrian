@@ -620,25 +620,29 @@ function post({ argv: [value], values, project, forge, remotes, env, access }) {
   const pr = pullRequest(value, { forge, remotes });
   const state = writingState(project);
   const file = recordPath(state, pr.repo, pr.number);
-  const found = readRecord(file, pr);
-  if (!found) throw new Error(notRun(pr.number));
+  if (!readRecord(file, pr)) throw new Error(notRun(pr.number));
   const body = readBody(values['body-file'], state);
   const kind = refusedKind(body, refusalContext(project, { state, env, access }));
   if (kind) throw new Error(`refused: the body holds ${kind}. Nothing was posted`);
   const marker = feedbackMarker(pr);
   const comment = `${marker}\n${neutralized(body)}`;
-  const target = ownComment({ forge, pr, record: found, marker });
-  let written;
-  try {
-    written = target === null
-      ? forge.postComment(pr.repo, pr.number, comment, { host: pr.host })
-      : forge.editComment(pr.repo, target, comment, { host: pr.host });
-  } catch (error) {
-    throw new Error(`the post failed, and the record is unchanged (${ghError(error)})`);
-  }
-  if (!Number.isSafeInteger(written?.id)) throw new Error('gh gave no comment id for the post, and the record is unchanged');
-  updateRecord(file, pr, (current) => {
-    current.comment_id = written.id;
+  // The record's lock, a write beside it under product-feedback/, is taken before any comment is read or posted, and held
+  // until the record names the comment: a session whose sandbox refuses a write there posts nothing.
+  const target = withLocks([file], () => {
+    const found = readRecord(file, pr);
+    if (!found) throw new Error(notRun(pr.number));
+    const own = ownComment({ forge, pr, record: found, marker });
+    let written;
+    try {
+      written = own === null
+        ? forge.postComment(pr.repo, pr.number, comment, { host: pr.host })
+        : forge.editComment(pr.repo, own, comment, { host: pr.host });
+    } catch (error) {
+      throw new Error(`the post failed, and the record is unchanged (${ghError(error)})`);
+    }
+    if (!Number.isSafeInteger(written?.id)) throw new Error('gh gave no comment id for the post, and the record is unchanged');
+    writeRecord(file, { ...found, comment_id: written.id });
+    return own;
   });
   console.log(`${target === null ? 'posted' : 'edited'} the product feedback comment on #${pr.number}`);
   return 0;

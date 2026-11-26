@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -496,8 +496,30 @@ test('in an issue session, status never reads clear from the clone\'s refs: GitH
   const fake = fakeGh();
   const forge = (cwd, options) => createGithubForge({ ...options, cwd, run: (args) => fake.gh(args) });
   const hold = (mark) => readyCheck('gh pr ready 7', { cwd: r.dir, env: {}, now: () => 0, forge, unattendedMark: mark });
-  assert.match(hold(() => ({ issue: 'ENG-1', root: null })) ?? '', /still owed/u);
+  assert.match(hold(() => ({ issue: 'ENG-1', root: null, cwd: r.dir })) ?? '', /still owed/u);
   assert.equal(hold(() => null), null);
+});
+
+test('post takes the record\'s lock under product-feedback/ before any forge call that reads or posts the comment', (t) => {
+  const r = repo(t);
+  recorded(t, r, [finding('F1', 'The save button hides')]);
+  const body = bodyAt(r, 'Plain words.');
+  // A folder no write reaches, as a confined session's sandbox leaves product-feedback/: the lock is refused first.
+  const folder = path.dirname(r.file);
+  chmodSync(folder, 0o555);
+  let refused;
+  try {
+    refused = run(t, r, ['post', '7', '--body-file', body]);
+  } finally {
+    chmodSync(folder, 0o755);
+  }
+  assert.equal(refused.code, 3, refused.err.join('\n'));
+  assert.deepEqual(refused.writes, [], 'nothing posted');
+  assert.ok(!refused.calls.some((args) => args[0] === 'api' && (args[3] === 'user' || /comments/u.test(args[3] ?? ''))), 'no comment read either');
+  assert.equal(recordOf(r).comment_id, null);
+  const posted = run(t, r, ['post', '7', '--body-file', body]);
+  assert.equal(posted.code, 0, posted.err.join('\n'));
+  assert.equal(recordOf(r).comment_id, 901);
 });
 
 test('record and recheck read the repository, the number, and the head from gh, never from an argument', (t) => {

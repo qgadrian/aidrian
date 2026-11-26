@@ -946,7 +946,13 @@ A `-R` or `--repo` value or a `GH_REPO` assignment the shell fills in, and a fol
 keep the target unknown there, and refuse.
 `status` takes the same reads there (`issueReads` in `lib/pr-product-feedback.mjs`), so it never says clear from the clone's refs either.
 Text fed to a shell that names a ready, and more than one ready in a command, are refused whatever git says.
-The GitHub MCP hook reads the same mark, and refuses a call whose number it cannot read or whose folder is in no project.
+So is a ready it cannot read as one: a program, `pr`, or `ready` word the shell fills in, such as `$G pr ready 7` or `gh pr $(echo ready) 7`,
+and gh run by another program, such as `xargs gh pr ready` or `parallel`.
+Every ready there is judged in the project of the clone the session's mark records, never the folder the call runs in,
+and a ready from another project's folder, such as one nested in the clone or a temporary one, is refused.
+A ready that names no pull request written out, such as `gh pr ready` alone or a branch name, is refused, and the deny asks for the number or URL.
+The GitHub MCP hook reads the same mark and judges in the same clone.
+It refuses a call whose number it cannot read, or that comes from another project's folder.
 The deny of an owed pull request names the stop the run records,
 `pr_open` with "product feedback is owed on #<n>, which an issue session does not run: …", never the skill:
 the step is the Human's ([In an issue session](config.md#in-an-issue-session)).

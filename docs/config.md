@@ -886,6 +886,12 @@ Its report lists that under Decisions for the Human, with that command, and the 
 With `auto` on, every user-facing pull request of a project run stops at a draft for the Human.
 The [ready hold](hooks.md#ready-hold) holds that draft there, since `pr-auto-merge` reads no product feedback and the forge merges no draft.
 
+What this does not stop: the ready hold reads the words of each shell command, as every hook that reads commands does.
+A session that runs a script file, an interpreter such as `node -e`, a shell alias, or a GraphQL query read from a file
+can mark the draft ready with no word the hook sees.
+The merge gate then reads no product feedback, so such a pull request can merge with its feedback still owed.
+The hold stops a session that follows the flow, not one set on getting around it.
+
 ### With the key off
 
 A project without `review.productFeedback.auto` runs nothing of the feature unasked, and its hooks cost it nothing, save in
@@ -964,6 +970,8 @@ through its re-check. `--by human` is held to the Human's own word by the [answe
 
 `post` is the only path that posts, and a pull request body or comment never receives a local path. Its `--body-file` must really be
 inside `<state>/tmp/`, a symlink resolved. The comment opens with a marker, `<!-- aidrian-product-feedback: pr=<n> repo=<owner/name> -->`.
+It takes the record's lock, a file beside the record, before it reads or posts the comment, and holds it until the record names the comment.
+So where no write reaches `product-feedback/`, as in a confined session's sandbox, nothing is posted.
 
 Before any write, `post` exits 3, naming the kind of match and never the value, on the body as written, and on a copy with format
 characters stripped and numeric entities and `%xx` decoded. It refuses:

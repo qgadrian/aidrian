@@ -49,7 +49,7 @@ import { runExec } from './reviewers.mjs';
 import { where } from './settled.mjs';
 import { atCap, grantedRounds, raiseAsk, retireChecks } from './extension.mjs';
 import { settleCaptures } from './dispatch.mjs';
-import { answerPending, CAPPED, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, sameCommit, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
+import { answerPending, CAPPED, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, recordedMeanwhile, sameCommit, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { ghImage } from './visual.mjs';
 import { prepareStep } from './step.mjs';
@@ -274,9 +274,29 @@ function settle({ project, root, repo, n, state, deletes }, result) {
   const removed = removedPosts(deletes);
   state.pending = mergePending(local?.pending, state.pending);
   mergeIndex(state, local, removed);
+  // A pass result recorded while the step ran is one the step decided without: its outcome is not saved, and the step
+  // asks to run again, which decides from the record with that result in it.
+  const meanwhile = UNDECIDED.has(result.status) ? [] : recordedMeanwhile(project, state, repo);
+  if (meanwhile.length) retryInstead(result, meanwhile);
   noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
   writeLocalState(project, state, { repo, removed });
   return result;
+}
+
+// The statuses the step returns without deciding on the passes' results: nothing recorded meanwhile changes them.
+const UNDECIDED = new Set(['running', 'incomplete', 'unsatisfied', 'too_large', 'stuck', 'error']);
+// What a result keeps when it becomes the retry: where the step stood, and what it already posted.
+const KEPT = ['pr', 'repo', 'head', 'base', 'depth', 'round', 'max_rounds', 'engine', 'inline_review', 'replies', 'summary_error'];
+
+// `result`, in place, as the step's retry once `passes` recorded a result while it ran (state.mjs recordedMeanwhile):
+// `incomplete` with `retry_recommended`, so no merge counts it as finished and no owed review is answered by it.
+export function retryInstead(result, passes) {
+  const kept = Object.fromEntries(KEPT.filter((key) => result[key] !== undefined).map((key) => [key, result[key]]));
+  for (const key of Object.keys(result)) delete result[key];
+  return Object.assign(result, kept, {
+    status: 'incomplete', reason: `${passes.join(', ')} recorded a result while the step ran, which the step decided without: run the step again`,
+    retry_recommended: true, recorded_meanwhile: passes,
+  });
 }
 
 // Every bot answer that counts for this head, fresh or reused, answers the reviews the Human asked for
@@ -381,7 +401,7 @@ function finish(s, status, extra) {
   // A visual pass with its result on a head whose capture failed: the captures comment stops asking to wait for it.
   settleCaptures(s);
   if (onPr) {
-    const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status, { ...s.post(), diffPaths: new Set((s.changes ?? []).map((change) => change.file)) });
+    const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, result.status, { ...s.post(), diffPaths: new Set((s.changes ?? []).map((change) => change.file)) });
     try {
       writeSummary(summary, (id) => forge.editComment(repo, id, body), () => forge.postComment(repo, n, body));
     } catch (error) {

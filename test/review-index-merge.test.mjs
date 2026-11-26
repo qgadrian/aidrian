@@ -8,8 +8,9 @@ import test from 'node:test';
 
 import { removedPosts } from '../plugins/aidrian/lib/review/delete.mjs';
 import { recordVerdict } from '../plugins/aidrian/lib/review/extension.mjs';
-import { parseFindings, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
-import { emptyState, mergeIndex, takeRecorded } from '../plugins/aidrian/lib/review/state.mjs';
+import { freshId, parseFindings, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
+import { retryInstead } from '../plugins/aidrian/lib/review/run.mjs';
+import { emptyState, mergeIndex, noteOutcome, takeRecorded } from '../plugins/aidrian/lib/review/state.mjs';
 
 const FROM = 'a'.repeat(40);
 const TO = 'b'.repeat(40);
@@ -196,4 +197,75 @@ test('a pass both writers hold: the one recorded last counts, and an open findin
   later.passes[PASS].at = LATER;
   takeRecorded(second.step, later);
   assert.equal(second.step.passes[PASS].open, 1);
+});
+
+// The local record a write's state was read from, as the readers note it (state.mjs noteRead): its revision, write time,
+// and first round.
+const snapshot = (record) => ({ revision: record.revision, updatedAt: record.updatedAt, rounds: record.rounds.slice(0, 1) });
+
+test('a write during the first round: a record read with no round yet takes in what another command recorded', () => {
+  const { step, wrote } = stepping();
+  const read = { ...structuredClone(step), rounds: [] };
+  const opened = structuredClone(read);
+  // The step read the record before its first round, then opened it.
+  opened.rounds = [{ head: HEAD, at: LATER }];
+  const disk = Object.assign(wrote(attest([finding('One')])), { rounds: [] });
+  assert.deepEqual(takeRecorded(structuredClone(opened), disk), [], 'by the first round alone, the two are not one review');
+  assert.deepEqual(takeRecorded(opened, disk, { read: snapshot(read) }), [PASS], 'by the read, they are');
+  assert.equal(opened.passes[PASS].open, 1);
+  // A step that started another review than the one it read takes nothing of the old one.
+  const restart = stepping();
+  const restarted = structuredClone(restart.step);
+  restarted.rounds = [{ head: 'd'.repeat(40), at: LATER }];
+  assert.deepEqual(takeRecorded(restarted, restart.wrote(attest([finding('One')])), { read: snapshot(restart.step) }), []);
+  assert.equal(restarted.passes[PASS], undefined);
+});
+
+test('a write is another command`s by the local record read, not by the revision a posted copy gave the state', () => {
+  const { step, wrote } = stepping();
+  const local = snapshot(step);
+  // The state is the pull request's posted copy, at a higher revision than this machine's file.
+  const adopted = Object.assign(structuredClone(step), { revision: 9, updatedAt: '2026-11-25T10:02:00.000Z' });
+  const disk = wrote(attest([finding('One')]));
+  assert.equal(disk.revision, 4, 'the attest built on the file, past it and below the copy');
+  assert.deepEqual(takeRecorded(structuredClone(adopted), disk), [], 'by revision alone, the copy is newer and the attest lost');
+  assert.deepEqual(takeRecorded(adopted, disk, { read: local }), [PASS]);
+  assert.equal(adopted.revision, 9, 'the higher revision stays the floor of the next write');
+  // The file as read, or as this state last wrote it, with its running mark's revision lowered after: its own.
+  const own = Object.assign(structuredClone(disk), { revision: disk.revision - 1 });
+  delete own.passes[PASS];
+  assert.deepEqual(takeRecorded(own, disk, { read: snapshot(disk) }), []);
+  assert.equal(own.passes[PASS], undefined);
+});
+
+test('a pass taken from another write names a finding this write moved to a fresh id by that id alone, after the index is rebuilt', () => {
+  const { step, wrote } = stepping();
+  attest([finding('One')])(step);
+  const read = structuredClone(step);
+  read.updatedAt = '2026-11-25T10:01:00.000Z';
+  read.passes[PASS].at = '2026-11-25T10:00:30.000Z';
+  const ours = structuredClone(read);
+  // This write moved R1-1 to a fresh id, as when a comment already carries its marker.
+  const fresh = freshId(ours, 'R1-1');
+  assert.equal(fresh, 'R1-2');
+  // Another command recorded the pass again meanwhile, its finding still under R1-1.
+  const disk = structuredClone(read);
+  attest([finding('One'), finding('Two')])(disk);
+  Object.assign(disk, { revision: read.revision + 1, updatedAt: new Date().toISOString() });
+  assert.deepEqual(takeRecorded(ours, disk, { read: snapshot(read) }), [PASS]);
+  recordFindings(ours, null, null);
+  const ids = ours.passes[PASS].list.map((each) => each.id);
+  assert.ok(ids.includes(fresh) && !ids.includes('R1-1'), ids.join(', '));
+  assert.equal(ours.index['R1-1'], undefined, 'no second identity for the moved finding');
+  assert.deepEqual([ours.index[fresh].mint, ours.passes[PASS].list.find((each) => each.id === fresh).mint], [ours.index[fresh].mint, ours.index[fresh].mint]);
+});
+
+test('a step outcome decided without a pass recorded meanwhile is the retry, which answers no owed review', () => {
+  const result = { status: 'received', pr: 7, repo: 'o/r', head: HEAD, round: 1, engine: { name: 'codex' }, open: [{ pass: PASS }], dispatch: [] };
+  assert.equal(retryInstead(result, [PASS]), result);
+  assert.deepEqual(Object.keys(result).sort(), ['engine', 'head', 'pr', 'reason', 'recorded_meanwhile', 'repo', 'retry_recommended', 'round', 'status']);
+  assert.deepEqual([result.status, result.retry_recommended, result.recorded_meanwhile], ['incomplete', true, [PASS]]);
+  const state = { ...emptyState(7, 'o/r'), pending: [{ kind: 'review', head: HEAD, at: AT, by: 't', id: 'x' }] };
+  noteOutcome(state, result);
+  assert.deepEqual([state.outcome.status, state.pending[0].answered], ['incomplete', undefined]);
 });

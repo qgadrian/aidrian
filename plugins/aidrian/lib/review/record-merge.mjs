@@ -41,9 +41,10 @@ function identities(round) {
 }
 
 // The Human's entries of `other` that `base` lacks, added to `base`. A flow's sign-off and an overrule or acceptance of one
-// invariant on one head keep the later of the two; the other lists gain each entry they do not hold.
-export function keepHuman(base, other) {
-  if (!isObject(base) || !isObject(other) || !sameReview(base, other)) return base;
+// invariant on one head keep the later of the two; the other lists gain each entry they do not hold. With `lineage`, as
+// for keepRecorded, the caller has told the two copies of one review already.
+export function keepHuman(base, other, { lineage = false } = {}) {
+  if (!isObject(base) || !isObject(other) || (!lineage && !sameReview(base, other))) return base;
   if (!isObject(base.signoffs)) base.signoffs = {};
   for (const [flow, signoff] of Object.entries(isObject(other.signoffs) ? other.signoffs : {})) {
     if (isObject(signoff) && (!isObject(base.signoffs[flow]) || later(base.signoffs[flow], signoff))) base.signoffs[flow] = { ...signoff };
@@ -152,18 +153,25 @@ function keepDecided(base, other, key, keys) {
   base[key] = inTimeOrder([...out.values()]);
 }
 
-// The passes `other` recorded after `since`, the time of the write `base` was read from, into `base`: each `base` lacks,
+// The ids of the passes `other` recorded after `since`, the time of the write `base` was read from: each `base` lacks,
 // and each `base` holds recorded earlier, by their `at` (findings.mjs recordResult). A pass in the record `base` was read
-// from, which `base` dropped on purpose, is never taken back; nor is one with no `at`.
-export function keepRecorded(base, other, since) {
-  if (!isObject(base) || !isObject(other) || !sameReview(base, other)) return;
+// from, which `base` dropped on purpose, is not one; nor is one with no `at`.
+export function recordedPasses(base, other, since) {
+  const ours = isObject(base?.passes) ? base.passes : {};
+  return Object.entries(isObject(other?.passes) ? other.passes : {}).filter(([id, pass]) => {
+    if (!isObject(pass) || typeof pass.at !== 'string') return false;
+    return isObject(ours[id]) ? pass.at > String(ours[id].at ?? '') : pass.at > String(since ?? '');
+  }).map(([id]) => id);
+}
+
+// Those passes (recordedPasses), from `other` into `base`; returns their ids. With `lineage`, the caller has told the
+// two copies of one review already, as a record read with no round yet and the write that opened its first.
+export function keepRecorded(base, other, since, { lineage = false } = {}) {
+  if (!isObject(base) || !isObject(other) || (!lineage && !sameReview(base, other))) return [];
   if (!isObject(base.passes)) base.passes = {};
-  for (const [id, pass] of Object.entries(isObject(other.passes) ? other.passes : {})) {
-    if (!isObject(pass) || typeof pass.at !== 'string') continue;
-    const ours = base.passes[id];
-    const fresh = isObject(ours) ? pass.at > String(ours.at ?? '') : pass.at > String(since ?? '');
-    if (fresh) base.passes[id] = structuredClone(pass);
-  }
+  const taken = recordedPasses(base, other, since);
+  for (const id of taken) base.passes[id] = structuredClone(other.passes[id]);
+  return taken;
 }
 
 // `base[key]` with each entry of `other[key]` whose `keys` it does not hold, in time order (inTimeOrder).

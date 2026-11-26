@@ -33,7 +33,7 @@ import { withGitFacts } from '../git.mjs';
 import { recordsFolder, remoteStateDirs, stateDir } from '../project.mjs';
 import { originRepo, repoName } from '../remotes.mjs';
 import { isClosed, isFindingId, isMint, recordedFindings, recordFindings } from './findings.mjs';
-import { keepHuman, keepRecorded, keepWork, sameReview } from './record-merge.mjs';
+import { keepHuman, keepRecorded, keepWork, recordedPasses, sameReview } from './record-merge.mjs';
 import { escapeLines, fillWithheld, findingsTable, flagName, isPostId, isPrivate, JUDGE_RULING, plainChecker, postedCopy, untextedBlocking, WITHHELD } from './publish.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { ruledLines } from './settled.mjs';
@@ -478,7 +478,20 @@ export function owedElsewhere(project, pr, repo) {
 // plugin kept writing the old name, the record is their merge (mergeRecords), so neither's Human entries are lost.
 // One call reads each folder's roots, prefix, and remote URLs once (lib/git.mjs withGitFacts), or as the open call does.
 export function readLocalState(project, pr, repo) {
-  return withGitFacts(() => localState(project, pr, repo));
+  const state = withGitFacts(() => localState(project, pr, repo));
+  return noteRead(state, state);
+}
+
+// The local record each state a reader returned was read from, or its writer last wrote (writeState): { revision,
+// updatedAt, rounds } with the first round alone, or null when there was none. Kept beside the state, never in it, so a
+// write tells another command's write since then from its own read (takeRecorded), whatever revision a posted copy gave
+// the state, and a step's running mark, which lowers the state's revision after it writes (step.mjs), stays its own.
+const readFrom = new WeakMap();
+function noteRead(state, record) {
+  if (!isObject(state)) return state;
+  const first = Array.isArray(record?.rounds) && isObject(record.rounds[0]) ? [structuredClone(record.rounds[0])] : [];
+  readFrom.set(state, record ? { revision: record.revision ?? 0, updatedAt: record.updatedAt ?? null, rounds: first } : null);
+  return state;
 }
 
 function localState(project, pr, repo) {
@@ -529,39 +542,76 @@ export function writeLocalState(project, state, options) {
 
 function writeState(project, state, { repo = null, removed = new Set() } = {}) {
   ownedBy(state, repo);
-  takeRecorded(state, readFile(file(project, state.pr, state.repo), state.pr), removed);
+  takeRecorded(state, readFile(file(project, state.pr, state.repo), state.pr), { removed, read: readOf(state) });
   recordFindings(state, null, null);
   state.revision = (state.revision ?? 0) + 1;
   state.updatedAt = new Date().toISOString();
   writeAt(project, state);
+  noteRead(state, state);
 }
 
-// Takes into `state` what another write of its file, `disk`, recorded since `state` was read, by mergeRecords' rule for
-// two copies of one review, with `state` as the base, so this write's own changes stand: every Human entry `state` lacks
-// (keepHuman), and of an extension both hold, the one decided last; the owed entries (mergePending); the passes recorded
-// after the read (keepRecorded), where a pass both hold counts as recorded last; each finding index entry `state` lacks,
-// such as one an `attest` minted, but an id `state` moved to a fresh one (findings.mjs freshId, which lists it in
-// `aliases`); what `disk` closed, marked, or mapped in the index (mergeIndex); and the higher id counter and revision.
-// Nothing is taken when `disk` is the record `state` was read from or an older one, or another review: a write with no
-// other writer since its read writes what it holds. A `disk` written at the time `state` holds is `state`'s own write,
-// such as the review step's running mark, which raised the revision on disk alone (step.mjs). No entry of `state` is
-// dropped, and no open finding of `disk`.
+// The local record `state` was read from (noteRead), null for none, or undefined when no reader returned `state`.
+const readOf = (state) => (readFrom.has(state) ? readFrom.get(state) : undefined);
+
+// The pass ids another write of this machine's record of `state` recorded since `state` was read, which its next write
+// takes in (takeRecorded), or []. The review step asks before it saves an outcome it decided without them (run.mjs
+// settle). `repo` names the file when `state` names no repository yet.
+export function recordedMeanwhile(project, state, repo = null) {
+  const disk = readFile(file(project, state.pr, state.repo ?? repo), state.pr);
+  const gate = sinceRead(state, disk, readOf(state));
+  return gate ? recordedPasses(state, disk, gate.since) : [];
+}
+
+// Whether `disk`, this machine's record file now, holds another write made since `state` was read: { since }, the time
+// passes recorded after count from, or null. With `read`, the local record `state` was read from (null for none): the
+// file is another write when it is not that record, by revision and write time, whatever revision a posted copy gave
+// `state`, and it continues the review read, as `state` does, by the first round (sameReview). A record read with no
+// round yet is continued by any first round, so a write during the first round is kept; a `state` that started another
+// review than the one read takes nothing. Without `read`, as for a state no reader returned, the file is another write
+// when it is newer than `state` and written at another time, of the same review.
+function sinceRead(state, disk, read) {
+  if (!isObject(disk)) return null;
+  if (read !== undefined) {
+    if (read && (disk.revision ?? 0) === read.revision && (disk.updatedAt ?? null) === read.updatedAt) return null;
+    if (read?.rounds.length && !(sameReview(read, disk) && sameReview(state, read))) return null;
+    return { since: read?.updatedAt ?? '' };
+  }
+  if (newer(state, disk) !== disk || disk.updatedAt === state.updatedAt || !sameReview(state, disk)) return null;
+  return { since: state.updatedAt ?? '' };
+}
+
+// Takes into `state` what another write of its file, `disk`, recorded since `state` was read (sinceRead; `read` is the
+// local record it was read from), by mergeRecords' rule for two copies of one review, with `state` as the base, so this
+// write's own changes stand: every Human entry `state` lacks (keepHuman), and of an extension both hold, the one decided
+// last; the owed entries (mergePending); the passes recorded after the read (keepRecorded), where a pass both hold
+// counts as recorded last, each finding in them that names an id `state` moved to a fresh one (findings.mjs freshId,
+// which lists it in `aliases`) under that fresh id and mint mark; each finding index entry `state` lacks, such as one an
+// `attest` minted, but a moved id; what `disk` closed, marked, or mapped in the index (mergeIndex); and the higher id
+// counter and revision, so the next write is past both. A write with no other writer since its read writes what it
+// holds. No entry of `state` is dropped, and no open finding of `disk`. Returns the pass ids it took.
 // Accepted limits: no lock spans the read and the write, so a write landing between this read and the write below is
 // still lost, a window of one write's length, not a review step's minutes; and an id both minted for different findings
 // keeps `state`'s entry, as keepWork accepts.
-export function takeRecorded(state, disk, removed = new Set()) {
-  if (!disk || newer(state, disk) !== disk || disk.updatedAt === state.updatedAt || !sameReview(state, disk)) return;
-  keepHuman(state, disk);
+export function takeRecorded(state, disk, { removed = new Set(), read = undefined } = {}) {
+  const gate = sinceRead(state, disk, read);
+  if (!gate) return [];
+  keepHuman(state, disk, { lineage: true });
   state.pending = mergePending(disk.pending, state.pending);
-  keepRecorded(state, disk, state.updatedAt);
+  const taken = keepRecorded(state, disk, gate.since, { lineage: true });
   const index = isObject(state.index) ? state.index : (state.index = {});
-  const moved = new Set(Object.values(index).flatMap((entry) => (Array.isArray(entry?.aliases) ? entry.aliases : [])));
+  const movedTo = new Map(Object.values(index).filter(isObject).flatMap((entry) => (Array.isArray(entry.aliases) ? entry.aliases : []).map((alias) => [alias, entry])));
+  for (const finding of recordedFindings({ passes: Object.fromEntries(taken.map((id) => [id, state.passes[id]])) })) {
+    const to = movedTo.get(finding.id);
+    if (to) Object.assign(finding, { id: to.id, mint: to.mint, aliases: [...new Set([...(Array.isArray(finding.aliases) ? finding.aliases : []), ...to.aliases])] });
+    if (movedTo.has(finding.ruled_id)) finding.ruled_id = movedTo.get(finding.ruled_id).id;
+  }
   for (const [id, entry] of Object.entries(isObject(disk.index) ? disk.index : {})) {
-    if (isFindingId(id) && isObject(entry) && !isObject(index[id]) && !moved.has(id)) index[id] = structuredClone(entry);
+    if (isFindingId(id) && isObject(entry) && !isObject(index[id]) && !movedTo.has(id)) index[id] = structuredClone(entry);
   }
   mergeIndex(state, disk, removed);
   if (Number.isSafeInteger(disk.idCounter) && disk.idCounter > (Number.isSafeInteger(state.idCounter) ? state.idCounter : 0)) state.idCounter = disk.idCounter;
   state.revision = Math.max(state.revision ?? 0, disk.revision ?? 0);
+  return taken;
 }
 
 // Holds `state` to the repository `repo` of the command that writes it (writeLocalState): a record that names none
@@ -768,13 +818,13 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   const held = remote ? null : heldRevision(body);
   if (held !== null && (local?.revision ?? 0) < held) return { held, why: heldWhy(body) };
   const chosen = newer(local, remote);
-  if (!chosen || chosen !== remote) return { state: chosen ?? emptyState(pr, repo), local: read };
+  if (!chosen || chosen !== remote) return { state: noteRead(chosen ?? emptyState(pr, repo), local), local: read };
   if (reading !== undefined && !isPrivate(typeof reading === 'function' ? reading() : reading)) {
     const own = widenMarks(local ?? emptyState(pr, repo), remote);
     const current = Array.isArray(remote.planNote?.current) ? remote.planNote.current : null;
     const finding = untextedBlocking(remote, local, current);
     if (finding) return { held: remote.revision ?? 0, why: 'findings', finding, own };
-    return { state: restartFrom(own, remote), local: read };
+    return { state: noteRead(restartFrom(own, remote), local), local: read };
   }
   // The private copy holds less than the record where a check withheld a string: that is filled from this machine's own
   // record. A machine with none fills from an empty one, so every finding of the copy is marked adopted.
@@ -783,7 +833,7 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   // since nothing takes one back: it is kept (record-merge.mjs keepHuman), as when a session on an older plugin posted
   // from its old-name file.
   if (local) keepHuman(remote, local);
-  return { state: remote, local: read };
+  return { state: noteRead(remote, local), local: read };
 }
 
 // The pull request's comment copy `copy` as `repo`'s record, or null. The comment is that pull request's own, so a copy

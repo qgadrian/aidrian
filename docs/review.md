@@ -1869,18 +1869,26 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   what a restart takes, the security mark, the posts, and the engine's resolve of a finding this machine recorded, by
   its id and mint mark, and never a closed state.
 - *A command while a step runs.* Every write of the record, the step's and each command's, first reads this machine's
-  record file again (`plugins/aidrian/lib/review/state.mjs` writeState). When another write landed there since its
-  own read, of the same review, it takes that write in by the merge two record files get above, with its own record as
-  the base, so its own changes stand: the Human entries, and of an extension both hold the one decided last, the owed
-  entries, each pass recorded after its read, each finding index entry it lacks, what the index merge above keeps, and
-  the higher id counter. Each pass result carries `at`, when it was recorded; of a pass both hold, the one recorded
-  last counts, on any head, as two writes one after the other would leave it. A pass in the record it read that it
-  dropped, such as a slice of a replaced packing, is not taken back, nor is an id it moved to a fresh one. So an
-  `aidrian pr attest`, `aidrian pr signoff`, or `aidrian pr extend` that lands during a step of several minutes, such as
-  a visual capture, is in the record after the step, with its findings, and the next round does not dispatch that pass
-  again. A write with no other write since its read writes what it holds. No lock spans the read and the write, so a
-  write landing between them is still lost; that window is one write, not a step. Two writes that mint one id for
-  different findings keep the first entry the writer holds.
+  record file again (`plugins/aidrian/lib/review/state.mjs` writeState).
+  Another write landed there since its own read when the file is not the local record the writer read, or last wrote,
+  by revision and write time, whatever revision the pull request's posted copy gave the record it builds on.
+  It must continue the review read, by its first round, as the writer does; a record read with no round yet is
+  continued by any, so a write during the first round counts, and a writer that started another review takes nothing.
+  The writer then takes that write in by the merge two record files get above, with its own record as the base, so its
+  own changes stand: the Human entries, and of an extension both hold the one decided last, the owed entries, each pass
+  recorded after its read, each finding index entry it lacks, what the index merge above keeps, and the higher id
+  counter and revision, the floor of its own write. Each pass result carries `at`, when it was recorded; of a pass both
+  hold, the one recorded last counts, on any head, as two writes one after the other would leave it. A pass in the
+  record it read that it dropped, such as a slice of a replaced packing, is not taken back. A finding in a pass it takes
+  that names an id it moved to a fresh one is renamed to that id and mint mark, so no finding gets a second identity.
+  So an `aidrian pr attest`, `aidrian pr signoff`, or `aidrian pr extend` that lands during a step of several minutes,
+  such as a visual capture, is in the record after the step, with its findings.
+  A step that decided its outcome without a pass result recorded meanwhile saves no such outcome: it returns
+  `incomplete` with `retry_recommended` and `recorded_meanwhile`, the passes, so no merge counts it as finished and no
+  owed review is answered by it, and the next step decides from the record with that result in it.
+  A write with no other write since its read writes what it holds.
+  No lock spans the read and the write, so a write landing between them is still lost; that window is one write, not a
+  step. Two writes that mint one id for different findings keep the first entry the writer holds.
 
 ### The posted copy
 

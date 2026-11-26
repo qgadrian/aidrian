@@ -83,7 +83,7 @@ import { fenceFor, writeIssueFile } from './project-issue-text.mjs';
 import { keptLines, keptPrompt } from './project-kept.mjs';
 import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, recordedHead, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
-import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
+import { accessProblem, feedbackHeld, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { holdsProblem } from './project-forge-holds.mjs';
 import { pushPreflight } from './push-preflight.mjs';
@@ -890,7 +890,8 @@ function launchStart(context, place) {
           // The runs folder as the run names it, whose trust the host's record must hold for the clone to be trusted.
           runs: runsFolder(state),
           // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
-          guarded: guardedStore({ env, home }),
+          // Nor the folders product feedback keeps (feedbackHeld), even where a temporary folder's grant holds the state root.
+          guarded: [...guardedStore({ env, home }), ...feedbackHeld(state, { env })],
           // Every host's files, from the clone's root and at any depth, whose writes the host's sandbox denies too, so the
           // session plants nothing another host would load there.
           hostFiles: { paths: protectedPaths(), globs: nestedGlobs() },

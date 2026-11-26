@@ -562,14 +562,21 @@ test('a start on Claude Code reaches the registries both reads of the default br
   // No write the sandbox grants reaches a folder product feedback keeps, or is the state folder (docs/config.md#product-feedback).
   const held = feedbackHeld(fx.state, { env: fx.env });
   const state = realpathSync(fx.state);
-  // Both ways: no grant at or under a feedback folder, none at the state folder, and none above any of them, but the
-  // temporary folders, which hold this fixture's state folder only because the test's state root lies in one.
+  // Both ways: no grant at or under a feedback folder, none at the state folder, and none above the state folder but the
+  // temporary folders, which hold this fixture's state folder because the test's state root lies in one.
   const temporary = new Set(['/tmp', tmpdir()].map((each) => realpathSync(each)));
   const under = (inner, outer) => inner === outer || inner.startsWith(`${outer}${path.sep}`);
   for (const grant of settings.sandbox.filesystem.allowWrite) {
     assert.notEqual(grant, state, 'not the state folder');
     for (const folder of held) assert.ok(!under(grant, folder), `${grant} is at or under ${folder}`);
-    for (const folder of [...held, state]) assert.ok(temporary.has(grant) || !under(folder, grant), `${grant} holds ${folder}`);
+    assert.ok(temporary.has(grant) || !under(state, grant), `${grant} holds ${state}`);
+  }
+  // A grant that holds a feedback folder, as a temporary folder holds this state root, is no exemption: each is denied,
+  // to sandboxed commands and to the file tools alike.
+  assert.ok([...temporary].some((each) => held.some((folder) => under(folder, each))), 'the fixture\'s state root lies in a temporary folder');
+  for (const folder of held) {
+    assert.ok(settings.sandbox.filesystem.denyWrite.includes(folder), `${folder} is denied`);
+    assert.ok(settings.permissions.deny.includes(`Edit(/${folder})`) && settings.permissions.deny.includes(`Edit(/${folder}/**)`), `${folder} is denied to the file tools`);
   }
   assert.equal(lstatSync(cache).mode & 0o777, 0o700, 'owner-only');
   assert.deepEqual(readdirSync(cache).sort(), ['.keep-attempt', 'npm-global.npmrc', 'npm-user.npmrc']);

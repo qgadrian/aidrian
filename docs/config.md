@@ -867,6 +867,9 @@ machine opted out. Two limits follow, for `status` and the ready hold alike:
 In a [project run](#project-run)'s issue session, product feedback is the Human's step, never the session's.
 The session writes none of it: its sandbox grants no write to `<state>/product-feedback/`, `<state>/audits/`,
 `<state root>/feedback-folders/`, or the state folder itself.
+On Claude Code its sandbox also denies writes to those three folders, to sandboxed commands and the file tools,
+even where the grant of a temporary folder, such as `/tmp`, holds a state root placed inside it.
+Codex's start takes no deny list, so there a state root inside a temporary folder Codex lets the session write stays writable.
 A record holds what the ready hold and the post rule trust, such as an answer's `by` and `limited`, so a session that could write it could forge them.
 After the draft opens, the session runs only `status <PR> --json`.
 There `status` reads no git ref, which the session could have rewritten: GitHub's config at the default branch and the base decides, as for the ready hold.

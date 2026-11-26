@@ -1004,6 +1004,7 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
       repository: {
         defaultBranchRef: { name: 'main', target: { pointer: null, config: blob('{"version":1}'), knowledge: { object: { entries: [{ name: '10-x.json', type: 'blob', object: { text: '{}', isTruncated: false } }] } } } },
         pullRequest: {
+          url: 'https://github.com/Acme/Notes/pull/7',
           headRefOid: sha,
           headRefName: 'feat/x',
           baseRefName: 'release',
@@ -1034,7 +1035,7 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
   const { forge, args } = recorded(() => JSON.stringify(answer));
   const paths = { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' };
   assert.deepEqual(forge.reviewTrail('acme/notes', 7, { paths }), {
-    viewer: 'adrian', head: sha, headRef: 'feat/x', title: 'feat: x', body: 'Fixes ENG-1', messages: [{ oid: sha, message: 'feat: x' }], messagesComplete: false,
+    viewer: 'adrian', url: 'https://github.com/Acme/Notes/pull/7', head: sha, headRef: 'feat/x', title: 'feat: x', body: 'Fixes ENG-1', messages: [{ oid: sha, message: 'feat: x' }], messagesComplete: false,
     closingIssues: [{ number: 12, repo: 'acme/notes' }, { number: 3, repo: null }], closingIssuesComplete: true,
     base: 'release', baseOid: 'c'.repeat(40), author: 'adrian', draft: false, reviewDecision: 'APPROVED',
     latestReviews: [{ author: { login: 'lead' }, state: 'APPROVED' }],

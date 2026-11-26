@@ -850,11 +850,15 @@ export function unattendedProblem({ project, home = project, merge, mark, forge 
 }
 
 // The pull request as gh's view gives it, read off the review trail, for the product feedback check, or null when the
-// trail's file list is not whole, which then views it once.
-function trailView(trail, { number, repo, host }) {
+// trail's file list is not whole, or its address is not this pull request's, which then views it once. The address is
+// GitHub's own spelling, since the feedback commands keep records under it and a record's folder keeps its case.
+export function trailView(trail, { number, repo, host }) {
   if (trail?.filesComplete !== true || !Array.isArray(trail.files) || !Number.isInteger(trail.filesTotal)) return null;
+  const url = typeof trail.url === 'string' ? trail.url : '';
+  const match = /^https:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/(\d+)$/u.exec(url);
+  if (!match || match[1].toLowerCase() !== String(host).toLowerCase() || match[2].toLowerCase() !== String(repo).toLowerCase() || Number(match[3]) !== number) return null;
   return {
-    number, headRefOid: trail.head, baseRefName: trail.base, baseRefOid: trail.baseOid, author: { login: trail.author }, url: `https://${host}/${repo}/pull/${number}`,
+    number, headRefOid: trail.head, baseRefName: trail.base, baseRefOid: trail.baseOid, author: { login: trail.author }, url,
     files: trail.files, changedFiles: trail.filesTotal, reviewDecision: trail.reviewDecision ?? '', latestReviews: trail.latestReviews ?? [],
   };
 }

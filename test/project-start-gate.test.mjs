@@ -633,7 +633,8 @@ test('a later attempt over host files no review passed holds the base\'s bytes, 
 
 // The base moved on after the branch forked: both add a change entry, and the base changes AGENTS.md, which the branch
 // kept, so the start holds the base's copies of it and of the branch's CLAUDE.md. A later base that renames CLAUDE.md
-// conflicts in the route's merge and the push guard's, so the branch's lines never reach the new path through either.
+// conflicts in the route's merge and the push guard's on git 2.50 and later, so the branch's lines never reach the new
+// path through either.
 test('a later attempt over host files no review passed merges its moved base, git merging the base copies in the index alone, and pushes it, but not a base that renames one', (t) => {
   const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n', 'AGENTS.md': 'a\nb\n', 'CHANGELOG.md': 'one\n' } });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
@@ -677,6 +678,12 @@ test('a later attempt over host files no review passed merges its moved base, gi
   });
   assert.equal(push(), null, 'the merge of the base passes the push guard');
 
+  // git's ort merge honours merge.renames only from 2.50 on: an older git still detects the rename, as on main.
+  const [major, minor] = git('--version').match(/(\d+)\.(\d+)/u).slice(1).map(Number);
+  if (major < 2 || (major === 2 && minor < 50)) {
+    t.diagnostic(`git ${major}.${minor} detects renames whatever merge.renames says, so the renamed-base asserts are skipped`);
+    return;
+  }
   // The base then moves CLAUDE.md, which the branch changed, to .claude/CLAUDE.md, a host file no base copy covers.
   mkdirSync(path.join(base, '.claude'), { recursive: true });
   fx.git('-C', base, 'mv', 'CLAUDE.md', '.claude/CLAUDE.md');

@@ -28,10 +28,10 @@ function ended(t) {
 }
 
 // The attempt's session records a `failed` result: the command's answer.
-function recordFailed(fx, options = []) {
+function recordFailed(fx) {
   const file = path.join(fx.root, 'result.json');
   writeFileSync(file, JSON.stringify({ status: 'failed', pr: null, decisions: [], stop: 'out of time' }));
-  return fx.cmd(['result', 'launch', 'ENG-1', '--file', file, ...options], { session: CHILD });
+  return fx.cmd(['result', 'launch', 'ENG-1', '--file', file], { session: CHILD });
 }
 
 test('an ended attempt whose clone holds a commit it never pushed keeps its folder, with a kept row and a line naming it', (t) => {
@@ -67,23 +67,6 @@ test('an ended attempt whose work the forge holds, and whose result read its tre
   assert.equal(existsSync(folder), false);
   assert.equal(fx.rows().filter((row) => row.event === 'kept').length, 0);
   assert.ok(fx.forge.calls.some(([kind, repo, , options]) => kind === 'hasCommit' && repo === 'acme/widgets' && options.host === 'github.com'), 'asked of the pinned repository');
-});
-
-test('a failed result read clean over a commit it never pushed keeps that head, which the next attempt is not offered', (t) => {
-  const { fx, work, git, end } = ended(t);
-  git('commit', '-q', '--allow-empty', '-m', 'work in progress: export');
-  const head = git('rev-parse', 'HEAD');
-  assert.equal(recordFailed(fx).exitCode, 0);
-  end();
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, [
-    'result ENG-1 failed -> open',
-    `kept ENG-1 attempt 1: its clone holds ${head.slice(0, 12)}, a commit the forge does not have, so its folder stays for the run's life; recover the work from ${work}`,
-    'idle',
-  ]);
-  assert.equal(fx.rows().find((row) => row.event === 'result').tree, 'clean', 'clean never overrides the commit');
-  const again = fx.cmd(['start', 'launch', 'ENG-1']);
-  assert.equal(again.exitCode, 0, again.err.join('\n'));
-  assert.ok(again.out.includes('not taken ENG-1 attempt 1: its session did not end on a usage or rate limit'), again.out.join('\n'));
 });
 
 test('a forge that cannot answer whether it holds the work leaves the folder for the next wait', (t) => {

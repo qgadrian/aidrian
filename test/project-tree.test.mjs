@@ -16,7 +16,8 @@ import test from 'node:test';
 import { stubGitSpawn } from '../plugins/aidrian/lib/git.mjs';
 import { DROP_FILE, ingestDrops } from '../plugins/aidrian/lib/project-result.mjs';
 import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { attemptFolder, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
+import { keptCandidate, keptLines } from '../plugins/aidrian/lib/project-kept.mjs';
+import { attemptFolder, cloneRefs, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
 import { ledgerKeep, treeLines, treeOf } from '../plugins/aidrian/lib/project-tree.mjs';
 import { DRIVER, ISSUES, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -123,7 +124,7 @@ test('the tree check reads every way work can lie outside a commit, and `result`
 // A run `launch` written by hand, with ENG-1's attempt 1 running in an attempt folder whose clone's refs are files at
 // HAS, a commit the forge holds: no git and no child process. `take(tree)` hands a failed result over with `tree` and
 // takes it in; `sweep()` sweeps the ended attempt, as `wait` does.
-function handRun(t) {
+function handRun(t, { has = true } = {}) {
   const state = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-tree-run-')));
   t.after(() => rmSync(state, { recursive: true, force: true }));
   const folder = attemptFolder(state, 'launch', 'ENG-1', 1);
@@ -141,14 +142,14 @@ function handRun(t) {
     { event: 'start', key: 'ENG-1', attempt: 1, outcome: 'started', session: DRIVER, id: CHILD, child: CHILD, cwd: path.join(folder, 'work'), branch: BRANCH, name: 'ENG-1', drop, at },
   ];
   writeFileSync(path.join(runFolder(state, 'launch'), 'ledger.jsonl'), rows.map((row) => `${JSON.stringify(row)}\n`).join(''));
-  const forge = { branchHead: () => null, hasCommit: (repo, sha) => sha === HAS };
+  const forge = { branchHead: () => null, hasCommit: (repo, sha) => has && sha === HAS };
   const take = (tree) => {
     writeFileSync(path.join(drop, DROP_FILE), JSON.stringify({ run: 'launch', key: 'ENG-1', attempt: 1, ...FAILED, tree }));
     return ingestDrops({ state, run: 'launch', found: readRun(state, 'launch'), forge, now: Date.now() });
   };
   const sweep = () => sweepAttempts({ state, run: 'launch', found: readRun(state, 'launch'), cap: { ended: () => true }, env: {}, forge });
   const rowsOf = (event) => readRun(state, 'launch').rows.filter((row) => row.event === event);
-  return { state, folder, take, sweep, rowsOf };
+  return { state, folder, take, sweep, rowsOf, found: () => readRun(state, 'launch') };
 }
 
 test('a handed-over tree reaches the result row only as one of its words, and the sweep keeps the folder once, with one row and one line', (t) => {
@@ -177,6 +178,16 @@ test('a clean result over a tree its session read clean is swept, and no end wit
     assert.match(ended.sweep()[0], /^kept ENG-1 attempt 1: its session ended with no result that says its clone was left clean, /u, reason);
     assert.ok(existsSync(ended.folder), reason);
   }
+});
+
+test('a result read clean over a commit the forge lacks keeps that head, which the next attempt is not offered', (t) => {
+  const run = handRun(t, { has: false });
+  assert.deepEqual(run.take('clean'), ['result ENG-1 failed -> open']);
+  const work = path.join(run.folder, 'work');
+  assert.deepEqual(run.sweep(), [`kept ENG-1 attempt 1: its clone holds ${HAS.slice(0, 12)}, a commit the forge does not have, so its folder stays for the run's life; recover the work from ${work}`]);
+  assert.deepEqual(run.rowsOf('kept').map(({ head }) => head), [HAS], 'clean never overrides the commit');
+  const offer = keptCandidate({ found: run.found(), key: 'ENG-1', branch: BRANCH, folderOf: (attempt) => attemptFolder(run.state, 'launch', 'ENG-1', attempt), refs: cloneRefs });
+  assert.deepEqual(keptLines('ENG-1', offer), ['not taken ENG-1 attempt 1: its session did not end on a usage or rate limit']);
 });
 
 // ledgerKeep over hand-made rows: attempt 1 of ENG-1, started with `start` fields, then `rows`.

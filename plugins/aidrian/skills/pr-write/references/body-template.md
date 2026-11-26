@@ -53,4 +53,7 @@ Fixes <ISSUE-KEY, such as ABC-12 or #12>
   Before the body ships, each one is set against the decisions on record and the ADR consequences (`aidrian decisions residuals`),
   and one that contradicts a decision is fixed or dropped, never shipped. A residual is dropped only when the defect no longer
   ships or is shown to be no defect, and then one line of why stays in the body: never delete the bullet alone while the defect ships.
+  A line may add the finding's file after the title, `<title> (<file>): <why>`, the file exactly as the finding gives it.
+  It then names that file's finding only.
+  Any other wrapping, such as backticks or a finding id in place of the title, names no finding.
 - **Follow-up for a person** never lists a check CI runs, or work an agent can do now.

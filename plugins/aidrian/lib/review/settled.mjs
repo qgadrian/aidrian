@@ -28,12 +28,17 @@ function holdsPath(text, file) {
   return Boolean(literal) && new RegExp(`(?<![\\w./-])${literal}(?![\\w/-]|\\.\\w)`, 'u').test(text);
 }
 
+// Whether `text` opens with `head` and a reason after it.
+const opensWith = (text, head) => text.startsWith(head) && Boolean(trim(text.slice(head.length)));
+
 // The raised findings a residual names: its text opens with a finding's exact title, a colon, and a reason, the shape
-// `<title>: <why>` the pull request body template writes. The longest title wins, so a title that opens another title
-// does not name that one's finding. A title raised in one file is named there. Raised in several, the line names only the
-// files whose path it holds, and none when it holds no path: a second file raised later must not widen an earlier line.
+// `<title>: <why>` the pull request body template writes, or with the title, that finding's own file in parentheses,
+// a colon, and a reason, `<title> (<file>): <why>`. The longest title wins, so a title that opens another title
+// does not name that one's finding. A title raised in one file is named there. Raised in several, the file form names only
+// the finding in its file, and the plain form only the files whose path the line holds, and none when it holds no path:
+// a second file raised later must not widen an earlier line.
 export function namedBy(text, raised) {
-  const named = raised.filter((each) => text.startsWith(`${trim(each.title)}:`) && trim(text.slice(trim(each.title).length + 1)));
+  const named = raised.filter((each) => opensWith(text, `${trim(each.title)}:`) || (trim(each.file) !== '' && opensWith(text, `${trim(each.title)} (${trim(each.file)}):`)));
   const longest = Math.max(...named.map((each) => trim(each.title).length));
   const titled = named.filter((each) => trim(each.title).length === longest);
   if (new Set(titled.map((each) => trim(each.file))).size < 2) return titled;

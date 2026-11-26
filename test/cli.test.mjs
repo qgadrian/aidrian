@@ -1947,6 +1947,21 @@ test('project init starts a run for a session the host names, and records that s
   assert.deepEqual([first.event, first.session], ['init', session]);
   // As a process, so the project command stays tested through bin/aidrian's own entry, as the driver session runs it.
   assert.equal(runProcess(['project', 'next', 'launch'], dir).stdout.split('\n')[0], 'next ENG-1 feat/eng-1');
+  // A project below the repository's top: its attempts' clones could not be made, so init and init --check refuse it.
+  const nested = path.join(dir, 'apps', 'web');
+  mkdirSync(path.join(nested, '.aidrian'), { recursive: true });
+  const nestedState = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-state-')));
+  t.after(() => rmSync(nestedState, { recursive: true, force: true }));
+  writeFileSync(path.join(nested, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: nestedState }, projectRun: { maxParallel: 2 } }));
+  // Committed and on the base branch, with a state folder of its own, so no other check of init refuses it.
+  execFileSync('git', ['-C', dir, 'add', 'apps'], { stdio: 'pipe' });
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, 'commit', '-q', '-m', 'nested'], { stdio: 'pipe' });
+  execFileSync('git', ['-C', dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD'], { stdio: 'pipe' });
+  const line = `aidrian project init: the project at ${nested} lies below its repository's top, ${dir}, and a project run starts each issue in a clone of that top, so it runs only a project there: run init from a project at ${dir}`;
+  for (const check of [[], ['--check']]) {
+    assert.deepEqual(projectIn(t, nested, ['init', 'nested', '--file', path.join(dir, 'snapshot.json.input'), ...check], session), { exitCode: 1, out: [], err: [line] }, check.join(' '));
+  }
+  assert.ok(!existsSync(runFolder(nestedState, 'nested')));
 });
 
 test('project init takes --project only for the project of the current folder\'s main checkout', (t) => {

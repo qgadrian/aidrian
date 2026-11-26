@@ -4,6 +4,11 @@ The one-time steps the Human takes before a project run, the one-shot project au
 (`aidrian project init`, `start`, `preflight`, `resume`, and `end`), can work through a tracker project alone.
 Each step is done once: per machine, per repository, or per team, as the table says, and kept after each release.
 
+A project run supports only a project at its repository's top, the folder that holds `.aidrian/` or `.aidrian.json` there.
+Each attempt starts its session in a fresh clone of the repository's top, and every guard of a start reads that top as the session's folder.
+So `init` and `init --check` refuse a project below the top, before any run exists, and name the top to run init from.
+Supporting a nested project would move the session, its write guard, its sandbox, and its push guard to the project folder of the clone together.
+
 `aidrian project preflight`, run in the run's first, attended turn, names each missing step at once.
 Every `blocker` line ends with `(setup: <repository>/blob/main/docs/project-run-setup.md#<section>)`, the section below
 that clears it, where `<repository>` is the plugin's repository as its manifest names it, so a project's checkout,

@@ -269,6 +269,17 @@ export function stateWorkFolders(state, { env, home, names = WORK_FOLDERS }) {
   return { folders };
 }
 
+// Why a project run cannot run `project`, or null: its folder lies below its repository's top. prepareAttempt clones the
+// main checkout's project folder, which git does only for a repository's top, and the guards of a start take the clone's
+// top for the folder its session works in, so `aidrian project init` refuses such a project before any run exists.
+// The top is the one git read when the project was found (project.mjs openProject `top`); a folder git cannot read has
+// none, and is left to init's own checks, which pin no repository there.
+export function belowTopProblem(project) {
+  const { top } = project;
+  if (!top || top === (resolvedPath(project.root) ?? project.root)) return null;
+  return `the project at ${project.root} lies below its repository's top, ${top}, and a project run starts each issue in a clone of that top, so it runs only a project there: run init from a project at ${top}`;
+}
+
 // The fresh clone of attempt `attempt` of issue `key` for a confined host: { folder, work, git, drop, cache, branch,
 // onForge, head, reviewed, overlay, kept }, or { problem }, { halt }, { retry }, or { park }, each of which leaves no
 // attempt folder. `head` is the commit the forge's branch was at, or the tip it was cut from, which the start row records.

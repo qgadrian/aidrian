@@ -758,12 +758,14 @@ export const haltOf = (found) => latestHalt(found)?.cause ?? null;
 // The halt haltOf reads, as { cause, kind, key, attempt, index }, or null: `kind` is 'environment' for an environment
 // result's, and a halt row's own for a start whose proof failed, 'sandbox' when the sandbox's proof did and 'proof'
 // otherwise; null for any other, such as a usage limit's past LIMIT_WAITS. `index` is the row's place in `found.rows`.
+// An environment halt adds `class`, the result's `cause` (project-recheck.mjs CAUSE_CHECKS), or null when its row has
+// none, as one an older plugin wrote.
 export function latestHalt(found) {
   let halt = null;
   found.rows.forEach((row, index) => {
     const at = { key: typeof row.key === 'string' ? row.key : null, attempt: Number.isInteger(row.attempt) ? row.attempt : null, index };
     if (row.event === 'halt') halt = { cause: typeof row.cause === 'string' && row.cause !== '' ? row.cause.slice(0, 300) : 'a start failed its proof', kind: ['proof', 'sandbox'].includes(row.kind) ? row.kind : null, ...at };
-    else if (row.event === 'result' && row.status === 'environment') halt = { cause: typeof row.halt === 'string' && row.halt !== '' ? row.halt.slice(0, 300) : 'an issue\'s session found its environment broken', kind: 'environment', ...at };
+    else if (row.event === 'result' && row.status === 'environment') halt = { cause: typeof row.halt === 'string' && row.halt !== '' ? row.halt.slice(0, 300) : 'an issue\'s session found its environment broken', kind: 'environment', class: typeof row.cause === 'string' ? row.cause : null, ...at };
     else if (row.event === 'resume') halt = null;
   });
   return halt;

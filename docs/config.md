@@ -2073,7 +2073,9 @@ session the host continued the driver as takes custody with it and lifts no halt
 `next` prints `halted <cause>` first, and `--json` adds `halt`.
 An issue's session that finds its own environment broken, such as a sandbox that refuses what the work needs, a forge
 sign-in or push that fails, or a host tool that fails, records the result `environment`, with the failing command and
-its error as its `stop`, which it must name. Every result's `stop` has the whole user part of an HTTP URL masked as
+its error as its `stop`, which it must name, and its `cause`, one of the [causes below](#environment-causes), which
+`aidrian project result` refuses the result without, naming the list; a `cause` on any other status is refused too.
+Every result's `stop` has the whole user part of an HTTP URL masked as
 `***`, and anything shaped like a token, another URL's password, or an Authorization value masked as `[redacted]`,
 before it is kept. The driver's `wait` records the result with that
 stop as the run's halt cause, in the same row, and prints `result ISSUE environment -> open`, or `-> parked attempts`
@@ -2118,13 +2120,32 @@ Not offered, and left for a person in the kept folder: uncommitted files, a firs
 whose objects a session packed, commits that change such a file, a merge of a moved base that brings such a change in,
 and the work of an earlier run.
 The driver lifts two kinds of halt by itself, once each, when the preflight's own checks of that cause pass
-(`lib/project-recheck.mjs`): an environment result's, re-checked by `commit`, `host`, `trust`, and `access` with its
-`token-reads`, and a failed proof's but the sandbox proof's, by `host`, `trust`, and `access`. When the driver's
-`start` of the halted issue meets such a halt, it runs only those checks of `aidrian project preflight RUN`, with no
+(`lib/project-recheck.mjs`): an environment result's, re-checked by the checks of its `cause` alone, and a failed
+proof's but the sandbox proof's, by `host`, `trust`, and `access`.
+
+<a id="environment-causes"></a>The causes of an environment result, and the checks that can see each one cleared
+(`CAUSE_CHECKS`), are a closed list. The class comes from the `cause` field alone, never from the `stop` text.
+
+| `cause` | What failed | Checks |
+| --- | --- | --- |
+| `commit` | a commit the session could not make | `commit` |
+| `host` | the host, or a host tool, that will not run | `host`, `trust` |
+| `sign_in` | the forge sign-in, its token, or a permission | `access`, with its `token-reads` |
+| `push` | a push | `access`, with its `token-reads` |
+| `network` | the network | `access`, with its `token-reads` |
+| `sandbox_refused` | the sandbox refused a path, port, or domain the work needs | none |
+| `other` | anything else | none |
+
+A cause with no checks, and an environment halt whose row names no cause, as one an older plugin wrote, or one off the
+list, is kept with no probe: the start prints `recheck kept the halt: <cause>`, then a line that no check covers this
+cause, naming its class (`none recorded` or `not a known cause` for those two), and that a person fixes it, then lifts
+the halt with `aidrian project resume RUN` from a session they attend. The halt waits on that person.
+
+When the driver's `start` of the halted issue meets a halt with checks, it runs only those checks of `aidrian project preflight RUN`, with no
 person, on the repository the run's init row pinned: first `repository`, the start gate's own check that origin still names it,
 which on a moved origin keeps the halt before any probe runs, then the state folder and the team's policy the others
 need. When every line is `ok` or a `note`, it writes a `resume` row with `via: "recheck"`, the halt's `kind`, issue,
-and attempt, and the `checks` that passed, under the ledger's lock only while the halt stands, the run has not ended,
+and attempt, the `checks` that passed, and for an environment halt its `cause`, under the ledger's lock only while the halt stands, the run has not ended,
 and custody rests where the caller read it, prints `recheck lifted the halt: <cause>; ok <checks>` and
 `` lifted the <kind> halt of <issue>; run `next` again ``, and exits 0 having launched nothing: the driver's next start of the
 issue reads the run, its policy, and its access afresh, and launches it. A run that changed meanwhile prints `the checks

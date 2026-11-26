@@ -3,7 +3,9 @@
 // of it whose proof failed, it runs the preflight's checks of that cause for that run (lib/project-preflight.mjs
 // recheckLines, the same checks, on the repository the run pinned, with no person), and when they all pass, writes a
 // `resume` row by the driver, `via: "recheck"`, naming the checks, and that start launches nothing: the next one starts
-// the issue afresh. A re-check that does not pass, for whatever reason,
+// the issue afresh. An environment result's checks are those of the `cause` its session named (CAUSE_CHECKS), never read
+// from its `stop` text: a cause no check covers, or none recorded, as on a row an older plugin wrote, keeps the halt for a
+// person with no probe. A re-check that does not pass, for whatever reason,
 // writes nothing: the halt stays, and the driver's Halt steps end the run for a person. A halt of the same kind on the
 // same issue after a self-lift stays for a person with no re-check, so a cause the preflight cannot see never starts the
 // issue over and over. Any other halt, such as a usage limit's or a failed sandbox proof's, stays for a person as before.
@@ -13,14 +15,39 @@ import { appendToRun, latestHalt } from './project-run.mjs';
 import { driverOf } from './project-run-guard.mjs';
 import { endedIn } from './run-driver.mjs';
 
-// The preflight checks that show each kind of halt cleared: an environment result names its session's sandbox, forge
-// sign-in, push, or forge reads; a failed proof, the host's start and hooks, its trust, and its access. The repository
-// check, that origin still names the run's repository, runs first for both, and the state folder and the team's policy
-// the others need.
+// The preflight checks that show a failed proof cleared: the host's start and hooks, its trust, and its access. An
+// environment result's are those of its cause (CAUSE_CHECKS). The repository check, that origin still names the run's
+// repository, runs first for both, and the state folder and the team's policy the others need.
 export const RECHECKS = Object.freeze({
-  environment: Object.freeze(['commit', 'host', 'trust', 'access']),
   proof: Object.freeze(['host', 'trust', 'access']),
 });
+
+// The causes an environment result names (project-result.mjs validateResult), each with the preflight checks that can see
+// it cleared: `commit` the commit check; `host`, a host or host tool that will not run, the host's start and its trust;
+// `sign_in`, `push`, and `network`, the forge token's access; `sandbox_refused`, a path, port, or domain the sandbox
+// refused, and `other`, none, so their halt waits on a person.
+export const CAUSE_CHECKS = Object.freeze({
+  commit: Object.freeze(['commit']),
+  host: Object.freeze(['host', 'trust']),
+  sign_in: Object.freeze(['access']),
+  push: Object.freeze(['access']),
+  network: Object.freeze(['access']),
+  sandbox_refused: Object.freeze([]),
+  other: Object.freeze([]),
+});
+export const ENVIRONMENT_CAUSES = Object.freeze(Object.keys(CAUSE_CHECKS));
+
+// The checks of halt `halt` (project-run.mjs latestHalt): for an environment halt its cause's, empty for a cause off the
+// list or none recorded; else its kind's, or null for a kind no re-check covers.
+const checksOf = (halt) => {
+  if (halt.kind === 'environment') return Object.hasOwn(CAUSE_CHECKS, halt.class) ? CAUSE_CHECKS[halt.class] : [];
+  return Object.hasOwn(RECHECKS, halt.kind) ? RECHECKS[halt.kind] : null;
+};
+// The class an uncovered environment halt's line names.
+const classOf = (halt) => {
+  if (halt.class === null) return 'none recorded';
+  return Object.hasOwn(CAUSE_CHECKS, halt.class) ? halt.class : 'not a known cause';
+};
 
 // Whether the run `found` self-lifted a halt of `kind` on issue `key` before row `index`.
 const liftedBefore = (found, { kind, key, index }) => found.rows.slice(0, index).some((row) => row.event === 'resume' && row.via === 'recheck' && row.kind === kind && row.key === key);
@@ -29,19 +56,22 @@ const liftedBefore = (found, { kind, key, index }) => found.rows.slice(0, index)
 // `key`, whose custody rests with `custodian` (the run's driver, or the driver a successor takes over from), with
 // `recheck({ repository, names })` the re-check's lines for the run's pinned repository: { lifted, lines }, `lines` the
 // lines to print. It lifts only when every line is `ok` or a `note`, and at least one is `ok`. Nothing happens for a
-// run that is not halted, a halt of another kind or of another issue than `key`, or without `recheck`; a second halt
-// of its kind on its issue after a self-lift is kept with no probe. The `resume` row goes in under the ledger's lock,
+// run that is not halted, a halt of another kind or of another issue than `key`, or without `recheck`; an environment
+// halt whose cause maps to no check, or names none, and a second halt of its kind on its issue after a self-lift, are
+// kept with no probe. The `resume` row goes in under the ledger's lock,
 // only while that halt still stands, the run has not ended, and custody still rests with `custodian`, so a halt lifts once;
 // a run that changed so meanwhile gets a line saying so, and a write that fails, its own line. A ledger another process
 // holds throws LOCKED, which the command answers with exit 75, to be tried again.
 export function recheckHalt({ state, run, found, session, key, custodian = session, recheck, now = Date.now() }) {
   const halt = latestHalt(found);
-  if (!halt || typeof recheck !== 'function' || !RECHECKS[halt.kind] || halt.key !== key) return { lifted: false, lines: [] };
+  const names = halt ? checksOf(halt) : null;
+  if (!names || typeof recheck !== 'function' || halt.key !== key) return { lifted: false, lines: [] };
   const kept = `recheck kept the halt: ${halt.cause}`;
+  if (!names.length) return { lifted: false, lines: [kept, `no check covers this cause (${classOf(halt)}): a person fixes it, then lifts the halt with \`aidrian project resume ${run}\` from a session they attend`] };
   if (liftedBefore(found, halt)) return { lifted: false, lines: [kept, `the run lifted a halt of ${halt.key} of this kind (${halt.kind}) by itself once, so this one waits on a person`] };
   let lines;
   try {
-    const answer = recheck({ repository: found.init.repository, names: RECHECKS[halt.kind] });
+    const answer = recheck({ repository: found.init.repository, names });
     lines = Array.isArray(answer) ? answer : [];
   } catch (error) {
     lines = [`blocker recheck: the re-check failed (${String(error?.message ?? error).split('\n')[0].slice(0, 200)})`];
@@ -49,7 +79,7 @@ export function recheckHalt({ state, run, found, session, key, custodian = sessi
   const passed = lines.filter((line) => /^ok \S+$/u.test(line)).map((line) => line.slice(3));
   const failed = lines.filter((line) => !line.startsWith('ok ') && !line.startsWith('note '));
   if (failed.length || !passed.length) return { lifted: false, lines: [kept, ...(failed.length ? failed : ['no check of this halt ran'])] };
-  const row = { event: 'resume', session, kind: halt.kind, key: halt.key, attempt: halt.attempt, via: 'recheck', checks: passed, at: new Date(now).toISOString() };
+  const row = { event: 'resume', session, kind: halt.kind, key: halt.key, attempt: halt.attempt, via: 'recheck', checks: passed, ...(halt.kind === 'environment' ? { cause: halt.class } : {}), at: new Date(now).toISOString() };
   const unwritten = (why) => ({ lifted: false, lines: [kept, `the checks passed, but the resume row could not be written: ${String(why).split('\n')[0].slice(0, 200)}`] });
   let written;
   try {

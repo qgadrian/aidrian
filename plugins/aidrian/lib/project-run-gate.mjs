@@ -77,7 +77,7 @@ import { FILE_MODES, startLoadProblem, startUnreadable } from './pr-auto-merge-d
 import { chainEnded, lingerLine, lingerProblem, notStopped, releaseAttempts, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, liftRow, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
-import { recheckHalt } from './project-recheck.mjs';
+import { ENVIRONMENT_CAUSES, recheckHalt } from './project-recheck.mjs';
 import { ATTEMPT_ENV, cacheVars, registryHosts } from './project-registries.mjs';
 import { CLAIM_VAR, newClaim, writeClaim } from './project-token.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
@@ -300,7 +300,7 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
     ...(includePolicyFiles ? [POLICY_FILES_LINE] : []),
     ...(baseCopies ? [baseCopiesLine(baseCopies, indexEdits)] : []),
     `When the work ends, whatever its outcome, write the result as JSON to a file outside the state folder, and as the last step run \`aidrian project result ${run} ${key} --file <that file>\`: ` +
-      '{ "status": "merged" | "pr_open" | "parked" | "blocked" | "environment" | "failed", "pr": <number or null>, "decisions": [{ "question", "options": [...], "recommended": <index>, "class" }], "stop": <why the work stopped, or null> }.',
+      `{ "status": "merged" | "pr_open" | "parked" | "blocked" | "environment" | "failed", "pr": <number or null>, "decisions": [{ "question", "options": [...], "recommended": <index>, "class" }], "stop": <why the work stopped, or null>, "cause": <on environment alone: ${ENVIRONMENT_CAUSES.map((cause) => `"${cause}"`).join(' | ')}> }.`,
     ...(typeof note === 'string' && note !== '' ? [note] : []),
   ].join('\n');
 }

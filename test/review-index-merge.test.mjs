@@ -269,3 +269,59 @@ test('a step outcome decided without a pass recorded meanwhile is the retry, whi
   noteOutcome(state, result);
   assert.deepEqual([state.outcome.status, state.pending[0].answered], ['incomplete', undefined]);
 });
+
+test('the write`s decide sees exactly what its merge took, after the merge and before anything else', () => {
+  const { step, wrote } = stepping();
+  const disk = wrote(attest([finding('One')]));
+  disk.pending = [{ kind: 'review', head: HEAD, at: AT, by: 't', id: 'owed' }];
+  let seen = null;
+  const taken = takeRecorded(step, disk, { read: snapshot(step), decide: (ids) => (seen = { ids, open: step.passes[PASS]?.open, owed: step.pending.map((each) => each.id) }) });
+  assert.deepEqual(seen, { ids: taken, open: 1, owed: ['owed'] });
+  assert.deepEqual(taken, [PASS]);
+  // A sign-off alone takes no pass, and the file as read takes nothing: decide runs with none.
+  const signed = stepping();
+  const calls = [];
+  takeRecorded(signed.step, signed.wrote((state) => (state.signoffs.checkout = { head: HEAD, by: 'the Human', at: LATER })), { read: snapshot(signed.step), decide: (ids) => calls.push(ids) });
+  takeRecorded(signed.step, structuredClone(signed.step), { read: snapshot(signed.step), decide: (ids) => calls.push(ids) });
+  assert.deepEqual(calls, [[], []]);
+  assert.equal(signed.step.signoffs.checkout.by, 'the Human');
+  // The step's save turns its outcome into the retry from that same list.
+  const result = { status: 'received', pr: 7, repo: 'o/r', head: HEAD };
+  if (taken.length) retryInstead(result, taken);
+  assert.deepEqual([result.status, result.recorded_meanwhile], ['incomplete', [PASS]]);
+});
+
+test('a check a step moved to a new head is one check with the older copy, the one read again or decided last', () => {
+  const NEXT = 'e'.repeat(40);
+  const moved = (state, at) => Object.assign(state.extensions[0], { head: NEXT, revalidated_at: at });
+  // The step moved the check; a sign-off wrote the older copy meanwhile.
+  const first = stepping();
+  moved(first.step, '2026-11-25T10:02:00.000Z');
+  takeRecorded(first.step, first.wrote((state) => (state.signoffs.checkout = { head: HEAD, by: 'the Human', at: LATER })), { read: snapshot(first.step) });
+  assert.deepEqual(first.step.extensions.map((each) => [each.head, each.status]), [[NEXT, 'judging']], 'one check, on the head it moved to');
+  // The judge decided after the step moved the check: the verdict counts.
+  const second = stepping();
+  moved(second.step, '2026-11-25T10:01:00.000Z');
+  takeRecorded(second.step, second.wrote((state) => recordVerdict(state, { verdict: 'extend', reason: 'r', current: HEAD, at: LATER })), { read: snapshot(second.step) });
+  assert.deepEqual(second.step.extensions.map((each) => each.status), ['asking']);
+});
+
+test('a finding under an id this write moved, with another mint mark, is another finding: it keeps its id and its entry', () => {
+  const { step } = stepping();
+  attest([finding('One')])(step);
+  const read = Object.assign(structuredClone(step), { updatedAt: '2026-11-25T10:01:00.000Z' });
+  read.passes[PASS].at = '2026-11-25T10:00:30.000Z';
+  const ours = structuredClone(read);
+  const fresh = freshId(ours, 'R1-1');
+  assert.deepEqual(ours.index[fresh].moved_from, [{ id: 'R1-1', mint: read.index['R1-1'].mint }], 'the old id keeps its mint mark');
+  // Another command minted R1-1 for another finding.
+  const other = { id: 'R1-1', mint: 'bbbbbbbb', title: 'Other', severity: 'high', state: 'open', disposition: 'fix_now' };
+  const disk = structuredClone(read);
+  disk.passes[PASS] = { head: HEAD, reviewer: 'code-reviewer', findings: 1, open: 1, list: [other], at: new Date().toISOString() };
+  disk.index['R1-1'] = { ...other, pass: PASS };
+  Object.assign(disk, { revision: read.revision + 1, updatedAt: new Date().toISOString() });
+  assert.deepEqual(takeRecorded(ours, disk, { read: snapshot(read) }), [PASS]);
+  recordFindings(ours, null, null);
+  assert.deepEqual(ours.passes[PASS].list.map((each) => [each.id, each.mint]), [['R1-1', 'bbbbbbbb']], 'not renamed to the moved finding');
+  assert.deepEqual([ours.index['R1-1']?.mint, ours.index[fresh]?.mint], ['bbbbbbbb', ours.index[fresh].mint], 'its entry is kept beside the moved one');
+});

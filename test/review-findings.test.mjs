@@ -703,11 +703,12 @@ test('freshId: a new id and mint mark on every copy of the finding, every engine
   assert.equal(id, 'R1-3', 'from the one counter');
   assert.equal(state.index[old], undefined, 'the entry moves to the new id');
   const entry = state.index[id];
-  const { id: _a, mint: _b, aliases: _c, ...keys } = entry;
+  const { id: _a, mint: _b, aliases: _c, moved_from: from, ...keys } = entry;
   const { id: _d, mint: _e, aliases: _f, ...was } = before;
   assert.deepEqual(keys, was, 'every engine key of the old id, its security mark among them');
   assert.equal(entry.security, true);
   assert.deepEqual(entry.aliases, [old]);
+  assert.deepEqual(from, [{ id: old, mint: before.mint }], 'the old id with its own mint mark');
   assert.ok(/^[0-9a-f]{8}$/u.test(entry.mint) && entry.mint !== before.mint, 'a mint mark of its own');
   const listedCopy = state.passes.p.list[0];
   assert.deepEqual([listedCopy.id, listedCopy.mint, listedCopy.aliases, listedCopy.security], [id, entry.mint, [old], true]);

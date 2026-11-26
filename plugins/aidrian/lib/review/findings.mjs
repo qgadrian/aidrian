@@ -506,7 +506,10 @@ export function freshId(state, oldId) {
   if (!minted) return null;
   for (const finding of recordedFindings(state)) {
     if (finding.id !== oldId) continue;
-    Object.assign(finding, { id: minted.id, mint: minted.mint, aliases: [...new Set([...listOf(finding.aliases).filter(isFindingId), oldId])] });
+    // `moved_from` keeps the old id with its mint mark, so a merge renames only a copy of this very finding (state.mjs
+    // takeRecorded), never another one minted under the same id.
+    const from = [...listOf(finding.moved_from).filter(isObject), ...(isMint(finding.mint) ? [{ id: oldId, mint: finding.mint }] : [])];
+    Object.assign(finding, { id: minted.id, mint: minted.mint, aliases: [...new Set([...listOf(finding.aliases).filter(isFindingId), oldId])], ...(from.length ? { moved_from: from } : {}) });
   }
   const index = indexOf(state);
   if (isObject(index[oldId])) {

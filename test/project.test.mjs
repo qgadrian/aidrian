@@ -765,13 +765,35 @@ test('spellingProblem refuses a path that is a held name, a file in a held folde
   for (const file of ['.aidrian.json', 'docs/rules.md', 'docs', 'docs/other.md', 'DOCS/other.md', '.aidrian/knowledge/x.json', '.github/workflows/ci.yml', '.GITHUB/ISSUE_TEMPLATE/a.md', 'src/a.js']) assert.equal(spellingProblem(file, names), null, file);
   // A guarded path by its fold alone, and two spellings of one name the harness holds.
   assert.match(spellingProblem('.github/in\ufb06ructions/x.md', []) ?? '', /is a guarded path in another spelling/u);
-  assert.equal(spellingRule([], { guarded: false })('.github/in\ufb06ructions/x.md'), null, 'unless the rule leaves that clause out, as the push guard does');
   assert.equal(spellingProblem('CLAUDE.md', ['CLAUDE.md']), null);
   assert.match(spellingProblem('CLAUDE.md', ['CLAUDE.md', 'claude.md']) ?? '', /^"CLAUDE\.md" is "claude\.md" in another spelling/u);
   // A path past the rule's bounds is refused before it is folded, whatever names it holds.
   const deep = `${'a/'.repeat(65)}x.md`;
   for (const file of [deep, `docs/${'x'.repeat(4092)}`]) assert.match(spellingProblem(file, []) ?? '', /is deeper than 64 folders or longer than 4096 bytes, which no guard judges$/u, file.slice(0, 20));
   for (const file of [`${'a/'.repeat(64)}x.md`, `docs/${'x'.repeat(4091)}`]) assert.equal(spellingProblem(file, []), null, 'at the bounds');
+  // At the depth bound with letters outside ASCII, each folder's fold is its parts' folds joined: a held folder deep
+  // down, spelled another way, refuses, and its own spelling passes.
+  const accented = Array.from({ length: 63 }, (_, at) => `\u03a3${at}\u00e9\u03a3`).join('/');
+  const rule = spellingRule([`${accented}/stra\u00dfe/`]);
+  assert.match(rule(`${accented}/STRASSE/x.md`) ?? '', /in another spelling/u);
+  assert.equal(rule(`${accented}/stra\u00dfe/x.md`), null);
+  assert.match(rule(`${accented.normalize('NFD')}/stra\u00dfe/x.md`) ?? '', /in another spelling/u, 'the folders above in another Unicode form');
+  assert.equal(rule(`${accented}/other/x.md`), null, 'beside the held folder');
+});
+
+// spellingRule folds a path a part at a time, which holds only while a path's fold is its parts' folds joined by `/`.
+test('a path\'s fold is its parts\' folds joined by a slash, final sigma and the other context letters among them', () => {
+  const letters = ['a', 'Z', '\u03a3', '\u03c3', '\u03c2', '\u0345', '\u0130', '\u0131', '\u1e9e', '\u00df', '\ufb03', '\u00e9', 'e\u0301', '\u212a', ' ', '.'];
+  let seed = 7;
+  const next = () => {
+    seed = (seed * 48271) % 2147483647;
+    return seed;
+  };
+  for (let sample = 0; sample < 20_000; sample += 1) {
+    const parts = Array.from({ length: 1 + (next() % 4) }, () => Array.from({ length: next() % 5 }, () => letters[next() % letters.length]).join(''));
+    const file = parts.join('/');
+    assert.equal(foldPath(file), parts.map(foldPath).join('/'), JSON.stringify(file));
+  }
 });
 
 // A refusal compares folds, so a fold that told apart two paths equal in lower case would drop one.

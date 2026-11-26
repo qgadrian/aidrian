@@ -134,9 +134,10 @@ const [PATH_DEPTH, PATH_BYTES] = [64, 4096];
 // The one spelling rule, for `names`, the paths the harness holds by their exact spelling, a folder's with a trailing
 // `/`: (file) => why `file` is one of them in another spelling, or null. That is when its fold (foldPath) is a name's,
 // a file's in a folder name, or a folder's that holds a name, and either its own spelling is none of them or two
-// spellings share that fold; or, unless `guarded` is false, when it is a guarded path (isGuardedPath) by its fold alone. A disk that ignores case or
+// spellings share that fold; or when it is a guarded path (isGuardedPath) by its fold alone. Each path is folded once, a
+// part at a time: a path's fold is its parts' folds joined by `/`, so each folder's fold is a join of the first parts'. A disk that ignores case or
 // Unicode form reads it as that name, so the rule refuses each such path wherever the harness reads one.
-export function spellingRule(names, { guarded = true } = {}) {
+export function spellingRule(names) {
   const [files, folders, parents] = [new Map(), new Map(), new Map()];
   const add = (map, exact) => map.set(foldPath(exact), new Set([...(map.get(foldPath(exact)) ?? []), exact]));
   for (const name of names) {
@@ -152,12 +153,13 @@ export function spellingRule(names, { guarded = true } = {}) {
   return (file) => {
     // A path past these bounds is refused before it is folded, never judged in part.
     if (Buffer.byteLength(file) > PATH_BYTES || file.split('/').length > PATH_DEPTH + 1) return `${JSON.stringify(file.slice(0, 200))} is deeper than ${PATH_DEPTH} folders or longer than ${PATH_BYTES} bytes, which no guard judges`;
-    const folded = foldPath(file);
     const parts = file.split('/');
-    const at = other(files, folded, file) ?? other(parents, folded, file) ?? other(folders, folded, file)
-      ?? parts.slice(0, -1).map((_, end) => other(folders, foldPath(parts.slice(0, end + 1).join('/')), parts.slice(0, end + 1).join('/'))).find(Boolean);
+    const foldedParts = parts.map(foldPath);
+    const folded = foldedParts.join('/');
+    let at = other(files, folded, file) ?? other(parents, folded, file) ?? other(folders, folded, file);
+    for (let end = 1; !at && end < parts.length; end += 1) at = other(folders, foldedParts.slice(0, end).join('/'), parts.slice(0, end).join('/'));
     if (at) return line(file, at);
-    return guarded && isGuardedPath(file) && !GUARDED_PATHS.test(file) ? `${JSON.stringify(file).slice(0, 200)} is a guarded path in another spelling, which a disk that ignores case or Unicode form reads as one` : null;
+    return isGuardedPath(file) && !GUARDED_PATHS.test(file) ? `${JSON.stringify(file).slice(0, 200)} is a guarded path in another spelling, which a disk that ignores case or Unicode form reads as one` : null;
   };
 }
 

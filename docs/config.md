@@ -2250,10 +2250,10 @@ Residuals of the base copies:
 - A checkout filter that rewrites an `always` doc, such as `eol=crlf`, refuses a start on existing work, as it does for `AGENTS.md`;
   one that rewrites a policy file refuses a first attempt too.
 - A hand write by the session, a first attempt, and a base that renames a host file the branch changed are not held.
-- A push or a merge of another spelling of a name the start holds, such as `docs/RULES.md` beside an always
-  `docs/rules.md`, is not refused by the push guard or the merge gate: the push guard holds the workflow folders, the
-  base copies' names when its row keeps them, and a guarded path by its fold alone. Every later start on that head refuses it, so it can cost the
-  run's progress, but no session loads it.
+- Another spelling of a name the start holds, such as `docs/RULES.md` beside an always `docs/rules.md`: the merge gate
+  refuses it by its fold unless the lift that passes the exact name is on, and the push guard refuses it when its row
+  keeps base copies. The gap is a push with no base copies, which every later start on that head refuses, so it can
+  cost the run's progress, but no session loads it.
 
 Every park row names the recorded head.
 A kept clone's commits never move it: a start on them records the forge's head.

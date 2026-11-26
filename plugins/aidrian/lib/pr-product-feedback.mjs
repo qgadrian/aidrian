@@ -216,8 +216,8 @@ function committedAuto(project, ref) {
 //   - `unknown`: no source says on, and git names no default branch on origin, so only GitHub can say off.
 // The default branch is origin/HEAD, origin/<git.defaultBranch> of the working copy, or origin/main. HEAD, the branch itself,
 // can only raise: it never says off alone. `team` says an origin ref commits `auto: true`, for the reason `status` gives
-// a machine that opted out.
-export function localFeedback(project) {
+// a machine that opted out. `list` is the test seam, readdirSync.
+export function localFeedback(project, { list = readdirSync } = {}) {
   if (project.localFeedbackAuto === true) return { state: 'on', team: false };
   let config = DEFAULTS;
   try {
@@ -235,7 +235,7 @@ export function localFeedback(project) {
     if (isDirectory(folder)) {
       // Only a listing that worked and found nothing says empty: one the folder refuses may hide a record still reachable.
       try {
-        kept = readdirSync(folder).length > 0;
+        kept = list(folder).length > 0;
       } catch {
         kept = true;
       }
@@ -302,6 +302,25 @@ export function feedbackStatus(value, project, { forge, remotes = () => checkout
   const reason = owed.some((each) => each.state === 'unanswered') ? 'unanswered' : 'not_rechecked';
   const count = `${owed.length} item${owed.length === 1 ? '' : 's'}`;
   return say(2, 'owed', reason, reason === 'unanswered' ? `${count} still owed an answer or a re-check` : `${count} waiting for a re-check of the fix`, owed);
+}
+
+// Why product feedback keeps a merge off, or null: the one check both merge points make, `aidrian pr auto-merge`
+// (pr-auto-merge.mjs, reason `feedback`) for every merge it judges, and the merge guard (rules/github/merge-review.mjs)
+// for a merge no Human attends. It is feedbackStatus with the reads of a project run's issue session (issueReads): GitHub's
+// config at the default branch and the base, never a git ref a session could have rewritten. So a pull request born
+// ready, or marked ready by a form the ready hold cannot read, stops at the merge. `pr` is { number, repo, host }, with
+// `view`, gh's answer to the pull request's view when the caller has it, and `main`, the default branch's name the caller
+// read from GitHub, or null to ask. Owed, or a read that fails, keeps it off: the Human runs the pr-product-feedback skill.
+export function feedbackHold(forge, project, { number, repo, host, view = null, main = null }) {
+  const remedy = `run the pr-product-feedback skill on #${number} in a session the Human attends, then try again`;
+  try {
+    const url = `https://${host}/${repo}/pull/${number}`;
+    const reads = { ...issueReads(), ...(main ? { mainBranch: () => main } : {}) };
+    const { exit, result } = feedbackStatus(url, project, { forge, view, remotes: () => [`${host}/${repo}`.toLowerCase()], ...reads });
+    return exit === 0 ? null : `product feedback is owed on #${number} (${result.why}): ${remedy}`;
+  } catch (error) {
+    return `the product feedback of #${number} cannot be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}): ${remedy}`;
+  }
 }
 
 // `status`: prints what feedbackStatus says, and exits with it.

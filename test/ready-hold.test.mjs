@@ -6,14 +6,14 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
-import { runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
+import { localFeedback, runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, DEADLINE_MS, FED_REASON, FORM_REASON, HOOK_BUDGET_MS, MANY_REASON, MCP_REPO_REASON, OVERRIDE } from '../plugins/aidrian/lib/rules/github/ready-hold.mjs';
@@ -591,16 +591,15 @@ test('the committed config is found where each ref puts it, and only off at ever
   const emptyCalls = owedNow(empty);
   assert.equal(emptyCalls.reason('gh pr ready 7'), null, 'an empty product-feedback folder raises nothing');
   assert.equal(emptyCalls.calls.length, 0, 'and asks GitHub nothing');
-  // One that cannot be listed may hide a record a path still reaches: GitHub decides.
+  // One that cannot be listed may hide a record a path still reaches: GitHub decides. The listing is the seam's, so the
+  // test holds whoever runs it, root included.
   const unlisted = repo(t, { feedback: null });
-  const hidden = path.join(unlisted, '../state/product-feedback');
-  mkdirSync(hidden);
-  chmodSync(hidden, 0o300);
-  try {
-    assert.match(owedNow(unlisted).reason('gh pr ready 7') ?? '', /still owed/u, 'a product-feedback folder that cannot be listed raises');
-  } finally {
-    chmodSync(hidden, 0o700);
-  }
+  mkdirSync(path.join(unlisted, '../state/product-feedback'));
+  const refused = () => {
+    throw Object.assign(new Error('EACCES: permission denied, scandir'), { code: 'EACCES' });
+  };
+  assert.equal(localFeedback(findProject(unlisted), { list: refused }).state, 'on', 'a product-feedback folder that cannot be listed raises');
+  assert.equal(localFeedback(findProject(unlisted)).state, 'off', 'the same folder, listed empty, keeps none');
 });
 
 test('status of a project without the feature, or a machine that opted out, makes no gh call', (t) => {

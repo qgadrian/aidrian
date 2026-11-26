@@ -194,6 +194,27 @@ test('a forged review record with outcome received on the head, and no bot revie
   assert.equal(merge(r, MERGE), null);
 });
 
+test('a pull request opened ready whose product feedback is owed is refused by the merge guard as by auto-merge; with it off, both allow it', (t) => {
+  // The default branch runs product feedback on src/, which the pull request changes, and no record says it ran.
+  const r = repo(t, configOf({ review: { productFeedback: { auto: true, files: ['src/**'] } } }));
+  r.record(forged());
+  const owed = /^Blocked: no Human attends this session, and this merges pull request #7, but product feedback is owed on #7 \(.*\): run the pr-product-feedback skill on #7 in a session the Human attends/u;
+  assert.match(merge(r, MERGE) ?? '', owed, 'gh pr merge');
+  assert.match(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }) ?? '', owed, 'the GitHub MCP merge');
+  const gate = autoMerge(t, r);
+  assert.deepEqual([gate.code, gate.result.reason], [1, 'feedback'], 'auto-merge holds it for the same reason');
+  // Read from the review trail the guard already took: no other forge call.
+  const calls = [];
+  merge(r, MERGE, { calls });
+  assert.deepEqual(calls.map(([name]) => name), ['reviewTrail'], 'the trail serves the check');
+  // With it off on the default branch, both allow the merge.
+  const off = repo(t);
+  off.record(forged());
+  assert.equal(merge(off, MERGE), null);
+  assert.equal(mcp(off, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }), null);
+  assert.equal(autoMerge(t, off).code, 0);
+});
+
 test('attended merges are unchanged: auto-merge reads no trail and needs no bot, and the guard asks the forge nothing', (t) => {
   const r = repo(t, configOf({ github: { ...CHECKS, autoMerge: TEAM, reviewer: null } }));
   r.record(forged());

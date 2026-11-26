@@ -417,7 +417,8 @@ after the `pr-merge-when-green` steps waited for every check. The read must give
 a head pushed in between exits 3, as does a failed read of the pull request.
 
 It is on only when all of these hold, checked in this order; the last two, `closes` and `trust`, only in a session no Human attends.
-`feedback` holds for every merge, attended or not.
+`feedback` holds for every merge, attended or not, and the [merge guard](hooks.md#merge-guard) makes the same check
+before a merge in a session no Human attends, by `gh pr merge` or the GitHub MCP merge.
 With `--json`, `reason` names the first that fails and `why` says it in a sentence; both are `null` when on.
 
 | `reason` | What must hold |
@@ -891,8 +892,11 @@ Its report lists that under Decisions for the Human, with that command, and the 
 "Product feedback: owed, for the Human, before this leaves draft".
 With `auto` on, every user-facing pull request of a project run stops at a draft for the Human.
 The [ready hold](hooks.md#ready-hold) holds that draft there, and the forge merges no draft.
-The merge hold itself lives in the [auto-merge gate](#auto-merge): its `feedback` row reads the same product feedback for every merge it judges,
-from GitHub, so a pull request born ready, or marked ready by a form no hook reads, still stops there.
+The merge hold itself sits at both merge points, so at every merge the harness sees that no Human asks for:
+the [auto-merge gate](#auto-merge)'s `feedback` row for every merge it judges, and the [merge guard](hooks.md#merge-guard)
+before a merge in a session no Human attends, by `gh pr merge` or the GitHub MCP merge.
+Both run one check, `feedbackHold` in `lib/pr-product-feedback.mjs`, from GitHub, so a pull request born ready, or marked
+ready by a form no hook reads, still stops there.
 There the hold checks a ready in one form alone, `gh pr ready <number or URL>` run first from the clone, with no repository option,
 and refuses every other ([In an issue session](hooks.md#in-an-issue-session)).
 So a ready from a folder outside the clone, or one naming a repository, is refused even when it would be right.
@@ -903,8 +907,9 @@ can mark the draft ready with no word the hook sees.
 So can a ready a variable spells, such as `X="pr ready"; gh $X 7` or `G=gh; $G pr ready 7`, a ready another program runs,
 such as `xargs gh pr ready`, `parallel`, `find -exec`, or `watch`, and one in a string argument of a program that runs it,
 such as an interpreter's code.
-Each passes the ready hold, and is held at the merge gate: `aidrian pr auto-merge` stays off while its feedback is owed or cannot be read.
-The ready hold stops a session that follows the flow; the merge gate stops a merge no Human asks for, whatever marked it ready.
+Each passes the ready hold, and is held at the merge: `aidrian pr auto-merge` stays off, and the merge guard refuses a merge in a
+session no Human attends, while its feedback is owed or cannot be read.
+The ready hold stops a session that follows the flow; the merge points stop a merge no Human asks for, whatever marked it ready.
 
 ### With the key off
 

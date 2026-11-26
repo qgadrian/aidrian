@@ -859,7 +859,9 @@ So `aidrian pr auto-merge` reads the record itself, and no record keeps auto-mer
 it asks for [merge trust](review.md#merge-trust) too.
 It also stays off for a changed instruction or workflow file (`paths`), a comment from outside the repository (`outsider`),
 requested changes (`review`), and [product feedback](config.md#product-feedback) owed or unreadable (`feedback`),
-for every merge. Neither it nor this guard stops a session with a shell or a forged local record:
+for every merge. In a session no Human attends this guard makes that same feedback check before the merge,
+by `gh pr merge` or the GitHub MCP merge, reading the review trail it already took; owed or unreadable refuses.
+Neither it nor this guard stops a session with a shell or a forged local record:
 for proof, protect the branch with a required review from a second account. [Limits](config.md#limits).
 
 Limits:
@@ -956,11 +958,12 @@ Every ready there is judged in the project of that clone.
 It refuses a ready it cannot read as one with the same deny: gh's `pr` and `ready` around a word the shell fills in, such as `gh pr "$X" ready 7`.
 gh whose own subcommand is another, as `gh pr create --title ready`, holds no ready, and no other program's words are read for one,
 so `echo gh pr ready 7` runs; a ready another program runs, as `xargs`, `parallel`, `find -exec`, or `watch` do, passes this hook
-and is held at the auto-merge gate.
+and is held at the merge: by the auto-merge gate, and by the [merge guard](#merge-guard) in a session no Human attends.
 The GitHub MCP hook reads the same mark and judges in the same clone.
 It refuses a call whose number it cannot read, and one whose `owner` and `repo` are not both given and equal to the clone's origin repository.
-A pull request opened as no draft, or marked ready by a form this hook cannot read, skips this hold and is held at the
-[auto-merge gate](config.md#auto-merge), whose `feedback` row reads the same product feedback for every merge.
+A pull request opened as no draft, or marked ready by a form this hook cannot read, skips this hold and is held at the merge:
+the [auto-merge gate](config.md#auto-merge)'s `feedback` row, for every merge it judges, and the [merge guard](#merge-guard),
+for a merge in a session no Human attends, run the same check.
 The deny of an owed pull request names the stop the run records,
 `pr_open` with "product feedback is owed on #<n>, which an issue session does not run: …", never the skill:
 the step is the Human's ([In an issue session](config.md#in-an-issue-session)).
@@ -973,7 +976,7 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
   `gh pr {ready,} 7`, `gh pr ready "$PR"`, `gh pr ready {7,}`, a loop such as `for n in 7 8; do gh pr ready $n; done`.
   A repository the shell fills in or expands (`-R "$REPO"`) counts as the session's own, as the merge guard reads it.
   In an issue session each of these is refused, but a ready a variable spells, such as `X="pr ready"; gh $X 7` or `$G pr ready 7`,
-  and one another program runs, which no hook that reads words can see, and which the auto-merge gate holds
+  and one another program runs, which no hook that reads words can see, and which the auto-merge gate and the merge guard hold
   ([What this does not stop](config.md#in-an-issue-session)).
 - A graphql call with no literal pull request id (`$id` from `-f id="$ID"`, `@file`, or `--input`), and an id that resolves to
   no pull request.
@@ -989,7 +992,7 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
   on its own branch, chooses both branches whose config is read.
 - An off read from stale or rewritten git refs: [The commands](config.md#the-commands) names both limits, which the hold
   shares with `status`.
-- A pull request opened as no draft is never held here; the auto-merge gate's `feedback` row holds its merge.
+- A pull request opened as no draft is never held here; the auto-merge gate's `feedback` row and the merge guard hold its merge.
   A person's own shell outside a session is never held.
 
 ### Where the ready hold is verified

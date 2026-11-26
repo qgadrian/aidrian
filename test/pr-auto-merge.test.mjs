@@ -207,7 +207,7 @@ test('product feedback owed, or unreadable, keeps it off for every merge; a defa
   assert.equal(held.code, 1);
   const out = json(held);
   assert.deepEqual([out.effective, out.reason], [false, 'feedback']);
-  assert.match(out.why, /^product feedback is owed on #7 \(.*\): run the pr-product-feedback skill on #7 in a session the Human attends, then check again$/u);
+  assert.match(out.why, /^product feedback is owed on #7 \(.*\): run the pr-product-feedback skill on #7 in a session the Human attends, then try again$/u);
   // Off on the default branch: on, as before.
   const off = run(t, r, ['7', '--json']);
   assert.deepEqual([off.code, json(off).reason], [0, null]);

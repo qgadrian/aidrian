@@ -1868,8 +1868,9 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   its id and mint mark, and never a closed state.
 - *A command while a step runs.* Every write of the record, the step's and each command's, first reads this machine's
   record file again (`plugins/aidrian/lib/review/state.mjs` writeState).
-  Another write landed there since its own read when the file is not the local record the writer read, or last wrote,
-  by revision and write time, whatever revision the pull request's posted copy gave the record it builds on.
+  Another write landed there since its own read when that file, the repository's own record file, is not as the writer
+  read it, or last wrote it, by revision and write time, whatever revision the pull request's posted copy or an
+  old-name record merged into its state gave the record it builds on.
   It must continue the review read, by its first round, as the writer does; a record read with no round yet is
   continued by any, so a write during the first round counts, and a writer that started another review takes nothing.
   The writer then takes that write in by the merge two record files get above, with its own record as the base, so its
@@ -1883,7 +1884,8 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   stands over the step's own change, such as reading a check again on a new head; so does a command that did not change
   them, as an attest. A command that did change them, such as `aidrian pr extend` recording a judge's verdict or the
   Human's answer, writes nothing: it exits non-zero, saying the record changed while it ran and to run it again on the
-  current record, and it prints no `recorded` and logs no entry to the dispatch log.
+  current record, and it prints no `recorded` and logs no entry to the dispatch log. `aidrian pr await-review` logs
+  the bot's extension changes only once the record holding them is written, so a refused write logs none.
   So an `aidrian pr attest`, `aidrian pr signoff`, or `aidrian pr extend` that lands during a step of several minutes,
   such as a visual capture, is in the record after the step, with its findings.
   The review step sets its outcome from that same read, after the merge and before the write: when the merge took a

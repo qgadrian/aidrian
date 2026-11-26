@@ -553,7 +553,9 @@ function botProject(t, config = {}, { visibility = 'PRIVATE' } = {}) {
   const edit = (id, body) => (issue.find((comment) => comment.id === id).body = body);
   let head = 'zzz';
   // `failRead`: the read of the bot's reviews, counted from 1 in this run, that fails as GitHub would.
-  const run = (comments, { reviews = comments.length, at = 'zzz', failRead = null, args = [] } = {}) => {
+  // `during`: run once at this run's first read of the bot's reviews, after the record was read, as another command's
+  // write landing while the run waits.
+  const run = (comments, { reviews = comments.length, at = 'zzz', failRead = null, args = [], during = null } = {}) => {
     head = at;
     let reviewReads = 0;
     const list = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: { login: DEFAULT_REVIEWER }, submitted_at: T(i + 1), commit_id: `c${i}`, state: 'COMMENTED' }));
@@ -574,6 +576,7 @@ function botProject(t, config = {}, { visibility = 'PRIVATE' } = {}) {
       reviews: (_repo, n) => {
         onPr42(n);
         reviewReads += 1;
+        if (reviewReads === 1) during?.();
         if (reviewReads === failRead) throw new Error('HTTP 502: GitHub is unavailable');
         return list;
       },
@@ -582,7 +585,7 @@ function botProject(t, config = {}, { visibility = 'PRIVATE' } = {}) {
       reactions: () => [],
     };
     let t0 = Date.parse(T(30));
-    return runAwaitReview(['42', '--request', '--timeout-sec', '0', ...args], loadConfig(project).config, project, { forge, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), requests, reviewReads }));
+    return runAwaitReview(['42', '--request', '--timeout-sec', '0', ...args], loadConfig(project).config, project, { forge, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: log.mock.calls.length ? JSON.parse(log.mock.calls.at(-1).arguments[0]) : null, requests, reviewReads }));
   };
   // `aidrian pr extend` as the CLI runs it, with the review step's forge over the same comments.
   const extend = (args) => runExtend(['42', ...args], project, loadConfig(project).config, {
@@ -1301,4 +1304,68 @@ test('a Human`s deny that lands after a review step retired the check is refused
     rows = readFileSync(log, 'utf8');
   } catch {}
   assert.doesNotMatch(rows, /deny|denied/u, 'no denial in the dispatch log');
+});
+
+test('await-review at the cap whose save meets another command`s extension checks exits non-zero, and logs no extension change', async (t) => {
+  const { logPath } = await import('../plugins/aidrian/lib/dispatch-log.mjs');
+  const bot = botProject(t);
+  const quiet = t.mock.method(console, 'error', () => {});
+  const theirs = { source: 'plan', round: 2, head: 'zzz', at: '2026-08-23T07:10:00Z', mode: 'ask', status: 'judging', by: null, reasons: [] };
+  const during = () => writeLocalState(bot.project, { ...emptyState(42, 'acme/notes'), extensions: [theirs] }, { repo: 'acme/notes' });
+  const capped = await bot.run(converging, { during });
+  assert.equal(capped.code, 1);
+  assert.match(quiet.mock.calls.map((call) => call.arguments.join(' ')).join('\n'), /changed while this command ran: another write changed its extension checks/u);
+  assert.deepEqual(readLocalState(bot.project, 42, 'acme/notes').extensions, [theirs], 'the other command`s checks, and no check of this run');
+  let rows = '';
+  try {
+    rows = readFileSync(logPath(bot.project, loadConfig(bot.project).config), 'utf8');
+  } catch {}
+  assert.doesNotMatch(rows, /review_extension/u, 'no extension change reaches the dispatch log');
+  // With no other write, the same run logs its check once the record holds it.
+  const clean = botProject(t);
+  assert.equal((await clean.run(converging)).code, 10);
+  assert.match(readFileSync(logPath(clean.project, loadConfig(clean.project).config), 'utf8'), /"event":"review_extension"/u);
+});
+
+// A project with its state folder inside a temporary folder, and pull request 7 of o/r with a check at the cap waiting
+// for the Human on HEAD_C.
+const HEAD_C = 'c'.repeat(40);
+const ASKING = { source: 'plan', round: 2, head: HEAD_C, at: '2026-11-25T10:00:00.000Z', mode: 'ask', status: 'asking', by: 'judge', reasons: ['r'] };
+function extendProject(t) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-extend-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  const project = projectAt(dir);
+  const round = { head: HEAD_C, at: '2026-11-25T10:00:00.000Z' };
+  // The repository's own file, and a newer record under the old name that a session on an older plugin wrote, which
+  // holds the check: the reader merges the two.
+  writeLocalState(project, { ...emptyState(7, 'o/r'), rounds: [round] }, { repo: 'o/r' });
+  const own = readLocalState(project, 7, 'o/r');
+  writeFileSync(recordFile(project, 7, null), `${JSON.stringify({ ...own, revision: own.revision + 4, updatedAt: '2026-11-25T11:00:00.000Z', extensions: [ASKING] }, null, 2)}\n`);
+  const extend = (args, env = {}) => runExtend(['7', ...args], project, loadConfig(project).config, { repo: 'o/r', env, forge: { change: () => ({ headRefOid: HEAD_C }) } });
+  return { project, extend };
+}
+
+test('an extension decision with the repository`s file and an old-name record both present records, and a change meanwhile is refused', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { project, extend } = extendProject(t);
+  assert.equal(readLocalState(project, 7, 'o/r').extensions[0].status, 'asking', 'the reader merges the old-name record');
+  assert.equal(await extend(['--human', 'deny']), 0, 'both files as read: it records');
+  assert.deepEqual(readLocalState(project, 7, 'o/r').extensions.map((each) => [each.status, each.human?.answer]), [['denied', 'deny']]);
+  assert.throws(() => readFileSync(recordFile(project, 7, null)), /ENOENT/u, 'and the old-name record moved into the repository`s file');
+  // The same two files, and another command's change to the checks between the read and the write: refused.
+  const raced = extendProject(t);
+  let wrote = false;
+  const env = new Proxy({}, { get: () => {
+    if (!wrote) {
+      wrote = true;
+      const other = readLocalState(raced.project, 7, 'o/r');
+      retireChecks(other, { source: 'plan', head: 'e'.repeat(40) });
+      writeLocalState(raced.project, other, { repo: 'o/r' });
+    }
+    return undefined;
+  } });
+  await assert.rejects(raced.extend(['--human', 'deny'], env), /changed while this command ran/u);
+  assert.deepEqual(readLocalState(raced.project, 7, 'o/r').extensions.map((each) => [each.status, each.human]), [['stopped', undefined]]);
 });

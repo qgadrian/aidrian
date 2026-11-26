@@ -478,14 +478,21 @@ export function owedElsewhere(project, pr, repo) {
 // plugin kept writing the old name, the record is their merge (mergeRecords), so neither's Human entries are lost.
 // One call reads each folder's roots, prefix, and remote URLs once (lib/git.mjs withGitFacts), or as the open call does.
 export function readLocalState(project, pr, repo) {
-  const state = withGitFacts(() => localState(project, pr, repo));
-  return noteRead(state, state);
+  return withGitFacts(() => {
+    const state = localState(project, pr, repo);
+    return noteRead(state, writtenFile(project, pr, state?.repo ?? repo));
+  });
 }
 
-// The local record each state a reader returned was read from, or its writer last wrote (writeState): { revision,
-// updatedAt, rounds } with the first round alone, or null when there was none. Kept beside the state, never in it, so a
-// write tells another command's write since then from its own read (takeRecorded), whatever revision a posted copy gave
-// the state, and a step's running mark, which lowers the state's revision after it writes (step.mjs), stays its own.
+// The record file a write of `pr` of `repo` reads again and replaces (writeState), as it is now, or null: the
+// repository's own file alone, never an old-name record a reader merged into its state.
+const writtenFile = (project, pr, repo) => readFile(file(project, pr, repo), pr);
+
+// The record file each state a reader returned was read beside, or its writer last wrote (writeState): the file that
+// write reads again (writtenFile), as { revision, updatedAt, rounds, extensions } with the first round alone, or null
+// when there was none. Kept beside the state, never in it, so a write tells another command's write since then from its
+// own read (takeRecorded) by the same file it compares, whatever revision a posted copy or an old-name record gave the
+// state, and a step's running mark, which lowers the state's revision after it writes (step.mjs), stays its own.
 const readFrom = new WeakMap();
 function noteRead(state, record) {
   if (!isObject(state)) return state;
@@ -827,17 +834,20 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   const body = summaryComment(comments)?.body;
   const read = readLocalState(project, pr, repo);
   const local = ignoreOther && otherRecordRepo(read, repo) ? null : read;
+  // The file this record's write compares (writtenFile), as read beside `read`, or read now for `repo` when that is not
+  // the file `read` came from.
+  const written = local ? readOf(local) : withGitFacts(() => writtenFile(project, pr, repo));
   const remote = ownCopy(stateFromComment(body, pr), repo);
   const held = remote ? null : heldRevision(body);
   if (held !== null && (local?.revision ?? 0) < held) return { held, why: heldWhy(body) };
   const chosen = newer(local, remote);
-  if (!chosen || chosen !== remote) return { state: noteRead(chosen ?? emptyState(pr, repo), local), local: read };
+  if (!chosen || chosen !== remote) return { state: noteRead(chosen ?? emptyState(pr, repo), written), local: read };
   if (reading !== undefined && !isPrivate(typeof reading === 'function' ? reading() : reading)) {
     const own = widenMarks(local ?? emptyState(pr, repo), remote);
     const current = Array.isArray(remote.planNote?.current) ? remote.planNote.current : null;
     const finding = untextedBlocking(remote, local, current);
     if (finding) return { held: remote.revision ?? 0, why: 'findings', finding, own };
-    return { state: noteRead(restartFrom(own, remote), local), local: read };
+    return { state: noteRead(restartFrom(own, remote), written), local: read };
   }
   // The private copy holds less than the record where a check withheld a string: that is filled from this machine's own
   // record. A machine with none fills from an empty one, so every finding of the copy is marked adopted.
@@ -846,7 +856,7 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   // since nothing takes one back: it is kept (record-merge.mjs keepHuman), as when a session on an older plugin posted
   // from its old-name file.
   if (local) keepHuman(remote, local);
-  return { state: noteRead(remote, local), local: read };
+  return { state: noteRead(remote, written), local: read };
 }
 
 // The pull request's comment copy `copy` as `repo`'s record, or null. The comment is that pull request's own, so a copy

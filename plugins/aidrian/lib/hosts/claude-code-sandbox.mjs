@@ -20,6 +20,7 @@ import path from 'node:path';
 
 import { ATTEMPT_KEEP, KEPT_FOLDERS } from '../attempt-clone.mjs';
 import { maskSecrets } from '../clean-text.mjs';
+import { foldPath } from '../fs.mjs';
 import { ENV_NAME } from '../project-registries.mjs';
 import { programNames, programOnPath } from './process.mjs';
 
@@ -40,13 +41,13 @@ const NESTED_SETTINGS = /^settings.*\.json$/u;
 
 // Whether the path whose parts from a confined clone's root are `segments` is a host file a session no Human attends
 // never writes, at any depth: a `.claude` folder, an entry of NESTED_ENTRIES or a settings file in one, or a SKILL.md.
-// Names are compared in lower case, as a disk that folds case reads them.
+// Names are compared by their folds (foldPath), as a disk that folds full Unicode case reads them, so `ſkills` is `skills`.
 export function nestedProtected(segments) {
-  const lower = segments.filter(Boolean).map((each) => each.toLowerCase());
-  const last = lower.at(-1);
+  const folded = segments.filter(Boolean).map(foldPath);
+  const last = folded.at(-1);
   if (last === undefined) return false;
   if (last === 'skill.md' || last === '.claude') return true;
-  return lower.slice(0, -1).some((each, at) => each === '.claude' && (NESTED_ENTRIES.includes(lower[at + 1]) || NESTED_SETTINGS.test(lower[at + 1])));
+  return folded.slice(0, -1).some((each, at) => each === '.claude' && (NESTED_ENTRIES.includes(folded[at + 1]) || NESTED_SETTINGS.test(folded[at + 1])));
 }
 
 // The sandbox's denyWrite globs for the nested host files of the clone `work`, as nestedProtected reads them, and a

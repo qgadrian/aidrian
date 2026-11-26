@@ -905,6 +905,22 @@ test('an issue session writes no workflow file, no handoff brief or snapshot, no
     assert.match(fx.ask(write(file))?.reason ?? '', why, file);
     assert.match(fx.ask(bash(`echo x > '${file}'`))?.reason ?? '', why, `shell ${file}`);
   }
+  // macOS's disk folds `ſ` to `s` and the ligature `ﬂ` to `fl`: each of these is `.github/workflows` or `.github/actions`
+  // there, which lower case keeps apart.
+  const workflowWhy = /the forge's workflow files, which the forge runs with the repository's secrets/u;
+  // The places read once, as the allowlist tests' steady ask does, since none of these asks changes them.
+  const own = () => ownAttemptFolder(fx.project, fx.config, fx.mark, { home: fx.home });
+  const found = unattendedPlaces({ cwd: fx.work, mark: fx.mark, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [path.join(fx.root, 'scratch')], own });
+  const steady = (input) => unattendedWriteDenial({ session_id: SESSION, cwd: fx.work, ...input }, fx.config, { mark: fx.mark, env: fx.env, places: () => found });
+  for (const file of ['.github/workflowſ/leak.yml', '.github/workﬂows/leak.yml', '.githuB/WORKFLOWſ/leak.yml', '.github/actionſ/setup/action.yml']) {
+    assert.match(steady(write(path.join(fx.work, file)))?.reason ?? '', workflowWhy, file);
+  }
+  assert.match(steady(bash(`echo x > '${path.join(fx.work, '.github', 'workﬂows', 'leak.yml')}'`))?.reason ?? '', workflowWhy, 'shell, folded');
+  assert.match(steady(bash(`rm -f ${path.join(fx.work, '.github', 'workflowſ')}/*.yml`))?.reason ?? '', workflowWhy, 'a glob from the folded folder');
+  assert.match(steady(bash(`rm -f ${fx.work}/.*hub/workflowſ/*.yml`))?.reason ?? '', workflowWhy, 'a wildcard, then a folded part');
+  // Each part chooses: `[!ﬆ]` names the `t` of `.github` only as written, and `workﬂows` names `workflows` only by its fold.
+  assert.match(steady(bash(`rm -f ${fx.work}/.gi[!ﬆ]hub/workﬂows/x.yml`))?.reason ?? '', workflowWhy, 'a class as written, then a folded part');
+  for (const file of ['.github/workflows-notes.md', 'src/ﬁle.js', '.github/ISSUE_TEMPLATE/ſtyle.md']) assert.equal(steady(write(path.join(fx.work, file))), null, file);
   for (const file of [path.join(fx.work, 'src', 'x.js'), path.join(fx.work, '.github', 'ISSUE_TEMPLATE', 'bug.md'), path.join(fx.state, 'plans', 'eng-1-implementation.md'),
     path.join(fx.state, 'plans', 'ENG-1-implementation.md'), path.join(fx.state, 'tmp', 'eng-1', 'log.txt'), path.join(fx.state, 'tmp', 'eng-1.snapshot.json'),
     path.join(fx.state, 'dispatch', 'feat-eng-1-export-S1-explorer.json'), path.join(fx.state, 'reviews', 'pr-3.json.tmp'),

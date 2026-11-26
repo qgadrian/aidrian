@@ -1806,6 +1806,50 @@ test('the host files a later session loads stay refused in its own worktree and 
   }
 });
 
+test('a host file spelled with a long s, which a disk that folds full Unicode case reads as an s, is refused as its plain spelling is', (t) => {
+  const fx = fixture(t);
+  const ask = fx.steady({ own: () => fx.attempt });
+  const work = path.join(fx.attempt, 'work');
+  // macOS's disk folds `ſ` to `s`, which lower case keeps apart: each names the refused entry there.
+  const rooted = ['.claude/ſkills/x/run.sh', '.claude/ſettings.json', '.mcp.jſon', '.claude/agentſ/a.md', '.opencode/pluginſ/x.js', '.agentſ/plugins/marketplace.json'];
+  for (const top of [fx.worktree, work]) {
+    for (const file of rooted) {
+      const target = path.join(top, file);
+      for (const input of [write(target), bash(`echo x > ${target}`)]) {
+        assert.match(ask(input)?.reason ?? '', /a host file a later session in that c(?:heckout|lone) loads/u, `${input.tool_name} ${file} in ${top}`);
+      }
+    }
+    assert.match(ask(bash(`rm -f ${path.join(top, '.claude', 'ſkills')}/*.md`))?.reason ?? '', /a host file a later session/u, 'a glob from a folded folder');
+  }
+  // A wildcard before the folded part: the glob's later parts reach the refused entry by their folds.
+  assert.match(ask(bash(`rm -f ${fx.worktree}/.c*/ſkills/x.md`))?.reason ?? '', /a host file a later session in that checkout loads/u, 'a wildcard, then a folded part');
+  // A negated class its fold would narrow, as `[!ß]` to `[!ss]`, still names a SKILL.md as written.
+  assert.match(ask(bash(`rm -f ${work}/docs/[!ß]kill.md`))?.reason ?? '', /a host file a later session in that clone loads from any depth/u, 'a class its fold narrows');
+  // A part that holds a brace is compared as before the fold, unfolded. A negated class of braces still reaches
+  // `.claude/skills`; a brace a shell expands never reached a refused entry, as written or folded: the stated residual.
+  assert.match(ask(bash(`rm -f ${fx.worktree}/.claude/[!{}]kills/x.md`))?.reason ?? '', /a host file a later session in that checkout loads/u, 'a negated class of braces');
+  for (const glob of ['.{claude,x}*/skills/x.md', '.{claude,x}*/ſkills/x.md']) assert.equal(ask(bash(`rm -f ${fx.worktree}/${glob}`)), null, glob);
+  // A checkout nested in the worktree that git lists nowhere, reached by a wildcard part whose fold names `.git`.
+  mkdirSync(path.join(fx.worktree, 'vendor', 'lib', '.git'), { recursive: true });
+  assert.match(ask(bash(`rm -rf ${fx.worktree}/vendor/*/.gı?`))?.reason ?? '', /a nested checkout's git folder or pointer to one/u, 'a folded .git through a wildcard');
+  // A glob with a brace that names no `.git` passes, as it did before the fold.
+  for (const glob of ['src/[{]*.js', 'src/{a,b}.js', 'src/{a,b}*.js', 'src/[a]*.js']) assert.equal(ask(bash(`rm -f ${fx.worktree}/${glob}`)), null, glob);
+  // At any depth of the clone, and in a temporary folder, by the hosts' nestedProtected and instruction names.
+  for (const file of ['pkg/.claude/ſkills/x.md', 'docs/ſKILL.md', 'a/.claude/ſettings.local.json', 'pkg/.agentſ/x.sh', 'pkg/opencode.jſon']) {
+    assert.match(ask(write(path.join(work, file)))?.reason ?? '', /a host file a later session in that clone loads from any depth/u, file);
+    assert.match(ask(write(path.join(fx.temp, file)))?.reason ?? '', /a host file a session started below that temporary folder loads/u, `temp ${file}`);
+  }
+  for (const file of ['AGENTſ.md', 'a/AGENTſ.override.md']) {
+    assert.match(ask(write(path.join(fx.temp, file)))?.reason ?? '', /a host file a session started below that temporary folder loads/u, file);
+  }
+  // A file the guard passes on its exact or lower-case spelling still passes, though its own fold differs from it.
+  for (const file of ['src/straße.js', 'docs/ﬁle.md', 'src/ſtrange.md', '.claude/noteſ.md', 'pkg/.claude/README.md', 'a/agents/x.md']) {
+    assert.equal(ask(write(path.join(fx.worktree, file))), null, `worktree ${file}`);
+    assert.equal(ask(write(path.join(work, file))), null, `clone ${file}`);
+  }
+  for (const file of ['a/ﬁle.txt', 'a/ſcratch.md', 'a/CLAUDE.md.bak']) assert.equal(ask(write(path.join(fx.temp, file))), null, `temp ${file}`);
+});
+
 test('a host file named .jsonc is a file, refused through a hard link beside it; .mcp.json stays one, and .opencode stays a folder', (t) => {
   const fx = fixture(t);
   const ask = fx.steady();

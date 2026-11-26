@@ -742,13 +742,14 @@ export const globPaths = (glob) => globStarts(glob).map(({ start, rest }) => ({ 
 // Whether a glob write reaches the store: each part it spells matches the store's part at that depth, so it names the
 // store, a file in it, or a folder that holds it. A part that is only stars, such as zsh's `**`, matches any number of
 // parts, none included (partsReach, which never recurses, so no glob of many parts can run the guard out of stack).
-export function globReaches({ prefix, rest }, store) {
+// `matches(part, name)` compares one part with the store's at its depth; the write guard passes its own (unattended-write.mjs foldMatch).
+export function globReaches({ prefix, rest }, store, matches = storeMatch) {
   // The root splits to two empty parts: only the first stands for it.
   const split = (file) => file.split(path.sep).filter((part, i) => i === 0 || part !== '');
   checkDeadline();
-  const matches = (part, name) => (GLOB.test(part) ? globParts(part, [], FOLD_FLAG).pattern.test(name) : fold(part) === name);
   return partsReach([...split(prefix), ...rest], split(store), matches, true);
 }
+const storeMatch = (part, name) => (GLOB.test(part) ? globParts(part, [], FOLD_FLAG).pattern.test(name) : fold(part) === name);
 
 // Why the call in `input` may not run because it writes in the continuation store of the state folder `state`
 // gives, or null: { match, reason }. It holds for a subagent, and for a main session `unattended()` says the background

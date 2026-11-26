@@ -22,7 +22,7 @@ import { bashCall, writeTargets } from './config-guard.mjs';
 import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
-import { foldCase, foldPath, isWithin, joinSpelled } from './fs.mjs';
+import { foldCase, foldPath, globParts, isWithin, joinSpelled } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
@@ -395,8 +395,9 @@ function nestedLinkHit(target, nested) {
 
 // The pathspecs of the index entries that can be a host file a host loads from any depth, in any case: a `.claude`
 // entry, anything below one, and a SKILL.md, then each glob the other hosts declare (hosts/index.mjs nestedGlobs).
-// Accepted residual: git's icase folds no long s or ligature, so a tracked link spelled so, as `pkg/.claude/ſkills`, is
-// not listed; listing the whole index instead would read every path of a large repository on each write.
+// Accepted residual: git's icase folds no long s or ligature, so a tracked link whose own name a pathspec spells, folded
+// so, as `pkg/.agentſ` or `docs/ſKILL.md`, is not listed (one below a `.claude` is, by `**/.claude/**`); listing the
+// whole index instead would read every path of a large repository on each write.
 const INDEX_LINKS = Object.freeze([':(glob,icase)**/.claude', ':(glob,icase)**/.claude/**', ':(glob,icase)**/SKILL.md', ...nestedPathspecs()]);
 // The most output that listing may print.
 const INDEX_BUFFER = 64 * 1024 * 1024;
@@ -430,37 +431,48 @@ export function hostFileLinks(listing) {
   return links;
 }
 
-// A glob part as a regular expression over one name, any case: `*`, `?`, a bracket class, and braces. One it cannot
-// build matches every name.
-function partPattern(part) {
-  let text = '';
+// The most words a glob part's braces may spell before the part matches every name.
+const BRACE_WORDS = 64;
+
+// The words the braces of a glob part spell, as a shell expands `{a,b}` and `x{a,{b,c}}`, or null when they spell more
+// than BRACE_WORDS. A `{` that never closes stays a plain character, as it does in a shell, so `[{]` is a class.
+function braceWords(part) {
+  const open = part.indexOf('{');
+  if (open < 0) return [part];
+  const cuts = [open];
   let depth = 0;
-  for (let i = 0; i < part.length; i += 1) {
-    const char = part[i];
-    if (char === '*') text += '[^/]*';
-    else if (char === '?') text += '[^/]';
-    else if (char === '[') {
-      const end = part.indexOf(']', i + 1);
-      if (end < 0) text += '\\[';
-      else {
-        text += `[${part.slice(i + 1, end).replace(/^!/u, '^').replace(/\\/gu, '\\\\')}]`;
-        i = end;
-      }
-    } else if (char === '{') {
-      depth += 1;
-      text += '(?:';
-    } else if (char === '}' && depth > 0) {
-      depth -= 1;
-      text += ')';
-    } else if (char === ',' && depth > 0) text += '|';
-    else text += char.replace(/[.*+?^${}()|[\]\\]/u, '\\$&');
+  let close = -1;
+  for (let i = open; i < part.length && close < 0; i += 1) {
+    if (part[i] === '{') depth += 1;
+    else if (part[i] === '}' && (depth -= 1) === 0) close = i;
+    else if (part[i] === ',' && depth === 1) cuts.push(i);
   }
-  try {
-    return new RegExp(`^${text}$`, 'iu');
-  } catch {
-    return /^/u;
+  if (close < 0) return [part];
+  cuts.push(close);
+  const tails = braceWords(part.slice(close + 1));
+  if (tails === null) return null;
+  const words = [];
+  for (let at = 0; at + 1 < cuts.length; at += 1) {
+    const inner = braceWords(part.slice(cuts[at] + 1, cuts[at + 1]));
+    if (inner === null) return null;
+    for (const each of inner) for (const tail of tails) words.push(`${part.slice(0, open)}${each}${tail}`);
+    if (words.length > BRACE_WORDS) return null;
   }
+  return words;
 }
+
+// Whether the glob part or plain name `part` may name `name`, in any case: `*`, `?`, a bracket class, and braces, by
+// fs.mjs globParts, whose steps grow with the name's length squared at most, so no part runs a guard out of time. A
+// part whose braces spell more than BRACE_WORDS words may name every name.
+function partMay(part, name) {
+  const words = braceWords(part);
+  return words === null || words.some((word) => globParts(word, [], 'i').pattern.test(name));
+}
+
+// The one compare of every refusal-side glob part, `part` against the name `name` at its depth: as written, or by both
+// their folds (foldPath), as a disk that folds full Unicode case reads them. Each part chooses for itself, and a fold
+// only adds names, as `[!ß]` names an `s` that its fold `[!ss]` does not.
+const foldMatch = (part, name) => partMay(part, name) || partMay(foldPath(part), foldPath(name));
 
 // Whether a glob, by its folder `prefix` and its later parts `rest`, may reach a NESTED entry of one of the clones
 // `nested`: it lies in one and a later part may name a `.claude` folder, a glob whose own text starts with a dot or is a
@@ -470,8 +482,7 @@ function partPattern(part) {
 function nestedGlob(prefix, rest, nested) {
   if (!nested.some(({ root }) => isWithin(root, prefix) || isWithin(prefix, root))) return false;
   if (nestedHit(prefix, nested)) return true;
-  // A glob part as written, or by its fold: a fold only adds names, as `[!ß]` names an `s` that its fold `[!ss]` does not.
-  const may = (part, name) => (GLOB_WORD.test(part) ? (!name.startsWith('.') || /^[.[{]/u.test(part)) && (partPattern(part).test(name) || partPattern(foldPath(part)).test(name)) : foldPath(part) === name);
+  const may = (part, name) => (!GLOB_WORD.test(part) || !name.startsWith('.') || /^[.[{]/u.test(part)) && foldMatch(part, name);
   const last = rest.at(-1) ?? '';
   if (rest.some((part) => may(part, '.claude') || NESTED_NAMES.folders.some((name) => may(part, name)))) return true;
   return may(last, 'skill.md') || NESTED_NAMES.files.some((name) => may(last, name));
@@ -681,7 +692,7 @@ function gitEntry(top, target, spelled) {
 function gitGlob(prefix, rest, places) {
   const roots = [...places.specific, ...places.reviews, places.worktree, ...(places.made ?? [])].filter(Boolean);
   if (!roots.some((root) => isWithin(root, prefix) || isWithin(prefix, root))) return false;
-  return rest.some((part) => (GLOB_WORD.test(part) ? /^[.[{]/u.test(part) && partPattern(part).test('.git') : isGitPart(part)));
+  return rest.some((part) => (!GLOB_WORD.test(part) || /^[.[{]/u.test(part)) && foldMatch(part, '.git'));
 }
 
 // A spelled path as placeOf meets it: a device always passes, before any path is resolved.
@@ -1074,10 +1085,8 @@ function globDenial(globs, found, say) {
       const denial = say.meets(placeOf(spelling.prefix, start, found, { holds: false }), glob.text);
       if (denial) return denial;
       // A refused folder the glob's folder already lies in, and allows, is no entry it reaches.
-      // As written, or by its parts' folds against the entry's (foldPath), as refusedHit compares, so `.c*/ſkills` reaches `.claude/skills`.
-      const folded = { prefix: foldPath(spelling.prefix), rest: spelling.rest.map(foldPath) };
-      const reached = found.refused.filter((entry) => !isWithin(entry.path, spelling.prefix))
-        .find((entry) => globReaches(spelling, entry.path) || globReaches(folded, entry.fold));
+      // Each part as written or by its fold (foldMatch), so `.c*/ſkills` reaches `.claude/skills`.
+      const reached = found.refused.filter((entry) => !isWithin(entry.path, spelling.prefix)).find((entry) => globReaches(spelling, entry.path, foldMatch));
       if (reached) return say.refused(reached, glob.text);
       if (nestedGlob(spelling.prefix, spelling.rest, found.nested ?? [])) return say.refused(NESTED, glob.text);
       if (!found.limited && gitGlob(spelling.prefix, spelling.rest, found)) return say.refused({ what: GIT_ENTRY }, glob.text);

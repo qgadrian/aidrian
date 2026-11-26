@@ -405,7 +405,9 @@ const indexFixture = (t) => {
   const facts = own();
   const root = { root: fx.work, common: git('rev-parse', '--path-format=absolute', '--git-common-dir').trim() };
   const push = (cwd = fx.work, given = facts) => pushCheckoutProblem(cwd, { root, fold: (each) => each, ...given });
-  return { ...fx, git, head, commit, reset, moveBase, own, push, asked: () => fx.ask(bash(EXACT))?.reason ?? null };
+  // `asked` asks the forge rule of the agent gate hook, with the row's facts, as the hook gives them to it.
+  const asked = () => issueForgeDenial({ session_id: SESSION, cwd: fx.work, ...bash(EXACT) }, NAMES, { mark: fx.mark, cwd: fx.work, issue: own, roots: () => [root], fold: (each) => each })?.reason ?? null;
+  return { ...fx, git, head, commit, reset, moveBase, own, push, asked };
 };
 const EDIT = [INDEX, '100644', NINE.with(0, 'edited\n').join('')];
 
@@ -429,7 +431,8 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   assert.equal(fx.push(path.join(fx.work, '.aidrian')), null, 'an edit of both');
   // A whole list git cut at its buffer, which spawnSync answers with status 0 and an error, is no list: the push refuses.
   const plainPush = { ...fx.own(), overlay: null, policyFiles: [], startLoaded: null };
-  // More paths than the guards can judge within their time budget, which the loop asks every 1,000: refused whole.
+  // More paths than the guards can judge within their time budget, which the loop asks every 1,000 and once more before a
+  // pass: refused whole, by the committed list and by the overlay's own.
   let listed = false;
   let tick = 0;
   const clock = performance.now;
@@ -437,12 +440,15 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   const start = 1e9;
   performance.now = () => (listed ? start + (tick += 1) : 0);
   stubGitSpawn((program, args, options) => {
-    if (!(args.includes('--name-only') && args.some((each) => each.endsWith('...HEAD')))) return spawnSync(program, args, options);
+    if (!(args.includes('--name-only') && (args.some((each) => each.endsWith('...HEAD')) || args.includes(fx.head)))) return spawnSync(program, args, options);
     listed = true;
     return { status: 0, signal: null, stdout: Array.from({ length: 1500 }, (_, at) => `src/${at}.js\0`).join(''), stderr: '' };
   });
   try {
-    assert.equal(withinDeadline(start + 1, () => fx.push(fx.work, plainPush)), 'it pushes commits that change 1500 paths, more than the guards can judge within their time budget, so the push is refused, never judged in part');
+    const past = 'it pushes commits that change 1500 paths, more than the guards can judge within their time budget, so the push is refused, never judged in part';
+    assert.equal(withinDeadline(start + 2, () => fx.push(fx.work, plainPush)), past);
+    [listed, tick] = [false, 0];
+    assert.equal(withinDeadline(start + 2, () => fx.push()), past, 'the overlay\'s scan');
   } finally {
     stubGitSpawn();
     performance.now = clock;
@@ -455,7 +461,7 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
       stubGitSpawn();
     }
   }
-  // As the hook asks it, with the row's own lists: both edits pass, and an always doc beside them does not.
+  // As the forge rule asks it, with the row's own lists: both edits pass, and an always doc beside them does not.
   fx.commit([ALWAYS, '100644', 'edited\n']);
   assert.match(fx.asked(), /: it pushes commits that change 1 host config or instruction file, .*\(docs\/rules\.md differs/u);
   fx.reset();
@@ -515,6 +521,11 @@ test('an edit of a knowledge index lifts the push guard for no other file: an in
   execFileSync('git', ['init', '-q', path.join(fx.work, '.GITHUB')], { stdio: 'pipe' });
   assert.match(fx.push(fx.work, plain) ?? '', /^it pushes from a checkout that holds an uncommitted change to "\.GITHUB" is "\.github" in another spelling/u);
   rmSync(path.join(fx.work, '.GITHUB'), { recursive: true });
+  // Another spelling of a guarded path that is no workflow folder: the push guard leaves it to the next start.
+  mkdirSync(path.join(fx.work, '.github', 'in\ufb06ructions'), { recursive: true });
+  writeFileSync(path.join(fx.work, '.github', 'in\ufb06ructions', 'x.md'), 'rules\n');
+  assert.equal(fx.push(fx.work, plain), null);
+  rmSync(path.join(fx.work, '.github'), { recursive: true });
   assert.deepEqual(['.github/work\ufb02ows/ci.yml', '.GitHub', '.github/workflows', '.github/other.yml', 'x/.github/workflows/ci.yml'].map(workflowPaths().counts), [true, true, true, false, false], 'the forge\'s workflow folder, by its fold');
   // A link in their folder's place, and a submodule, whose own `ignore` setting hides no entry of it from the guard.
   fx.reset();

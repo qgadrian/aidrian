@@ -134,9 +134,9 @@ const [PATH_DEPTH, PATH_BYTES] = [64, 4096];
 // The one spelling rule, for `names`, the paths the harness holds by their exact spelling, a folder's with a trailing
 // `/`: (file) => why `file` is one of them in another spelling, or null. That is when its fold (foldPath) is a name's,
 // a file's in a folder name, or a folder's that holds a name, and either its own spelling is none of them or two
-// spellings share that fold; or when it is a guarded path (isGuardedPath) by its fold alone. A disk that ignores case or
+// spellings share that fold; or, unless `guarded` is false, when it is a guarded path (isGuardedPath) by its fold alone. A disk that ignores case or
 // Unicode form reads it as that name, so the rule refuses each such path wherever the harness reads one.
-export function spellingRule(names) {
+export function spellingRule(names, { guarded = true } = {}) {
   const [files, folders, parents] = [new Map(), new Map(), new Map()];
   const add = (map, exact) => map.set(foldPath(exact), new Set([...(map.get(foldPath(exact)) ?? []), exact]));
   for (const name of names) {
@@ -157,7 +157,7 @@ export function spellingRule(names) {
     const at = other(files, folded, file) ?? other(parents, folded, file) ?? other(folders, folded, file)
       ?? parts.slice(0, -1).map((_, end) => other(folders, foldPath(parts.slice(0, end + 1).join('/')), parts.slice(0, end + 1).join('/'))).find(Boolean);
     if (at) return line(file, at);
-    return isGuardedPath(file) && !GUARDED_PATHS.test(file) ? `${JSON.stringify(file).slice(0, 200)} is a guarded path in another spelling, which a disk that ignores case or Unicode form reads as one` : null;
+    return guarded && isGuardedPath(file) && !GUARDED_PATHS.test(file) ? `${JSON.stringify(file).slice(0, 200)} is a guarded path in another spelling, which a disk that ignores case or Unicode form reads as one` : null;
   };
 }
 

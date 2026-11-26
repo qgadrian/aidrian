@@ -1140,7 +1140,7 @@ test('a folder the pointer file names holds policy too: a change to the config.j
     const result = run(t, r, ['7'], onStack(stacked, file));
     assert.deepEqual([result.code, result.out[0]], [1, readLine(file)], file);
   }
-  assert.equal(pathsProblem({ files: [{ path: 'Tools/Policy/config.json', changeType: 'MODIFIED' }], changedFiles: 1 }, '', { policyFiles: ['tools/policy/config.json'] }), 'it changes "Tools/Policy/config.json" is "tools/policy/config.json" in another spelling, which a disk that ignores case or Unicode form reads as the same path', 'refused, by the spelling rule first');
+  assert.equal(pathsProblem({ files: [{ path: 'Tools/Policy/config.json', changeType: 'MODIFIED' }], changedFiles: 1 }, '', { policyFiles: ['tools/policy/config.json'] }), 'it changes "Tools/Policy/config.json", a file the gate reads its policy from');
 });
 
 // The view of a pull request of 110 files, as gh gives it: the first 100, and the count.
@@ -1577,28 +1577,20 @@ test('the knowledge folder a pointer file names is guarded whole, and a project 
   assert.deepEqual(reasonOf(t, r, changes(moved, 'harness/notes.md')), [0, null], 'beside the folder');
   // Where that folder, or one that holds it or an always doc, is now a link, a file, or a submodule.
   const loaded = { docs: ['apps/web/docs/rules.md'], folder: 'harness/knowledge' };
-  assert.equal(pathsProblem({ files: [{ path: 'Harness', changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: loaded }), 'it changes "Harness" is "harness" in another spelling, which a disk that ignores case or Unicode form reads as the same path', 'another spelling, by the spelling rule first');
-  for (const file of ['harness/knowledge', 'harness', 'apps', 'apps/web/docs']) {
+  for (const file of ['harness/knowledge', 'harness', 'Harness', 'apps', 'apps/web/docs']) {
     assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: loaded }), `it changes ${JSON.stringify(file)}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`);
   }
   // By the fold of a path, as a disk that ignores case or Unicode form reads it: a long s, a Kelvin sign, a sharp s, a ligature, and each form of an accent.
   const spelled = { docs: ['docs/stra\u00dfe.md', 'docs/caf\u00e9.md', 'docs/rules.md', 'docs/fig.md'], folder: 'ma\u00df/knowledge' };
   for (const file of ['docs/STRASSE.md', 'docs/cafe\u0301.md', 'docs/CAFE\u0301.md', 'docs/rule\u017f.md', 'docs/\ufb01g.md', 'ma\u00df/\u212anowledge/x.json', 'MASS/knowledge/x.json', 'mass/knowledge', 'MASS']) {
-    assert.match(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: spelled }) ?? '', /the start hook loads|in another spelling, which a disk/u, file);
+    assert.match(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: spelled }) ?? '', /the start hook loads/u, file);
   }
   for (const file of ['docs/strase.md', 'docs/cafe.md', 'docs/g.md']) assert.equal(pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', { startDocs: spelled }), null, file);
   for (const file of ['.AIDRIAN.json', 'x/.aidrian/con\ufb01g.json', 'harne\u017f\u017f/CON\ufb01G.json', 'harne\u00df/config.json']) assert.equal(isPolicyPath(file, ['harness/config.json']), true, file);
   const one = (file, options) => pathsProblem({ files: [{ path: file, changeType: 'ADDED' }], changedFiles: 1 }, '', options);
-  // Another spelling of a name the gate holds refuses on every setting, both lifts included.
-  for (const lifts of [{}, { includeGuardedPaths: true }, { includeGuardedPaths: true, includePolicyFiles: true }]) {
-    assert.equal(one('docs/RULES.md', { ...lifts, startDocs: { docs: ['docs/rules.md'], folder: '.aidrian/knowledge' } }), 'it changes "docs/RULES.md" is "docs/rules.md" in another spelling, which a disk that ignores case or Unicode form reads as the same path', JSON.stringify(lifts));
-    assert.match(one('HARNESS/config.json', { ...lifts, policyFiles: ['harness/config.json'] }) ?? '', /^it changes "HARNESS\/config\.json" is "harness\/config\.json" in another spelling/u, JSON.stringify(lifts));
-    assert.match(one('.github/work\ufb02ows/ci.yml', lifts) ?? '', /^it changes "\.github\/work\ufb02ows\/ci\.yml" is a guarded path in another spelling/u, JSON.stringify(lifts));
-  }
-  assert.equal(one('docs/rules.md', { includeGuardedPaths: true, startDocs: { docs: ['docs/rules.md'], folder: '.aidrian/knowledge' } }), null, 'its own spelling, under the lift');
-  assert.match(one('.github/work\ufb02ows/ci.yml') ?? '', /^it changes "\.github\/work\ufb02ows\/ci\.yml" is a guarded path in another spelling/u, 'a ligature in the workflow folder');
+  assert.match(one('.github/work\ufb02ows/ci.yml') ?? '', /which instructs AI sessions, or decides CI's verdict/u, 'a ligature in the workflow folder');
   for (const [file, policy] of [['harne\u00df/config.json', 'harness/config.json'], ['STRA\u1e9eE/config.json', 'stra\u00dfe/config.json']]) {
-    for (const includeGuardedPaths of [false, true]) assert.equal(one(file, { policyFiles: [policy], includeGuardedPaths }), `it changes ${JSON.stringify(file)} is ${JSON.stringify(policy)} in another spelling, which a disk that ignores case or Unicode form reads as the same path`, file);
+    for (const includeGuardedPaths of [false, true]) assert.equal(one(file, { policyFiles: [policy], includeGuardedPaths }), `it changes ${JSON.stringify(file)}, a file the gate reads its policy from`, file);
   }
   assert.match(one('x/.aidrian/con\ufb01g.json', { includeGuardedPaths: true }) ?? '', /a policy file of aidrian/u, 'a policy name, with the key on');
   assert.equal(movedPointer([{ path: 'harne\u00df/.aidrian.json' }], 'harness/')?.path, 'harne\u00df/.aidrian.json');

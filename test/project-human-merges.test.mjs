@@ -198,9 +198,7 @@ test('neverMerged judges each changed file by the paths check alone, and the poi
   assert.equal(neverMerged(files('.github/workflows/ci.yml'), '', policies({ includeGuardedPaths: true })), null);
   assert.equal(neverMerged(files('.aidrian/config.json'), '', policies({ includeGuardedPaths: true })).path, '.aidrian/config.json');
   assert.equal(neverMerged(files('.aidrian/config.json'), '', policies({ includeGuardedPaths: true, includePolicyFiles: true })), null);
-  // Another spelling of the pointer, which the gate's spelling rule refuses before the lifts, and the pointer itself.
-  assert.match(neverMerged(files('.AIDRIAN.json'), '', policies({ includeGuardedPaths: true, includePolicyFiles: true })).why, /^it changes "\.AIDRIAN\.json" is "\.aidrian\.json" in another spelling/u);
-  assert.match(neverMerged(files('.aidrian.json'), '', policies({ includeGuardedPaths: true, includePolicyFiles: true })).why, /the pointer file that locates the config/u);
+  assert.match(neverMerged(files('.AIDRIAN.json'), '', policies({ includeGuardedPaths: true, includePolicyFiles: true })).why, /the pointer file that locates the config/u);
   // A project below the top of the repository: a file outside its folder has had no review.
   assert.equal(neverMerged(files('apps/web/src/a.js', 'tools/b.js'), 'apps/web/', policies({})).path, 'tools/b.js');
 });

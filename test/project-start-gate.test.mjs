@@ -1028,7 +1028,7 @@ test('policyFilesAt reads a nested project\'s pointer from the whole tree, and r
     const other = git('commit-tree', '-m', 'another spelling', git('write-tree').trim()).trim();
     assert.equal(startDocsAt(app, other, 'app/harness/config.json', 'app/'), `${spelled} at the base tip ${other.slice(0, 7)} is app/harness/knowledge in another spelling, which a disk may read as the same folder`);
   }
-  // A start keeps the always docs whole in its row, so the tip may name at most 64 of them, in at most 16 KiB of JSON.
+  // A start keeps the always docs whole in its row, so the tip may name at most 16 of them, in at most 4 KiB of UTF-8 JSON.
   const named = (docs) => {
     writeFileSync(path.join(top, 'index.json'), JSON.stringify({ dir: 'app/docs', always: docs }));
     git('read-tree', tip);
@@ -1037,13 +1037,15 @@ test('policyFilesAt reads a nested project\'s pointer from the whole tree, and r
     return [commit, startDocsAt(app, commit, 'app/harness/config.json', 'app/')];
   };
   const many = (count, length = 8) => Array.from({ length: count }, (_, at) => `${String(at).padStart(length, 'd')}.md`);
-  assert.equal(named(many(64))[1].docs.length, 64, 'at the bound');
-  const [over, tooMany] = named(many(65));
-  assert.equal(tooMany, `the knowledge indexes at the base tip ${over.slice(0, 7)} name 65 always docs, and a start keeps at most 64`);
+  assert.equal(named(many(16))[1].docs.length, 16, 'at the bound');
+  const [over, tooMany] = named(many(17));
+  assert.equal(tooMany, `the knowledge indexes at the base tip ${over.slice(0, 7)} name 17 always docs, and a start keeps at most 16`);
   assert.match(startUnreadable(tooMany), /^the default branch's knowledge cannot say which docs the start hook loads into every session \(/u);
-  const [long, tooLong] = named(many(10, 1700));
-  assert.equal(tooLong, `the always docs the knowledge indexes at the base tip ${long.slice(0, 7)} name take more than 16384 bytes, which a start keeps at most`);
-  assert.equal(named(many(9, 1700))[1].docs.length, 9, 'under the bytes');
+  // Counted in UTF-8 bytes: two names of 1,020 two-byte letters take fewer than 4,096 characters, and more bytes.
+  const accented = (length) => [`${'\u00e9'.repeat(length)}.md`, `${'\u00e9'.repeat(length - 1)}a.md`];
+  const [long, tooLong] = named(accented(1020));
+  assert.equal(tooLong, `the always docs the knowledge indexes at the base tip ${long.slice(0, 7)} name take more than 4096 bytes, which a start keeps at most`);
+  assert.equal(named(accented(1010))[1].docs.length, 2, 'under the bytes');
   // A link in another spelling of a folder that holds the knowledge folder, beside it, refuses a start on existing work.
   git('read-tree', tip);
   git('update-index', '--add', '--cacheinfo', `120000,${git('rev-parse', `${tip}:app/.aidrian.json`).trim()},app/HARNESS`);

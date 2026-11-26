@@ -701,11 +701,12 @@ export function startDocsAt(root, tip, configFile, prefix) {
   }
   // A bound on what a start row keeps of them, whole.
   if (docs.length > ALWAYS_CAP) return `the knowledge indexes at the base tip ${tip.slice(0, 7)} name ${docs.length} always docs, and a start keeps at most ${ALWAYS_CAP}`;
-  if (JSON.stringify(docs).length > ALWAYS_BYTES) return `the always docs the knowledge indexes at the base tip ${tip.slice(0, 7)} name take more than ${ALWAYS_BYTES} bytes, which a start keeps at most`;
+  if (Buffer.byteLength(JSON.stringify(docs)) > ALWAYS_BYTES) return `the always docs the knowledge indexes at the base tip ${tip.slice(0, 7)} name take more than ${ALWAYS_BYTES} bytes, which a start keeps at most`;
   return { docs, folder };
 }
-// The most always docs, and the most bytes of their list as JSON, a start on existing work keeps in its row.
-const [ALWAYS_CAP, ALWAYS_BYTES] = [64, 16 * 1024];
+// The most always docs, and the most UTF-8 bytes of their list as JSON, a start on existing work keeps in its row, so
+// the ledger's copies stay small.
+const [ALWAYS_CAP, ALWAYS_BYTES] = [16, 4 * 1024];
 
 // The names a start on existing work holds by their exact spelling (project.mjs spellingRule), from the base tip
 // `tip`, read in `root`: the pointer and config.json `policyFiles` names (policyFilesAt), what the start hook loads (`startLoaded`), the

@@ -9,7 +9,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { DEFAULTS, loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { findProject, foldPath, GUARDED_PATHS, isGuardedPath, spellingProblem, knowledgeIn, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
+import { findProject, foldPath, GUARDED_PATHS, isGuardedPath, spellingProblem, spellingRule, knowledgeIn, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -765,6 +765,7 @@ test('spellingProblem refuses a path that is a held name, a file in a held folde
   for (const file of ['.aidrian.json', 'docs/rules.md', 'docs', 'docs/other.md', 'DOCS/other.md', '.aidrian/knowledge/x.json', '.github/workflows/ci.yml', '.GITHUB/ISSUE_TEMPLATE/a.md', 'src/a.js']) assert.equal(spellingProblem(file, names), null, file);
   // A guarded path by its fold alone, and two spellings of one name the harness holds.
   assert.match(spellingProblem('.github/in\ufb06ructions/x.md', []) ?? '', /is a guarded path in another spelling/u);
+  assert.equal(spellingRule([], { guarded: false })('.github/in\ufb06ructions/x.md'), null, 'unless the rule leaves that clause out, as the push guard does');
   assert.equal(spellingProblem('CLAUDE.md', ['CLAUDE.md']), null);
   assert.match(spellingProblem('CLAUDE.md', ['CLAUDE.md', 'claude.md']) ?? '', /^"CLAUDE\.md" is "claude\.md" in another spelling/u);
   // A path past the rule's bounds is refused before it is folded, whatever names it holds.

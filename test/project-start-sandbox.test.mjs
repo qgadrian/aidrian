@@ -695,7 +695,17 @@ test('a start halts when a folder product feedback keeps cannot be made a plain 
   const elsewhere = mkdtempSync(path.join(tmpdir(), 'aidrian-feedback-elsewhere-'));
   t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
   symlinkSync(elsewhere, path.join(fx.state, 'product-feedback'));
-  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /the folder product feedback keeps, .* cannot be made safely before the session's sandbox denies it/u);
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /the folder product feedback keeps, .*product-feedback, is a link/u);
+});
+
+test('a start halts when a folder product feedback keeps is a link to a sibling inside the state folder', (t) => {
+  // The sandbox would deny only the sibling, and leave the link a session could replace with a folder of forged records.
+  for (const name of ['product-feedback', 'audits']) {
+    const fx = runFixture(t);
+    mkdirSync(path.join(fx.state, `${name}-real`));
+    symlinkSync(path.join(fx.state, `${name}-real`), path.join(fx.state, name));
+    halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), new RegExp(`the folder product feedback keeps, .*${name}, is a link`, 'u'));
+  }
 });
 
 test('a host whose project start is not confined halts', (t) => {

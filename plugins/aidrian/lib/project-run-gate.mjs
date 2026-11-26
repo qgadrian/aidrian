@@ -169,6 +169,15 @@ export function guardedStore({ env, home }) {
 // cannot be made so, as through a link or in a folder another user may write.
 export function guardedFeedback(state, { env }) {
   const real = (folder) => resolvedPath(folder) ?? path.resolve(folder);
+  // Each folder's own entry, in its parent's real path, before feedbackHeld resolves it: a link there would have the
+  // sandbox deny only its target, and leave the link a session could replace with a folder of its own.
+  for (const entry of [path.join(real(state), 'product-feedback'), path.join(real(state), 'audits'), path.join(real(stateRoot(env)), 'feedback-folders')]) {
+    let linked = false;
+    try {
+      linked = lstatSync(entry).isSymbolicLink();
+    } catch {}
+    if (linked) return { problem: `the folder product feedback keeps, ${entry}, is a link, which the session's sandbox cannot deny in place: make it a plain folder, then start again` };
+  }
   const [records, audits, notes] = feedbackHeld(state, { env });
   for (const [folder, root] of [[records, real(state)], [audits, real(state)], [notes, real(stateRoot(env))]]) {
     const unsafe = (why) => ({ problem: `the folder product feedback keeps, ${folder}, cannot be made safely before the session's sandbox denies it (${why}): fix that, then start again` });
@@ -903,9 +912,11 @@ function launchStart(context, place) {
   // is in the row for the audit alone: nothing reads it back.
   const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20) } : {};
   // `machine`: this machine's auto-merge switch as the main checkout reads it, which a confined session, denied that
-  // checkout, reads in its place (attempt-clone.mjs confinedMachine): "unset" only for an untracked local file.
+  // checkout, reads in its place (attempt-clone.mjs confinedMachine): "unset" only for an untracked local file. With it,
+  // the machine's own review.productFeedback.auto when it sets one, so the feedback check there honours its opt-out.
   const local = context.project.localAutoMerge;
-  const machine = { autoMerge: local === 'unset' && !mayFollowTeamDefault(context.project) ? 'off' : local };
+  const feedbackAuto = context.project.localFeedbackAuto;
+  const machine = { autoMerge: local === 'unset' && !mayFollowTeamDefault(context.project) ? 'off' : local, ...(typeof feedbackAuto === 'boolean' ? { feedbackAuto } : {}) };
   const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: policy.issueHours, machine, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}), ...(head ? { head } : {}), ...(kept?.took ? { took: kept.took } : {}), ...overlaid, ...(decision?.sha256 ? { decision: decision.sha256 } : {}) };
   let proof = null;
   // Why the write-ahead row was refused under the ledger's lock, when the order or the cap moved since the start read it.

@@ -873,6 +873,7 @@ The session writes none of it: its sandbox grants no write to `<state>/product-f
 On Claude Code its sandbox also denies writes to those three folders, to sandboxed commands and the file tools,
 even where the grant of a temporary folder, such as `/tmp`, holds a state root placed inside it.
 The start makes each of the three first, owner-only, as it does the sign-off store, so each deny names a folder that is there at launch.
+A start where one of them is a link halts, since the sandbox would deny only its target and leave the link a session could replace.
 Codex's start takes no deny list, so there a state root inside a temporary folder its sandbox writes, `/tmp` or `$TMPDIR`, halts the start.
 It starts once `exclude_slash_tmp` or `exclude_tmpdir_env_var` is set true under `[sandbox_workspace_write]`, or the state root moves out
 ([Codex's project start](providers/codex.md#project-start)).
@@ -2341,7 +2342,9 @@ state folder the project does not name, reads every switch off. A confined sessi
 checkout, so its own commands, such as `aidrian pr auto-merge` and `stop-action`, cannot read that link: for them the
 auto-merge switch is the one the start row records as `machine.autoMerge`, which the driver reads in the main checkout
 as `aidrian pr auto-merge` reads it there, `unset` only for a local file git does not track, which then follows a team
-default of `"on"`. It holds only while the main checkout is denied to the reading process and the session's own mark
+default of `"on"`.
+The start row records the main checkout's `review.productFeedback.auto` as `machine.feedbackAuto` when it sets one, which those commands read the same way.
+It holds only while the main checkout is denied to the reading process and the session's own mark
 names the run, the issue, the main checkout, and the clone as the folder its start began in; every other switch still
 reads off there. The merge guard, a hook outside the sandbox, still reads the main checkout's own switch at the merge,
 so a switch turned off after the start stops the merge.

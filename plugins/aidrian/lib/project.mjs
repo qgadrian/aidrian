@@ -357,7 +357,7 @@ function safeRoots(root, read) {
 // switch a confined session's start row recorded (attempt-clone.mjs confinedMachine). `read` is readLocal's.
 function cloneLocal(roots, checkouts, problems, unreadable, read) {
   if (!roots?.attempt) return readLocal(checkouts, problems, unreadable, read);
-  if (roots.unlinked) return { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...OFF_SWITCHES, ...(roots.attempt.machine ? { autoMerge: roots.attempt.machine.autoMerge } : {}) };
+  if (roots.unlinked) return { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...OFF_SWITCHES, ...(roots.attempt.machine ? { autoMerge: roots.attempt.machine.autoMerge, feedbackAuto: roots.attempt.machine.feedbackAuto } : {}) };
   return readLocal([checkouts.at(-1)], problems, unreadable, read);
 }
 

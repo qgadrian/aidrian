@@ -42,8 +42,8 @@ function identities(round) {
 
 // The Human's entries of `other` that `base` lacks, added to `base`. A flow's sign-off and an overrule or acceptance of one
 // invariant on one head keep the later of the two; the other lists gain each entry they do not hold. With `lineage`, as
-// for keepRecorded, the caller has told the two copies of one review already.
-export function keepHuman(base, other, { lineage = false } = {}) {
+// for keepRecorded, the caller has told the two copies of one review already; `extensions` false leaves those alone.
+export function keepHuman(base, other, { lineage = false, extensions = true } = {}) {
   if (!isObject(base) || !isObject(other) || (!lineage && !sameReview(base, other))) return base;
   if (!isObject(base.signoffs)) base.signoffs = {};
   for (const [flow, signoff] of Object.entries(isObject(other.signoffs) ? other.signoffs : {})) {
@@ -53,11 +53,11 @@ export function keepHuman(base, other, { lineage = false } = {}) {
   keepLatest(base, other, 'acceptances', ['flow', 'invariant', 'head']);
   keepEach(base, other, 'waivers', ['head', 'kind', 'at']);
   keepEach(base, other, 'delegations', ['head', 'kind', 'at']);
-  // An extension both copies hold is one check by its source, reviewer, round, and time, not its head, which a step
-  // moves in place when it reads the check again on a new head (extension.mjs revalidate). Of the two, the one decided
-  // or read again last counts: a judge's verdict or the Human's answer recorded while a review step held the record it
-  // read is not undone by the step's copy of the waiting check, nor a check the step moved by an older copy.
-  keepDecided(base, other, 'extensions', ['source', 'reviewer', 'round', 'at']);
+  // Accepted limit: an extension both copies hold keeps `base`'s decision fields, so one the other copy approved may be
+  // asked again. Only two copies a mixed set of plugin versions let grow apart are merged, which is rare, and a second
+  // ask costs the Human one answer, never a grant they did not give. A write that takes in another command's write
+  // (state.mjs writeState) leaves the extensions to its own rule: `extensions` false.
+  if (extensions) keepEach(base, other, 'extensions', ['source', 'round', 'head', 'at']);
   const overrides = Array.isArray(other.overrides) ? other.overrides.filter((line) => typeof line === 'string') : [];
   if (overrides.length) base.overrides = [...new Set([...(Array.isArray(base.overrides) ? base.overrides : []), ...overrides])];
   keepStops(base, other);
@@ -138,20 +138,6 @@ function keepLatest(base, other, key, keys) {
   for (const entry of theirs) {
     const at = keyOf(entry, keys);
     if (!out.has(at) || later(out.get(at), entry)) out.set(at, { ...entry });
-  }
-  base[key] = inTimeOrder([...out.values()]);
-}
-
-// `base[key]` with each entry of `other[key]` whose `keys` it does not hold, and, where both hold one, `other`'s when it
-// was decided or read again later (`decided_at`, `revalidated_at`); in time order (inTimeOrder).
-function keepDecided(base, other, key, keys) {
-  const theirs = list(other, key);
-  if (!theirs.length) return;
-  const touched = (entry) => [entry.decided_at, entry.revalidated_at].map((at) => String(at ?? '')).sort().at(-1);
-  const out = new Map(list(base, key).map((entry) => [keyOf(entry, keys), entry]));
-  for (const entry of theirs) {
-    const at = keyOf(entry, keys);
-    if (!out.has(at) || touched(entry) > touched(out.get(at))) out.set(at, structuredClone(entry));
   }
   base[key] = inTimeOrder([...out.values()]);
 }

@@ -274,9 +274,9 @@ function settle({ project, root, repo, n, state, deletes }, result) {
   const removed = removedPosts(deletes);
   state.pending = mergePending(local?.pending, state.pending);
   mergeIndex(state, local, removed);
-  // The outcome is set from the very read the write merges (state.mjs writeState): a pass result recorded while the
-  // step ran is one the step decided without, so its outcome is not saved, and the step asks to run again, which
-  // decides from the record with that result in it.
+  // The outcome is set from the very read the write merges (state.mjs writeState): a pass result or an extension check
+  // another command recorded while the step ran is one the step decided without, so its outcome is not saved, and the
+  // step asks to run again, which decides from the record with it.
   const decide = (taken) => {
     if (taken.length && !UNDECIDED.has(result.status)) retryInstead(result, taken);
     noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
@@ -290,14 +290,15 @@ const UNDECIDED = new Set(['running', 'incomplete', 'unsatisfied', 'too_large', 
 // What a result keeps when it becomes the retry: where the step stood, and what it already posted.
 const KEPT = ['pr', 'repo', 'head', 'base', 'depth', 'round', 'max_rounds', 'engine', 'inline_review', 'replies', 'summary_error'];
 
-// `result`, in place, as the step's retry once `passes` recorded a result while it ran (state.mjs takeRecorded):
-// `incomplete` with `retry_recommended`, so no merge counts it as finished and no owed review is answered by it.
-export function retryInstead(result, passes) {
+// `result`, in place, as the step's retry once another command recorded `taken` while it ran, pass results by their ids
+// and `extensions` for the extension checks (state.mjs takeRecorded): `incomplete` with `retry_recommended`, so no merge
+// counts it as finished and no owed review is answered by it.
+export function retryInstead(result, taken) {
   const kept = Object.fromEntries(KEPT.filter((key) => result[key] !== undefined).map((key) => [key, result[key]]));
   for (const key of Object.keys(result)) delete result[key];
   return Object.assign(result, kept, {
-    status: 'incomplete', reason: `${passes.join(', ')} recorded a result while the step ran, which the step decided without: run the step again`,
-    retry_recommended: true, recorded_meanwhile: passes,
+    status: 'incomplete', reason: `another command recorded ${taken.join(', ')} while the step ran, which the step decided without: run the step again`,
+    retry_recommended: true, recorded_meanwhile: taken,
   });
 }
 

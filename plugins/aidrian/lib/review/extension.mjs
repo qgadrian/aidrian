@@ -429,9 +429,6 @@ export function revalidate({ state, source, round, head, history, reviewer = nul
   const sig = signals(read);
   const before = entry.head;
   entry.head = head;
-  // When the check moved to this head, so a merge of two copies of the record keeps the one read again last
-  // (record-merge.mjs keepDecided).
-  entry.revalidated_at = now();
   entry.signals = compactSignals(sig);
   noteUnreviewed(entry, read.rounds?.at(-1), head);
   const decide = (status, by, reasons) => {

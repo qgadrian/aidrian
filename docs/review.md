@@ -363,11 +363,8 @@ repository it names, and moved to that repository's file by its next write; one 
 origin alone. When both files of one pull request exist, as when a session on an older plugin keeps writing the old name
 while a newer one writes the repository's file, and both are copies of one review (the same first round, which a quiet push moves to a new head without making it
 another review), the record is
-their merge: the newer of the two, with every Human entry of the other
-(sign-offs, overrules, acceptances, waivers, delegations, extensions, and stage sign-offs), each pass and round it lacks,
-its owed entries, and the higher id counter; of an extension check both hold, by its source, reviewer, round, and
-time, the one decided or read again on a new head last (`decided_at`, `revalidated_at`).
-Each merged list ends in time order, so an older waive the other copy holds
+their merge: the newer of the two, with every Human entry of the other (sign-offs, overrules, acceptances, waivers, delegations, extensions, and stage sign-offs), each pass and round it lacks,
+its owed entries, and the higher id counter. Each merged list ends in time order, so an older waive the other copy holds
 lands before a newer refuse, and the refuse still stands. A stage sign-off travels with its quota stop's choice: a signed or chosen stop
 only the other holds is added, the later choice of a stop both hold wins with its own sign-off, and a stop the newer one
 recorded again on that head, or let go as older than the latest ten, stays gone. The next write keeps that merge, past the old file's revision, before it removes
@@ -1878,24 +1875,24 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   The writer then takes that write in by the merge two record files get above, with its own record as the base, so its
   own changes stand: the Human entries, the owed entries, each pass recorded after its read, each finding index entry
   it lacks, what the index merge above keeps, and the higher id counter and revision, the floor of its own write.
-  An extension check both hold is one check by its source, reviewer, round, and time, not its head, which a step moves
-  when it reads the check again on a new head; the copy decided or read again last counts.
   Each pass result carries `at`, when it was recorded; of a pass both
-  hold, the one recorded last counts, on any head, as two writes one after the other would leave it. A pass in the
-  record it read that it dropped, such as a slice of a replaced packing, is not taken back.
-  An id the writer moved to a fresh one keeps its old id and mint mark in `moved_from`: a finding in a pass it takes
-  with that id and that mint mark is renamed to the fresh id, so no finding gets a second identity, and one with
-  another mint mark is another finding minted under the same id, left as it is with its own index entry.
+  hold, the one recorded last counts, on any head, as two writes one after the other would leave it, and a pass taken
+  is taken as written. A pass in the record it read that it dropped, such as a slice of a replaced packing, is not
+  taken back. The extension checks are the one exception to that merge: when the file's are not the ones the writer
+  read, the file's are kept whole, so a judge's verdict or the Human's answer recorded meanwhile stands over any change
+  of the writer's, such as a step reading a check again on a new head.
   So an `aidrian pr attest`, `aidrian pr signoff`, or `aidrian pr extend` that lands during a step of several minutes,
   such as a visual capture, is in the record after the step, with its findings.
   The review step sets its outcome from that same read, after the merge and before the write: when the merge took a
-  pass result, one the step decided without, it saves no finished outcome and returns `incomplete` with
-  `retry_recommended` and `recorded_meanwhile`, the passes, so no merge counts it as finished and no owed review is
-  answered by it, and the next step decides from the record with that result in it.
-  Two limits stay. The round evidence the step derived before its save (a round's open findings and the cap's cause)
-  is saved beside that retry until the next step on that head derives it again. A finding the step closed as not
-  reported while a concurrent `aidrian pr attest` reported it again keeps its closed index entry beside the open
-  finding in the pass; both fail closed, since the retry is no finished outcome.
+  pass result or the file's extension checks, which the step decided without, it saves no finished outcome and
+  returns `incomplete` with `retry_recommended` and `recorded_meanwhile` (the passes, and `extensions`), so no merge
+  counts it as finished and no owed review is answered by it, and the next step decides from the record with them,
+  reading the checks again from it.
+  Three limits stay, each failing closed. The round evidence the step derived before its save (a round's open findings
+  and the cap's cause) is saved beside that retry until the next step on that head derives it again. A finding the
+  step closed as not reported while a concurrent `aidrian pr attest` reported it again keeps its closed index entry
+  beside the open finding in the pass. A finding the step moved to a fresh id while another command recorded it under
+  the old id holds both ids, one more open finding.
   A write with no other write since its read writes what it holds.
   No lock spans the read and the write, so a write landing between them is still lost; that window is one write, not a
   step. Two writes that mint one id for different findings keep the first entry the writer holds.

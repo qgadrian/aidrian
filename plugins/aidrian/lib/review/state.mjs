@@ -490,7 +490,8 @@ const readFrom = new WeakMap();
 function noteRead(state, record) {
   if (!isObject(state)) return state;
   const first = Array.isArray(record?.rounds) && isObject(record.rounds[0]) ? [structuredClone(record.rounds[0])] : [];
-  readFrom.set(state, record ? { revision: record.revision ?? 0, updatedAt: record.updatedAt ?? null, rounds: first } : null);
+  const extensions = Array.isArray(record?.extensions) ? structuredClone(record.extensions) : [];
+  readFrom.set(state, record ? { revision: record.revision ?? 0, updatedAt: record.updatedAt ?? null, rounds: first, extensions } : null);
   return state;
 }
 
@@ -536,7 +537,8 @@ function absorb(base, other) {
 // review step that held its copy for minutes never loses an `attest`, a sign-off, or an extension recorded meanwhile.
 // `removed` names the posts this write deleted or found gone (delete.mjs removedPosts), which that merge never maps again.
 // `decide(taken)`, when given, runs after that merge and before the record is written, with the ids of the passes it
-// took, so the review step sets its outcome from the very read the write merged (run.mjs settle).
+// took and `extensions` when it took the file's extension checks, so the review step sets its outcome from the very read
+// the write merged (run.mjs settle).
 // One call reads each folder's roots, prefix, and remote URLs once (lib/git.mjs withGitFacts), or as the open call does.
 export function writeLocalState(project, state, options) {
   return withGitFacts(() => writeState(project, state, options));
@@ -575,18 +577,20 @@ function sinceRead(state, disk, read) {
 
 // Takes into `state` what another write of its file, `disk`, recorded since `state` was read (sinceRead; `read` is the
 // local record it was read from), by mergeRecords' rule for two copies of one review, with `state` as the base, so this
-// write's own changes stand: every Human entry `state` lacks (keepHuman), and of an extension both hold, the one decided
-// last; the owed entries (mergePending); the passes recorded after the read (keepRecorded), where a pass both hold
-// counts as recorded last, each finding in them that is a copy of one `state` moved to a fresh id (findings.mjs freshId,
-// which keeps the old id and mint mark in `moved_from`), by that id and mint mark both, under the fresh id and mint mark;
-// each finding index entry `state` lacks, such as one an `attest` minted, but a copy of a moved one; what `disk` closed,
-// marked, or mapped in the index (mergeIndex); and the higher id counter and revision, so the next write is past both.
-// A finding under a moved id with another mint mark is another finding minted under the same id: it is left as it is,
-// as below. A write with no other writer since its read writes what it holds. No entry of `state` is dropped, and no
-// open finding of `disk`. Then `decide(taken)` runs, with the ids of the passes taken, [] when none. Returns those ids.
+// write's own changes stand: every Human entry `state` lacks (keepHuman), the owed entries (mergePending), the passes
+// recorded after the read (keepRecorded), where a pass both hold counts as recorded last, each taken as written; each
+// finding index entry `state` lacks, such as one an `attest` minted; what `disk` closed, marked, or mapped in the index
+// (mergeIndex); and the higher id counter and revision, so the next write is past both. The extension checks are the
+// one exception: when the file's are not the ones `state` was read with (none, for a state no reader returned, such as
+// a new record's), the file's are kept whole, a judge's verdict or the Human's answer over any change of `state`'s, and `extensions` is
+// among the ids taken, so the review step saves the retry and its next step reads the checks again from the record.
+// A write with no other writer since its read writes what it holds. No entry of `state` is dropped, and no open
+// finding of `disk`. Then `decide(taken)` runs, with the ids of the passes taken and `extensions`, [] when none.
+// Returns those ids.
 // Accepted limits: no lock spans the read and the write, so a write landing between this read and the write below is
-// still lost, a window of one write's length, not a review step's minutes; and an id both minted for different findings
-// keeps `state`'s entry, as keepWork accepts.
+// still lost, a window of one write's length, not a review step's minutes; an id both minted for different findings
+// keeps `state`'s entry, as keepWork accepts; and a finding `state` moved to a fresh id (findings.mjs freshId) while
+// another command recorded it under the old one holds both ids, one more open finding, which fails closed.
 export function takeRecorded(state, disk, { removed = new Set(), read = undefined, decide = () => {} } = {}) {
   const taken = mergeSince(state, disk, removed, read);
   decide(taken);
@@ -596,24 +600,17 @@ export function takeRecorded(state, disk, { removed = new Set(), read = undefine
 function mergeSince(state, disk, removed, read) {
   const gate = sinceRead(state, disk, read);
   if (!gate) return [];
-  keepHuman(state, disk, { lineage: true });
+  keepHuman(state, disk, { lineage: true, extensions: false });
   state.pending = mergePending(disk.pending, state.pending);
   const taken = keepRecorded(state, disk, gate.since, { lineage: true });
-  const index = isObject(state.index) ? state.index : (state.index = {});
-  // Each id this write moved to a fresh one, with the mint mark it had: { entry, mint }.
-  const movedTo = new Map(Object.values(index).filter(isObject)
-    .flatMap((entry) => (Array.isArray(entry.moved_from) ? entry.moved_from : []).filter((from) => isFindingId(from?.id) && isMint(from.mint)).map((from) => [from.id, { entry, mint: from.mint }])));
-  const sameAsMoved = (id, mint) => movedTo.has(id) && movedTo.get(id).mint === mint;
-  const theirs = isObject(disk.index) ? disk.index : {};
-  for (const finding of recordedFindings({ passes: Object.fromEntries(taken.map((id) => [id, state.passes[id]])) })) {
-    if (sameAsMoved(finding.ruled_id, theirs[finding.ruled_id]?.mint)) finding.ruled_id = movedTo.get(finding.ruled_id).entry.id;
-    if (!sameAsMoved(finding.id, finding.mint)) continue;
-    const { entry } = movedTo.get(finding.id);
-    const aliases = [...new Set([...(Array.isArray(finding.aliases) ? finding.aliases : []), ...(Array.isArray(entry.aliases) ? entry.aliases : [])])];
-    Object.assign(finding, { id: entry.id, mint: entry.mint, aliases, moved_from: structuredClone(entry.moved_from) });
+  const theirs = Array.isArray(disk.extensions) ? disk.extensions : [];
+  if (JSON.stringify(theirs) !== JSON.stringify(Array.isArray(read?.extensions) ? read.extensions : [])) {
+    state.extensions = structuredClone(theirs);
+    taken.push('extensions');
   }
-  for (const [id, entry] of Object.entries(theirs)) {
-    if (isFindingId(id) && isObject(entry) && !isObject(index[id]) && !sameAsMoved(id, entry.mint)) index[id] = structuredClone(entry);
+  const index = isObject(state.index) ? state.index : (state.index = {});
+  for (const [id, entry] of Object.entries(isObject(disk.index) ? disk.index : {})) {
+    if (isFindingId(id) && isObject(entry) && !isObject(index[id])) index[id] = structuredClone(entry);
   }
   mergeIndex(state, disk, removed);
   if (Number.isSafeInteger(disk.idCounter) && disk.idCounter > (Number.isSafeInteger(state.idCounter) ? state.idCounter : 0)) state.idCounter = disk.idCounter;

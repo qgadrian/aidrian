@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { removedPosts } from '../plugins/aidrian/lib/review/delete.mjs';
-import { recordVerdict } from '../plugins/aidrian/lib/review/extension.mjs';
+import { recordHuman, recordVerdict } from '../plugins/aidrian/lib/review/extension.mjs';
 import { freshId, parseFindings, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { retryInstead } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, mergeIndex, noteOutcome, takeRecorded } from '../plugins/aidrian/lib/review/state.mjs';
@@ -148,11 +148,11 @@ test('an extend that lands while a review step runs is in the record the step sa
   takeRecorded(step, wrote((state) => recordVerdict(state, { verdict: 'extend', reason: 'the findings converge', current: HEAD, at: LATER })));
   const [check] = step.extensions;
   assert.deepEqual([step.extensions.length, check.status, check.judge?.verdict], [1, 'asking', 'extend'], 'the judge`s verdict, not the step`s stale copy of the waiting check');
-  // A step that decided the check after the judge, as a catch-up retiring it does, keeps its own decision.
+  // A step that changed the check too, as a catch-up retiring it does, takes the judge's word whole, and says so.
   const again = stepping();
   Object.assign(again.step.extensions[0], { status: 'stopped', by: 'catch_up', decided_at: '2026-11-25T10:09:00.000Z' });
-  takeRecorded(again.step, again.wrote((state) => recordVerdict(state, { verdict: 'extend', reason: 'r', current: HEAD, at: LATER })));
-  assert.equal(again.step.extensions[0].status, 'stopped');
+  assert.deepEqual(takeRecorded(again.step, again.wrote((state) => recordVerdict(state, { verdict: 'extend', reason: 'r', current: HEAD, at: LATER }))), ['extensions']);
+  assert.equal(again.step.extensions[0].status, 'asking');
 });
 
 test('a write with no other writer since its read takes nothing: a pass it dropped stays dropped', () => {
@@ -200,8 +200,8 @@ test('a pass both writers hold: the one recorded last counts, and an open findin
 });
 
 // The local record a write's state was read from, as the readers note it (state.mjs noteRead): its revision, write time,
-// and first round.
-const snapshot = (record) => ({ revision: record.revision, updatedAt: record.updatedAt, rounds: record.rounds.slice(0, 1) });
+// first round, and extension checks.
+const snapshot = (record) => ({ revision: record.revision, updatedAt: record.updatedAt, rounds: record.rounds.slice(0, 1), extensions: structuredClone(record.extensions ?? []) });
 
 test('a write during the first round: a record read with no round yet takes in what another command recorded', () => {
   const { step, wrote } = stepping();
@@ -238,26 +238,23 @@ test('a write is another command`s by the local record read, not by the revision
   assert.equal(own.passes[PASS], undefined);
 });
 
-test('a pass taken from another write names a finding this write moved to a fresh id by that id alone, after the index is rebuilt', () => {
-  const { step, wrote } = stepping();
+test('a finding this write moved to a fresh id while another command recorded it under the old id holds both ids, open: it fails closed', () => {
+  const { step } = stepping();
   attest([finding('One')])(step);
-  const read = structuredClone(step);
-  read.updatedAt = '2026-11-25T10:01:00.000Z';
+  const read = Object.assign(structuredClone(step), { updatedAt: '2026-11-25T10:01:00.000Z' });
   read.passes[PASS].at = '2026-11-25T10:00:30.000Z';
   const ours = structuredClone(read);
   // This write moved R1-1 to a fresh id, as when a comment already carries its marker.
   const fresh = freshId(ours, 'R1-1');
   assert.equal(fresh, 'R1-2');
-  // Another command recorded the pass again meanwhile, its finding still under R1-1.
+  // Another command recorded the pass again meanwhile, its finding still under R1-1: the pass is taken as written.
   const disk = structuredClone(read);
-  attest([finding('One'), finding('Two')])(disk);
+  attest([finding('One')])(disk);
   Object.assign(disk, { revision: read.revision + 1, updatedAt: new Date().toISOString() });
   assert.deepEqual(takeRecorded(ours, disk, { read: snapshot(read) }), [PASS]);
   recordFindings(ours, null, null);
-  const ids = ours.passes[PASS].list.map((each) => each.id);
-  assert.ok(ids.includes(fresh) && !ids.includes('R1-1'), ids.join(', '));
-  assert.equal(ours.index['R1-1'], undefined, 'no second identity for the moved finding');
-  assert.deepEqual([ours.index[fresh].mint, ours.passes[PASS].list.find((each) => each.id === fresh).mint], [ours.index[fresh].mint, ours.index[fresh].mint]);
+  assert.deepEqual(ours.passes[PASS].list.map((each) => each.id), ['R1-1']);
+  assert.deepEqual([ours.index['R1-1']?.state, ours.index[fresh]?.state], ['open', 'open'], 'one finding under two ids, both open: never fewer');
 });
 
 test('a step outcome decided without a pass recorded meanwhile is the retry, which answers no owed review', () => {
@@ -291,37 +288,37 @@ test('the write`s decide sees exactly what its merge took, after the merge and b
   assert.deepEqual([result.status, result.recorded_meanwhile], ['incomplete', [PASS]]);
 });
 
-test('a check a step moved to a new head is one check with the older copy, the one read again or decided last', () => {
+test('extension checks another command changed while the step ran are kept whole, and the step`s outcome is the retry', () => {
   const NEXT = 'e'.repeat(40);
-  const moved = (state, at) => Object.assign(state.extensions[0], { head: NEXT, revalidated_at: at });
-  // The step moved the check; a sign-off wrote the older copy meanwhile.
-  const first = stepping();
-  moved(first.step, '2026-11-25T10:02:00.000Z');
-  takeRecorded(first.step, first.wrote((state) => (state.signoffs.checkout = { head: HEAD, by: 'the Human', at: LATER })), { read: snapshot(first.step) });
-  assert.deepEqual(first.step.extensions.map((each) => [each.head, each.status]), [[NEXT, 'judging']], 'one check, on the head it moved to');
-  // The judge decided after the step moved the check: the verdict counts.
-  const second = stepping();
-  moved(second.step, '2026-11-25T10:01:00.000Z');
-  takeRecorded(second.step, second.wrote((state) => recordVerdict(state, { verdict: 'extend', reason: 'r', current: HEAD, at: LATER })), { read: snapshot(second.step) });
-  assert.deepEqual(second.step.extensions.map((each) => each.status), ['asking']);
-});
-
-test('a finding under an id this write moved, with another mint mark, is another finding: it keeps its id and its entry', () => {
-  const { step } = stepping();
-  attest([finding('One')])(step);
-  const read = Object.assign(structuredClone(step), { updatedAt: '2026-11-25T10:01:00.000Z' });
-  read.passes[PASS].at = '2026-11-25T10:00:30.000Z';
-  const ours = structuredClone(read);
-  const fresh = freshId(ours, 'R1-1');
-  assert.deepEqual(ours.index[fresh].moved_from, [{ id: 'R1-1', mint: read.index['R1-1'].mint }], 'the old id keeps its mint mark');
-  // Another command minted R1-1 for another finding.
-  const other = { id: 'R1-1', mint: 'bbbbbbbb', title: 'Other', severity: 'high', state: 'open', disposition: 'fix_now' };
-  const disk = structuredClone(read);
-  disk.passes[PASS] = { head: HEAD, reviewer: 'code-reviewer', findings: 1, open: 1, list: [other], at: new Date().toISOString() };
-  disk.index['R1-1'] = { ...other, pass: PASS };
-  Object.assign(disk, { revision: read.revision + 1, updatedAt: new Date().toISOString() });
-  assert.deepEqual(takeRecorded(ours, disk, { read: snapshot(read) }), [PASS]);
-  recordFindings(ours, null, null);
-  assert.deepEqual(ours.passes[PASS].list.map((each) => [each.id, each.mint]), [['R1-1', 'bbbbbbbb']], 'not renamed to the moved finding');
-  assert.deepEqual([ours.index['R1-1']?.mint, ours.index[fresh]?.mint], ['bbbbbbbb', ours.index[fresh].mint], 'its entry is kept beside the moved one');
+  // The step read a check waiting for the Human, then read it again on a new head (extension.mjs revalidate).
+  const asking = () => {
+    const s = stepping();
+    s.step.extensions[0].status = 'asking';
+    return { ...s, read: snapshot(s.step), move: () => Object.assign(s.step.extensions[0], { head: NEXT }) };
+  };
+  const decline = (state) => {
+    state.extensions[0].status = 'asking';
+    recordHuman(state, { answer: 'deny', by: 'the Human', current: HEAD, at: LATER });
+  };
+  const save = ({ step, read }, disk) => {
+    const result = { status: 'extension_ask', pr: 7, repo: 'o/r', head: NEXT };
+    const taken = takeRecorded(step, disk, { read, decide: (ids) => (ids.length && retryInstead(result, ids), noteOutcome(step, result)) });
+    return { taken, result };
+  };
+  // The Human declined before the step moved the check, and after it: either way the decline is kept.
+  for (const order of ['decline first', 'move first']) {
+    const s = asking();
+    let disk;
+    if (order === 'decline first') (disk = s.wrote(decline), s.move());
+    else (s.move(), disk = s.wrote(decline));
+    const { taken, result } = save(s, disk);
+    assert.deepEqual(taken, ['extensions'], order);
+    assert.deepEqual(s.step.extensions.map((each) => [each.status, each.head, each.human?.answer]), [['denied', HEAD, 'deny']], `${order}: the Human's decline, whole`);
+    assert.deepEqual([result.status, result.retry_recommended, s.step.outcome.status], ['incomplete', true, 'incomplete'], `${order}: the retry`);
+  }
+  // A file whose checks are the ones the step read keeps the step's own move, and its outcome.
+  const s = asking();
+  s.move();
+  const { taken, result } = save(s, s.wrote((state) => (state.extensions[0].status = 'asking', state.signoffs.checkout = { head: HEAD, by: 'the Human', at: LATER })));
+  assert.deepEqual([taken, s.step.extensions[0].head, result.status], [[], NEXT, 'extension_ask']);
 });

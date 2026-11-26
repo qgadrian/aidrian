@@ -25,7 +25,7 @@ import { forgeWorkflowFolders } from './forges/index.mjs';
 import { foldCase, foldPath, globParts, isWithin, joinSpelled } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
-import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
+import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders, storeMatch } from './handoff-guard.mjs';
 import { fileEditOf, instructionNames, nestedGlobs, nestedPathspecs, nestedProtected, opaqueShellCommand, protectedFile, protectedPaths, transcriptFolders } from './hosts/index.mjs';
 import { issueForgeDenial } from './issue-forge-guard.mjs';
 import { worktreesDir } from './project.mjs';
@@ -431,15 +431,56 @@ export function hostFileLinks(listing) {
   return links;
 }
 
+// A glob part as a regular expression over one name, any case: `*`, `?`, a bracket class, and braces. One it cannot
+// build matches every name.
+function partPattern(part) {
+  let text = '';
+  let depth = 0;
+  for (let i = 0; i < part.length; i += 1) {
+    const char = part[i];
+    if (char === '*') text += '[^/]*';
+    else if (char === '?') text += '[^/]';
+    else if (char === '[') {
+      const end = part.indexOf(']', i + 1);
+      if (end < 0) text += '\\[';
+      else {
+        text += `[${part.slice(i + 1, end).replace(/^!/u, '^').replace(/\\/gu, '\\\\')}]`;
+        i = end;
+      }
+    } else if (char === '{') {
+      depth += 1;
+      text += '(?:';
+    } else if (char === '}' && depth > 0) {
+      depth -= 1;
+      text += ')';
+    } else if (char === ',' && depth > 0) text += '|';
+    else text += char.replace(/[.*+?^${}()|[\]\\]/u, '\\$&');
+  }
+  try {
+    return new RegExp(`^${text}$`, 'iu');
+  } catch {
+    return /^/u;
+  }
+}
+
 // Whether the glob part or plain name `part` may name `name`, in any case: `*`, `?`, and a bracket class, by fs.mjs
 // globParts, whose steps grow with the name's length squared at most, so no part runs a guard out of time.
 const partMay = (part, name) => globParts(part, [], 'i').pattern.test(name);
 
-// The one compare of every refusal-side glob part, `part` against the name `name` at its depth: as written, or by both
-// their folds (foldPath), as a disk that folds full Unicode case reads them. Each part chooses for itself, and a fold
-// only adds names, as `[!ß]` names an `s` that its fold `[!ss]` does not. A part that holds a brace may name every
-// name, unparsed: a shell may expand it to any word, and a refusal fails closed.
-const foldMatch = (part, name) => /[{}]/u.test(part) || partMay(part, name) || partMay(foldPath(part), foldPath(name));
+// A part that holds a brace, which the fold leaves to the compare each guard made before it.
+const BRACE = /[{}]/u;
+
+// The one compare of the nested host-file and nested `.git` glob parts, `part` against the name `name` at its depth: as
+// written, or by both their folds (foldPath), as a disk that folds full Unicode case reads them. Each part chooses for
+// itself, and a fold only adds names, as `[!ß]` names an `s` that its fold `[!ss]` does not. A part that holds a brace
+// is compared as before the fold, unfolded: a glob part by partPattern, which reads braces, and a plain one in lower case.
+const foldMatch = (part, name) => (BRACE.test(part)
+  ? (GLOB_WORD.test(part) ? partPattern(part).test(name) : part.toLowerCase() === name)
+  : partMay(part, name) || partMay(foldPath(part), foldPath(name)));
+
+// The compare of a glob part with a refused entry's part at its depth (globDenial): foldMatch, but globReaches' own
+// compare for a part that holds a brace, as before the fold.
+const entryMatch = (part, name) => (BRACE.test(part) ? storeMatch(part, name) : foldMatch(part, name));
 
 // Whether a glob, by its folder `prefix` and its later parts `rest`, may reach a NESTED entry of one of the clones
 // `nested`: it lies in one and a later part may name a `.claude` folder, a glob whose own text starts with a dot or is a
@@ -1052,8 +1093,9 @@ function globDenial(globs, found, say) {
       const denial = say.meets(placeOf(spelling.prefix, start, found, { holds: false }), glob.text);
       if (denial) return denial;
       // A refused folder the glob's folder already lies in, and allows, is no entry it reaches.
-      // Each part as written or by its fold (foldMatch), so `.c*/ſkills` reaches `.claude/skills`.
-      const reached = found.refused.filter((entry) => !isWithin(entry.path, spelling.prefix)).find((entry) => globReaches(spelling, entry.path, foldMatch));
+      // Each part as written or by its fold (foldMatch), so `.c*/ſkills` reaches `.claude/skills`; a part that holds a brace
+      // keeps globReaches' own compare, as before the fold, which never backtracks on a long folder name.
+      const reached = found.refused.filter((entry) => !isWithin(entry.path, spelling.prefix)).find((entry) => globReaches(spelling, entry.path, entryMatch));
       if (reached) return say.refused(reached, glob.text);
       if (nestedGlob(spelling.prefix, spelling.rest, found.nested ?? [])) return say.refused(NESTED, glob.text);
       if (!found.limited && gitGlob(spelling.prefix, spelling.rest, found)) return say.refused({ what: GIT_ENTRY }, glob.text);

@@ -272,18 +272,20 @@ export function stateWorkFolders(state, { env, home, names = WORK_FOLDERS }) {
 // Why a project run cannot run `project`, or null: its folder lies below its repository's top. prepareAttempt clones the
 // main checkout's project folder, which git does only for a repository's top, and the guards of a start take the clone's
 // top for the folder its session works in, so `aidrian project init` refuses such a project before any run exists.
-// A root equal to the top git read when the project was found (project.mjs openProject `top`) is that top, with no git
-// call more: that read is trimmed, but a trimmed top never equals a folder inside the real one. Any other root is asked
-// once for git's own prefix from its checkout's top, `read(root)`, kept whole but for its one final newline: an empty
-// prefix is the top, any other is below it, and a failed read or one with no final newline refuses, since whether a
-// clone could be made is unknown. Before either, a folder name that starts or ends with whitespace or holds a newline, in
-// the root, the top, or the main checkout, refuses: git.mjs checkoutRoots trims its read and splits it by line, so the top
-// and the main checkout it maps to could be wrong, and a run would record and clone a folder that is not the project's.
+// git.mjs checkoutRoots trims its read and splits it by line, so the top and the main checkout it maps to could be wrong,
+// and a run would record and clone a folder that is not the project's: a folder name that starts or ends with whitespace
+// or holds a newline, in the root, the top, or the main checkout, refuses first. A project with no top (project.mjs
+// openProject `top`) refuses next: git's roots read gave no answer it could parse, so its main checkout is unknown. A
+// root equal to the top is that top, with no git call more: a trimmed top never equals a folder inside the real one. Any
+// other root is asked once for git's own prefix from its checkout's top, `read(root)`, kept whole but for its one final
+// newline: an empty prefix is the top, any other is below it, and a failed read or one with no final newline refuses,
+// since whether a clone could be made is unknown.
 export function belowTopProblem(project, read = (cwd) => gateGit(['rev-parse', '--show-prefix'], cwd)) {
   const root = resolvedPath(project.root) ?? project.root;
   const odd = [root, project.top, project.checkouts?.at(-1)].find((each) => typeof each === 'string' && each.split('/').some((part) => /^\s|\s$|\n/u.test(part)));
   if (odd !== undefined) return `the project's folder ${JSON.stringify(odd)} has a folder name that starts or ends with whitespace or holds a newline, which a project run does not support: rename or move that folder, then run init again`;
-  if (project.top && project.top === root) return null;
+  if (!project.top) return `git's repository folders for the project at ${project.root} could not be read, so its main checkout is unknown; a project run needs a project in a git checkout, with no folder name on its path, or its main checkout's, that starts or ends with whitespace or holds a newline`;
+  if (project.top === root) return null;
   const said = read(root);
   const out = said.status === 0 && typeof said.stdout === 'string' ? said.stdout : '';
   if (!out.endsWith('\n')) return `git cannot tell whether the project at ${project.root} lies at its repository's top (rev-parse --show-prefix: ${said.status === 0 ? 'no terminated line' : gitSaid(said)}), and a project run starts each issue in a clone of that top: run init from a project at the top of a repository git reads`;

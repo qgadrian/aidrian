@@ -1972,20 +1972,24 @@ test('project init starts a run for a session the host names, and records that s
   for (const [root, top, main] of [['/w/ topic/web', null, '/src/repo/web'], ['/w/a\nb/web', null, '/src/repo/web'], ['/w/topic', '/w/topic', '/src/repo\t']]) {
     assert.equal(`aidrian project init: ${belowTopProblem({ root, top, checkouts: [root, main] }, unread)}`, named(root === '/w/topic' ? main : root), JSON.stringify(root));
   }
-  // git's prefix decides any other root, read whole: an empty prefix is the top, any other below it, and an answer with
-  // no final newline, or a failed read, refuses.
+  // No top: git's roots read gave no answer it could parse, as for a newline in the main checkout's path, so its main
+  // checkout is unknown, and init refuses before any read.
+  assert.equal(`aidrian project init: ${belowTopProblem({ root: '/w/topic', top: null, checkouts: ['/w/topic'] }, unread)}`,
+    'aidrian project init: git\'s repository folders for the project at /w/topic could not be read, so its main checkout is unknown; a project run needs a project in a git checkout, with no folder name on its path, or its main checkout\'s, that starts or ends with whitespace or holds a newline');
+  // git's prefix decides any other root with a top, read whole: an empty prefix is the top, any other below it, and an
+  // answer with no final newline, or a failed read, refuses.
   const asked = [];
   const answer = (said) => (cwd) => {
     asked.push(cwd);
     return said;
   };
   assert.equal(belowTopProblem({ root: dir, top: dir }, () => assert.fail('the top it found needs no read')), null);
-  assert.equal(belowTopProblem({ root: '/r/repo', top: null }, answer({ status: 0, stdout: '\n' })), null);
+  assert.equal(belowTopProblem({ root: '/r/repo', top: '/r/linked' }, answer({ status: 0, stdout: '\n' })), null);
   assert.deepEqual(asked, ['/r/repo'], 'the root itself is asked');
-  assert.equal(belowTopProblem({ root: '/r/top/apps/web', top: null }, answer({ status: 0, stdout: 'apps/web/\n' })),
+  assert.equal(belowTopProblem({ root: '/r/top/apps/web', top: '/r/top' }, answer({ status: 0, stdout: 'apps/web/\n' })),
     'the project at /r/top/apps/web lies below its repository\'s top, /r/top, and a project run starts each issue in a clone of that top, so it runs only a project there: run init from a project at /r/top');
-  assert.match(belowTopProblem({ root: '/r/repo', top: null }, answer({ status: 0, stdout: 'apps/web/' })), /^git cannot tell whether the project at \/r\/repo lies at its repository's top \(rev-parse --show-prefix: no terminated line\)/u);
-  assert.match(belowTopProblem({ root: '/r/repo', top: null }, answer({ status: 128, stdout: '', stderr: 'fatal: not a git repository\n' })), /\(rev-parse --show-prefix: fatal: not a git repository\)/u);
+  assert.match(belowTopProblem({ root: '/r/repo', top: '/r/linked' }, answer({ status: 0, stdout: 'apps/web/' })), /^git cannot tell whether the project at \/r\/repo lies at its repository's top \(rev-parse --show-prefix: no terminated line\)/u);
+  assert.match(belowTopProblem({ root: '/r/repo', top: '/r/linked' }, answer({ status: 128, stdout: '', stderr: 'fatal: not a git repository\n' })), /\(rev-parse --show-prefix: fatal: not a git repository\)/u);
 });
 
 test('project init takes --project only for the project of the current folder\'s main checkout', (t) => {

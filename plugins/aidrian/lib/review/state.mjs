@@ -621,6 +621,8 @@ function mergeSince(state, disk, removed, read, step) {
   if (changed && !step && json(state.extensions) !== json(read?.extensions)) throw new Error(extensionsConflict(state.pr));
   keepHuman(state, disk, { lineage: true, extensions: false });
   state.pending = mergePending(disk.pending, state.pending);
+  // Accepted residual: a pass is taken by its recorded time, so one an attest stamped before another command's write
+  // the step then read, and saved after that read, is not taken, and the step's save can overwrite it.
   const taken = keepRecorded(state, disk, gate.since, { lineage: true });
   if (changed) {
     state.extensions = structuredClone(Array.isArray(disk.extensions) ? disk.extensions : []);

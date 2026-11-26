@@ -276,9 +276,13 @@ export function stateWorkFolders(state, { env, home, names = WORK_FOLDERS }) {
 // call more: that read is trimmed, but a trimmed top never equals a folder inside the real one. Any other root is asked
 // once for git's own prefix from its checkout's top, `read(root)`, kept whole but for its one final newline: an empty
 // prefix is the top, any other is below it, and a failed read or one with no final newline refuses, since whether a
-// clone could be made is unknown.
+// clone could be made is unknown. Before either, a folder name that starts or ends with whitespace or holds a newline, in
+// the root, the top, or the main checkout, refuses: git.mjs checkoutRoots trims its read and splits it by line, so the top
+// and the main checkout it maps to could be wrong, and a run would record and clone a folder that is not the project's.
 export function belowTopProblem(project, read = (cwd) => gateGit(['rev-parse', '--show-prefix'], cwd)) {
   const root = resolvedPath(project.root) ?? project.root;
+  const odd = [root, project.top, project.checkouts?.at(-1)].find((each) => typeof each === 'string' && each.split('/').some((part) => /^\s|\s$|\n/u.test(part)));
+  if (odd !== undefined) return `the project's folder ${JSON.stringify(odd)} has a folder name that starts or ends with whitespace or holds a newline, which a project run does not support: rename or move that folder, then run init again`;
   if (project.top && project.top === root) return null;
   const said = read(root);
   const out = said.status === 0 && typeof said.stdout === 'string' ? said.stdout : '';

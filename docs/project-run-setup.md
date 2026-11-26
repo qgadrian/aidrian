@@ -8,6 +8,7 @@ A project run supports only a project at its repository's top, the folder that h
 Each attempt starts its session in a fresh clone of the repository's top, and every guard of a start reads that top as the session's folder.
 So `init` and `init --check` refuse a project below the top, before any run exists, and name the top to run init from.
 They decide by git's own prefix from the checkout's top, and refuse too when git cannot give it.
+They also refuse a project whose folder, checkout top, or main checkout has a folder name that starts or ends with whitespace or holds a newline.
 Supporting a nested project would move the session, its write guard, its sandbox, and its push guard to the project folder of the clone together.
 
 `aidrian project preflight`, run in the run's first, attended turn, names each missing step at once.

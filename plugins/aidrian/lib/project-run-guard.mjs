@@ -229,8 +229,10 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
     const branch = issueBranch(found, mark.issue);
     const pushUrl = typeof start.pushUrl === 'string' && start.pushUrl !== '' ? start.pushUrl : null;
     const overlay = typeof start.overlay === 'string' && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(start.overlay) ? start.overlay : null;
-    const policyFiles = overlay && Array.isArray(start.policyFiles) ? start.policyFiles.filter((each) => typeof each === 'string') : [];
-    const startLoaded = overlay ? startLoadedIn(start.startLoaded) : null;
+    // The write-ahead row of the same attempt keeps the names the start's spelling rule held; a settling row does not.
+    const ahead = found.rows.find((row) => isStartRow(row) && row.key === mark.issue && row.attempt === start.attempt && row.pending === true) ?? start;
+    const policyFiles = overlay && Array.isArray(ahead.policyFiles) ? ahead.policyFiles.filter((each) => typeof each === 'string') : [];
+    const startLoaded = overlay ? startLoadedIn(ahead.startLoaded) : null;
     const indexFiles = overlay ? indexFilesIn(start.indexFiles) : [];
     if (typeof branch === 'string' && branch !== '') return { key: mark.issue, branch, pushUrl, overlay, policyFiles, ...(startLoaded ? { startLoaded } : {}), ...(indexFiles.length ? { indexFiles } : {}), ...slugsShared(found, mark.issue, branch) };
   }

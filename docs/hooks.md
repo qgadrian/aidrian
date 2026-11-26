@@ -1766,7 +1766,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     lists whole, as an embedded repository, is judged without its trailing slash, and a read whose output outgrows its
     8 MiB buffer refuses, as does a list it cannot judge within its time budget, which each walk over the push's paths, its
     committed and uncommitted lists and the base copies' checks, asks every 1,000 paths or 256 KiB of path text, and once
-    more before a pass.
+    more before a pass. The uncommitted entries are parsed and judged, spelling and workflow together, in that one walk.
     The other exception is an exact path of the row's `indexFiles`, the knowledge index files the attempt may edit in
     git's index ([Project run](config.md#project-run)). One that differs from `<overlay>`, and from git's clean merge of a
     newer base, must be a plain file (`git ls-tree -z HEAD`, `100644 blob`) that is not the base's blob the row names. A

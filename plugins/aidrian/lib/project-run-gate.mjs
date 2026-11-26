@@ -1110,8 +1110,10 @@ export function forgeBase(project, repository, forge, env = process.env) {
 // `started`; one whose outcome is unknown, or that could not be held or stopped, stays `uncertain` or `unheld` for
 // settleOrphans; any other gives its attempt back (`void`) and opens the issue again, and one whose proof failed also
 // halts the run, with a halt row of `kind` 'sandbox' when the sandbox's own proof failed, else 'proof' (`proofKind`). A start that never got as far as its write-ahead row records nothing.
-function startLines({ result, state, run, key, attempt, session, base, proof, proofKind = 'proof', cap, orphans, now }) {
+function startLines({ result, state, run, key, attempt, session, base: ahead, proof, proofKind = 'proof', cap, orphans, now }) {
   const at = iso(now);
+  // The names the spelling rule held stay in the write-ahead row alone, which ownIssue reads them from.
+  const { startLoaded, policyFiles, ...base } = ahead;
   let rows = [];
   const halt = proof ? [{ event: 'halt', kind: proofKind, cause: cleanText(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, CAPS.stop), key, attempt, at }] : [];
   // A session whose stop is unknown stays for settleOrphans, and a failed proof halts the run all the same.

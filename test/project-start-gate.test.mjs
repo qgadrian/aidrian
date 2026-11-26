@@ -830,7 +830,9 @@ test('the policy files come from the pinned base tip: a config it relocates is h
   assert.equal(readFileSync(path.join(clone, 'cfg/config.json'), 'utf8'), `${JSON.stringify(fx.committed)}\n`, 'the base copy');
   const row = fx.rows().findLast((each) => each.event === 'start');
   assert.equal(row.overlay, head);
-  assert.deepEqual(row.policyFiles, ['.aidrian.json', 'cfg/config.json'], 'the pinned tip\'s list, not the forge read\'s');
+  // The write-ahead row keeps the list; the row that settles the start does not repeat it.
+  const ahead = fx.rows().find((each) => each.event === 'start' && each.attempt === row.attempt && each.pending === true);
+  assert.deepEqual([ahead.policyFiles, 'policyFiles' in row], [['.aidrian.json', 'cfg/config.json'], false], 'the pinned tip\'s list, not the forge read\'s');
   assert.deepEqual(ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home }).policyFiles, ['.aidrian.json', 'cfg/config.json']);
 });
 
@@ -1115,7 +1117,7 @@ const indexRun = (t, autoMerge, edit = null, { github = {}, ...options } = {}) =
   fx.git('-C', scratch, 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
   return { fx, head: fx.git('-C', scratch, 'rev-parse', 'HEAD').trim() };
 };
-// The attempt `attempt` of such a run, started: its clone, its start row, first message, and base-copies.txt (null when
+// The attempt `attempt` of such a run, started: its clone, its start row and the write-ahead one, first message, and base-copies.txt (null when
 // there is none), and `push()`, the push guard's answer for the clone, with the row's facts as ownIssue gives them.
 const laterAttempt = (fx, attempt) => {
   const started = fx.cmd(['start', 'launch', 'ENG-1']);
@@ -1124,7 +1126,7 @@ const laterAttempt = (fx, attempt) => {
   const copies = path.join(path.dirname(clone), 'base-copies.txt');
   const own = ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home });
   return {
-    clone, own, copies, row: fx.rows().findLast((row) => row.event === 'start'), prompt: fx.claude.starts().at(-1).args.at(-1), listing: existsSync(copies) ? readFileSync(copies, 'utf8') : null,
+    clone, own, copies, row: fx.rows().findLast((row) => row.event === 'start'), ahead: fx.rows().findLast((row) => row.event === 'start' && row.pending === true), prompt: fx.claude.starts().at(-1).args.at(-1), listing: existsSync(copies) ? readFileSync(copies, 'utf8') : null,
     push: () => pushCheckoutProblem(clone, { root: { root: clone, common: fx.git('-C', clone, 'rev-parse', '--path-format=absolute', '--git-common-dir').trim() }, fold: (each) => each, ...own }),
   };
 };
@@ -1140,8 +1142,11 @@ test('with both keys on, an attempt on base copies may edit the knowledge index 
     writeFileSync(path.join(scratch, '.aidrian/knowledge/run.json'), '{}\n', { mode: 0o755 });
     writeFileSync(path.join(scratch, '.aidrian/knowledge/new.json'), '{"dir":"new"}\n');
   });
-  const { clone, own, copies, row, prompt, listing, push } = laterAttempt(fx, 1);
+  const { clone, own, copies, row, ahead, prompt, listing, push } = laterAttempt(fx, 1);
   assert.equal(row.overlay, head);
+  // What the spelling rule held is kept once, in the write-ahead row; the settling row does not repeat it.
+  const rows = fx.rows().filter((each) => each.event === 'start' && each.attempt === row.attempt);
+  assert.deepEqual([rows.length, rows.filter((each) => 'startLoaded' in each || 'policyFiles' in each).length, ahead.pending, own.startLoaded], [2, 1, true, ahead.startLoaded]);
   const indexFiles = [{ path: '.aidrian/knowledge/docs.json', base: fx.git('rev-parse', 'refs/remotes/origin/main:.aidrian/knowledge/docs.json').trim() }, { path: '.aidrian/knowledge/new.json', base: null }];
   assert.deepEqual([row.indexFiles, own.indexFiles], [indexFiles, indexFiles], 'the index alone, with the tip\'s blob');
   const disk = () => ['AGENTS.md', '.aidrian/config.json', '.aidrian/knowledge/docs.json', '.aidrian/knowledge/gone.json'].map((file) => readFileSync(path.join(clone, file), 'utf8'));
@@ -2023,10 +2028,10 @@ test('a moved project folder\'s knowledge index is a base copy, and its one edit
   assert.deepEqual([first.row.overlay, 'startLoaded' in first.row, first.listing, textIn(first.clone, tagged)], [undefined, false, null, 'branch tagged\n'], 'a tagged doc is the branch\'s own');
   reopen(fx, 1, 12);
   const head = more({ [docs]: alwaysIndex() });
-  const { clone, row, own, push } = laterAttempt(fx, 2);
+  const { clone, row, ahead, own, push } = laterAttempt(fx, 2);
   const tip = fx.git('rev-parse', `refs/remotes/origin/main:${docs}`).trim();
   const startLoaded = { docs: ['docs/rules.md'], folder: '-0:cfg/knowledge' };
-  assert.deepEqual([row.overlay, row.startLoaded, own.startLoaded, row.indexFiles], [head, startLoaded, startLoaded, [{ path: docs, base: tip }]]);
+  assert.deepEqual([row.overlay, ahead.startLoaded, own.startLoaded, row.indexFiles], [head, startLoaded, startLoaded, [{ path: docs, base: tip }]]);
   assert.deepEqual([textIn(clone, docs), textIn(clone, tagged)], [base, 'branch tagged\n'], 'the base\'s bytes on disk, and the branch\'s tagged doc');
   indexEdit(fx, clone, docs, () => alwaysIndex('rules.md', 'more.md'));
   assert.equal(push(), null, 'the recipe\'s edit');
@@ -2075,7 +2080,7 @@ test('an always doc outside the project folder is a base copy no attempt may edi
   const base = alwaysIndex('rules.md', 'listed.md');
   const { fx, head, more } = branchRun(t, { [rules]: 'branch rules\n' }, { config: { github: { autoMerge: BOTH_KEYS } }, files: { [docs]: base, [rules]: 'base rules\n' } });
   const first = laterAttempt(fx, 1);
-  assert.deepEqual([first.row.overlay, first.row.startLoaded, first.row.indexFiles], [head, { docs: [rules, listed], folder: '.aidrian/knowledge' }, undefined], 'both keys on give no edit of it');
+  assert.deepEqual([first.row.overlay, first.ahead.startLoaded, first.row.indexFiles], [head, { docs: [rules, listed], folder: '.aidrian/knowledge' }, undefined], 'both keys on give no edit of it');
   assert.deepEqual([textIn(first.clone, rules), fx.git('-C', first.clone, 'status', '--porcelain')], ['base rules\n', '']);
   assert.match(first.listing, /\ndocs\/rules\.md\n~~~~\n$/u);
   for (const text of ['base rules\n', 'edited rules\n']) {

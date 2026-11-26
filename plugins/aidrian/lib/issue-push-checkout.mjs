@@ -70,11 +70,14 @@ function overlayProblem(folder, overlay, { policyFiles, startLoaded, indexFiles 
   if (diff.status !== 0) return `it pushes, and ${SLOW} which files its commits change from ${overlay.slice(0, 7)}, the head its attempt started from on the base branch's copies of the host config and instruction files`;
   const changed = diff.stdout.split('\0');
   let count = 0;
+  // The index files the commits change, gathered in the same walk, never by a scan of the list of its own.
+  const indexChanged = new Set();
   if (!inBudget(changed, (file) => {
     if (guarded(file)) count += 1;
+    else if (editable.has(file)) indexChanged.add(file);
   })) return pastLine(`commits that change ${changed.length - 1} paths`);
-  const merged = mergedProblem(folder, overlay, { held, guarded }, count > 0);
-  if (!merged.conflict && !merged.edited && !merged.reason) return indexProblem(folder, indexFiles, changed, merged.differ);
+  const merged = mergedProblem(folder, overlay, { held, guarded, editable }, count > 0);
+  if (!merged.conflict && !merged.edited && !merged.reason) return indexProblem(folder, indexFiles, indexChanged, merged.differ);
   const why = merged.conflict ? `${namedFiles([merged.conflict])} conflicts in that merge, which a session never resolves by hand`
     : merged.edited ? `${namedFiles([merged.edited])} differs from git's merge of the base` : merged.reason;
   if (!count) return `it pushes a merge of the base into the branch in which ${why}, and this attempt runs on the base branch's copies of the host config and instruction files; record the result with that file in its stop: \`pr_open\` when the branch has a pull request, otherwise \`parked\` with a decision for the Human naming the file`;
@@ -90,7 +93,7 @@ function overlayProblem(folder, overlay, { policyFiles, startLoaded, indexFiles 
 // HEAD holds other than it does. With no newer base merged, every changed path is held; where git cannot make that tree,
 // or a conflict in it touches a held file, mergedProblem has refused the push.
 function indexProblem(folder, indexFiles, changed, differ = changed) {
-  for (const { path: file, base } of indexFiles.filter((each) => changed.includes(each.path) && differ.includes(each.path))) {
+  for (const { path: file, base } of indexFiles.filter((each) => changed.has(each.path) && differ.has(each.path))) {
     const listed = budgeted(['ls-tree', '-z', 'HEAD', '--', `:(top,literal)${file}`], folder);
     const name = namedFiles([file]);
     if (listed.status !== 0) return `it pushes, and ${SLOW} what its commits leave at ${name}, a knowledge index file this attempt may change only in git's index: ${INDEX_RECIPE}`;
@@ -117,10 +120,11 @@ function leftAt(entries, name, base) {
 // in it is { conflict } whatever HEAD holds, since only a hand resolved it, and every other one must be as the merge
 // gives it, one kept as `overlay` holds it too. Else only `changed`, some such file differs from `overlay`, reads them.
 // A file HEAD holds otherwise is { edited }. { reason } when git cannot say. The conflict is of any file `held` names,
-// and `differ`, beside no problem, lists every path HEAD holds other than that merge does, when one was read.
+// and `differ`, beside no problem, holds each path of `editable` that HEAD holds other than that merge does, when one was
+// read, gathered in the budgeted walk.
 // SHORTCUT: origin's remote-tracking ref is the session's own copy, as committedProblem's is; the pull request's diff
 // against the forge's own base, which the merge gate holds for a review of these files, stands behind it.
-function mergedProblem(folder, overlay, { held, guarded }, changed) {
+function mergedProblem(folder, overlay, { held, guarded, editable }, changed) {
   for (const ref of BASE_REFS) {
     const found = budgeted(['merge-base', 'HEAD', ref], folder);
     if (found.status === null) return { reason: SLOW };
@@ -140,8 +144,13 @@ function mergedProblem(folder, overlay, { held, guarded }, changed) {
     if (differ.status !== 0) return { reason: `${SLOW} how the head differs from the merge` };
     const paths = differ.stdout.split('\0');
     let edited;
-    if (!inBudget(paths, (file) => (guarded(file) ? (edited = file) : null))) return { reason: PAST_REASON };
-    return edited ? { edited } : { differ: paths };
+    const indexDiffer = new Set();
+    if (!inBudget(paths, (file) => {
+      if (guarded(file)) edited = file;
+      else if (editable.has(file)) indexDiffer.add(file);
+      return edited;
+    })) return { reason: PAST_REASON };
+    return edited ? { edited } : { differ: indexDiffer };
   }
   // No base to read: committedProblem refuses the push with the advice that brings one back.
   return changed ? { reason: 'git names no merge base with origin\'s default branch' } : {};
@@ -190,16 +199,30 @@ function committedProblem(folder, { counts }, spelling) {
 function uncommittedProblem(folder, { counts }, spelling) {
   const status = budgeted(['status', '--porcelain', '-z', '--untracked-files=all', '--ignored=no', '--'], folder, true);
   if (status.status !== 0) return `it pushes, and ${SLOW} whether its checkout holds a change to the forge's workflow files`;
-  // A folder git lists whole, as an embedded repository, ends with a slash, which no name it may be spelled as has.
-  const entries = statusEntries(status.stdout).map((entry) => ({ ...entry, paths: entry.paths.map((file) => file.replace(/\/+$/u, '')) }));
-  const paths = entries.flatMap((entry) => entry.paths);
-  const judged = judgedPaths(paths, spelling, () => false);
-  if (judged.past) return pastLine(`from a checkout that holds ${paths.length} uncommitted paths`);
-  const spelled = judged.spelled;
-  if (spelled) return `it pushes from a checkout that holds an uncommitted change to ${spelled}, which a command run beside the push could commit into it; take it out, then push again`;
-  const found = entries.find(({ paths }) => paths.some((file) => counts(file)));
+  // One walk over the status entries, in the guards' budget, parses each, judges its paths' spelling and workflow
+  // folders, and keeps the first workflow one. A folder git lists whole, as an embedded repository, ends with a slash,
+  // which no name it may be spelled as has.
+  const fields = status.stdout.split('\0');
+  const budget = walkBudget();
+  let found = null;
+  for (let at = 0; at < fields.length; at += 1) {
+    if (!budget.step(fields[at])) return pastLine(`from a checkout that holds ${fields.length - 1} uncommitted entries`);
+    if (fields[at].length < 4) continue;
+    const code = fields[at].slice(0, 2);
+    const paths = [fields[at].slice(3)];
+    if (/[RC]/u.test(code) && fields[at + 1]) {
+      at += 1;
+      paths.push(fields[at]);
+    }
+    for (const file of paths.map((each) => each.replace(/\/+$/u, ''))) {
+      const spelled = spelling(file);
+      if (spelled) return `it pushes from a checkout that holds an uncommitted change to ${spelled}, which a command run beside the push could commit into it; take it out, then push again`;
+      if (!found && counts(file)) found = { file, untracked: code === '??' };
+    }
+  }
+  if (!budget.done()) return pastLine(`from a checkout that holds ${fields.length - 1} uncommitted entries`);
   if (!found) return null;
-  const file = found.paths.find((each) => counts(each));
+  const { file } = found;
   const undo = found.untracked ? `git clean -f -- ${shellWord(file)}` : `git restore --staged --worktree -- ${shellWord(file)}`;
   return `it pushes from a checkout that holds an uncommitted change to ${file.slice(0, 120)}, a workflow file the forge runs with the repository's secrets, which a command run beside the push could commit into it; take it out with \`${undo.slice(0, 200)}\`, then push again`;
 }
@@ -220,18 +243,29 @@ function spent() {
 // out first, so the list is never judged in part, else true.
 const BUDGET_PATHS = 1000;
 const BUDGET_TEXT = 256 * 1024;
-function inBudget(list, visit) {
+// A walk's budget: `step(item)` false once it is spent, asked by the work done; `done()` false when it is spent at the end.
+function walkBudget() {
   let [paths, text] = [BUDGET_PATHS, BUDGET_TEXT];
+  return {
+    step(item) {
+      if (paths >= BUDGET_PATHS || text >= BUDGET_TEXT) {
+        if (spent()) return false;
+        [paths, text] = [0, 0];
+      }
+      paths += 1;
+      text += item.length;
+      return true;
+    },
+    done: () => !spent(),
+  };
+}
+function inBudget(list, visit) {
+  const budget = walkBudget();
   for (const item of list) {
-    if (paths >= BUDGET_PATHS || text >= BUDGET_TEXT) {
-      if (spent()) return false;
-      [paths, text] = [0, 0];
-    }
-    paths += 1;
-    text += item.length;
+    if (!budget.step(item)) return false;
     if (visit(item)) return true;
   }
-  return !spent();
+  return budget.done();
 }
 
 // Why a push whose `what` the guards could not judge within their time budget is refused.

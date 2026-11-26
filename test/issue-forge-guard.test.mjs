@@ -431,6 +431,14 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   assert.equal(fx.push(path.join(fx.work, '.aidrian')), null, 'an edit of both');
   // A whole list git cut at its buffer, which spawnSync answers with status 0 and an error, is no list: the push refuses.
   const plainPush = { ...fx.own(), overlay: null, policyFiles: [], startLoaded: null };
+  // The stubbed pushes below test the walks, not the clone: git's answers on which repository the clone is and where its
+  // origin pushes are given as git gave them once.
+  const common = `${fx.git('rev-parse', '--path-format=absolute', '--git-common-dir').trim()}\n`;
+  const real = (program, args, options) => {
+    if (args.includes('--git-common-dir')) return { status: 0, signal: null, stdout: common, stderr: '' };
+    if (args.includes('get-url')) return { status: 0, signal: null, stdout: `${fx.dir}\n`, stderr: '' };
+    return spawnSync(program, args, options);
+  };
   // More paths than the guards can judge within their time budget, which the loop asks every 1,000 and once more before a
   // pass: refused whole, by the committed list and by the overlay's own.
   let listed = false;
@@ -440,8 +448,9 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
   const start = 1e9;
   let listing = Array.from({ length: 1500 }, (_, at) => `src/${at}.js\0`).join('');
   performance.now = () => (listed ? start + (tick += 1) : 0);
+  let statusList = false;
   stubGitSpawn((program, args, options) => {
-    if (!(args.includes('--name-only') && (args.some((each) => each.endsWith('...HEAD')) || args.includes(fx.head)))) return spawnSync(program, args, options);
+    if (!(statusList ? args.includes('status') : args.includes('--name-only') && (args.some((each) => each.endsWith('...HEAD')) || args.includes(fx.head)))) return real(program, args, options);
     listed = true;
     return { status: 0, signal: null, stdout: listing, stderr: '' };
   });
@@ -454,12 +463,17 @@ test('an issue session pushes its edit of a knowledge index its start lets it ed
     [listed, tick] = [false, 0];
     listing = Array.from({ length: 900 }, (_, at) => `src/${String(at).padStart(9000, 'x')}\0`).join('');
     assert.equal(withinDeadline(start + 2, () => fx.push()), past.replace('1500', '900'), 'by the text');
+    // The status entries, walked once in the same budget, every 1,000 and before a pass.
+    [listed, tick] = [false, 0];
+    listing = Array.from({ length: 1500 }, (_, at) => `?? src/${at}.js\0`).join('');
+    statusList = true;
+    assert.equal(withinDeadline(start + 2, () => fx.push(fx.work, plainPush)), 'it pushes from a checkout that holds 1500 uncommitted entries, more than the guards can judge within their time budget, so the push is refused, never judged in part');
   } finally {
     stubGitSpawn();
     performance.now = clock;
   }
   for (const [word, why] of [['--name-only', /^it pushes, and git could not say in time which files its commits change/u], ['status', /^it pushes, and git could not say in time whether its checkout holds a change to the forge's workflow files/u]]) {
-    stubGitSpawn((program, args, options) => (args.includes(word) && (word !== '--name-only' || args.some((each) => each.endsWith('...HEAD'))) ? { status: 0, signal: null, stdout: 'src/a.js\0', stderr: '', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : spawnSync(program, args, options)));
+    stubGitSpawn((program, args, options) => (args.includes(word) && (word !== '--name-only' || args.some((each) => each.endsWith('...HEAD'))) ? { status: 0, signal: null, stdout: 'src/a.js\0', stderr: '', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : real(program, args, options)));
     try {
       assert.match(fx.push(fx.work, plainPush) ?? '', why, word);
     } finally {

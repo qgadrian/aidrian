@@ -551,15 +551,21 @@ async function reviewRecord(project, forge, base) {
   const { readReading } = await import('./review/dispatch.mjs');
   const record = readRecord(project, Number(n), comments, repo, () => readReading(forge, repo, n));
   if (record.held !== undefined) throw new Error(heldMessage(Number(n), record.held, record.why, record.finding));
-  return { state: record.state, comments };
+  // `events`: the dispatch-log rows of the extension changes made on it, written once the record is (saveRecord).
+  return { state: record.state, comments, events: [] };
 }
 
 // Writes the record where the review step does: the state folder and, when it publishes, the pull request's summary
-// comment, so another machine continues from the same checks and grants.
-async function saveRecord(record, { project, config = null, forge, base, status }) {
+// comment, so another machine continues from the same checks and grants. The extension changes made on it reach the
+// dispatch log only once the record is written: a write refused because another command changed the checks meanwhile
+// (state.mjs takeRecorded) throws first, and logs none of them.
+async function saveRecord(record, { project, config = null, forge, base, status, env = process.env }) {
   const { publishState, writeLocalState } = await import('./review/state.mjs');
   const { postContext } = await import('./review/dispatch.mjs');
+  const { extensionLogger } = await import('./review/extension.mjs');
   writeLocalState(project, record.state, { repo: base.repo });
+  const log = extensionLogger(project, config, { pr: Number(base.n), repo: base.repo, env });
+  for (const row of record.events.splice(0)) log(row);
   if (!publishes(base)) return base.baseTip === null ? 'the forge named no base branch, so nothing was posted' : null;
   return publishState(record.state, {
     comments: () => record.comments,
@@ -596,9 +602,9 @@ async function botAtCap(result, { project, config, forge, base, record, policy, 
         return null;
       }
     },
-    log: extension.extensionLogger(project, config, { pr: n, repo: base.repo, env }),
+    log: (row) => record.events.push(row),
   });
-  const summaryError = await saveRecord(record, { project, config, forge, base, status: decision.status });
+  const summaryError = await saveRecord(record, { project, config, forge, base, status: decision.status, env });
   return { ...result, ...decision, ...(summaryError ? { summary_error: summaryError } : {}) };
 }
 
@@ -614,7 +620,7 @@ async function botRevalidate({ project, config, forge, base, record, reviewer, e
   extension.revalidate({
     state: record.state, source: 'bot', round, head, reviewer,
     history: botHistory(extension, { project, config, forge, base, reviewer, head }),
-    log: extension.extensionLogger(project, config, { pr: Number(base.n), repo: base.repo, env }),
+    log: (row) => record.events.push(row),
   });
   return true;
 }
@@ -679,7 +685,7 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     // The raise a round_limit prints waits on the configured reviewer: a wait on another `--reviewer` gets none, since
     // its rounds are that reviewer's, and the review-rounds rule approves no `--reviewer`.
     if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, forge, base, record, policy, env });
-    else if (moved) await saveRecord(record, { project, config, forge, base, status: result.status });
+    else if (moved) await saveRecord(record, { project, config, forge, base, status: result.status, env });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') {
       const { raiseAsk } = await import('./review/extension.mjs');
       result = { ...result, extension: { status: 'off', mode: 'off' }, ...raiseAsk({ pr: Number(base.n), repo: base.repo, source: 'bot', round: result.codex_rounds }) };

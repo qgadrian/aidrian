@@ -5,7 +5,8 @@
 // waiver, an extension, a delegation at the round limit, or a stage sign-off is the Human's word, and nothing in the
 // engine takes one back.
 // keepHuman adds those; keepWork adds the review's own progress, the passes, rounds, and id counter, for two copies of
-// one record on one machine. Each mutates and returns `base`, so a caller that writes or posts it carries the result.
+// one record on one machine; keepRecorded adds the passes another command recorded while a writer held the copy it read
+// (state.mjs writeState). Each mutates `base`, so a caller that writes or posts it carries the result.
 // Both act only on two copies of one review, the same first round (sameReview): a review that started over, from an
 // empty record, dropped the earlier review's entries on purpose, as an override line is filled only into its own review.
 
@@ -40,9 +41,10 @@ function identities(round) {
 }
 
 // The Human's entries of `other` that `base` lacks, added to `base`. A flow's sign-off and an overrule or acceptance of one
-// invariant on one head keep the later of the two; the other lists gain each entry they do not hold.
-export function keepHuman(base, other) {
-  if (!isObject(base) || !isObject(other) || !sameReview(base, other)) return base;
+// invariant on one head keep the later of the two; the other lists gain each entry they do not hold. With `lineage`, as
+// for keepRecorded, the caller has told the two copies of one review already; `extensions` false leaves those alone.
+export function keepHuman(base, other, { lineage = false, extensions = true } = {}) {
+  if (!isObject(base) || !isObject(other) || (!lineage && !sameReview(base, other))) return base;
   if (!isObject(base.signoffs)) base.signoffs = {};
   for (const [flow, signoff] of Object.entries(isObject(other.signoffs) ? other.signoffs : {})) {
     if (isObject(signoff) && (!isObject(base.signoffs[flow]) || later(base.signoffs[flow], signoff))) base.signoffs[flow] = { ...signoff };
@@ -53,8 +55,9 @@ export function keepHuman(base, other) {
   keepEach(base, other, 'delegations', ['head', 'kind', 'at']);
   // Accepted limit: an extension both copies hold keeps `base`'s decision fields, so one the other copy approved may be
   // asked again. Only two copies a mixed set of plugin versions let grow apart are merged, which is rare, and a second
-  // ask costs the Human one answer, never a grant they did not give.
-  keepEach(base, other, 'extensions', ['source', 'round', 'head', 'at']);
+  // ask costs the Human one answer, never a grant they did not give. A write that takes in another command's write
+  // (state.mjs writeState) leaves the extensions to its own rule: `extensions` false.
+  if (extensions) keepEach(base, other, 'extensions', ['source', 'round', 'head', 'at']);
   const overrides = Array.isArray(other.overrides) ? other.overrides.filter((line) => typeof line === 'string') : [];
   if (overrides.length) base.overrides = [...new Set([...(Array.isArray(base.overrides) ? base.overrides : []), ...overrides])];
   keepStops(base, other);
@@ -137,6 +140,27 @@ function keepLatest(base, other, key, keys) {
     if (!out.has(at) || later(out.get(at), entry)) out.set(at, { ...entry });
   }
   base[key] = inTimeOrder([...out.values()]);
+}
+
+// The ids of the passes `other` recorded after `since`, the time of the write `base` was read from: each `base` lacks,
+// and each `base` holds recorded earlier, by their `at` (findings.mjs recordResult). A pass in the record `base` was read
+// from, which `base` dropped on purpose, is not one; nor is one with no `at`.
+function recordedPasses(base, other, since) {
+  const ours = isObject(base?.passes) ? base.passes : {};
+  return Object.entries(isObject(other?.passes) ? other.passes : {}).filter(([id, pass]) => {
+    if (!isObject(pass) || typeof pass.at !== 'string') return false;
+    return isObject(ours[id]) ? pass.at > String(ours[id].at ?? '') : pass.at > String(since ?? '');
+  }).map(([id]) => id);
+}
+
+// Those passes (recordedPasses), from `other` into `base`; returns their ids. With `lineage`, the caller has told the
+// two copies of one review already, as a record read with no round yet and the write that opened its first.
+export function keepRecorded(base, other, since, { lineage = false } = {}) {
+  if (!isObject(base) || !isObject(other) || (!lineage && !sameReview(base, other))) return [];
+  if (!isObject(base.passes)) base.passes = {};
+  const taken = recordedPasses(base, other, since);
+  for (const id of taken) base.passes[id] = structuredClone(other.passes[id]);
+  return taken;
 }
 
 // `base[key]` with each entry of `other[key]` whose `keys` it does not hold, in time order (inTimeOrder).

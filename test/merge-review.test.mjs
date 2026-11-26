@@ -45,9 +45,12 @@ function repo(t, config = {}) {
   const viewer = (head = HEAD) => (target, where) => (views.push([target, where]), head === null ? null : { number: Number(target ?? 5), headRefOid: head });
   const run = (command, { head = HEAD } = {}) => check(command, { cwd: dir, env: {}, input: { transcript_path: transcript }, viewPr: viewer(head) });
   const answer = (question, label, timestamp) => writeFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp, toolUseResult: { answers: { [question]: label } } })}\n`);
+  // The record is this one alone: the earlier record of `pr` goes first, since a write takes in what a record it never
+  // read holds (state.mjs writeState).
   const record = (pr, edit) => {
     const state = emptyState(pr, 'acme/notes');
     edit(state);
+    rmSync(recordFile(project, pr, state.repo), { force: true });
     writeLocalState(project, state);
   };
   return { dir, git, project, transcript, views, viewer, run, answer, record, commit: git('rev-parse', 'HEAD') };

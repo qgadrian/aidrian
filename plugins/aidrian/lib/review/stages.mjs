@@ -146,7 +146,8 @@ export async function runStages(s) {
     const holds = !clean && bot.signal?.holds_finding === true;
     // With no inline comment to count, the one open finding is a floor: the answer may hold more (extension.mjs signals).
     const floor = !clean && !(bot.signal?.line_comments >= 1);
-    state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, ...(floor ? { floor: true } : {}), bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null, ...(holds ? { holds_finding: true } : {}) } };
+    const signal = { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null, ...(holds ? { holds_finding: true } : {}) };
+    state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, ...(floor ? { floor: true } : {}), bot: signal, at: new Date().toISOString() };
     recorded = true;
   };
   // A request a wait posted, from either call, is on record for the head it asked about (`requested_head`), never

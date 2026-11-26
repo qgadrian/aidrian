@@ -1866,6 +1866,41 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   private by the step's reading is never built on ([The posted copy](#the-posted-copy)): from it the step takes only
   what a restart takes, the security mark, the posts, and the engine's resolve of a finding this machine recorded, by
   its id and mint mark, and never a closed state.
+- *A command while a step runs.* Every write of the record, the step's and each command's, first reads this machine's
+  record file again (`plugins/aidrian/lib/review/state.mjs` writeState).
+  Another write landed there since its own read when that file, the repository's own record file, is not as the writer
+  read it, or last wrote it, by revision and write time, whatever revision the pull request's posted copy or an
+  old-name record merged into its state gave the record it builds on.
+  It must continue the review read, by its first round, as the writer does; a record read with no round yet is
+  continued by any, so a write during the first round counts, and a writer that started another review takes nothing.
+  The writer then takes that write in by the merge two record files get above, with its own record as the base, so its
+  own changes stand: the Human entries, the owed entries, each pass recorded after its read, each finding index entry
+  it lacks, what the index merge above keeps, and the higher id counter and revision, the floor of its own write.
+  Each pass result carries `at`, when it was recorded; of a pass both
+  hold, the one recorded last counts, on any head, as two writes one after the other would leave it, and a pass taken
+  is taken as written. A pass in the record it read that it dropped, such as a slice of a replaced packing, is not
+  taken back. The extension checks are the one exception to that merge, when the file's are not the ones the writer
+  read. The review step's write keeps the file's whole, so a judge's verdict or the Human's answer recorded meanwhile
+  stands over the step's own change, such as reading a check again on a new head; so does a command that did not change
+  them, as an attest. A command that did change them, such as `aidrian pr extend` recording a judge's verdict or the
+  Human's answer, writes nothing: it exits non-zero, saying the record changed while it ran and to run it again on the
+  current record, and it prints no `recorded` and logs no entry to the dispatch log. `aidrian pr await-review` logs
+  the bot's extension changes only once the record holding them is written, so a refused write logs none.
+  So an `aidrian pr attest`, `aidrian pr signoff`, or `aidrian pr extend` that lands during a step of several minutes,
+  such as a visual capture, is in the record after the step, with its findings.
+  The review step sets its outcome from that same read, after the merge and before the write: when the merge took a
+  pass result or the file's extension checks, which the step decided without, it saves no finished outcome and
+  returns `incomplete` with `retry_recommended` and `recorded_meanwhile` (the passes, and `extensions`), so no merge
+  counts it as finished and no owed review is answered by it, and the next step decides from the record with them,
+  reading the checks again from it.
+  Three limits stay, each failing closed. The round evidence the step derived before its save (a round's open findings
+  and the cap's cause) is saved beside that retry until the next step on that head derives it again. A finding the
+  step closed as not reported while a concurrent `aidrian pr attest` reported it again keeps its closed index entry
+  beside the open finding in the pass. A finding the step moved to a fresh id while another command recorded it under
+  the old id holds both ids, one more open finding.
+  A write with no other write since its read writes what it holds.
+  No lock spans the read and the write, so a write landing between them is still lost; that window is one write, not a
+  step. Two writes that mint one id for different findings keep the first entry the writer holds.
 
 ### The posted copy
 

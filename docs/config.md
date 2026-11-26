@@ -869,6 +869,7 @@ The session writes none of it: its sandbox grants no write to `<state>/product-f
 `<state root>/feedback-folders/`, or the state folder itself.
 A record holds what the ready hold and the post rule trust, such as an answer's `by` and `limited`, so a session that could write it could forge them.
 After the draft opens, the session runs only `status <PR> --json`.
+There `status` reads no git ref, which the session could have rewritten: GitHub's config at the default branch and the base decides, as for the ready hold.
 On exit 2, for any reason, it runs nothing of the `pr-product-feedback` skill, keeps the line for its report, and goes on with the review rounds.
 On exit 3 it reports the line and goes on; this step never ends the issue `environment` or `failed`.
 `diff`, `record`, `answer`, `recheck`, and `post` exit 3 there, before any write, note, or forge call, with this line:

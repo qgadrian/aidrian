@@ -562,9 +562,14 @@ test('a start on Claude Code reaches the registries both reads of the default br
   // No write the sandbox grants reaches a folder product feedback keeps, or is the state folder (docs/config.md#product-feedback).
   const held = feedbackHeld(fx.state, { env: fx.env });
   const state = realpathSync(fx.state);
+  // Both ways: no grant at or under a feedback folder, none at the state folder, and none above any of them, but the
+  // temporary folders, which hold this fixture's state folder only because the test's state root lies in one.
+  const temporary = new Set(['/tmp', tmpdir()].map((each) => realpathSync(each)));
+  const under = (inner, outer) => inner === outer || inner.startsWith(`${outer}${path.sep}`);
   for (const grant of settings.sandbox.filesystem.allowWrite) {
     assert.notEqual(grant, state, 'not the state folder');
-    for (const folder of held) assert.ok(grant !== folder && !grant.startsWith(`${folder}${path.sep}`), `${grant} reaches ${folder}`);
+    for (const folder of held) assert.ok(!under(grant, folder), `${grant} is at or under ${folder}`);
+    for (const folder of [...held, state]) assert.ok(temporary.has(grant) || !under(folder, grant), `${grant} holds ${folder}`);
   }
   assert.equal(lstatSync(cache).mode & 0o777, 0o700, 'owner-only');
   assert.deepEqual(readdirSync(cache).sort(), ['.keep-attempt', 'npm-global.npmrc', 'npm-user.npmrc']);

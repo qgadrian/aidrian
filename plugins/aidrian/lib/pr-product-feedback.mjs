@@ -237,6 +237,11 @@ export function localFeedback(project) {
   return { state: 'off', team };
 }
 
+// The reads `status` and the ready hold take in a project run's issue session, as feedbackStatus seams: the session can
+// write every ref of its clone, whose git folder it is granted, so git never says off there (`local` is never off), and
+// the default branch's name comes from GitHub (`mainBranch` null). GitHub's config at the default branch and the base decides.
+export const issueReads = () => ({ local: Object.freeze({ state: 'maybe', team: false }), mainBranch: () => null });
+
 // What `status` says of pull request `value`, as { exit, result }: exit 0 clear, 2 owed, and an error thrown. Everything it
 // reads of the team, it reads from GitHub, once localFeedback has not said off. It prints nothing, so the ready hold
 // (rules/github/ready-hold.mjs) runs it in its own process, at the project root it found, with the forge it bounds.
@@ -290,8 +295,9 @@ export function feedbackStatus(value, project, { forge, remotes = () => checkout
 }
 
 // `status`: prints what feedbackStatus says, and exits with it.
-function status({ argv: [value], values, project, forge, remotes }) {
-  const { exit, result } = feedbackStatus(value, project, { forge, remotes });
+// In an issue session it takes the strict reads (issueReads).
+function status({ argv: [value], values, project, forge, remotes, env }) {
+  const { exit, result } = feedbackStatus(value, project, { forge, remotes, ...(inIssueSession(env) ? issueReads() : {}) });
   if (values.json) console.log(JSON.stringify(result));
   else {
     console.log(`product feedback ${result.state} for #${result.pr}: ${result.why}`);

@@ -349,6 +349,17 @@ test('in a project run\'s issue session the hold asks GitHub past refs the sessi
     assert.match(ask(issue) ?? '', /in a project run's issue session, and the ready hold could not read/u, what);
     assert.equal(ask(plain), null, `${what}: no issue mark, as today`);
   }
+  // A repository the shell fills in, through -R or GH_REPO, and a folder the hook cannot read, keep the target unknown
+  // there: each counts as the session's own elsewhere, as today, where the pull request is owed.
+  for (const command of ['gh pr ready 7 -R "$REPO"', 'gh pr ready 7 --repo="$REPO"', 'gh pr ready 7 -R$REPO', 'GH_REPO="$R" gh pr ready 7', 'GH_REPO=$(cat repo) gh pr ready 7', 'cd "$D" && gh pr ready 7']) {
+    const strict = check(command, { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: issue });
+    assert.match(strict ?? '', /in a project run's issue session, and the ready hold could not read (?:the repository the shell fills in|the folder gh runs in)/u, command);
+    const today = check(command, { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: plain });
+    assert.match(today ?? '', /still owed/u, `${command}: no issue mark, as today`);
+  }
+  // A plain GH_REPO, and one the hook's own environment holds, are read as written.
+  assert.match(check('GH_REPO=acme/notes gh pr ready 7', { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: issue }) ?? '', /still owed/u);
+  assert.match(check('gh pr ready 7', { now: FROZEN, cwd: on, env: { GH_REPO: 'acme/notes' }, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: issue }) ?? '', /still owed/u);
   // Fed text and more than one ready are refused there whatever git says.
   assert.equal(judge("echo 'gh pr ready 7' | bash", { head: HEAD }, issue).reason, FED_REASON);
   assert.equal(judge('gh pr ready 7; gh pr ready 8', { head: HEAD }, issue).reason, MANY_REASON);

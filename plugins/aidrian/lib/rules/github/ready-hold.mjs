@@ -34,7 +34,7 @@
 import { forgeFor } from '../../forges/index.mjs';
 import { runGit } from '../../git.mjs';
 import { VIEW_FIELDS } from '../../pr-auto-merge.mjs';
-import { feedbackStatus, localFeedback } from '../../pr-product-feedback.mjs';
+import { feedbackStatus, issueReads, localFeedback } from '../../pr-product-feedback.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo } from '../../review-gate.mjs';
 import { shellPlain, walkCommands } from '../../shell-lex.mjs';
@@ -65,21 +65,28 @@ const NODE_IDS = /\bPR_[A-Za-z0-9_-]{4,}|\bMDExOlB1bGxSZXF1ZXN0[A-Za-z0-9+/=]+|(
 const URL_TARGET = /^https?:\/\//iu;
 const BARE = /^#?(\d+)$/u;
 
-// GH_REPO for this invocation as written, after its assignments and env changes, or null for this repository: a value the
-// rule cannot read counts as this one, as the merge guard's review-request invocationRepo reads it.
+// GH_REPO for this invocation as written, after its assignments and env changes, as { repo, unread }: `repo` null for this
+// repository, where a value the rule cannot read counts as this one, as the merge guard's review-request invocationRepo
+// reads it; `unread` says the value that holds is one the rule cannot read.
 function ghRepoAsWritten(environment, env) {
   let repo = env.GH_REPO || null;
+  let unread = false;
   for (const change of environment) {
-    if (change.clear) repo = change.keep?.includes('GH_REPO') ? repo : null;
-    else if (change.name === 'GH_REPO') repo = change.value && !change.value.dynamic && change.value.text ? change.value.text : null;
+    if (change.clear) {
+      if (!change.keep?.includes('GH_REPO')) [repo, unread] = [null, false];
+    } else if (change.name === 'GH_REPO') {
+      const plain = Boolean(change.value && !change.value.dynamic && change.value.text);
+      [repo, unread] = [plain ? change.value.text : null, Boolean(change.value?.dynamic)];
+    }
   }
-  return repo;
+  return { repo, unread };
 }
 
 // What one gh invocation marks ready, or null when it marks none, or when gh's command words are words the rule cannot
 // read: { target, repo, url } with `target` the pull request as written (a number, URL, branch) or null for the current
 // branch, `repo` the repository as written or null for this one, and `url` whether the target is a URL, which gh takes
-// over `-R`; { ids } for a graphql call, its literal pull request ids; or { unreadable } for one it cannot read.
+// over `-R`, and `unreadRepo` when the repository is a `-R` or GH_REPO value the rule cannot read, which counts as this one
+// but in an issue session; { ids } for a graphql call, its literal pull request ids; or { unreadable } for one it cannot read.
 export function readReady({ program, args, environment = [] }, env = {}) {
   if (program !== 'gh') return null;
   const command = commandPath(args);
@@ -99,8 +106,10 @@ export function readReady({ program, args, environment = [] }, env = {}) {
   // A repository the shell fills in or expands counts as this one, as the merge guard reads it.
   const filled = args.some((token) => token.expands && /^(?:-R|--repo)/u.test(token.text));
   const fromFlag = flag && flag.value && !unreadable(flag.value) && !filled ? flag.value.text : null;
-  const repo = url ? null : flag ? fromFlag : ghRepoAsWritten(environment, env);
-  return { target, repo, url };
+  const fromEnv = ghRepoAsWritten(environment, env);
+  const repo = url ? null : flag ? fromFlag : fromEnv.repo;
+  const unreadRepo = !url && (flag ? fromFlag === null : fromEnv.unread);
+  return { target, repo, url, ...(unreadRepo ? { unreadRepo } : {}) };
 }
 
 // The text a shell is fed that the walk could not read as commands, or null: what a pipe or a script feeds a shell
@@ -211,15 +220,14 @@ export const strictReason = (why) =>
   `Blocked: this marks a pull request ready in a project run's issue session, and the ready hold could not read ${why}, ` +
   'so it cannot tell whether product feedback is owed. Run `aidrian pr product-feedback status <PR>`, then `gh pr ready <PR>` with the ' +
   'number written out, as its own command, from the attempt\'s clone; when gh keeps failing, leave the draft and say so in the report.';
-// What an issue session reads in place of git alone: never off, so GitHub decides (localFeedback).
-const ASK_GITHUB = Object.freeze({ state: 'maybe', team: false });
-
-// The deny reason for `calls`, each { call, projects }, or null. Any failure to read the state lets a call run, but in an
-// issue session (`strict`), where each failure refuses and git's answer is never read.
+// The deny reason for `calls`, each { call, projects, unknown }, or null, `unknown` saying the folder gh runs in could not be
+// read. Any failure to read the state lets a call run, but in an issue session (`strict`), where each failure refuses and
+// git's answer is never read (pr-product-feedback.mjs issueReads, which `status` takes there too).
 function judgeCalls(calls, seams, strict = false) {
   const local = new Map();
+  const strictReads = issueReads();
   const localOf = (project) => {
-    if (!local.has(project.root)) local.set(project.root, strict ? ASK_GITHUB : localFeedback(project));
+    if (!local.has(project.root)) local.set(project.root, strict ? strictReads.local : localFeedback(project));
     return local.get(project.root);
   };
   const may = (project) => ['on', 'maybe'].includes(localOf(project).state);
@@ -227,12 +235,14 @@ function judgeCalls(calls, seams, strict = false) {
   const marks = calls.filter(({ call }) => !call.fed).reduce((sum, { call }) => sum + (call.ids?.length || 1), 0);
   if (marks > 1 && (strict || calls.some(({ projects }) => projects.some(may)))) return MANY_REASON;
   let forgeAt = null;
-  for (const { call, projects } of calls) {
+  for (const { call, projects, unknown } of calls) {
     if (call.fed) continue;
     if (call.unreadable) {
       if (strict) return strictReason(call.unreadable);
       continue;
     }
+    if (strict && call.unreadRepo) return strictReason('the repository the shell fills in');
+    if (strict && unknown) return strictReason('the folder gh runs in');
     const judged = projects.filter(may);
     if (!judged.length) {
       if (strict) return strictReason('the project of the folder gh runs in');
@@ -250,7 +260,7 @@ function judgeCalls(calls, seams, strict = false) {
     for (const project of judged) {
       for (const { value, view } of pulls) {
         try {
-          const mainBranch = strict ? () => null : mainBranchOf(project);
+          const mainBranch = strict ? strictReads.mainBranch : mainBranchOf(project);
           const { exit, result } = feedbackStatus(value, project, { forge: forgeAt(project.root), view, local: localOf(project), mainBranch });
           if (exit === 2) return owedReason(result, strict);
         } catch (error) {
@@ -298,7 +308,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, input =
     // A folder in no project: only a call that names its repository is the session's.
     const list = here === UNKNOWN ? [sessionProject()] : here === null ? (named(call) ? [sessionProject()] : []) : named(call) ? [here, sessionProject()] : [here];
     const projects = list.filter((project, at) => project && list.findIndex((other) => other?.root === project.root) === at);
-    return { call, projects };
+    return { call, projects, unknown: here === UNKNOWN };
   });
   return judgeCalls(calls, seams, issueSession(unattendedMark));
 }

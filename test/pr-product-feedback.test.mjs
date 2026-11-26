@@ -11,6 +11,7 @@ import { heldFolders, itemState } from '../plugins/aidrian/lib/feedback-record.m
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { accessTerms, deriveKind, HUMAN_ACTIONS, issueRefusal, neutralized, refusalContext, refusedKind, runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
 import { ATTEMPT_ENV } from '../plugins/aidrian/lib/project-registries.mjs';
+import { check as readyCheck } from '../plugins/aidrian/lib/rules/github/ready-hold.mjs';
 import { configPathIn, projectAt, stateRoot, strictConfigPathIn } from '../plugins/aidrian/lib/project.mjs';
 import { check } from '../plugins/aidrian/lib/rules/product-feedback-answer.mjs';
 
@@ -478,6 +479,25 @@ test('in a project run\'s issue session, diff, record, answer, recheck, and post
   assert.equal(run(t, r, ['status', '7', '--json'], {}, issue).code, 2);
   assert.equal(run(t, r, ['items', '7', '--json'], {}, issue).code, 0);
   assert.equal(run(t, r, ['answer', '7', 'PF1', 'fix-now'], {}, { env: { [ATTEMPT_ENV]: '' } }).code, 0, 'without the marker, as today');
+});
+
+test('in an issue session, status never reads clear from the clone\'s refs: GitHub decides, as the ready hold does', (t) => {
+  // A stale clone: its origin refs and HEAD commit product feedback off, and GitHub's default branch has it on.
+  const r = repo(t, { config: configText({ auto: false, files: ['src/ui/**'] }) });
+  r.git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  r.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  const issue = { env: { [ATTEMPT_ENV]: 'launch/ENG-1.1/0123456789abcdef' } };
+  const plain = status(t, r);
+  assert.deepEqual([plain.code, plain.json.reason, plain.calls.length], [0, 'off', 0], 'without the marker: git says off, with no gh call, as today');
+  const strict = status(t, r, {}, issue);
+  assert.deepEqual([strict.code, strict.json.reason], [2, 'not_run'], strict.err.join('\n'));
+  assert.ok(strict.calls.some((args) => args[3] === 'repos/acme/notes'), 'the default branch from GitHub, never origin/HEAD');
+  // The ready hold refuses the same case under an issue mark, and lets it run with none.
+  const fake = fakeGh();
+  const forge = (cwd, options) => createGithubForge({ ...options, cwd, run: (args) => fake.gh(args) });
+  const hold = (mark) => readyCheck('gh pr ready 7', { cwd: r.dir, env: {}, now: () => 0, forge, unattendedMark: mark });
+  assert.match(hold(() => ({ issue: 'ENG-1', root: null })) ?? '', /still owed/u);
+  assert.equal(hold(() => null), null);
 });
 
 test('record and recheck read the repository, the number, and the head from gh, never from an argument', (t) => {

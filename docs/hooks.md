@@ -942,10 +942,14 @@ Step 3 never says off, and every ready asks GitHub.
 `status` asks GitHub for the default branch too, never the clone's `origin/HEAD`.
 It refuses every case it lets through elsewhere for want of a read: a target or graphql id it cannot read, a ready in no project,
 a gh call that fails or passes the deadline, and `status` exiting 3.
+A `-R` or `--repo` value or a `GH_REPO` assignment the shell fills in, and a folder gh runs in that the hook cannot read,
+keep the target unknown there, and refuse.
+`status` takes the same reads there (`issueReads` in `lib/pr-product-feedback.mjs`), so it never says clear from the clone's refs either.
 Text fed to a shell that names a ready, and more than one ready in a command, are refused whatever git says.
 The GitHub MCP hook reads the same mark, and refuses a call whose number it cannot read or whose folder is in no project.
-The deny of an owed pull request names the stop the run records, `pr_open` with "product feedback is owed on #<n>, which an issue session does not run: …",
-never the skill: the step is the Human's ([In an issue session](config.md#in-an-issue-session)).
+The deny of an owed pull request names the stop the run records,
+`pr_open` with "product feedback is owed on #<n>, which an issue session does not run: …", never the skill:
+the step is the Human's ([In an issue session](config.md#in-an-issue-session)).
 A project without product feedback pays the gh calls of each ready there.
 `AIDRIAN_ALLOW_UNHELD_READY=1` still lets every one run, and outside issue sessions nothing changes.
 

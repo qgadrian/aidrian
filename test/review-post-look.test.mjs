@@ -50,6 +50,16 @@ test('a summary in the old layout and in the new one carry the same record, and 
   assert.equal(refreshSummary(old, state, OPEN), fresh, 'the old layout refreshes into the new one, status and plan line kept');
 });
 
+test('a text check that refuses one Details tag drops the wrapper whole: its sections show, and the withheld notice is outside', () => {
+  const state = { ...emptyState(7, 'o/r'), revision: 4, rounds: [{ head: 'abc1234def' }] };
+  const post = { ...OPEN, checker: { allows: (line) => !line.includes('</details>') } };
+  const lines = summaryBody(state, null, 'received', post).split('\n');
+  assert.ok(!lines.includes('<details><summary>Details</summary>') && !lines.includes('</details>'), 'no tag stands alone');
+  const citation = lines.findIndex((line) => line.startsWith('A citation shows'));
+  const notice = lines.findIndex((line) => line.startsWith('_text withheld: 1 value of the review record'));
+  assert.ok(citation > 0 && notice > citation, 'the sections show, and the notice counts the refused tag after them');
+});
+
 test('a summary header names its status in either layout', () => {
   assert.equal(summaryHeader('received'), '### ✅ Review: received');
   assert.equal(summaryHeader('human_required'), '### ⏸️ Review: human_required');

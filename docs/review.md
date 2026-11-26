@@ -2017,9 +2017,10 @@ its place in bold, such as `` **🟠 P1 · high** · `src/a.js:2` ``, then the r
 comment's header carries a status emoji, `### 🛠️ Review: fix_required` (✅ received or none needed, 🛠️ a fix to make, ⏸️
 a wait on a person or a step, ⚠️ an error or a timeout, ℹ️ any other), the **Findings** table shows the badge in its
 Severity column, and the quota stops, waived repeats, carried review, extra rounds, waivers, delegations, overrides,
-and the citation note sit in one collapsed **Details** block below the pass table. Only the look changed: the marker
-lines, the attribution line, the plan lines, and the record markers are read as before, so a post in the earlier layout,
-with `### Review: <status>` and a bold severity word, still parses, and the next write to a summary comment gives it the new one.
+and the citation note sit in one collapsed **Details** block below the pass table; a text check that refuses either of
+its two tag lines drops both, and the sections show unwrapped. Only the look changed: the marker lines, the attribution
+line, the plan lines, and the record markers are read as before, so a post in the earlier layout, with
+`### Review: <status>` and a bold severity word, still parses, and the next write to a summary comment gives it the new one.
 
 **What counts as private.** The table reads the repository as private only on an exact `PRIVATE` reading of its
 visibility in that step, for a pull request from inside the team; `INTERNAL`, any other value, and a failed read are not

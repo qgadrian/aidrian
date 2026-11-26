@@ -1008,11 +1008,16 @@ function withRecord(lines, copy, withheld, post, state) {
   const checker = post.checker ?? plainChecker();
   let hidden = withheld;
   // One element can hold a line break: the checks and the escaping read every line of the body as it will post.
-  const shown = lines.flatMap((line) => String(line).split(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/u)).filter((line) => {
-    if (checker.allows(line)) return true;
-    hidden += 1;
-    return false;
+  const checked = lines.flatMap((line) => String(line).split(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/u)).map((line) => {
+    const allowed = checker.allows(line);
+    if (!allowed) hidden += 1;
+    return { line, allowed };
   });
+  // The Details tags show as a pair or not at all: a check that refuses one leaves the sections unwrapped, never a
+  // block left open or a stray closer.
+  const tag = (each) => each.line === DETAILS_OPEN || each.line === DETAILS_CLOSE;
+  const wrapped = checked.filter(tag).every((each) => each.allowed);
+  const shown = checked.filter((each) => each.allowed && (wrapped || !tag(each))).map((each) => each.line);
   if (hidden) shown.push('', `_${WITHHELD}: ${hidden} ${hidden === 1 ? 'value' : 'values'} of the review record are not shown on the pull request._`);
   const escaped = [SUMMARY_MARKER, ...escapeLines(shown)];
   const holdWith = (line) => [...escaped, line, `<!-- aidrian-review-state-held:${state.revision ?? 0} -->`].join('\n');

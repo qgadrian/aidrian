@@ -272,11 +272,20 @@ export function stateWorkFolders(state, { env, home, names = WORK_FOLDERS }) {
 // Why a project run cannot run `project`, or null: its folder lies below its repository's top. prepareAttempt clones the
 // main checkout's project folder, which git does only for a repository's top, and the guards of a start take the clone's
 // top for the folder its session works in, so `aidrian project init` refuses such a project before any run exists.
-// The top is the one git read when the project was found (project.mjs openProject `top`); a folder git cannot read has
-// none, and is left to init's own checks, which pin no repository there.
-export function belowTopProblem(project) {
-  const { top } = project;
-  if (!top || top === (resolvedPath(project.root) ?? project.root)) return null;
+// A root equal to the top git read when the project was found (project.mjs openProject `top`) is that top, with no git
+// call more: that read is trimmed, but a trimmed top never equals a folder inside the real one. Any other root is asked
+// once for git's own prefix from its checkout's top, `read(root)`, kept whole but for its one final newline: an empty
+// prefix is the top, any other is below it, and a failed read or one with no final newline refuses, since whether a
+// clone could be made is unknown.
+export function belowTopProblem(project, read = (cwd) => gateGit(['rev-parse', '--show-prefix'], cwd)) {
+  const root = resolvedPath(project.root) ?? project.root;
+  if (project.top && project.top === root) return null;
+  const said = read(root);
+  const out = said.status === 0 && typeof said.stdout === 'string' ? said.stdout : '';
+  if (!out.endsWith('\n')) return `git cannot tell whether the project at ${project.root} lies at its repository's top (rev-parse --show-prefix: ${said.status === 0 ? 'no terminated line' : gitSaid(said)}), and a project run starts each issue in a clone of that top: run init from a project at the top of a repository git reads`;
+  const prefix = out.slice(0, -1);
+  if (prefix === '') return null;
+  const top = path.resolve(root, ...prefix.replace(/\/$/u, '').split('/').map(() => '..'));
   return `the project at ${project.root} lies below its repository's top, ${top}, and a project run starts each issue in a clone of that top, so it runs only a project there: run init from a project at ${top}`;
 }
 

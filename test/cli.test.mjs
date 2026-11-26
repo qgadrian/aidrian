@@ -9,6 +9,7 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
+import { belowTopProblem } from '../plugins/aidrian/lib/project-start.mjs';
 import { initRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { usageLines } from '../plugins/aidrian/lib/usage.mjs';
@@ -1962,6 +1963,20 @@ test('project init starts a run for a session the host names, and records that s
     assert.deepEqual(projectIn(t, nested, ['init', 'nested', '--file', path.join(dir, 'snapshot.json.input'), ...check], session), { exitCode: 1, out: [], err: [line] }, check.join(' '));
   }
   assert.ok(!existsSync(runFolder(nestedState, 'nested')));
+  // git's prefix decides, read whole: a top whose name ends in a space, which the trimmed roots read misses, is the top;
+  // a name with a newline below the top is below it; an answer with no final newline, or a failed read, refuses.
+  const asked = [];
+  const answer = (said) => (cwd) => {
+    asked.push(cwd);
+    return said;
+  };
+  assert.equal(belowTopProblem({ root: dir, top: dir }, () => assert.fail('the top it found needs no read')), null);
+  assert.equal(belowTopProblem({ root: '/r/repo ', top: '/r/repo' }, answer({ status: 0, stdout: '\n' })), null);
+  assert.deepEqual(asked, ['/r/repo '], 'the root itself is asked');
+  assert.equal(belowTopProblem({ root: '/r/top/a\nb/web', top: null }, answer({ status: 0, stdout: 'a\nb/web/\n' })),
+    'the project at /r/top/a\nb/web lies below its repository\'s top, /r/top, and a project run starts each issue in a clone of that top, so it runs only a project there: run init from a project at /r/top');
+  assert.match(belowTopProblem({ root: '/r/repo', top: null }, answer({ status: 0, stdout: 'apps/web/' })), /^git cannot tell whether the project at \/r\/repo lies at its repository's top \(rev-parse --show-prefix: no terminated line\)/u);
+  assert.match(belowTopProblem({ root: '/r/repo', top: null }, answer({ status: 128, stdout: '', stderr: 'fatal: not a git repository\n' })), /\(rev-parse --show-prefix: fatal: not a git repository\)/u);
 });
 
 test('project init takes --project only for the project of the current folder\'s main checkout', (t) => {

@@ -2160,7 +2160,9 @@ What the start hook loads is the knowledge folder beside that `config.json`, whe
 and each `always` doc its indexes name, by the rule of the [auto-merge](#auto-merge) `paths` check, case and Unicode form ignored, and a
 link, file, or submodule in the place of one or of a folder that holds it.
 The write-ahead start row keeps it as `startLoaded`, `{ docs, folder }`, beside `overlay` and `policyFiles`, and the row
-that settles the start repeats neither list; the push guard reads them from the first. A doc only the base moved
+that settles the start repeats neither list; the push guard reads them from the write-ahead row of the same launch.
+No row is appended that would take the run's ledger past 8 MiB, the most a run reads: a start's write-ahead row keeps
+room for the largest rows that settle it, so a start that cannot have both is refused before its launch. A doc only the base moved
 counts too.
 A start on existing work is refused, too, when a path of the tip, or of the branch's head once fetched, spells another
 way a name the harness holds by its exact spelling: the pointer, the policy files, what the start hook loads, the

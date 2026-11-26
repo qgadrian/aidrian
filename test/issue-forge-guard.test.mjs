@@ -576,6 +576,13 @@ test('an edit of a knowledge index lifts the push guard for no other file: an in
   assert.deepEqual(own({ ...start, startLoaded: { ...LOADED, more: 1 } }).startLoaded, LOADED);
   for (const startLoaded of [undefined, null, 'x', {}, { docs: [] }, { docs: [], folder: null }, { docs: 'x', folder: 'k' }, { docs: ['x', 7], folder: 'k' }]) assert.equal('startLoaded' in own({ ...start, startLoaded }), false, JSON.stringify(startLoaded));
   assert.equal('startLoaded' in own({ ...start, overlay: undefined }), false, 'no overlay');
+  // The names come from the write-ahead row of the selected launch: a launch given back, then a retry of the same
+  // attempt with another pinned list, gives the retry's.
+  const settled = Object.fromEntries(Object.entries(start).filter(([name]) => name !== 'policyFiles' && name !== 'startLoaded'));
+  const launch = (list, docs) => ({ ...settled, outcome: 'uncertain', pending: true, policyFiles: list, startLoaded: { docs, folder: '.aidrian/knowledge' } });
+  appendToRun(fx.state, 'launch', () => ({ rows: [launch(['first.json'], ['docs/first.md']), { ...settled, outcome: 'void' }, launch(['retry.json'], ['docs/retry.md'])].map((row) => ({ ...row, at: new Date().toISOString() })) }));
+  const retried = own({ ...settled, outcome: 'started' });
+  assert.deepEqual([retried.policyFiles, retried.startLoaded.docs], [['retry.json'], ['docs/retry.md']]);
 });
 
 test('an issue session merges a moved base, which may give an index the base\'s own copy, then edits one, and pushes no merge whose index conflicted', (t) => {

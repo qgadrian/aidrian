@@ -1021,6 +1021,20 @@ function launchStart(context, place) {
 // so starts that ran side by side never pass it together: the claim of the session makes its starts one at a time, and
 // this lock makes the last check and the write one step. Whether it was written; when the order, the cap, or a
 // lingering session refused it, `refused.why` says why, and `refused.retry` marks the last, a wait.
+// The bytes of the largest rows that may settle a start of `base` (startLines): its row without the names only the
+// write-ahead row keeps, with every field a settling outcome adds, an issue row, and a halt whose cause is at its cap, each
+// letter counted at four bytes. writeAhead keeps them free in the ledger, so the start can always be settled.
+function settlingBytes(base, at) {
+  const { startLoaded, policyFiles, ...settled } = base;
+  const id = 'x'.repeat(64);
+  const rows = [
+    { ...settled, at, outcome: 'uncertain', stopped: false, proof: true, id, child: id },
+    { event: 'issue', key: base.key, state: 'open', at },
+    { event: 'halt', kind: 'sandbox', cause: 'x'.repeat(CAPS.stop * 4), key: base.key, attempt: base.attempt, at },
+  ];
+  return rows.reduce((sum, row) => sum + Buffer.byteLength(`${JSON.stringify(row)}\n`), 0);
+}
+
 function writeAhead({ state, run, base, held, session, now, found, env, parallel, maxStarts = PROJECT_STARTS, refused = {} }) {
   const at = iso(now);
   const custodian = held.role === 'driver' ? session : held.driver.session;
@@ -1049,7 +1063,7 @@ function writeAhead({ state, run, base, held, session, now, found, env, parallel
       refused.why = `the run started ${starts} sessions, and a run starts at most ${runCap}, under projectRun.maxStarts and the cap in code of ${PROJECT_STARTS}`;
       return { problem: refused.why };
     }
-    return { rows: [...custodyRows(held, session, now), { ...base, at, outcome: 'uncertain', pending: true }, { event: 'issue', key: base.key, state: 'running', at }] };
+    return { rows: [...custodyRows(held, session, now), { ...base, at, outcome: 'uncertain', pending: true }, { event: 'issue', key: base.key, state: 'running', at }], reserve: settlingBytes(base, at) };
   }));
   const done = Boolean(written && !written.problem);
   if (done) markCustodian(session, found, run, state, env);

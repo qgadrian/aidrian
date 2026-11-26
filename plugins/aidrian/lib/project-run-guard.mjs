@@ -229,8 +229,10 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
     const branch = issueBranch(found, mark.issue);
     const pushUrl = typeof start.pushUrl === 'string' && start.pushUrl !== '' ? start.pushUrl : null;
     const overlay = typeof start.overlay === 'string' && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(start.overlay) ? start.overlay : null;
-    // The write-ahead row of the same attempt keeps the names the start's spelling rule held; a settling row does not.
-    const ahead = found.rows.find((row) => isStartRow(row) && row.key === mark.issue && row.attempt === start.attempt && row.pending === true) ?? start;
+    // The write-ahead row of the same launch keeps the names the start's spelling rule held; a settling row does not. That
+    // is the latest pending row of the attempt at or before the selected start: a launch given back, and started again
+    // under the same number, wrote its own.
+    const ahead = writeAheadOf(found, start) ?? start;
     const policyFiles = overlay && Array.isArray(ahead.policyFiles) ? ahead.policyFiles.filter((each) => typeof each === 'string') : [];
     const startLoaded = overlay ? startLoadedIn(ahead.startLoaded) : null;
     const indexFiles = overlay ? indexFilesIn(start.indexFiles) : [];
@@ -243,6 +245,15 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
 // the folder and every doc are strings.
 const startLoadedIn = (value) => (typeof value?.folder === 'string' && Array.isArray(value.docs) && value.docs.every((each) => typeof each === 'string')
   ? { docs: value.docs, folder: value.folder } : null);
+
+// The latest write-ahead (`pending`) row of `start`'s issue and attempt at or before `start` in the run `found`, or null.
+function writeAheadOf(found, start) {
+  for (let at = found.rows.lastIndexOf(start); at >= 0; at -= 1) {
+    const row = found.rows[at];
+    if (isStartRow(row) && row.key === start.key && row.attempt === start.attempt && row.pending === true) return row;
+  }
+  return null;
+}
 
 // A branch as the files named for it spell it (pr-body.mjs bodyFilePath, a dispatch handoff): each `/` a `-`, in lower case.
 export const branchSlug = (branch) => branch.replaceAll('/', '-').toLowerCase();

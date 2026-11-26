@@ -575,6 +575,9 @@ test('a start on Claude Code reaches the registries both reads of the default br
   // to sandboxed commands and to the file tools alike.
   assert.ok([...temporary].some((each) => held.some((folder) => under(folder, each))), 'the fixture\'s state root lies in a temporary folder');
   for (const folder of held) {
+    // The start makes each one first, owner-only, so the deny names a folder that is there at launch, which no sandbox skips.
+    assert.equal(lstatSync(folder).isDirectory(), true, `${folder} is made before the launch`);
+    assert.equal(lstatSync(folder).mode & 0o077, 0, `${folder} is owner-only`);
     assert.ok(settings.sandbox.filesystem.denyWrite.includes(folder), `${folder} is denied`);
     assert.ok(settings.permissions.deny.includes(`Edit(/${folder})`) && settings.permissions.deny.includes(`Edit(/${folder}/**)`), `${folder} is denied to the file tools`);
   }

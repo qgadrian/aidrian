@@ -869,6 +869,7 @@ The session writes none of it: its sandbox grants no write to `<state>/product-f
 `<state root>/feedback-folders/`, or the state folder itself.
 On Claude Code its sandbox also denies writes to those three folders, to sandboxed commands and the file tools,
 even where the grant of a temporary folder, such as `/tmp`, holds a state root placed inside it.
+The start makes each of the three first, owner-only, as it does the sign-off store, so each deny names a folder that is there at launch.
 Codex's start takes no deny list, so there a state root inside a temporary folder its sandbox writes, `/tmp` or `$TMPDIR`, halts the start.
 It starts once `exclude_slash_tmp` or `exclude_tmpdir_env_var` is set true under `[sandbox_workspace_write]`, or the state root moves out
 ([Codex's project start](providers/codex.md#project-start)).

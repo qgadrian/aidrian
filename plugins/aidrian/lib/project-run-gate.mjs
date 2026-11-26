@@ -162,6 +162,21 @@ export function guardedStore({ env, home }) {
   return [...signoffFolders({ env, home }), ...decisionStoreFolders({ env, home })].map((each) => resolvedPath(each) ?? path.resolve(each));
 }
 
+// The folders product feedback keeps (project-start.mjs feedbackHeld), which a confined session's sandbox denies, made
+// first as guardedStore makes its own: owner-only, and only once the folders from the real parent of the folder that holds
+// each, the state folder or the state root, down pass storePathProblem, so a deny names a path there at launch and none
+// is made through a link.
+export function guardedFeedback(state, { env }) {
+  const [records, audits, notes] = feedbackHeld(state, { env });
+  for (const [folder, root] of [[records, state], [audits, state], [notes, stateRoot(env)]]) {
+    if (storePathProblem(path.join(folder, 'entry'), root) !== null) continue;
+    try {
+      mkdirSync(folder, { recursive: true, mode: 0o700 });
+    } catch {}
+  }
+  return feedbackHeld(state, { env });
+}
+
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
 // and through the forge at the repository init pinned, `repository`. { maxParallel, maxStarts, issueHours, solo,
 // unverifiedHosts, workflowSecretsAccepted, forgeProtectionAccepted, outsideSandbox, mcpServers, registries, localBinding,
@@ -891,7 +906,7 @@ function launchStart(context, place) {
           runs: runsFolder(state),
           // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
           // Nor the folders product feedback keeps (feedbackHeld), even where a temporary folder's grant holds the state root.
-          guarded: [...guardedStore({ env, home }), ...feedbackHeld(state, { env })],
+          guarded: [...guardedStore({ env, home }), ...guardedFeedback(state, { env })],
           // Every host's files, from the clone's root and at any depth, whose writes the host's sandbox denies too, so the
           // session plants nothing another host would load there.
           hostFiles: { paths: protectedPaths(), globs: nestedGlobs() },

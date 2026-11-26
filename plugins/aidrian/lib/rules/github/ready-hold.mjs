@@ -31,9 +31,9 @@
 // There it guesses no repository: it checks a `gh pr ready` only in one form (plainReady), `gh pr ready <number or URL>`
 // as the command's first, run from the clone the mark records, with no `-R`, `--repo`, GH_REPO, GIT_DIR, or GIT_WORK_TREE
 // in the command or the hook's environment, and refuses any other with FORM_REASON. So it refuses a ready it cannot read
-// as one (unreadReady): gh with `pr` and `ready` around a word the shell fills in, and `gh pr ready` in the command a
-// launcher runs, as xargs or a `-c` string hands it on. It refuses each read that fails (strictReason):
-// gh failing or past the deadline, and status exiting 3. A ready a variable spells (`gh $X 7`) is out of its sight.
+// as one (unreadReady): gh with `pr` and `ready` around a word the shell fills in. It refuses each read that fails
+// (strictReason): gh failing or past the deadline, and status exiting 3. A ready a variable spells (`gh $X 7`), and one
+// another program runs (xargs, parallel, `find -exec`, watch), are out of its sight.
 // The MCP call names its repository, which must be the clone's origin. The deny of an owed one names the stop the run records.
 
 import { existsSync } from 'node:fs';
@@ -334,11 +334,6 @@ function plainReady({ invocation, folder }, at, cwd) {
     && (BARE.test(args[2].text) || URL_TARGET.test(args[2].text));
 }
 
-// The programs that run a command their words name, which the walk may not read as one: their words are read for gh's
-// ready. A shell's only after `-c`, find's only after an option that runs a command.
-const LAUNCHERS = new Set(['xargs', 'parallel', 'find', 'watch', 'nohup', 'nice', 'time', 'command', 'exec', 'sudo', 'doas', 'timeout', 'env', ...SHELLS]);
-const FIND_RUNS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
-
 // gh's first two command words as tokens, as commandPath reads them.
 function commandTokens(args) {
   const words = commandPath(args);
@@ -347,41 +342,20 @@ function commandTokens(args) {
   return tokens;
 }
 
-// The words written out of the command a launcher runs, split at white space, as a `-c` string or watch's one word holds
-// several; [] for a program that is no launcher.
-function launchedWords({ program, args = [] }) {
-  if (!LAUNCHERS.has(program)) return [];
-  const literal = args.filter((token) => !unreadable(token));
-  const from = program === 'find' ? literal.findIndex(({ text }) => FIND_RUNS.has(text))
-    : SHELLS.has(program) && program !== 'eval' ? literal.findIndex(({ text }) => /^-[A-Za-z]*c[A-Za-z]*$/u.test(text)) : -1;
-  if ((program === 'find' || (SHELLS.has(program) && program !== 'eval')) && from === -1) return [];
-  return literal.slice(from + 1).flatMap(({ text }) => text.split(/\s+/u)).filter(Boolean);
-}
-
-// A ready the hold cannot read, which only an issue session refuses (check), or null:
-//   - gh, which readReady reads as no ready, whose command words are not both written out, with `pr` and then `ready`
-//     among its words written out, as `gh pr "$X" ready 7`, but an `--undo`. gh whose command words are written out
-//     and are another subcommand, as `gh pr create --title ready`, is none.
-//   - a launcher (LAUNCHERS) whose command holds `gh pr ready` or `gh api` with the mutation, as `xargs gh pr ready`,
-//     `find -exec gh pr ready 7 ;`, `watch 'gh pr ready 7'`, or `sh -c '…'`. `echo gh pr ready 7` runs no command.
-// A ready a variable spells, as `X="pr ready"; gh $X 7`, it does not see.
+// A ready the hold cannot read, which only an issue session refuses (check), or null: gh, which readReady reads as no
+// ready, whose command words are not both written out, with `pr` and then `ready` among its words written out, as
+// `gh pr "$X" ready 7`, but an `--undo`. gh whose command words are written out and are another subcommand, as
+// `gh pr create --title ready`, is none. A ready another program runs, as xargs, parallel, `find -exec`, or watch
+// runs it, and one a variable spells, as `X="pr ready"; gh $X 7`, it does not see.
 export function unreadReady(invocation) {
-  if (!invocation || typeof invocation.program !== 'string' || invocation.dynamic) return null;
+  if (invocation?.program !== 'gh' || invocation.dynamic) return null;
   const args = invocation.args ?? [];
-  if (invocation.program === 'gh') {
-    const [noun, verb] = commandTokens(args);
-    if (noun && !unreadable(noun) && (noun.text !== 'pr' || (verb && !unreadable(verb)))) return null;
-    const words = args.filter((token) => !unreadable(token)).map(({ text }) => text);
-    const pr = words.indexOf('pr');
-    if (pr === -1 || !words.slice(pr + 1).includes('ready')) return null;
-    return switchValue(args, readWords(args, READY_VALUES).flags, '--undo') === true ? null : 'gh pr ready around a word the shell fills in';
-  }
-  const words = launchedWords(invocation);
-  const at = words.findIndex((word) => /(?:^|\/)gh$/u.test(word));
-  if (at === -1) return null;
-  const rest = words.slice(at + 1);
-  const [noun, verb] = commandPath(rest.map((text) => ({ text })));
-  return (noun === 'pr' && verb === 'ready') || rest.some((word) => word.includes(MUTATION)) ? `gh run by ${invocation.program}` : null;
+  const [noun, verb] = commandTokens(args);
+  if (noun && !unreadable(noun) && (noun.text !== 'pr' || (verb && !unreadable(verb)))) return null;
+  const words = args.filter((token) => !unreadable(token)).map(({ text }) => text);
+  const pr = words.indexOf('pr');
+  if (pr === -1 || !words.slice(pr + 1).includes('ready')) return null;
+  return switchValue(args, readWords(args, READY_VALUES).flags, '--undo') === true ? null : 'gh pr ready around a word the shell fills in';
 }
 
 // The deny reason for `command`, or null. `cwd` is the session's folder, `env` the hook's own environment, `input` the hook's

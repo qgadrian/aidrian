@@ -952,10 +952,9 @@ The deny asks for `gh pr ready <PR>` from the clone, with no repository option.
 So a ready from a folder outside the clone, or one naming a repository, is refused even when it would mark the right pull request.
 A graphql call names its pull request by node id, so it is judged from any folder.
 Every ready there is judged in the project of that clone.
-It refuses a ready it cannot read as one with the same deny: gh's `pr` and `ready` around a word the shell fills in, such as `gh pr "$X" ready 7`,
-and `gh pr ready` in the command a launcher runs, as `xargs`, `parallel`, `find -exec`, `watch`, `nohup`, or `sh -c` hand it on.
-gh whose own subcommand is another, as `gh pr create --title ready`, holds no ready, nor does a program that runs no command its words name,
-as `echo gh pr ready 7`; `xargs gh pr list` and a program the shell fills in, such as `"$PY" -m pytest`, run.
+It refuses a ready it cannot read as one with the same deny: gh's `pr` and `ready` around a word the shell fills in, such as `gh pr "$X" ready 7`.
+gh whose own subcommand is another, as `gh pr create --title ready`, holds no ready, and no other program's words are read for one,
+so `echo gh pr ready 7` runs; a ready another program runs, as `xargs`, `parallel`, `find -exec`, or `watch` do, is out of its sight.
 The GitHub MCP hook reads the same mark and judges in the same clone.
 It refuses a call whose number it cannot read, and one whose `owner` and `repo` are not both given and equal to the clone's origin repository.
 A pull request opened as no draft skips this hold, so there the [agent gates](#agent-gates) refuse it: every pull request opens as a draft.
@@ -971,7 +970,7 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
   `gh pr {ready,} 7`, `gh pr ready "$PR"`, `gh pr ready {7,}`, a loop such as `for n in 7 8; do gh pr ready $n; done`.
   A repository the shell fills in or expands (`-R "$REPO"`) counts as the session's own, as the merge guard reads it.
   In an issue session each of these is refused, but a ready a variable spells, such as `X="pr ready"; gh $X 7` or `$G pr ready 7`,
-  which no hook that reads words can see ([What this does not stop](config.md#in-an-issue-session)).
+  and one another program runs, which no hook that reads words can see ([What this does not stop](config.md#in-an-issue-session)).
 - A graphql call with no literal pull request id (`$id` from `-f id="$ID"`, `@file`, or `--input`), and an id that resolves to
   no pull request.
 - A script, an interpreter, `xargs`, a variable set in an earlier Bash call, a `gh alias` such as `gh rd 7`, and `curl` to the
@@ -1824,13 +1823,16 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - A shell the lexer cannot read, or a command word built at run time, whose text names a push, a release, a workflow,
     or the API.
   - A pull request opened as no draft, since one opened ready skips the [ready hold](#ready-hold).
-    That is `gh pr create` or `gh pr new` whose own last draft setting is not on, as the pull request body rule reads its options:
-    each option takes its value as gh reads it, so in `--attach --draft` the file is `--draft`, and `--draft --draft=false` is off.
-    A word the shell fills in where an option may go refuses too, and so does a write to `repos/<owner>/<name>/pulls` (`forgeApiOpensPull`).
+    A create from the shell passes in one form alone: every word of the gh command written out, none the shell fills in,
+    opening with exactly `gh pr create` or `gh pr new`, and its last draft setting on, as the pull request body rule reads
+    its options with their values: `--draft`, `--draft=true`, or `-d`, so `--attach --draft` and `--draft --draft=false` are off.
+    So a create with a shell-filled value, such as `--title "$T"`, or with an option before `create`, is refused even as a draft.
+    A write to `repos/<owner>/<name>/pulls` (`forgeApiOpensPull`) is refused too.
     The GitHub MCP server's `create_pull_request` without `draft: true` is refused, under a plugin's name and as Codex's connector too.
-    A shell the lexer cannot read, such as PowerShell, opens no pull request at all, with a draft word or without, since the
-    hook cannot tie that word to the create; its refusal sends the session to the Bash tool.
-    The refusal names the fix: `gh pr create --draft ...`, or the MCP call with `draft: true`.
+    A shell the lexer cannot read, such as PowerShell, whose text runs `gh pr create`, `gh pr new`, or a `gh api` write to
+    a `/pulls` path is refused with a draft word or without, since the hook cannot tie that word to the create.
+    The refusal names the fix: `gh pr create --draft ...` from the Bash tool with every value written out and
+    `--body-file <literal path>`, or the MCP call with `draft: true`.
 
   An attended session, a run's driver, and a session a pending mark holds are not held by it. Its residual: a script or
   program the session runs, or `curl` with the token, can still push or call the forge, a command an earlier call left

@@ -116,7 +116,7 @@ export function issueForgeDenial(input, { names: { human } }, { mark = null, iss
   if (opaque !== null) {
     const texts = opaqueTexts(opaque);
     // Whether a draft word there belongs to the create cannot be read, so any opening of a pull request is refused.
-    if (texts.some((text) => OPENS_PULL.test(text))) return undrafted('it runs a shell the guard cannot read, in words that open a pull request, whose draft setting it cannot read', OPAQUE_REMEDY);
+    if (texts.some((text) => OPENS_PULL.test(text) || API_OPENS_PULL.test(text))) return undrafted('it runs a shell the guard cannot read, in words that open a pull request, whose draft setting it cannot read', OPAQUE_REMEDY);
     return texts.some((text) => FORGE_WORD.test(text)) ? deny('issue session forge call it cannot read', 'it runs a shell the guard cannot read, in words that may push, release, or call the forge') : null;
   }
   const command = bashCall(input) && typeof input.tool_input?.command === 'string' ? input.tool_input.command : null;
@@ -136,10 +136,12 @@ export function issueForgeDenial(input, { names: { human } }, { mark = null, iss
 
 // The GitHub MCP server's tool that opens a pull request, as a host's connector reaches it too (hosts githubCall).
 const CREATE_TOOL = 'mcp__github__create_pull_request';
-const DRAFT_REMEDY = 'open it as a draft: `gh pr create --draft ...`, or the GitHub MCP create_pull_request call with `draft: true`';
-const OPAQUE_REMEDY = 'open it from the Bash tool as a draft, `gh pr create --draft ...`, or with the GitHub MCP create_pull_request call and `draft: true`';
-// Text a shell the guard cannot read is fed that opens a pull request: `pr create`, `pr new`, or a pulls route.
-const OPENS_PULL = /\bpr\b[\s\S]*\b(?:create|new)\b|\bpulls\b/iu;
+const DRAFT_REMEDY = 'open it as a draft with every value written out: `gh pr create --draft ...`, with `--body-file <literal path>` for the body, or the GitHub MCP create_pull_request call with `draft: true`';
+const OPAQUE_REMEDY = 'open it from the Bash tool as a draft with every value written out, `gh pr create --draft ...` with `--body-file <literal path>`, or with the GitHub MCP create_pull_request call and `draft: true`';
+// Text a shell the guard cannot read is fed that opens a pull request: `gh pr create` or `gh pr new`, and a `gh api` call
+// on a pulls route with a method or a field that writes, in one command of the text.
+const OPENS_PULL = /\bgh\s+pr\s+(?:create|new)\b/iu;
+const API_OPENS_PULL = /\bgh\s+api\b(?=[^\n;|&]*\/pulls\b)(?=[^\n;|&]*(?:\s-X\s*POST\b|\s--method[\s=]+POST\b|\s-[fF]\s|\s--(?:raw-)?field\b))/iu;
 
 // Whether one walked command (shell-lex walkCommands) may run in the call of the exact push: a git push, whose own words
 // and variables pushProblem holds, a read of BESIDE_GIT, `git branch --show-current`, or a program of BESIDE_PROGRAMS,

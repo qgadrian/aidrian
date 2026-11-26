@@ -27,7 +27,7 @@
 // product feedback is the Human's (docs/config.md#product-feedback). `status` and `items` still run. The marker is only
 // the message: the session's sandbox, which grants no feedback folder, is the control.
 
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -208,7 +208,8 @@ function committedAuto(project, ref) {
 
 // What git alone says of whether `project` may run product feedback, before any gh call, as { state, team }. A session can
 // rewrite every ref it reads, so this read only ever sends the decision to GitHub, and off needs every source off:
-//   - `on`: the main checkout's local `auto` is true, a ref commits `auto: true`, or the state folder holds `product-feedback/`;
+//   - `on`: the main checkout's local `auto` is true, a ref commits `auto: true`, or the state folder's `product-feedback/`
+//     holds an entry; an empty one, as a project run's start makes before its sandbox denies it, keeps no feedback;
 //   - `maybe`: no source says on, and a ref's config cannot be read (committedAuto undefined): GitHub decides;
 //   - `off`: the local `auto` is false, or every ref says off, and git names the default branch on origin;
 //   - `unknown`: no source says on, and git names no default branch on origin, so only GitHub can say off.
@@ -229,7 +230,8 @@ export function localFeedback(project) {
   if (project.localFeedbackAuto === false) return { state: onOrigin.length ? 'off' : 'unknown', team };
   let kept = false;
   try {
-    kept = isDirectory(path.join(stateDir(project, { config }), 'product-feedback'));
+    const folder = path.join(stateDir(project, { config }), 'product-feedback');
+    kept = isDirectory(folder) && readdirSync(folder).length > 0;
   } catch {}
   if (team || onHead === true || kept) return { state: 'on', team };
   if (!onOrigin.length) return { state: 'unknown', team };

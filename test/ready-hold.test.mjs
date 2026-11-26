@@ -381,17 +381,10 @@ test('in a project run\'s issue session the hold asks GitHub past refs the sessi
   // A pull request not written out: the shell fills it in, the current branch's, or a branch's.
   refusedForm('gh pr ready "$PR"', {}, null);
   for (const command of ['gh pr ready', 'gh pr ready feature/absences']) refusedForm(command, {}, /still owed/u);
-  // A ready it cannot read as one: gh's `pr` and `ready` around a word the shell fills in, and `gh pr ready` in the
-  // command a launcher runs, its words or a `-c` string.
-  for (const command of ['gh pr "$X" ready 7', 'gh "$N" pr ready 7', 'xargs gh pr ready <<< 7', 'xargs -n1 gh pr ready <<< 7', 'parallel gh pr ready ::: 7',
-    'find . -maxdepth 0 -exec gh pr ready 7 \\;', "watch 'gh pr ready 7'", 'xargs gh api graphql -f query=markPullRequestReadyForReview']) {
-    refusedForm(command, {}, null);
-  }
-  // Inert words and other programs are no ready, nor is an undo.
-  // A `-c` string the walk reads too: its gh and the shell are two readies, refused with no gh call.
-  const shell = strictAt("nohup sh -c 'gh pr ready 7'");
-  assert.equal(shell.reason, MANY_REASON);
-  assert.equal(shell.calls.length, 0);
+  // A ready it cannot read as one: gh's `pr` and `ready` around a word the shell fills in.
+  for (const command of ['gh pr "$X" ready 7', 'gh "$N" pr ready 7']) refusedForm(command, {}, null);
+  // A `-c` string the walk reads as commands: its ready is not the line's first, so it is refused with no gh call.
+  refusedForm("nohup sh -c 'gh pr ready 7'", {});
   // A program that runs no command its words name, and gh's own subcommand when it is another, hold no ready.
   for (const command of ['brew upgrade gh && echo ready', 'G=gh; echo "$G"', 'gh pr view "$PR"', 'xargs gh pr list', '"$PY" -m pytest "$T"',
     '"$(git rev-parse --show-toplevel)/scripts/x.sh" "$Y"', 'gh pr ready 7 --undo', 'echo gh pr ready 7', "printf 'gh pr ready 7'",
@@ -589,9 +582,15 @@ test('the committed config is found where each ref puts it, and only off at ever
   assert.match(owedNow(headOn).reason('gh pr ready 7') ?? '', /still owed/u, 'HEAD raises');
   // Every ref off, and the state folder keeps product feedback: GitHub decides.
   const kept = repo(t, { feedback: null });
-  mkdirSync(path.join(kept, '../state/product-feedback'));
+  mkdirSync(path.join(kept, '../state/product-feedback/acme'), { recursive: true });
   const keptCalls = owedNow(kept);
   assert.match(keptCalls.reason('gh pr ready 7') ?? '', /still owed/u, 'a state folder that keeps product feedback raises');
+  // An empty one, as a project run's start makes before its sandbox denies it, keeps none: every ref off still runs unasked.
+  const empty = repo(t, { feedback: null });
+  mkdirSync(path.join(empty, '../state/product-feedback'));
+  const emptyCalls = owedNow(empty);
+  assert.equal(emptyCalls.reason('gh pr ready 7'), null, 'an empty product-feedback folder raises nothing');
+  assert.equal(emptyCalls.calls.length, 0, 'and asks GitHub nothing');
 });
 
 test('status of a project without the feature, or a machine that opted out, makes no gh call', (t) => {

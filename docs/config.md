@@ -888,8 +888,8 @@ Its report lists that under Decisions for the Human, with that command, and the 
 "Product feedback: owed, for the Human, before this leaves draft".
 With `auto` on, every user-facing pull request of a project run stops at a draft for the Human.
 The [ready hold](hooks.md#ready-hold) holds that draft there, since `pr-auto-merge` reads no product feedback and the forge merges no draft.
-So the session opens every pull request as a draft: the [agent gates](hooks.md#agent-gates) refuse `gh pr create` without `--draft` or `-d`,
-and the GitHub MCP `create_pull_request` without `draft: true`, and name that fix.
+So the session opens every pull request as a draft: the [agent gates](hooks.md#agent-gates) refuse any `gh pr create` but one with
+every value written out and `--draft` or `-d`, and the GitHub MCP `create_pull_request` without `draft: true`, and name that fix.
 There the hold checks a ready in one form alone, `gh pr ready <number or URL>` run first from the clone, with no repository option,
 and refuses every other ([In an issue session](hooks.md#in-an-issue-session)).
 So a ready from a folder outside the clone, or one naming a repository, is refused even when it would be right.
@@ -897,8 +897,9 @@ So a ready from a folder outside the clone, or one naming a repository, is refus
 What this does not stop: the ready hold reads the words of each shell command, as every hook that reads commands does.
 A session that runs a script file, an interpreter such as `node -e`, a shell alias, or a GraphQL query read from a file
 can mark the draft ready with no word the hook sees.
-So can a ready a variable spells, such as `X="pr ready"; gh $X 7` or `G=gh; $G pr ready 7`, and one in a string argument of a
-program that runs it, such as an interpreter's code, where no word `gh` stands apart.
+So can a ready a variable spells, such as `X="pr ready"; gh $X 7` or `G=gh; $G pr ready 7`, a ready another program runs,
+such as `xargs gh pr ready`, `parallel`, `find -exec`, or `watch`, and one in a string argument of a program that runs it,
+such as an interpreter's code.
 The merge gate then reads no product feedback, so such a pull request can merge with its feedback still owed.
 The hold stops a session that follows the flow, not one set on getting around it.
 

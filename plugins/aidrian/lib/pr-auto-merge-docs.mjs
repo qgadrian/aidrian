@@ -13,7 +13,7 @@
 
 import path from 'node:path';
 
-import { GUARDED_PATHS, PLUGIN_REPOSITORY_PATHS } from './project.mjs';
+import { foldPath, isGuardedPath, PLUGIN_REPOSITORY_PATHS } from './project.mjs';
 import { QUIET_TEST_FILES } from './review/diff.mjs';
 import { globPattern } from './fs.mjs';
 import { classify, ONLY_NON_BEHAVIOUR, pathPattern } from './review/plan.mjs';
@@ -62,14 +62,25 @@ export const startUnreadable = (loaded) =>
   (typeof loaded === 'string' ? `the default branch's knowledge cannot say which docs the start hook loads into every session (${loaded})` : null);
 
 // Why the changed file `file`, from the top of the repository, is one the start hook loads, by `loaded`, or null: an
-// `always` doc of a bucket, or a file in the knowledge folder whose indexes name them. Compared ignoring case, as the
-// policy files are, since a disk that ignores case loads either spelling.
-export function startLoadProblem(file, loaded) {
-  const lower = file.toLowerCase();
-  const named = JSON.stringify(file);
-  if (loaded.docs.some((doc) => doc.toLowerCase() === lower)) return `it changes ${named}, a knowledge doc the start hook loads into every session`;
-  if (loaded.folder && lower.startsWith(`${loaded.folder.toLowerCase()}/`)) return `it changes ${named}, in the default branch's knowledge folder, which decides what the start hook loads`;
-  return null;
+// `always` doc of a bucket, or a file in the knowledge folder whose indexes name them; or the folder's own path, or a
+// parent of it or of such a doc, where a changed path can only be a link, a file, or a submodule, which puts other files
+// in their place. Compared by the fold of the path (project.mjs foldPath), as the policy files are, since a disk that
+// ignores case or Unicode form loads either spelling.
+export const startLoadProblem = (file, loaded) => startLoadRule(loaded)(file);
+
+// startLoadProblem for one `loaded`, its names folded once, for a caller that judges many paths against it.
+export function startLoadRule(loaded) {
+  const docs = new Set(loaded.docs.map(foldPath));
+  const folder = loaded.folder ? foldPath(loaded.folder) : null;
+  const held = [...docs, ...(folder ? [`${folder}/`] : [])];
+  return (file) => {
+    const folded = foldPath(file);
+    const named = JSON.stringify(file);
+    if (docs.has(folded)) return `it changes ${named}, a knowledge doc the start hook loads into every session`;
+    if (folder && folded.startsWith(`${folder}/`)) return `it changes ${named}, in the default branch's knowledge folder, which decides what the start hook loads`;
+    if (held.some((each) => each.startsWith(`${folded}/`))) return `it changes ${named}, which stands where the default branch keeps the knowledge folder or a doc the start hook loads`;
+    return null;
+  };
 }
 
 // Whether a tree entry is whole: a name, a sha, a mode, and the type git gives that mode.
@@ -150,7 +161,7 @@ function pathProblem({ path: file, changeType }, own, loaded, pluginRepository) 
   const named = JSON.stringify(file);
   const changed = changeProblem(named, changeType);
   if (changed) return changed;
-  if (GUARDED_PATHS.test(file) || GUARDED_PATHS.test(own)) return `it changes ${named}, which instructs AI sessions`;
+  if (isGuardedPath(file) || isGuardedPath(own)) return `it changes ${named}, which instructs AI sessions`;
   if (pluginRepository && PLUGIN_REPOSITORY_PATHS.test(file)) return `it changes ${named}, ${RELEASE_SCRIPT}`;
   const started = startLoadProblem(file, loaded);
   if (started) return started;

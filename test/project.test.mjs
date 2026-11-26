@@ -9,7 +9,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { DEFAULTS, loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { findProject, GUARDED_PATHS, knowledgeIn, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
+import { findProject, foldPath, GUARDED_PATHS, isGuardedPath, spellingProblem, spellingRule, knowledgeIn, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -746,11 +746,69 @@ test('GUARDED_PATHS holds every host\'s instruction files, by name at any depth,
     'Claude Code\'s folder, at any depth': ['.claude', '.claude/settings.json', 'apps/web/.claude/settings.json', 'a/b/.claude/agents/x.md', 'pkg/.claude'],
   };
   for (const [family, files] of Object.entries(families)) {
-    for (const file of files) assert.ok(GUARDED_PATHS.test(file), `${family}: ${file}`);
+    for (const file of files) assert.ok(GUARDED_PATHS.test(file) && isGuardedPath(file), `${family}: ${file}`);
   }
   for (const file of ['docs/agents.mdx', 'docs/agent-sources.md', 'docs/claude-notes.md', 'NOTSKILL.md', '.claude.md', 'pkg/.claude.md', 'pkg/.claudex/a.md', 'src/.cursorrules.js', '.github/instructions-old.md', 'docs/cursor/a.md', 'windsurf.md', '.github/dependabot.yml', 'README.md']) {
-    assert.equal(GUARDED_PATHS.test(file), false, file);
+    assert.deepEqual([GUARDED_PATHS.test(file), isGuardedPath(file)], [false, false], file);
   }
+  // Another spelling a disk that folds names reads as the same path, which the pattern alone does not take.
+  for (const file of ['.github/in\ufb06ructions/x.md', '.github/copilot-in\ufb05ructions.md', '.github/work\ufb02ows/ci.yml', '.GITHUB/WORK\ufb02OWS/ci.yml']) {
+    assert.deepEqual([GUARDED_PATHS.test(file), isGuardedPath(file)], [false, true], file);
+  }
+});
+
+// The one spelling rule: names the harness holds by their exact spelling, a folder's with a trailing slash.
+test('spellingProblem refuses a path that is a held name, a file in a held folder, or a folder that holds one, in another spelling', () => {
+  const names = ['.aidrian.json', 'docs/rules.md', '.aidrian/knowledge/', '.github/workflows/', '.github'];
+  const refused = { '.AIDRIAN.JSON': '.aidrian.json', 'docs/RULES.md': 'docs/rules.md', DOCS: 'docs', '.aidrian/Knowledge/x.json': '.aidrian/knowledge', '.aidrian/KNOWLEDGE': '.aidrian/knowledge', '.github/work\ufb02ows/ci.yml': '.github/workflows', '.GITHUB': '.github' };
+  for (const [file, name] of Object.entries(refused)) assert.equal(spellingProblem(file, names), `${JSON.stringify(file)} is ${JSON.stringify(name)} in another spelling, which a disk that ignores case or Unicode form reads as the same path`, file);
+  for (const file of ['.aidrian.json', 'docs/rules.md', 'docs', 'docs/other.md', 'DOCS/other.md', '.aidrian/knowledge/x.json', '.github/workflows/ci.yml', '.GITHUB/ISSUE_TEMPLATE/a.md', 'src/a.js']) assert.equal(spellingProblem(file, names), null, file);
+  // A guarded path by its fold alone, and two spellings of one name the harness holds.
+  assert.match(spellingProblem('.github/in\ufb06ructions/x.md', []) ?? '', /is a guarded path in another spelling/u);
+  assert.equal(spellingProblem('CLAUDE.md', ['CLAUDE.md']), null);
+  assert.match(spellingProblem('CLAUDE.md', ['CLAUDE.md', 'claude.md']) ?? '', /^"CLAUDE\.md" is "claude\.md" in another spelling/u);
+  // A path past the rule's bounds is refused before it is folded, whatever names it holds.
+  const deep = `${'a/'.repeat(65)}x.md`;
+  for (const file of [deep, `docs/${'x'.repeat(4092)}`]) assert.match(spellingProblem(file, []) ?? '', /is deeper than 64 folders or longer than 4096 bytes, which no guard judges$/u, file.slice(0, 20));
+  for (const file of [`${'a/'.repeat(64)}x.md`, `docs/${'x'.repeat(4091)}`]) assert.equal(spellingProblem(file, []), null, 'at the bounds');
+  // At the depth bound with letters outside ASCII, each folder's fold is its parts' folds joined: a held folder deep
+  // down, spelled another way, refuses, and its own spelling passes.
+  const accented = Array.from({ length: 63 }, (_, at) => `\u03a3${at}\u00e9\u03a3`).join('/');
+  const rule = spellingRule([`${accented}/stra\u00dfe/`]);
+  assert.match(rule(`${accented}/STRASSE/x.md`) ?? '', /in another spelling/u);
+  assert.equal(rule(`${accented}/stra\u00dfe/x.md`), null);
+  assert.match(rule(`${accented.normalize('NFD')}/stra\u00dfe/x.md`) ?? '', /in another spelling/u, 'the folders above in another Unicode form');
+  assert.equal(rule(`${accented}/other/x.md`), null, 'beside the held folder');
+});
+
+// spellingRule folds a path a part at a time, which holds only while a path's fold is its parts' folds joined by `/`.
+test('a path\'s fold is its parts\' folds joined by a slash, final sigma and the other context letters among them', () => {
+  const letters = ['a', 'Z', '\u03a3', '\u03c3', '\u03c2', '\u0345', '\u0130', '\u0131', '\u1e9e', '\u00df', '\ufb03', '\u00e9', 'e\u0301', '\u212a', ' ', '.'];
+  let seed = 7;
+  const next = () => {
+    seed = (seed * 48271) % 2147483647;
+    return seed;
+  };
+  for (let sample = 0; sample < 20_000; sample += 1) {
+    const parts = Array.from({ length: 1 + (next() % 4) }, () => Array.from({ length: next() % 5 }, () => letters[next() % letters.length]).join(''));
+    const file = parts.join('/');
+    assert.equal(foldPath(file), parts.map(foldPath).join('/'), JSON.stringify(file));
+  }
+});
+
+// A refusal compares folds, so a fold that told apart two paths equal in lower case would drop one.
+test('foldPath gives one fold to every two spellings that are equal in lower case, in upper case, or in a Unicode form', () => {
+  const differ = [];
+  for (let code = 1; code <= 0x10ffff; code += 1) {
+    if (code >= 0xd800 && code <= 0xdfff) continue;
+    const letter = String.fromCodePoint(code);
+    // Between letters, so no word-final form is picked.
+    const others = [letter.toLowerCase(), letter.toUpperCase(), letter.normalize('NFC'), letter.normalize('NFD')].filter((each) => each !== letter);
+    if (others.some((each) => foldPath(`a${each}a`) !== foldPath(`a${letter}a`))) differ.push(code.toString(16));
+  }
+  assert.deepEqual(differ, []);
+  assert.equal(foldPath('STRA\u1e9eE/x'), foldPath('stra\u00dfe/x'));
+  assert.notEqual(foldPath('docs/a.md'), foldPath('docs/b.md'));
 });
 
 test('knowledgeIn: the knowledge index folder beside a located config.json, with its repository prefix', () => {

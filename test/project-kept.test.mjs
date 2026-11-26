@@ -13,6 +13,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { deflateSync, inflateSync } from 'node:zlib';
 
+import { stubGitSpawn } from '../plugins/aidrian/lib/git.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { copyLoose, keptCandidate, keptLines, keptPrompt, takeKept } from '../plugins/aidrian/lib/project-kept.mjs';
 import { isPolicyPath } from '../plugins/aidrian/lib/project.mjs';
@@ -342,7 +343,7 @@ test('kept commits that change a host, policy, or workflow file are not taken, a
   const guards = (file) => isGuarded(file) || isPolicyPath(file, ['settings/team/config.json']);
   const files = [
     'AGENTS.md', '.aidrian/knowledge/docs.json', '.aidrian/config.json', 'settings/team/config.json', '.github/workflows/ci.yml',
-    '.github', 'tools/skill/SKILL.md', '.claude/settings.json', '.mcp.json', '.MCP.json/below',
+    '.github', 'tools/skill/SKILL.md', '.claude/settings.json', '.mcp.json', '.MCP.j\u017fon/below',
   ];
   const git = inClone(fx, 1);
   for (const file of files) {
@@ -357,6 +358,14 @@ test('kept commits that change a host, policy, or workflow file are not taken, a
     assert.equal(room.kept.why.includes(path.basename(file)), false, `${file}: no file name of the clone reaches the driver`);
     assert.equal(inClone(fx, 2)('diff', '--name-only', forgeHead, 'HEAD'), '');
     assert.throws(() => inClone(fx, 2)('cat-file', '-e', head), `${file}: no refused commit in the clone, under any id`);
+  }
+  // A list of their files git cut at its buffer, with status 0 and an error, is no list: they are not taken.
+  fresh();
+  stubGitSpawn((program, args, options) => (args.includes('log') && args.includes('-m') ? { status: 0, signal: null, stdout: 'src.js\0', stderr: '', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : spawnSync(program, args, options)));
+  try {
+    notTaken(setting, prepare({ guards }), /^git cannot say which files its commits change$/u, 'a cut list');
+  } finally {
+    stubGitSpawn();
   }
 });
 
@@ -787,7 +796,8 @@ test('a fast-forward that fails ends its attempt, whose clone the sweep removes 
 });
 
 test('an attempt on base copies fast-forwards to its offered commits with the copies in place, and the next holds base copies again', (t) => {
-  const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n', '.claude/skills/x/SKILL.md': 'base skill\n' } });
+  const always = { '.aidrian/knowledge/docs.json': '{"dir":"docs","always":["rules.md"],"docs":{}}\n', 'docs/rules.md': 'base rules\n' };
+  const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n', '.claude/skills/x/SKILL.md': 'base skill\n', ...always } });
   assert.equal(startAgain(fx), null, 'no kept clone, no line');
   // The branch on the forge changes one host file and deletes another, so attempt 2 holds the base's copies of both.
   inClone(fx, 1)('rm', '-q', '.claude/skills/x/SKILL.md');
@@ -818,9 +828,12 @@ test('an attempt on base copies fast-forwards to its offered commits with the co
   git('update-index', '--no-skip-worktree', '--', 'CLAUDE.md');
   writeFileSync(path.join(clone, 'CLAUDE.md'), '# rules the session wrote\n');
   git('add', '--sparse', '--', 'CLAUDE.md');
+  // With an always doc, which the start hook loads.
+  writeFileSync(path.join(clone, 'docs/rules.md'), 'rules the session wrote\n');
+  git('add', '--', 'docs/rules.md');
   git('commit', '-q', '-m', 'rules');
   assert.match(limited(fx, 3), /^kept ENG-1 attempt 3: /u);
-  assert.equal(startAgain(fx), 'not taken ENG-1 attempt 3: its commits change 1 host config, instruction, policy, or workflow file');
+  assert.equal(startAgain(fx), 'not taken ENG-1 attempt 3: its commits change 2 host config, instruction, policy, or workflow files');
   assert.deepEqual([lastStart(fx).head, lastStart(fx).overlay, Object.hasOwn(lastStart(fx), 'took')], [forgeHead, forgeHead, false]);
   assert.ok(existsSync(folderOf(fx, 3)));
 });

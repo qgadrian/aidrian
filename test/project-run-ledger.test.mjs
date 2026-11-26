@@ -20,7 +20,7 @@ import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-m
 import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { humanMergeLines } from '../plugins/aidrian/lib/project-human-merges.mjs';
-import { appendToRun, INPUT_CAP, initRun, issueBranch, pinnedRepository, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, INPUT_CAP, LEDGER_CAP, initRun, issueBranch, pinnedRepository, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
 import { markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { recordIssue } from './project-start-fixture.mjs';
 
@@ -635,4 +635,28 @@ test('readCapped allocates what the file holds, not its cap: a small file reads 
   assert.match(readCapped(file, 6).problem, /is 7 bytes, over the 6 it may hold/u);
   writeFileSync(path.join(dir, 'empty'), '');
   assert.equal(readCapped(path.join(dir, 'empty'), 10).bytes.length, 0);
+});
+
+// No row is written that would take the ledger past what readRun reads, a reserve for rows a later append must write
+// included, so a start's write-ahead row is refused rather than leave its settling rows nowhere to go.
+test('appendToRun refuses, under its lock, rows that would take the ledger past its read cap, a reserve counted', (t) => {
+  const { state, input, init } = setup(t);
+  assert.equal(init('capped', input(SNAPSHOT, 'capped.json')).exitCode, 0);
+  const file = path.join(runFolder(state, 'capped'), 'ledger.jsonl');
+  const at = new Date().toISOString();
+  const row = (bytes) => ({ event: 'note', at, pad: 'x'.repeat(bytes) });
+  const lineOf = (value) => Buffer.byteLength(`${JSON.stringify(value)}\n`);
+  // Fill the ledger to 100 bytes under its cap.
+  const left = () => LEDGER_CAP - fs.statSync(file).size;
+  appendToRun(state, 'capped', () => ({ rows: [row(left() - lineOf(row(0)) - 100)] }));
+  assert.equal(left(), 100);
+  const refused = /^the ledger of run capped would pass 8388608 bytes, the most a run reads, so nothing is written$/u;
+  assert.match(appendToRun(state, 'capped', () => ({ rows: [row(200)] })).problem ?? '', refused, 'past the cap');
+  assert.match(appendToRun(state, 'capped', () => ({ rows: [row(1)], reserve: 100 })).problem ?? '', refused, 'past it with the reserve');
+  assert.equal(left(), 100, 'nothing written');
+  // At the cap: a write counts one byte more, for the line break a cut last line would take before it.
+  assert.match(appendToRun(state, 'capped', () => ({ rows: [row(100 - lineOf(row(0)))] })).problem ?? '', refused, 'the 100 bytes left, and that break');
+  assert.equal(appendToRun(state, 'capped', () => ({ rows: [row(100 - lineOf(row(0)) - 1)] })).problem, undefined, 'at the cap');
+  assert.equal(left(), 1);
+  assert.equal(readRun(state, 'capped').problem, undefined, 'and readRun reads it whole');
 });

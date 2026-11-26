@@ -146,6 +146,13 @@ test('every plugin file the gate, its command, its review, and the hooks load ke
   assert.deepEqual(EXCEPTIONS.filter((each) => !used.has(each)).map(({ file, line }) => `${file} ${line}`), [], 'exceptions nothing needs any more');
 });
 
+// The pattern alone misses a spelling a disk that folds names reads as a guarded path, so only project.mjs reads it.
+test('no plugin code but project.mjs tests a path against GUARDED_PATHS itself: every guard asks isGuardedPath', () => {
+  const files = readdirSync(path.join(ROOT, PLUGIN), { recursive: true }).filter((file) => file.endsWith('.mjs'));
+  const raw = files.filter((file) => /^(?!\s*\/\/).*\bGUARDED_PATHS\b/mu.test(readFileSync(path.join(ROOT, PLUGIN, file), 'utf8').replace(/\s\/\/ .*$/gmu, '')));
+  assert.deepEqual(raw, [path.join('lib', 'project.mjs')]);
+});
+
 // Every module GUARDED_LIB names, as a path from the repository root: a guarded module is the gate's machinery, so what
 // it loads is too, even when the walk from the entries reaches it only through a command dispatch it does not follow.
 const guardedModules = () => readdirSync(path.join(ROOT, PLUGIN, 'lib')).map((name) => `${PLUGIN}/lib/${name}`).filter((file) => file.endsWith('.mjs') && guarded(file));

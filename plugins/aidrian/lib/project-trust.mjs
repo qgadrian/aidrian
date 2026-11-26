@@ -16,9 +16,9 @@ import path from 'node:path';
 import { cleanText, maskSecrets } from './clean-text.mjs';
 import { foldCase, isWithin, resolvedPath } from './fs.mjs';
 import { repoIdentity } from './forges/index.mjs';
-import { GATE_CONFIG, gateGit } from './git.mjs';
+import { GATE_CONFIG, gateGit, WHOLE_TREE_BUFFER } from './git.mjs';
 import { instructionNames } from './hosts/index.mjs';
-import { GUARDED_PATHS } from './project.mjs';
+import { isGuardedPath } from './project.mjs';
 
 // How far down the default branch's first-parent chain a main checkout's HEAD may lag the tip.
 export const LAG_CAP = 500;
@@ -114,9 +114,9 @@ export function repositoryProblem(dirs, repository) {
 }
 
 // The paths git lists with `args`, a subcommand and its options, in the checkout `dir`, split on NUL, or null when git
-// fails. `-z` goes right after the subcommand: after a `--` it would be a path.
+// fails, or gives more than WHOLE_TREE_BUFFER, which is no list. `-z` goes right after the subcommand: after a `--` it would be a path.
 function listed(dir, [subcommand, ...args]) {
-  const read = gateGit([subcommand, '-z', ...args], dir, { timeout: 60_000 });
+  const read = gateGit([subcommand, '-z', ...args], dir, { timeout: 60_000, maxBuffer: WHOLE_TREE_BUFFER });
   return read.status === 0 ? read.stdout.split('\0').filter(Boolean) : null;
 }
 
@@ -274,9 +274,9 @@ export function namedFiles(files) {
   return `${names.join(', ')}${files.length > 3 ? `, and ${files.length - 3} more` : ''}`;
 }
 
-// Whether the path `file`, from the repository root, is a host config or instruction file (GUARDED_PATHS), a folder
+// Whether the path `file`, from the repository root, is a host config or instruction file (project.mjs isGuardedPath), a folder
 // listed with its trailing slash counting as itself.
-export const isGuarded = (file) => GUARDED_PATHS.test(file) || GUARDED_PATHS.test(file.replace(/\/$/u, ''));
+export const isGuarded = (file) => isGuardedPath(file) || isGuardedPath(file.replace(/\/$/u, ''));
 
 // Whether nothing is at `file`, read without following a link.
 function absent(file) {
@@ -289,27 +289,27 @@ function absent(file) {
 }
 
 // Why the worktree `dir` may not start a session no Human attends, or null: a host config or instruction file
-// (isGuarded) differs from the commit `tip`, or one is there untracked or git-ignored. Ignored folders are listed
+// (`guards`, isGuarded by default) differs from the commit `tip`, or one is there untracked or git-ignored. Ignored folders are listed
 // whole, so a dependency folder is one entry, and a guarded folder such as `.claude/` counts as itself. The paths of
 // `overlaid`, which overlayGuarded wrote from the tip and git is told to skip (skip-worktree) or ignore (info/exclude),
 // are left out of git's lists, which read the index or the ignore rules there, and held to the tip's bytes on disk
 // alone (rawMismatch); an ignored folder that holds one is listed file by file instead.
-export function trustProblem(dir, tip, overlaid = []) {
+export function trustProblem(dir, tip, overlaid = [], guards = isGuarded) {
   const skipped = new Set(overlaid);
   const changed = listed(dir, ['diff', '--name-only', '--no-renames', tip, '--']);
   const untracked = listed(dir, ['ls-files', '--others', '--exclude-standard']);
   const ignored = listed(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory']);
   if (!changed || !untracked || !ignored) return 'git cannot list the worktree\'s changed, untracked, and ignored files';
-  const differ = changed.filter((file) => isGuarded(file) && !skipped.has(file));
+  const differ = changed.filter((file) => guards(file) && !skipped.has(file));
   // The index may be told to skip a file (assume-unchanged, skip-worktree) or a filter may rewrite it: the bytes on disk decide.
-  const raw = rawMismatch(dir, tip, isGuarded, overlaid);
+  const raw = rawMismatch(dir, tip, guards, overlaid);
   if (raw?.problem) return raw.problem;
   if (raw) differ.push(raw.path);
   if (differ.length) return `its host config or instruction files differ from the base tip: ${namedFiles([...new Set(differ)])}`;
   // A folder entry that holds an overlaid path, listed again file by file; one git cannot list again stays whole.
   const holds = (entry) => entry.endsWith('/') && overlaid.some((file) => file.startsWith(entry));
   const ignoredFiles = ignored.flatMap((entry) => (holds(entry) ? listed(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '--', `:(top,literal)${entry}`]) ?? [entry] : [entry]));
-  const local = [...untracked, ...ignoredFiles].filter((file) => isGuarded(file) && !skipped.has(file));
+  const local = [...untracked, ...ignoredFiles].filter((file) => guards(file) && !skipped.has(file));
   if (local.length) return `it holds host config or instruction files git does not track, which no review saw: ${namedFiles(local)}`;
   return null;
 }

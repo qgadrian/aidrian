@@ -14,8 +14,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkDelivery, unwrittenHandoffs } from '../plugins/aidrian/lib/delivery-check.mjs';
+import { withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
+import { stubGitSpawn } from '../plugins/aidrian/lib/git.mjs';
+import { INDEX_RECIPE } from '../plugins/aidrian/lib/index-edits.mjs';
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
-import { rawPaths, statusEntries } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
+import { pushCheckoutProblem, rawPaths, statusEntries, workflowPaths } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { findingsFile, sessionIssue } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { keptPrompt } from '../plugins/aidrian/lib/project-kept.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
@@ -94,7 +97,7 @@ function issueFixture(t, options = {}) {
   // `branchWork(work)` commits the branch's own work in the clone before the start records its head.
   options.branchWork?.(work);
   // With `overlay`, the start gave the clone the base branch's copies of its host files over the head it cloned.
-  const overlay = options.overlay ? { overlay: execFileSync('git', ['-C', work, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), policyFiles: options.policyFiles ?? [] } : {};
+  const overlay = options.overlay ? { overlay: execFileSync('git', ['-C', work, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), policyFiles: options.policyFiles ?? [], ...(options.startLoaded ? { startLoaded: options.startLoaded } : {}), ...(options.indexFiles ? { indexFiles: options.indexFiles(work) } : {}) } : {};
   appendToRun(fx.state, 'launch', () => ({ rows: [
     { event: 'start', key, attempt: 1, session: DRIVER, name: `launch · ${key} · 1`, cwd: work, branch: BRANCH, drop: path.join(attempt, 'drop'), ...(options.pushUrl === undefined ? { pushUrl: fx.dir } : options.pushUrl), ...overlay, at, outcome: 'started', id: 'pid-1-0000000000000000', child: SESSION },
     { event: 'issue', key, state: 'running', at },
@@ -344,6 +347,294 @@ test('an issue session on the base branch\'s host files pushes no merge whose ho
   git(fx.work, 'merge', '-q', '--no-ff', '--no-edit', '-X', 'ours', 'origin/main');
   assert.equal(git(fx.work, 'diff', '--name-only', head, 'HEAD').trim(), '', 'the merge changes no file from the recorded head');
   assert.match(push(), /^.*: it pushes a merge of the base into the branch in which CLAUDE\.md conflicts in that merge, which a session never resolves by hand/u);
+});
+
+// The knowledge index files a start let an attempt on base copies edit in git's index (lib/index-edits.mjs): the branch
+// changes docs.json, which the base has, and adds new.json, which it lacks.
+const INDEX = '.aidrian/knowledge/docs.json';
+const ADDED = '.aidrian/knowledge/new.json';
+// One the branch leaves alone.
+const BASE_ONLY = '.aidrian/knowledge/other.json';
+// What the start hook loads there: the folder of both, a doc the branch leaves alone, and one it changes.
+const [ALWAYS, OWN_ALWAYS] = ['docs/rules.md', 'docs/own.md'];
+const LOADED = { docs: [ALWAYS, OWN_ALWAYS], folder: '.aidrian/knowledge' };
+const NINE = Array.from({ length: 9 }, (_, line) => `line ${line}\n`);
+const indexFixture = (t) => {
+  const identity = ['-c', 'user.name=t', '-c', 'user.email=t@example.com'];
+  const gitAt = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...identity, ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const fx = issueFixture(t, {
+    overlay: true,
+    policyFiles: ['.aidrian.json', '.aidrian/config.json', 'harness/stra\u00dfe.json'],
+    startLoaded: LOADED,
+    files: { [INDEX]: NINE.join(''), [BASE_ONLY]: 'other\n', 'CLAUDE.md': 'base\n', [ALWAYS]: NINE.join(''), [OWN_ALWAYS]: NINE.join('') },
+    branchWork: (work) => {
+      writeFileSync(path.join(work, INDEX), NINE.with(0, 'branch\n').join(''));
+      writeFileSync(path.join(work, ADDED), 'added\n');
+      writeFileSync(path.join(work, OWN_ALWAYS), NINE.with(0, 'branch\n').join(''));
+      gitAt(work, 'add', '-A');
+      gitAt(work, 'commit', '-q', '-m', 'feat: the indexes');
+    },
+    indexFiles: (work) => [{ path: INDEX, base: gitAt(work, 'rev-parse', `origin/main:${INDEX}`).trim() }, { path: ADDED, base: null }],
+  });
+  const git = (...args) => gitAt(fx.work, ...args);
+  const head = git('rev-parse', 'HEAD').trim();
+  // Commits `entries`, each [path, mode, text or id], through the index alone; a null mode deletes the path.
+  const blobs = new Map();
+  const blobOf = (text) => {
+    writeFileSync(path.join(fx.root, 'scratch', 'entry'), text);
+    if (!blobs.has(text)) blobs.set(text, git('hash-object', '-w', '--no-filters', path.join(fx.root, 'scratch', 'entry')).trim());
+    return blobs.get(text);
+  };
+  const commit = (...entries) => {
+    const info = entries.map(([file, mode, value]) => (mode === null ? `0 ${'0'.repeat(40)}\t${file}\n` : `${mode} ${mode === '160000' ? value : blobOf(value)}\t${file}\n`));
+    execFileSync('git', ['-C', fx.work, 'update-index', '--index-info'], { input: info.join(''), stdio: ['pipe', 'pipe', 'pipe'] });
+    git('commit', '-q', '-m', 'docs: the index');
+  };
+  const reset = (to = head) => git('reset', '-q', '--hard', to);
+  // The base moves on by `files`, and the clone fetches it.
+  const moveBase = (files) => {
+    for (const [file, text] of Object.entries(files)) {
+      if (text === null) rmSync(path.join(fx.dir, file));
+      else writeFileSync(path.join(fx.dir, file), text);
+    }
+    gitAt(fx.dir, 'commit', '-q', '-am', 'chore: the base moves');
+    git('fetch', '-q', 'origin');
+  };
+  // What the push guard says of the checkout, with the start row's facts; `asked` asks it as the agent gate hook does.
+  const own = () => ownIssue(fx.project, fx.config, fx.mark, { home: fx.home });
+  const facts = own();
+  const root = { root: fx.work, common: git('rev-parse', '--path-format=absolute', '--git-common-dir').trim() };
+  const push = (cwd = fx.work, given = facts) => pushCheckoutProblem(cwd, { root, fold: (each) => each, ...given });
+  // `asked` asks the forge rule of the agent gate hook, with the row's facts, as the hook gives them to it.
+  const asked = () => issueForgeDenial({ session_id: SESSION, cwd: fx.work, ...bash(EXACT) }, NAMES, { mark: fx.mark, cwd: fx.work, issue: own, roots: () => [root], fold: (each) => each })?.reason ?? null;
+  return { ...fx, git, head, commit, reset, moveBase, own, push, asked };
+};
+const EDIT = [INDEX, '100644', NINE.with(0, 'edited\n').join('')];
+
+test('an issue session pushes its edit of a knowledge index its start lets it edit, and no base copy, deletion, or other kind of file there, and each command of the recipe passes every Bash hook', async (t) => {
+  const fx = indexFixture(t);
+  assert.deepEqual(fx.own().indexFiles.map((each) => each.path), [INDEX, ADDED]);
+  fx.commit(EDIT, [ADDED, '100644', 'edited\n']);
+  // A git that cannot read HEAD's tree there refuses the push.
+  const name = INDEX.replaceAll('.', '\\.');
+  const bin = path.join(fx.root, 'no-ls-tree');
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nfor word; do [ "$word" = ls-tree ] && exit 128; done\nexec "${execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()}" "$@"\n`, { mode: 0o755 });
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${before}`;
+  try {
+    assert.match(fx.push(), new RegExp(`it pushes, and git could not say in time what its commits leave at ${name}, a knowledge index file`, 'u'));
+  } finally {
+    process.env.PATH = before;
+  }
+  // With git reading again, the edit of both passes, asked from a subfolder, which reads HEAD's tree from the top all the same.
+  assert.equal(fx.push(path.join(fx.work, '.aidrian')), null, 'an edit of both');
+  // A whole list git cut at its buffer, which spawnSync answers with status 0 and an error, is no list: the push refuses.
+  const plainPush = { ...fx.own(), overlay: null, policyFiles: [], startLoaded: null };
+  // The stubbed pushes below test the walks, not the clone: git's answers on which repository the clone is and where its
+  // origin pushes are given as git gave them once.
+  const common = `${fx.git('rev-parse', '--path-format=absolute', '--git-common-dir').trim()}\n`;
+  const real = (program, args, options) => {
+    if (args.includes('--git-common-dir')) return { status: 0, signal: null, stdout: common, stderr: '' };
+    if (args.includes('get-url')) return { status: 0, signal: null, stdout: `${fx.dir}\n`, stderr: '' };
+    return spawnSync(program, args, options);
+  };
+  // More paths than the guards can judge within their time budget, which the loop asks every 1,000 and once more before a
+  // pass: refused whole, by the committed list and by the overlay's own.
+  let listed = false;
+  let tick = 0;
+  const clock = performance.now;
+  // Still at its start while git reads, then a step each time the loop asks.
+  const start = 1e9;
+  let listing = Array.from({ length: 1500 }, (_, at) => `src/${at}.js\0`).join('');
+  performance.now = () => (listed ? start + (tick += 1) : 0);
+  let statusList = false;
+  stubGitSpawn((program, args, options) => {
+    if (!(statusList ? args.includes('status') : args.includes('--name-only') && (args.some((each) => each.endsWith('...HEAD')) || args.includes(fx.head)))) return real(program, args, options);
+    listed = true;
+    return { status: 0, signal: null, stdout: listing, stderr: '' };
+  });
+  try {
+    const past = 'it pushes commits that change 1500 paths, more than the guards can judge within their time budget, so the push is refused, never judged in part';
+    assert.equal(withinDeadline(start + 2, () => fx.push(fx.work, plainPush)), past);
+    [listed, tick] = [false, 0];
+    assert.equal(withinDeadline(start + 2, () => fx.push()), past, 'the overlay\'s scan');
+    // About 8 MiB of path text in fewer than 1,000 paths: the walk asks the budget every 256 KiB of it.
+    [listed, tick] = [false, 0];
+    listing = Array.from({ length: 900 }, (_, at) => `src/${String(at).padStart(9000, 'x')}\0`).join('');
+    assert.equal(withinDeadline(start + 2, () => fx.push()), past.replace('1500', '900'), 'by the text');
+    // The status entries, walked once in the same budget, every 1,000 and before a pass.
+    [listed, tick] = [false, 0];
+    listing = Array.from({ length: 1500 }, (_, at) => `?? src/${at}.js\0`).join('');
+    statusList = true;
+    assert.equal(withinDeadline(start + 2, () => fx.push(fx.work, plainPush)), 'it pushes from a checkout that holds 1500 uncommitted paths, more than the guards can judge within their time budget, so the push is refused, never judged in part');
+    // 600 renames, a short new path and a long old one each: 1,200 paths in 600 entries, each path charged, so the
+    // budget runs out after 1,000 paths, not 1,000 entries.
+    [listed, tick] = [false, 0];
+    listing = Array.from({ length: 600 }, (_, at) => `R  n${at}.js\0${'o'.repeat(300)}${at}.js\0`).join('');
+    assert.equal(withinDeadline(start + 2, () => fx.push(fx.work, plainPush)), 'it pushes from a checkout that holds 1200 uncommitted paths, more than the guards can judge within their time budget, so the push is refused, never judged in part');
+  } finally {
+    stubGitSpawn();
+    performance.now = clock;
+  }
+  for (const [word, why] of [['--name-only', /^it pushes, and git could not say in time which files its commits change/u], ['status', /^it pushes, and git could not say in time whether its checkout holds a change to the forge's workflow files/u]]) {
+    stubGitSpawn((program, args, options) => (args.includes(word) && (word !== '--name-only' || args.some((each) => each.endsWith('...HEAD'))) ? { status: 0, signal: null, stdout: 'src/a.js\0', stderr: '', error: Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' }) } : real(program, args, options)));
+    try {
+      assert.match(fx.push(fx.work, plainPush) ?? '', why, word);
+    } finally {
+      stubGitSpawn();
+    }
+  }
+  // As the forge rule asks it, with the row's own lists: both edits pass, and an always doc beside them does not.
+  fx.commit([ALWAYS, '100644', 'edited\n']);
+  assert.match(fx.asked(), /: it pushes commits that change 1 host config or instruction file, .*\(docs\/rules\.md differs/u);
+  fx.reset();
+  // Each refusal names the file and the recipe.
+  const refused = (what) => new RegExp(`it pushes commits that ${what}, a knowledge index file this attempt may change only in git's index: from the clone's root, each word that holds \`<path>\` quoted as one shell word, \`git show :./<path>\` into a temporary file outside the clone, .*\`git update-index --cacheinfo 100644,<id>,<path> --skip-worktree -- <path>\``, 'u');
+  fx.commit([INDEX, '100644', NINE.join('')]);
+  assert.match(fx.push(), refused(`put the base branch's copy of ${name} over the branch's own version`));
+  for (const [file, spelled] of [[INDEX, name], [ADDED, ADDED.replaceAll('.', '\\.')]]) {
+    fx.reset();
+    fx.commit([file, null]);
+    assert.match(fx.push(), refused(`delete ${spelled}`), file);
+    for (const mode of file === INDEX ? ['120000', '100755', '160000'] : []) {
+      fx.reset();
+      fx.commit([file, mode, mode === '160000' ? fx.head : 'CLAUDE.md']);
+      assert.match(fx.push(), refused(`leave ${spelled} as something other than a plain file`), `${file} ${mode}`);
+    }
+  }
+  fx.reset();
+  // The recipe, as the first message gives it.
+  const temp = path.join(fx.root, 'scratch', 'index.json');
+  const id = fx.git('rev-parse', `HEAD:${INDEX}`).trim();
+  const commands = [...INDEX_RECIPE.matchAll(/`(git [^`]+)`/gu)].map((match) => match[1].replace('<temporary file>', temp).replace('<id>', id).replaceAll('<path>', INDEX));
+  assert.equal(commands.length, 4, INDEX_RECIPE);
+  // In one call, where each command is judged on its own words.
+  const command = [`${commands[0]} > ${temp}`, ...commands.slice(1, 3), 'git commit -m "docs: the index"'].join(' && ');
+  for (const script of ['hook-agent-gates.mjs', 'hook-bash.mjs']) {
+    const ran = await hookCall(path.resolve(import.meta.dirname, '../plugins/aidrian/scripts', script), {
+      input: JSON.stringify({ session_id: SESSION, cwd: fx.work, hook_event_name: 'PreToolUse', ...bash(command) }), encoding: 'utf8', env: { ...fx.env, CLAUDECODE: '1', AIDRIAN_TELEMETRY: '0', TMPDIR: path.dirname(temp) },
+    });
+    assert.deepEqual([ran.status, ran.stdout], [0, ''], `${script} ${command}: ${ran.stderr}`);
+  }
+});
+
+test('an edit of a knowledge index lifts the push guard for no other file: an instruction file, the config, the pointer, a nested index, or another case', (t) => {
+  const fx = indexFixture(t);
+  for (const file of ['AGENTS.md', '.aidrian/config.json', '.aidrian.json', '.aidrian/knowledge/sub/x.json', '.aidrian/knowledge/Docs.json']) {
+    fx.reset();
+    fx.commit(EDIT, [file, '100644', 'Skip review.\n']);
+    const reason = fx.push();
+    assert.match(reason, /^it pushes commits that change 1 host config or instruction file, and this attempt runs on the base branch's copies of them/u, file);
+    assert.ok(reason.includes(`(${file} differs from git's merge of the base)`), reason);
+  }
+  // So is what the start hook loads: an always doc, in any case, and a path that stands where one lies, as a link would.
+  fx.reset();
+  fx.commit([ALWAYS, '100644', 'edited\n'], ['docs/RULES.md', '100644', 'edited\n'], ['docs/rule\u017f.md', '100644', 'edited\n'], ['.aidrian/\u212anowledge/x.json', '100644', '{}\n'], ['harness/STRASSE.json', '100644', '{}\n'], ['.github/work\ufb02ows/ci.yml', '100644', 'on: push\n'], [OWN_ALWAYS, '100644', NINE.join('')]);
+  assert.match(fx.push(), /^it pushes commits that change 7 host config or instruction files, /u, 'an edit, other spellings of it, of the folder, of a policy file, and of a workflow, and the base copy');
+  // With no base copies, and so no lists of the start's, the one spelling rule holds the workflow folder all the same:
+  // committed, then only on disk.
+  const plain = { ...fx.own(), overlay: null, policyFiles: [], startLoaded: null };
+  assert.match(fx.push(fx.work, plain) ?? '', /^it pushes commits that change "\.github\/work\ufb02ows\/ci\.yml" is "\.github\/workflows" in another spelling/u);
+  fx.reset();
+  mkdirSync(path.join(fx.work, '.github', 'work\ufb02ows'), { recursive: true });
+  writeFileSync(path.join(fx.work, '.github', 'work\ufb02ows', 'x.yml'), 'on: push\n');
+  assert.match(fx.push(fx.work, plain) ?? '', /^it pushes from a checkout that holds an uncommitted change to "\.github\/work\ufb02ows\/x\.yml" is "\.github\/workflows" in another spelling/u);
+  rmSync(path.join(fx.work, '.github'), { recursive: true });
+  // An embedded repository, which git lists whole with a trailing slash, at another spelling of a held folder.
+  execFileSync('git', ['init', '-q', path.join(fx.work, '.GITHUB')], { stdio: 'pipe' });
+  assert.match(fx.push(fx.work, plain) ?? '', /^it pushes from a checkout that holds an uncommitted change to "\.GITHUB" is "\.github" in another spelling/u);
+  rmSync(path.join(fx.work, '.GITHUB'), { recursive: true });
+  // Another spelling of a guarded path that is no workflow folder, by its fold alone, refuses too.
+  mkdirSync(path.join(fx.work, '.github', 'in\ufb06ructions'), { recursive: true });
+  writeFileSync(path.join(fx.work, '.github', 'in\ufb06ructions', 'x.md'), 'rules\n');
+  assert.match(fx.push(fx.work, plain) ?? '', /^it pushes from a checkout that holds an uncommitted change to "\.github\/in\ufb06ructions\/x\.md" is a guarded path in another spelling/u);
+  rmSync(path.join(fx.work, '.github'), { recursive: true });
+  assert.deepEqual(['.github/work\ufb02ows/ci.yml', '.GitHub', '.github/workflows', '.github/other.yml', 'x/.github/workflows/ci.yml'].map(workflowPaths().counts), [true, true, true, false, false], 'the forge\'s workflow folder, by its fold');
+  // A link in their folder's place, and a submodule, whose own `ignore` setting hides no entry of it from the guard.
+  fx.reset();
+  fx.commit([ALWAYS, null], [OWN_ALWAYS, null], ['docs', '120000', 'elsewhere'], ['.gitmodules', '100644', '[submodule "x"]\n\tpath = .claude/x\n\turl = ./x\n\tignore = all\n'], ['.claude/x', '160000', fx.head]);
+  fx.git('checkout', '-q', 'HEAD', '--', '.gitmodules');
+  assert.equal(fx.git('diff', '--name-only', fx.head, 'HEAD'), '.gitmodules\ndocs\ndocs/own.md\ndocs/rules.md\n', 'git alone leaves the submodule out');
+  assert.match(fx.push(), /^it pushes commits that change 4 host config or instruction files, /u);
+  // A folder in the index's place is no edit of it either.
+  fx.reset();
+  fx.commit([INDEX, null], [`${INDEX}/x.json`, '100644', '{}\n']);
+  assert.match(fx.push(), /change 1 host config or instruction file/u);
+  // With no list in the start row, the same edit is refused, as before.
+  fx.reset();
+  fx.commit(EDIT);
+  const start = fx.rows().findLast((row) => row.event === 'start');
+  const { indexFiles, ...before } = start;
+  assert.equal(indexFiles.length, 2);
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ ...before, at: new Date().toISOString() }] }));
+  assert.match(fx.push(fx.work, fx.own()), /^it pushes commits that change 1 host config or instruction file/u);
+  // What a ledger row may hold where the start wrote its lists: only with an overlay, and no malformed one.
+  const own = (row) => {
+    appendToRun(fx.state, 'launch', () => ({ rows: [{ ...row, at: new Date().toISOString() }] }));
+    return fx.own();
+  };
+  const good = [{ path: INDEX, base: 'a'.repeat(40) }, { path: ADDED, base: null }, { path: 'x.json', base: 'b'.repeat(64) }];
+  assert.deepEqual(own({ ...start, indexFiles: [{ path: 7, base: null }, { base: null }, null, 'x', ...good, { path: INDEX }, { path: INDEX, base: 'abc' }, { path: INDEX, base: 'A'.repeat(40) }, { path: INDEX, base: `${'a'.repeat(40)}\n` }] }).indexFiles, good);
+  for (const indexFiles of ['x', { path: INDEX, base: null }, [], [{ path: 7 }]]) assert.equal('indexFiles' in own({ ...start, indexFiles }), false, JSON.stringify(indexFiles));
+  for (const overlay of [undefined, 'HEAD', 'abc']) assert.equal('indexFiles' in own({ ...start, overlay, indexFiles: good }), false, `overlay ${overlay}`);
+  assert.deepEqual(own({ ...start, startLoaded: { ...LOADED, more: 1 } }).startLoaded, LOADED);
+  for (const startLoaded of [undefined, null, 'x', {}, { docs: [] }, { docs: [], folder: null }, { docs: 'x', folder: 'k' }, { docs: ['x', 7], folder: 'k' }]) assert.equal('startLoaded' in own({ ...start, startLoaded }), false, JSON.stringify(startLoaded));
+  assert.equal('startLoaded' in own({ ...start, overlay: undefined }), false, 'no overlay');
+  // The names come from the write-ahead row of the selected launch: a launch given back, then a retry of the same
+  // attempt with another pinned list, gives the retry's.
+  const settled = Object.fromEntries(Object.entries(start).filter(([name]) => name !== 'policyFiles' && name !== 'startLoaded'));
+  const launch = (list, docs) => ({ ...settled, outcome: 'uncertain', pending: true, policyFiles: list, startLoaded: { docs, folder: '.aidrian/knowledge' } });
+  appendToRun(fx.state, 'launch', () => ({ rows: [launch(['first.json'], ['docs/first.md']), { ...settled, outcome: 'void' }, launch(['retry.json'], ['docs/retry.md'])].map((row) => ({ ...row, at: new Date().toISOString() })) }));
+  const retried = own({ ...settled, outcome: 'started' });
+  assert.deepEqual([retried.policyFiles, retried.startLoaded.docs], [['retry.json'], ['docs/retry.md']]);
+  // A first launch with no base copies, given back, then a retake with them: the retake's own row.
+  const { overlay, ...bare } = settled;
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ ...bare, outcome: 'uncertain', pending: true }, { ...bare, outcome: 'void' }, launch(['retake.json'], ['docs/retake.md'])].map((row) => ({ ...row, at: new Date().toISOString() })) }));
+  const retaken = own({ ...settled, outcome: 'started' });
+  assert.deepEqual([retaken.overlay, retaken.policyFiles, retaken.startLoaded.docs], [overlay, ['retake.json'], ['docs/retake.md']]);
+});
+
+test('an issue session merges a moved base, which may give an index the base\'s own copy, then edits one, and pushes no merge whose index conflicted', (t) => {
+  const fx = indexFixture(t);
+  fx.moveBase({ [INDEX]: NINE.with(8, 'base\n').join(''), [BASE_ONLY]: 'the base\'s own\n', [ALWAYS]: 'the base\'s own\n' });
+  // A start lists an index only the base changed too, whose copy a merge of that base puts at HEAD.
+  const base = fx.git('rev-parse', `origin/main:${BASE_ONLY}`).trim();
+  const facts = fx.own();
+  const given = { ...facts, indexFiles: [...facts.indexFiles, { path: BASE_ONLY, base }] };
+  const push = () => fx.push(fx.work, given);
+  // Put there by hand, with no merge of the base, it is the copy on disk.
+  fx.commit([BASE_ONLY, '100644', 'the base\'s own\n']);
+  assert.match(push(), /put the base branch's copy of .* over the branch's own version/u);
+  fx.reset();
+  fx.git('merge', '-q', '--no-ff', '--no-edit', 'origin/main');
+  assert.equal(fx.git('rev-parse', `HEAD:${BASE_ONLY}`).trim(), base);
+  const merged = NINE.with(0, 'branch\n').with(8, 'base\n').join('');
+  assert.equal(fx.git('show', `HEAD:${INDEX}`), merged);
+  assert.equal(fx.git('show', `HEAD:${ALWAYS}`), 'the base\'s own\n');
+  assert.equal(push(), null, 'the merge alone, an always doc only the base changed with it');
+  fx.commit([INDEX, '100644', merged.replace('branch', 'edited')]);
+  assert.equal(push(), null, 'the merge, then an edit');
+  fx.commit([INDEX, '100644', NINE.join('')]);
+  assert.match(push(), /put the base branch's copy of .* over the branch's own version/u, 'the copy on disk, after the merge');
+  // A base that deletes it: deleted as git merged it.
+  fx.reset();
+  fx.moveBase({ [BASE_ONLY]: null });
+  fx.git('merge', '-q', '--no-ff', '--no-edit', 'origin/main');
+  assert.equal(push(), null, 'deleted as git merged it');
+  // A base that changes the line the branch changed: no bytes at HEAD stand in for that conflict, an edit's included.
+  fx.reset();
+  fx.moveBase({ [INDEX]: NINE.with(0, 'base\n').join(''), [ALWAYS]: NINE.join('') });
+  fx.git('merge', '-q', '--no-ff', '--no-edit', '-X', 'ours', 'origin/main');
+  const conflicts = /^it pushes a merge of the base into the branch in which \.aidrian\/knowledge\/docs\.json conflicts in that merge, which a session never resolves by hand/u;
+  assert.match(push(), conflicts);
+  fx.commit(EDIT);
+  assert.match(push(), conflicts);
+  // An always doc both changed there is no exception either.
+  fx.reset();
+  fx.moveBase({ [INDEX]: NINE.join(''), [OWN_ALWAYS]: NINE.with(0, 'base\n').join('') });
+  fx.git('merge', '-q', '--no-ff', '--no-edit', '-X', 'ours', 'origin/main');
+  assert.match(push(), /docs\/own\.md conflicts in that merge, which a session never resolves by hand/u);
 });
 
 test('an issue session on the base branch\'s host files names a conflicted file the branch spelled with a line break as one clean line', (t) => {

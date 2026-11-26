@@ -33,7 +33,7 @@ import path from 'node:path';
 
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS, systemReal } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
-import { gateGit } from './git.mjs';
+import { gateGit, WHOLE_TREE_BUFFER } from './git.mjs';
 import { nestedPathspecs } from './hosts/index.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, keepTokenFiles, sessionToken, tokenDigest, tokenFiles, tokenRecordThere, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
@@ -270,7 +270,7 @@ export function stateWorkFolders(state, { env, home }) {
 // turns signing off (UNSIGNED) and git's own packing (UNPACKED); a clone whose commits would still sign (signingProblem)
 // is { halt }.
 // A later attempt whose head differs from the tip in a file `guards` takes, the host config and instruction files
-// (project-trust.mjs isGuarded) and the policy files the gate resolved, and that the tip does not already hold, asks
+// (project-trust.mjs isGuarded), the policy files the gate resolved, and what the start hook loads, and that the tip does not already hold, asks
 // `reviewed(head, changed)`, `changed` every path the head changes from the tip: null keeps the branch's own files
 // (`reviewed` is the head, which trustProblem compares the clone with); a reason gives the clone the tip's copies of
 // those files instead (`overlay`: { sha, files, why }), which git is told to skip (skip-worktree) or, for one the branch
@@ -289,8 +289,9 @@ export function stateWorkFolders(state, { env, home }) {
 // has it. When the forge has the branch and it holds the recorded head, the clone also takes in the commits an ended
 // attempt's kept clone holds over that head, under a ref alone, where its session may take them (project-kept.mjs):
 // `kept` is that offer, or why the latest kept clone's are not offered, or null. Nothing else here reads them: the
-// checkout, the review asked, and the base copies go by the forge's head. `env` is the environment of its network calls.
-export function prepareAttempt({ project, state, run, found, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, env }) {
+// checkout, the review asked, and the base copies go by the forge's head. `spelled(paths)`, when given, says why a path of
+// that head spells a name the harness holds another way, which refuses the start. `env` is the environment of its network calls.
+export function prepareAttempt({ project, state, run, found, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, spelled = null, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
@@ -356,10 +357,17 @@ export function prepareAttempt({ project, state, run, found, key, attempt, branc
       if (head.status !== 0) return failed('rev-parse', head);
       from = head.stdout.trim();
       onHead = from;
+      // A path of the head that spells a name the harness holds another way (project-run-gate.mjs spellingAt) refuses.
+      if (spelled) {
+        const tree = git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', from], work, { maxBuffer: WHOLE_TREE_BUFFER });
+        if (tree.status !== 0) return failed('ls-tree', tree);
+        const why = spelled(tree.stdout.split('\0').filter(Boolean));
+        if (why) return gone(`the branch's head ${from.slice(0, 7)} holds ${why}`);
+      }
       // The recorded commit, or one after it: exit 1 is another history, and 128 a commit the fetch did not bring.
       const ours = own ? git(['merge-base', '--is-ancestor', own, from]) : null;
       if (ours && ours.status !== 0) return park(own, `its head ${from.slice(0, 7)} does not hold ${own.slice(0, 7)}, the commit this project's runs recorded it at`);
-      const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--']);
+      const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--'], work, { maxBuffer: WHOLE_TREE_BUFFER });
       if (changed.status !== 0) return failed('diff', changed);
       const paths = changed.stdout.split('\0').filter((file) => file !== '');
       const guarded = paths.filter(guards);
@@ -492,7 +500,7 @@ function baseCopyMarks({ work, gitFolder, tip, overlay, git }) {
     return { problem: `their ignore lines could not be written (${error.code ?? 'no code'})` };
   }
   // Exit 0 lists the ignored ones, 1 none; any other answer is no answer.
-  const checked = git(['check-ignore', '-z', '--stdin'], work, { input: `${deleted.join('\0')}\0` });
+  const checked = git(['check-ignore', '-z', '--stdin'], work, { input: `${deleted.join('\0')}\0`, maxBuffer: WHOLE_TREE_BUFFER });
   if (checked.status !== 0 && checked.status !== 1) return { problem: `git cannot say whether it ignores them (${said(checked)})` };
   const ignored = new Set(checked.stdout.split('\0').filter(Boolean));
   const stageable = deleted.find((file) => !ignored.has(file));

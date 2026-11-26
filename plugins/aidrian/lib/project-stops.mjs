@@ -181,9 +181,9 @@ function nextStep(decision, { view, branch, method, catchUp = false }) {
 // base copy, and the push guard lets the host files through only as git merged them (issue-push-checkout.mjs).
 const mergeBaseRoute = (base, branch) => `run \`git fetch origin ${base} ${branch}\`, and when it fails, run it again in this turn, up to three times in all; when it still fails, merge nothing and record the result pr_open with a stop that names the failed fetch, never asking this command again for it; \`git merge-base --is-ancestor origin/${branch} HEAD\`: when it fails, `
   + `HEAD does not hold the branch as the forge has it, so merge nothing and record the result pr_open with a stop that says ${branch} diverged from origin/${branch}; `
-  + `then \`git merge-tree --write-tree --name-only HEAD origin/${base}\` lists the files that would conflict: when one is a host config or instruction file, `
+  + `then \`git merge-tree --write-tree --name-only HEAD origin/${base}\` lists the files that would conflict: when one is a host config or instruction file, or a base copy the first message lists, `
   + 'record the result pr_open with that file\'s path in its stop, and merge nothing; '
-  + `else run \`git merge --no-ff --no-edit origin/${base}\`, a merge commit, never a rebase, resolve the conflicts without editing a host config or instruction file by hand (a merge git refuses over one is recorded the same way), `
+  + `else run \`git merge --no-ff --no-edit origin/${base}\`, a merge commit, never a rebase, resolve the conflicts without editing a host config or instruction file, or a base copy the first message lists, by hand (a merge git refuses over one is recorded the same way), `
   + `run the tests, commit, and push with \`git push origin HEAD:refs/heads/${branch}\` in a call of its own, never with force`;
 
 // The line of a decision. `why` is cleaned and capped as a result's `stop` is (project-result.mjs cleanText).

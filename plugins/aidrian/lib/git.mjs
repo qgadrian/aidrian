@@ -49,10 +49,13 @@ export const HARDENED_PAIRS = Object.freeze([
   ['diff.ignoreSubmodules', 'dirty'], ['protocol.ext.allow', 'never'], ['log.showSignature', 'false'], ['core.useReplaceRefs', 'false'],
 ]);
 export const GATE_CONFIG = Object.freeze(HARDENED_PAIRS.flatMap(([key, value]) => ['-c', `${key}=${value}`]));
-// The options each subcommand adds after its name: a diff runs no external diff and no textconv, and a status reads no
-// submodule.
-const GATE_ARGS = Object.freeze({ diff: ['--no-ext-diff', '--no-textconv'], status: ['--ignore-submodules=dirty'] });
+// The options each subcommand adds after its name: a diff runs no external diff and no textconv, and neither it nor a
+// status reads a submodule, or lets a submodule's own `ignore` setting, as `.gitmodules` holds one, hide its entry.
+const GATE_ARGS = Object.freeze({ diff: ['--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty'], status: ['--ignore-submodules=dirty'] });
 // How long a gate's git call may take unless it says otherwise: a fetch or a clone may take a while.
+// The output a read of a whole tree's paths, or of every path a push changes, may give. A read past it refuses, never
+// judged in part, so a guard answers inside the host's hook timeout whatever a session pushes.
+export const WHOLE_TREE_BUFFER = 8 * 1024 * 1024;
 const GATE_TIMEOUT_MS = 120_000;
 
 // `args` as the plugin runs them: GATE_CONFIG first, and, when the first argument is the subcommand, its GATE_ARGS after
@@ -78,11 +81,24 @@ export function hardenedEnv(env = process.env) {
 // holds a `commondir`, or whose own config sets a key that runs a program (attempt-clone.mjs cloneGitProblem), runs no
 // git: it answers `status` null with the reason on stderr and an `error` whose code is EREFUSED, as git not answering.
 // The -c settings override core.fsmonitor and core.hooksPath, but not a config a commondir leads git to.
+// A test's stand-in for spawnSync (stubGitSpawn), or null for node's own, read at each call, so a test that patches
+// node's own still sees every call.
+let spawnGit = null;
+
+// Makes `fake`, which takes spawnSync's arguments, run every git call of this process in its place; with none, node's own
+// spawnSync again. For a test that needs an answer git itself would rarely give, such as a cut read.
+export function stubGitSpawn(fake = null) {
+  spawnGit = fake;
+}
+
 export function runGit(args, cwd, options = {}) {
   const held = heldBack(cwd, options);
   if (held) return held;
-  const result = spawnSync('git', hardenedArgs(args), { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, ...(killSignal ? { killSignal } : {}), ...options, env: { ...(options.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } });
+  const result = (spawnGit ?? spawnSync)('git', hardenedArgs(args), { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, ...(killSignal ? { killSignal } : {}), ...options, env: { ...(options.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } });
   if (result.error?.code === 'ETIMEDOUT' && options.timeout === undefined) stalled = { status: null, stdout: '', stderr: '', error: result.error };
+  // A call that gives its own maxBuffer reads a whole list: an error on the result, as output cut at that buffer
+  // (ENOBUFS), whatever status git exited with, is no answer, never a list.
+  if (result.error && options.maxBuffer !== undefined) return { ...result, status: null };
   return result;
 }
 

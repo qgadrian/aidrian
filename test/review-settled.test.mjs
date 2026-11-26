@@ -456,6 +456,39 @@ test('namedBy: a residual names a finding only by its exact title, a colon, and 
   assert.deepEqual(namedBy(`${RAISED}; Other title: why`, [title(RAISED), title('Other title')]), [], 'one line opening with two titles names neither: the body takes one line each');
 });
 
+test('namedBy: `<title> (<file>): <why>` names the finding in exactly that file, and a near copy of it names nothing (#753)', () => {
+  const one = [{ title: RAISED, file: 'src/a.js' }];
+  assert.deepEqual(namedBy(`${RAISED} (src/a.js): every caller times out first`, one), one, 'the finding\'s own file in parentheses');
+  assert.deepEqual(namedBy(`${RAISED} ( src/a.js ): why`, [{ title: ` ${RAISED} `, file: ' src/a.js ' }]), [], 'the file as trimmed, character for character');
+  assert.deepEqual(namedBy(`${RAISED} (src/a.js): why`, [{ title: ` ${RAISED} `, file: ' src/a.js ' }]).length, 1, 'title and file are trimmed as the plain shape trims the title');
+  for (const near of [
+    `${RAISED} (src/b.js): why`, `${RAISED} (lib/src/a.js): why`, `${RAISED} (a.js): why`, `${RAISED} (\`src/a.js\`): why`, `\`${RAISED}\` (src/a.js): why`,
+    `${RAISED.toLowerCase()} (src/a.js): why`, `${RAISED} [src/a.js]: why`, `${RAISED}(src/a.js): why`, `${RAISED} (src/a.js) - why`, `${RAISED} (R1-3): why`, `R1-3: why`,
+  ]) assert.deepEqual(namedBy(near, one), [], `a near copy names nothing: ${near}`);
+  for (const bare of [`${RAISED} (src/a.js)`, `${RAISED} (src/a.js):`, `${RAISED} (src/a.js):   `]) assert.deepEqual(namedBy(bare, one), [], `no reason names nothing: "${bare}"`);
+  assert.deepEqual(namedBy(`${RAISED} (src/a.js): why`, [{ title: RAISED }]), [], 'a finding with no file has no file form');
+  const twoFiles = [{ title: RAISED, file: 'src/a.js' }, { title: RAISED, file: 'src/b.js' }];
+  assert.deepEqual(namedBy(`${RAISED} (src/b.js): every caller times out first`, twoFiles), [twoFiles[1]], 'one title in two files: only the file in parentheses');
+  assert.deepEqual(namedBy(`${RAISED} (src/a.js): src/b.js retries too`, twoFiles), [twoFiles[0]], 'a path in the reason does not widen the file form');
+  const nested = [{ title: RAISED, file: 'a' }, { title: RAISED, file: 'a): b' }];
+  assert.deepEqual(namedBy(`${RAISED} (a): b): why`, nested), [nested[0]], 'a file holding `):` has no file form: the line opens `a`\'s form alone');
+  assert.deepEqual(namedBy(`${RAISED} (a): b): why`, [nested[1]]), [], 'raised only in a file holding `):`, the file form names nothing');
+  assert.deepEqual(namedBy(`${RAISED}: why`, [nested[1]]), [nested[1]], 'and the plain form still names it');
+  assert.deepEqual(namedBy(`${RAISED} (src/a.js): why`, [...twoFiles, { title: `${RAISED} (src/a.js)`, file: 'src/c.js' }]), [{ title: `${RAISED} (src/a.js)`, file: 'src/c.js' }], 'the longest title still wins');
+});
+
+test('a `<title> (<file>): <why>` line anchors a medium finding in that file, and nothing for another file (#753)', () => {
+  const line = `${RAISED} (a.js): every caller already times out first`;
+  const settled = settledOn({ residuals: [line] });
+  assert.deepEqual(settled, [
+    { title: RAISED, file: 'a.js', severity: 'medium', residual: line },
+    { title: line, file: 'a.js', severity: 'medium', residual: line, raised: RAISED },
+  ]);
+  assert.deepEqual(splitRuled([repeatOf()], settled).findings, [], 'the medium repeat in that file is waived');
+  assert.deepEqual(settledOn({ residuals: [`${RAISED} (b.js): why`] }), [{ title: `${RAISED} (b.js): why` }], 'another file in parentheses anchors nothing');
+  assert.deepEqual(settledOn({ residuals: [`\`${RAISED}\` (a.js): why`] }), [{ title: `\`${RAISED}\` (a.js): why` }], 'backticks anchor nothing');
+});
+
 test('residualTexts: a residual whose why runs onto continuation lines still names the finding by its opening words', () => {
   const [text] = residualTexts(`## Accepted residuals\n\n- ${RAISED}: every caller\n  already times out first\n\n## Tests\n`);
   assert.equal(text, `${RAISED}: every caller already times out first`);
@@ -928,6 +961,10 @@ test('the body template opens a residual line with the finding\'s exact title, a
   assert.match(line, /^- <the finding's exact title\b[^>]*>: <why\b/u, line);
   const raised = [{ title: RAISED }];
   assert.deepEqual(namedBy(line.replace(/^- <[^>]*>/u, RAISED), raised), raised, 'the shape the template writes is the shape namedBy reads');
+  const shape = template.match(/`<title> \(<file>\): <why>`/u)?.[0];
+  assert.ok(shape, 'the template gives the file form');
+  const inFile = [{ title: RAISED, file: 'src/a.js' }];
+  assert.deepEqual(namedBy(shape.slice(1, -1).replace('<title>', RAISED).replace('<file>', 'src/a.js'), inFile), inFile, 'and namedBy reads it');
 });
 
 test('a later second file ends a line that names no path; a line that names a path keeps its own file', () => {
@@ -1470,6 +1507,8 @@ test('the auto-merge gate judges only the waivers the body still accepts: one th
   assert.ok(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: src/a.js keeps it, for a reason']), undefined) }), 'a line holding this file\'s path still lists it');
   assert.equal(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: kept, for a reason']), undefined) }), null, 'a line with no path names neither, as the review pass reads it');
   assert.ok(gate(twinRecord, { accepts: bodyAccepts(bodyWith([RESIDUAL_TEXT]), undefined) }), 'the residual\'s own text still lists it');
+  assert.ok(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations (src/a.js): kept, for a reason']), undefined) }), 'the file form for this file still lists it');
+  assert.equal(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations (src/z.js): kept, for a reason']), undefined) }), null, 'the file form for the other file keeps this one dropped');
   const lost = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, {}, [{ head: OLDER, findings: null }]);
   assert.ok(gate(lost, { accepts: bodyAccepts(bodyWith(['Preserve citations: a reworded reason']), undefined) }), 'a round that kept no findings loses no hold: the waiver names its own finding');
   assert.equal(gate(lost), null, 'and a body that dropped it still lets it go');

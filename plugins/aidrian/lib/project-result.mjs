@@ -60,8 +60,11 @@ export { cleanText };
 // The result a session wrote, `value`: { result, problems }, where `result` is { status, pr, decisions, stop } with only
 // those fields, `cause` on an `environment` one, which must carry one of ENVIRONMENT_CAUSES, and `stopCause` on a
 // `pr_open` one that carries it, each checked and its text cleaned (cleanText), or null when `problems` lists any.
-// `stopCause` is for the run's report alone: it lifts no check of the result.
-export function validateResult(value) {
+// `stopCause` is for the run's report alone: it lifts no check of the result. With `causeless`, an environment result
+// with no `cause` passes, as one an older plugin wrote does when a run that spans an upgrade reads it again (the driver's
+// take-in and the report); its halt then names no cause, so it waits on a person (project-recheck.mjs). An unlisted
+// cause, or one on another status, is refused either way.
+export function validateResult(value, { causeless = false } = {}) {
   if (!isObject(value)) return { result: null, problems: ['the result is not a JSON object'] };
   const problems = [];
   if (!RESULT_STATUSES.includes(value.status)) problems.push(`"status" ${quote(value.status)} is not one of ${RESULT_STATUSES.join(', ')}`);
@@ -91,8 +94,9 @@ export function validateResult(value) {
   // The message quotes nothing of the value: a token in it would reach the ended row, and a deeply nested one overflows
   // JSON.stringify, which would stop every later wait on the same drop.
   const { cause, stopCause } = value;
-  if (value.status === 'environment' && cause === undefined) problems.push(`an environment result names its "cause", one of ${ENVIRONMENT_CAUSES.join(', ')}`);
-  else if (value.status === 'environment' && !ENVIRONMENT_CAUSES.includes(cause)) problems.push(`"cause" ${quote(cause)} is not one of ${ENVIRONMENT_CAUSES.join(', ')}`);
+  if (value.status === 'environment' && cause === undefined) {
+    if (!causeless) problems.push(`an environment result names its "cause", one of ${ENVIRONMENT_CAUSES.join(', ')}`);
+  } else if (value.status === 'environment' && !ENVIRONMENT_CAUSES.includes(cause)) problems.push(`"cause" ${quote(cause)} is not one of ${ENVIRONMENT_CAUSES.join(', ')}`);
   else if (value.status !== 'environment' && cause !== undefined) problems.push('"cause" is for an environment result alone');
   if (stopCause !== undefined && stopCause !== HOST_DENIED_MERGE) problems.push(`"stopCause" is not "${HOST_DENIED_MERGE}"; leave it out for any other stop`);
   else if (stopCause !== undefined && value.status !== 'pr_open') problems.push('"stopCause" is for a pr_open result alone');
@@ -322,7 +326,8 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   if (read.problem) return bad(read.problem);
   const { value } = read;
   if (value?.run !== run || value?.key !== key || value?.attempt !== start.attempt) return bad('the drop\'s result names another run, issue, or attempt');
-  const checked = validateResult(value);
+  // A session of an older plugin hands over no cause: its halt then waits on a person.
+  const checked = validateResult(value, { causeless: true });
   if (!checked.result) return bad(checked.problems[0]);
   const verified = {};
   const pull = droppedPullProblem({ forge, repository, result: checked.result, branch, since: Date.parse(start.at), verified });

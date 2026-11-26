@@ -9,6 +9,7 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,7 @@ import test from 'node:test';
 import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { cleanText, mergeRelease, RESULT_CAP, validateResult, WAIT_MARGIN, waitRun } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE, ingestDrops } from '../plugins/aidrian/lib/project-result.mjs';
+import { rereadResult } from '../plugins/aidrian/lib/project-report.mjs';
 import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
 import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
 import { detectHost } from '../plugins/aidrian/lib/hosts/index.mjs';
@@ -25,7 +27,7 @@ import { appendToRun, HOST_DENIED_MERGE, readRun, runFolder, summaryText } from 
 import { CAUSE_CHECKS, ENVIRONMENT_CAUSES, recheckHalt } from '../plugins/aidrian/lib/project-recheck.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { decidedFixture, DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { decidedFixture, DRIVER, ISSUES, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const CHILD = STARTED[0].session;
 
@@ -861,6 +863,48 @@ test('a resume row the re-check cannot write is its own line, and a ledger anoth
 
 // An environment result row of `key`'s attempt 1 that halts run `launch` of `fx`, with `cause` when given.
 const environmentHalt = (fx, cause, key = 'ENG-1') => appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'result', key, attempt: 1, status: 'environment', ...(cause === undefined ? {} : { cause }), halt: `${key} attempt 1 found its environment broken: no network`, at: new Date().toISOString() }] }));
+
+// A run `launch` written by hand in a fresh state folder, with ENG-1's attempt 1 running and a drop folder: no git and
+// no child process, for the steps that read only the run's files.
+function handRun(t) {
+  const state = mkdtempSync(path.join(tmpdir(), 'aidrian-hand-run-'));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const folder = runFolder(state, 'launch');
+  const drop = path.join(state, 'drop');
+  mkdirSync(folder, { recursive: true });
+  mkdirSync(drop, { mode: 0o700 });
+  const snapshot = JSON.stringify({ issues: [ISSUES[0]] });
+  writeFileSync(path.join(folder, 'snapshot.json'), snapshot);
+  const at = new Date(Date.now() - 60_000).toISOString();
+  const rows = [
+    { event: 'init', run: 'launch', at, session: DRIVER, repository: { host: 'github.com', owner: 'acme', name: 'widgets' }, issues: 1, sha256: createHash('sha256').update(snapshot).digest('hex') },
+    { event: 'issue', key: 'ENG-1', state: 'running', at },
+    { event: 'start', key: 'ENG-1', attempt: 1, outcome: 'started', session: DRIVER, id: CHILD, child: CHILD, cwd: state, name: 'ENG-1', drop, at },
+  ];
+  writeFileSync(path.join(folder, 'ledger.jsonl'), rows.map((row) => `${JSON.stringify(row)}\n`).join(''));
+  return { state, drop };
+}
+
+test('a result an older plugin\'s session handed over with no cause is taken in, its halt waits on a person, and the report reads its stop text again; an unlisted cause is still refused', (t) => {
+  const { state, drop } = handRun(t);
+  writeFileSync(path.join(drop, DROP_FILE), JSON.stringify({ run: 'launch', key: 'ENG-1', attempt: 1, status: 'environment', pr: null, decisions: [], stop: 'git push: HTTP 403' }));
+  assert.deepEqual(ingestDrops({ state, run: 'launch', found: readRun(state, 'launch'), forge: { branchHead: () => null }, now: Date.now() }), ['result ENG-1 environment -> open']);
+  const found = readRun(state, 'launch');
+  const row = found.rows.findLast((each) => each.event === 'result');
+  assert.equal(Object.hasOwn(row, 'cause'), false);
+  let probes = 0;
+  const kept = recheckHalt({ state, run: 'launch', found, session: DRIVER, key: 'ENG-1', recheck: () => ((probes += 1), ['ok access']) });
+  assert.deepEqual([kept.lifted, kept.lines[1], probes], [false, 'no check covers this cause (none recorded): a person fixes it, then lifts the halt with `aidrian project resume launch` from a session they attend', 0]);
+  assert.deepEqual(rereadResult(state, 'launch', 'ENG-1', row), { result: { status: 'environment', pr: null, decisions: [], stop: 'git push: HTTP 403' } });
+  // On a re-read, an unlisted cause, or a cause on another status, is refused as before.
+  const file = path.join(runFolder(state, 'launch'), 'results', 'ENG-1.json');
+  const written = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...written, cause: 'wifi' }));
+  assert.deepEqual(rereadResult(state, 'launch', 'ENG-1', row), { problem: 'the session\'s result file fails its checks' });
+  assert.deepEqual(validateResult({ status: 'failed', stop: 'x', cause: 'push' }, { causeless: true }).problems, ['"cause" is for an environment result alone']);
+  // Where a session records a result, the cause is still required.
+  assert.match(validateResult({ status: 'environment', stop: 'x' }).problems[0], /^an environment result names its "cause"/u);
+});
 
 // One fixture for both halves, within the file's child-process budget.
 test('an environment halt\'s re-check reads its cause: one no check covers, or none, is kept with no probe; a covered one runs only its own checks, lifts, and records the cause', (t) => {

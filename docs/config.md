@@ -2075,6 +2075,9 @@ An issue's session that finds its own environment broken, such as a sandbox that
 sign-in or push that fails, or a host tool that fails, records the result `environment`, with the failing command and
 its error as its `stop`, which it must name, and its `cause`, one of the [causes below](#environment-causes), which
 `aidrian project result` refuses the result without, naming the list; a `cause` on any other status is refused too.
+The driver's `wait` and the run's report still take in a result with no cause that a session of an older plugin handed
+over, and keep its stop text, so a run that spans an upgrade loses nothing; its halt names no cause and waits on a
+person. An unlisted cause, or one on another status, is refused there too.
 Every result's `stop` has the whole user part of an HTTP URL masked as
 `***`, and anything shaped like a token, another URL's password, or an Authorization value masked as `[redacted]`,
 before it is kept. The driver's `wait` records the result with that

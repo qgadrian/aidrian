@@ -75,7 +75,8 @@ export function rereadResult(state, run, key, row) {
     return { problem: 'the session\'s result file is not JSON' };
   }
   if (value?.run !== run || value?.key !== key || value?.attempt !== row.attempt || value?.status !== row.status || (value?.pr ?? null) !== (row.pr ?? null)) return { problem: 'the session\'s result file names another run, issue, attempt, status, or pull request than the ledger' };
-  const checked = validateResult(value);
+  // A result file an older plugin wrote may hold an environment result with no cause: it keeps its stop text.
+  const checked = validateResult(value, { causeless: true });
   return checked.result ? { result: checked.result } : { problem: 'the session\'s result file fails its checks' };
 }
 

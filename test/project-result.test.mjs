@@ -856,7 +856,7 @@ test('a resume row the re-check cannot write is its own line, and a ledger anoth
   assert.deepEqual(rechecks(fx), []);
   // A run whose files go away under the re-check: the checks passed, and the row could not be written.
   const found = readRun(fx.state, 'launch');
-  const gone = recheckHalt({ state: fx.state, run: 'launch', found, session: DRIVER, key: 'ENG-1', recheck: () => (rmSync(path.join(folder, 'snapshot.json')), ['ok host']) });
+  const gone = recheckHalt({ state: fx.state, run: 'launch', found, session: DRIVER, key: 'ENG-1', recheck: () => (rmSync(path.join(folder, 'snapshot.json')), ['ok access']) });
   assert.equal(gone.lifted, false);
   assert.match(gone.lines.at(-1), /^the checks passed, but the resume row could not be written: no run launch in /u);
 });
@@ -920,6 +920,13 @@ test('an environment halt\'s re-check reads its cause: one no check covers, or n
     // A person lifts it, so the next halt is the latest.
     appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'resume', session: OTHER, at: new Date().toISOString() }] }));
   }
+  // A sign_in halt whose access check never ran, as on a host with no project-start capability, where only the
+  // repository, state, and policy lines answer ok: kept, naming the check.
+  environmentHalt(fx, 'sign_in');
+  const prerequisites = recheckHalt({ state: fx.state, run: 'launch', found: readRun(fx.state, 'launch'), session: DRIVER, key: 'ENG-1', recheck: () => ['ok repository', 'ok state', 'ok policy'] });
+  assert.deepEqual(prerequisites, { lifted: false, lines: ['recheck kept the halt: ENG-1 attempt 1 found its environment broken: no network', 'the checks of this halt that did not run or answer ok: access'] });
+  assert.deepEqual(rechecks(fx), []);
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'resume', session: OTHER, at: new Date().toISOString() }] }));
   const lifts = [];
   // Each on its own issue, since a second self-lift of one issue's environment halt waits on a person.
   for (const [cause, checks, key] of [['sign_in', ['access'], 'ENG-1'], ['host', ['host', 'trust'], 'ENG-4']]) {

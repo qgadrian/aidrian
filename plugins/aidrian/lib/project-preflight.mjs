@@ -208,7 +208,10 @@ export function recheckLines({ project, config, run, repository, names, env = pr
   if (policy.problem) return lines;
   const cap = detectHost({ env }).capabilities.projectStart;
   if (names.includes('host')) check('host', hostCheck(cap, policy, env));
-  if (names.includes('trust')) trustLines({ cap, state: place.state, env, home, lines, check });
+  // A host that keeps no record of trusted folders, as Codex, answers the trust check with a note, so the re-check counts
+  // it as run (project-recheck.mjs); a host with no project start fails the host check instead.
+  if (names.includes('trust') && cap && typeof cap.trust !== 'function') lines.push('note trust: this host keeps no record of trusted folders to check');
+  else if (names.includes('trust')) trustLines({ cap, state: place.state, env, home, lines, check });
   if (names.includes('access') && cap) {
     lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true, keychain: project.localForgeTokenKeychain, exec }));
   }

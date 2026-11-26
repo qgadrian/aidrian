@@ -55,7 +55,7 @@ const liftedBefore = (found, { kind, key, index }) => found.rows.slice(0, index)
 // Re-checks the halt of run `run` in `state`, as `found` (readRun) holds it, for the driver `session` starting issue
 // `key`, whose custody rests with `custodian` (the run's driver, or the driver a successor takes over from), with
 // `recheck({ repository, names })` the re-check's lines for the run's pinned repository: { lifted, lines }, `lines` the
-// lines to print. It lifts only when every line is `ok` or a `note`, and at least one is `ok`. Nothing happens for a
+// lines to print. It lifts only when every line is `ok` or a `note`, and every check the halt selects answered `ok` or a `note` of its own. Nothing happens for a
 // run that is not halted, a halt of another kind or of another issue than `key`, or without `recheck`; an environment
 // halt whose cause maps to no check, or names none, and a second halt of its kind on its issue after a self-lift, are
 // kept with no probe. The `resume` row goes in under the ledger's lock,
@@ -78,7 +78,12 @@ export function recheckHalt({ state, run, found, session, key, custodian = sessi
   }
   const passed = lines.filter((line) => /^ok \S+$/u.test(line)).map((line) => line.slice(3));
   const failed = lines.filter((line) => !line.startsWith('ok ') && !line.startsWith('note '));
-  if (failed.length || !passed.length) return { lifted: false, lines: [kept, ...(failed.length ? failed : ['no check of this halt ran'])] };
+  if (failed.length) return { lifted: false, lines: [kept, ...failed] };
+  // Every check the halt selects must have run and answered `ok`, or a `note` of its own, as trust on a host that keeps no
+  // trust record: the repository, state, and policy lines alone, or a check the host cannot run, such as access with no
+  // project-start capability, never lift it.
+  const unanswered = names.filter((name) => !passed.includes(name) && !lines.some((line) => line.startsWith(`note ${name}: `)));
+  if (unanswered.length) return { lifted: false, lines: [kept, `the checks of this halt that did not run or answer ok: ${unanswered.join(', ')}`] };
   const row = { event: 'resume', session, kind: halt.kind, key: halt.key, attempt: halt.attempt, via: 'recheck', checks: passed, ...(halt.kind === 'environment' ? { cause: halt.class } : {}), at: new Date(now).toISOString() };
   const unwritten = (why) => ({ lifted: false, lines: [kept, `the checks passed, but the resume row could not be written: ${String(why).split('\n')[0].slice(0, 200)}`] });
   let written;

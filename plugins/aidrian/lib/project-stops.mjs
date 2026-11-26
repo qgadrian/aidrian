@@ -51,7 +51,7 @@ export const STOP_ACTIONS = Object.freeze(['done', 'merge', 'park', 'wait', 'rer
 const CAPPED = new Set(['wait', 'retry', 'rerun_checks', 'update_branch', 'merge_base', 'review_round', 'request_bot', 'merge']);
 const BASE_UPDATES = new Set(['update_branch', 'merge_base']);
 // The auto-merge reasons nothing a session does unattended can change: they wait for the Human.
-export const POLICY_REASONS = Object.freeze(['team', 'local', 'checks', 'paths', 'author', 'outsider', 'closes']);
+export const POLICY_REASONS = Object.freeze(['team', 'local', 'checks', 'paths', 'author', 'outsider', 'feedback', 'closes']);
 // Every auto-merge reason this file knows; any other parks.
 const KNOWN_REASONS = new Set([...POLICY_REASONS, 'review', 'trust']);
 // How long a wait on a read or an action that failed lasts, in seconds.

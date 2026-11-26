@@ -6,7 +6,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -591,6 +591,16 @@ test('the committed config is found where each ref puts it, and only off at ever
   const emptyCalls = owedNow(empty);
   assert.equal(emptyCalls.reason('gh pr ready 7'), null, 'an empty product-feedback folder raises nothing');
   assert.equal(emptyCalls.calls.length, 0, 'and asks GitHub nothing');
+  // One that cannot be listed may hide a record a path still reaches: GitHub decides.
+  const unlisted = repo(t, { feedback: null });
+  const hidden = path.join(unlisted, '../state/product-feedback');
+  mkdirSync(hidden);
+  chmodSync(hidden, 0o300);
+  try {
+    assert.match(owedNow(unlisted).reason('gh pr ready 7') ?? '', /still owed/u, 'a product-feedback folder that cannot be listed raises');
+  } finally {
+    chmodSync(hidden, 0o700);
+  }
 });
 
 test('status of a project without the feature, or a machine that opted out, makes no gh call', (t) => {

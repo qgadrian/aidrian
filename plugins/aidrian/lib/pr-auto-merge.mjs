@@ -94,6 +94,7 @@ import { indexedAlways } from './knowledge.mjs';
 import { entryKind, FILE_MODES, noneNeededProblem, RELEASE_SCRIPT, startLoadProblem, startUnreadable, treeLookup } from './pr-auto-merge-docs.mjs';
 import { configPathIn, GUARDED_PATHS, isPluginRepository, isPolicyPath, knowledgeIn, strictConfigPathIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, POLICY_PATHS, trailPaths } from './project.mjs';
 import { hostOf } from './remotes.mjs';
+import { feedbackStatus, issueReads } from './pr-product-feedback.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
@@ -736,8 +737,10 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
   const { target, unknown } = parseArgs(argv);
   if (unknown) return fail(`unknown argument: ${unknown}`);
   let pr;
+  let view;
   try {
-    pr = readView(forge.change(target, VIEW_FIELDS));
+    view = forge.change(target, VIEW_FIELDS);
+    pr = readView(view);
   } catch (error) {
     return fail(`could not read the pull request with gh (${ghError(error)})`);
   }
@@ -852,10 +855,12 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
           signoff = { flow: unsigned[0] ?? null, signoffClass: signoffClassOf(policy, unsigned) };
         } else problem = `${problem}, and no judge's verdict lets it merge: ${stand.why}`;
       }
+      // Product feedback, read only when every check before it allows the merge (feedbackHold).
+      const feedback = outsider || problem || owedSignoff ? null : feedbackHold(forge, project, pr, view, main);
       // The closing words of a project run's issue session, from the final review verdict: read only when every check
       // before them allows it, a review a judge's verdict waived included. One read of the mark gives the run and its
       // issue.
-      const context = outsider || problem ? undefined : runIssue();
+      const context = outsider || problem || feedback ? undefined : runIssue();
       let closing = null;
       if (context !== undefined && unattended()) {
         try {
@@ -866,6 +871,7 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
       }
       if (outsider) [effective, reason, why] = [false, 'outsider', `${outsider} commented, and is no member of the repository`];
       else if (problem) [effective, reason, why] = [false, 'review', problem];
+      else if (feedback) [effective, reason, why] = [false, 'feedback', feedback];
       // Before merge trust, as for any merge: a pull request that would close another issue stops on that first.
       else if (closing) [effective, reason, why] = [false, 'closes', closing];
       else if (owedSignoff) [effective, reason, why, trust] = [false, 'trust', owedSignoff, 'signoff'];
@@ -893,6 +899,22 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
   };
   const localErrors = reason === 'local' ? project.errors.filter((each) => each.startsWith(`${project.paths.local}:`)) : [];
   return { code: effective ? 0 : 1, result, host: pr.host, localErrors };
+}
+
+// Why product feedback keeps the merge off (reason `feedback`), or null: the check the ready hold makes in a project run's
+// issue session (pr-product-feedback.mjs feedbackStatus with issueReads), for every merge this gate judges, attended or
+// not. It reads GitHub's config at the default branch, `main` as this gate read its name from GitHub, and the base, never
+// a git ref a session could have rewritten, and the pull request as this gate viewed it, so a pull request born ready, or
+// marked ready by a form no hook reads, still stops here. Owed, or a read that fails, keeps it off: the Human runs the
+// pr-product-feedback skill on it.
+function feedbackHold(forge, project, pr, view, main) {
+  const remedy = `run the pr-product-feedback skill on #${pr.number} in a session the Human attends, then check again`;
+  try {
+    const { exit, result } = feedbackStatus(String(pr.number), project, { forge, view, remotes: () => [`${pr.host}/${pr.repo}`.toLowerCase()], ...issueReads(), mainBranch: () => main });
+    return exit === 0 ? null : `product feedback is owed on #${pr.number} (${result.why}): ${remedy}`;
+  } catch (error) {
+    return `the product feedback of #${pr.number} cannot be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}): ${remedy}`;
+  }
 }
 
 // --- The closing words of a project run's issue session (reason `closes`, lib/closing-words.mjs) ---

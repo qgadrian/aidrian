@@ -51,9 +51,6 @@ const githubTools = {
   // It only marks a draft ready, so it stands for the server's draft tool with `draft: false`. Its name and input come from the
   // catalog a Codex 0.167.0 install cached on 2026-11-06; the connector's own update_pull_request takes no draft.
   mcp__codex_apps_github__mark_pull_request_ready_for_review: { as: 'mcp__github__update_pull_request_draft_state', repo: 'repository_full_name', fields: { pullNumber: 'pr_number' }, fixed: { draft: false } },
-  // It opens a pull request, a draft only with `draft: true`, which defaults to false: a project run's issue session opens
-  // none without it (lib/issue-forge-guard.mjs). Its name and input come from the catalog a Codex install cached on 2026-11-26.
-  mcp__codex_apps_github__create_pull_request: { as: 'mcp__github__create_pull_request', repo: 'repository_full_name', fields: { draft: 'draft', title: 'title' } },
 };
 
 // Its command line that starts or resumes a session, which lib/handoff-guard.mjs hostSessionStartDenial refuses a

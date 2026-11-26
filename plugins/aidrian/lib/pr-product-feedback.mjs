@@ -209,7 +209,8 @@ function committedAuto(project, ref) {
 // What git alone says of whether `project` may run product feedback, before any gh call, as { state, team }. A session can
 // rewrite every ref it reads, so this read only ever sends the decision to GitHub, and off needs every source off:
 //   - `on`: the main checkout's local `auto` is true, a ref commits `auto: true`, or the state folder's `product-feedback/`
-//     holds an entry; an empty one, as a project run's start makes before its sandbox denies it, keeps no feedback;
+//     holds an entry or cannot be listed; one listed empty, as a project run's start makes before its sandbox denies it,
+//     keeps no feedback;
 //   - `maybe`: no source says on, and a ref's config cannot be read (committedAuto undefined): GitHub decides;
 //   - `off`: the local `auto` is false, or every ref says off, and git names the default branch on origin;
 //   - `unknown`: no source says on, and git names no default branch on origin, so only GitHub can say off.
@@ -231,7 +232,14 @@ export function localFeedback(project) {
   let kept = false;
   try {
     const folder = path.join(stateDir(project, { config }), 'product-feedback');
-    kept = isDirectory(folder) && readdirSync(folder).length > 0;
+    if (isDirectory(folder)) {
+      // Only a listing that worked and found nothing says empty: one the folder refuses may hide a record still reachable.
+      try {
+        kept = readdirSync(folder).length > 0;
+      } catch {
+        kept = true;
+      }
+    }
   } catch {}
   if (team || onHead === true || kept) return { state: 'on', team };
   if (!onOrigin.length) return { state: 'unknown', team };

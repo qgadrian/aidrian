@@ -317,18 +317,6 @@ const ISSUE_MUTATIONS = new Set([
 // the call's words past `gh`, each { text, dynamic } as the shell lexer gives them: a word built at run time may name
 // any route or method, so a route or a method so built that may write is refused. Null for any other `program`.
 export function apiWrite(program, tokens) {
-  const call = apiCall(program, tokens);
-  if (call === null) return null;
-  const { route, sent, writes } = call;
-  if (route === 'graphql') return graphqlWrite(sent);
-  if (!writes) return null;
-  if (route === null) return 'a forge API route built at run time, with a method that writes';
-  return ISSUE_ROUTES.test(route.replace(/^repos\/\{owner\}\/\{repo\}\//u, 'repos/o/r/')) ? null : `the forge API route ${route.slice(0, 120)}, which only the Human writes`;
-}
-
-// A `gh api` call as { route, sent, writes }: `route` as written, or null when built at run time, `sent` its fields, and
-// `writes` whether its method writes. Null for any other call.
-function apiCall(program, tokens) {
   if (program !== 'gh') return null;
   let at = 0;
   while (at < tokens.length && tokens[at].text.startsWith('-') && !tokens[at].dynamic) at += GH_VALUES.includes(tokens[at].text) ? 2 : 1;
@@ -358,14 +346,11 @@ function apiCall(program, tokens) {
       route = dynamic ? null : word.replace(/^\/+/u, '').split('?')[0];
     }
   }
-  return { route, sent, writes: method === null ? fields : method !== 'GET' && method !== 'HEAD' };
-}
-
-// Why a `gh api` call opens a pull request, a REST write to a repository's pulls, which may open it ready, or null. A
-// project run's issue session opens one only with `gh pr create --draft` (lib/issue-forge-guard.mjs).
-export function apiOpensPull(program, tokens) {
-  const api = apiCall(program, tokens);
-  return api?.writes && api.route !== null && /^repos\/[^/]+\/[^/]+\/pulls$/u.test(api.route) ? 'it opens a pull request through the forge API, which may open it ready' : null;
+  if (route === 'graphql') return graphqlWrite(sent);
+  const writes = method === null ? fields : method !== 'GET' && method !== 'HEAD';
+  if (!writes) return null;
+  if (route === null) return 'a forge API route built at run time, with a method that writes';
+  return ISSUE_ROUTES.test(route.replace(/^repos\/\{owner\}\/\{repo\}\//u, 'repos/o/r/')) ? null : `the forge API route ${route.slice(0, 120)}, which only the Human writes`;
 }
 
 // An option word of gh api as [name, attached value]: `--name=value`, a short option glued to its value, as `-XPOST`,

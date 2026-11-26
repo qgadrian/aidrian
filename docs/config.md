@@ -2149,9 +2149,11 @@ person, on the repository the run's init row pinned: first `repository`, the sta
 which on a moved origin keeps the halt before any probe runs, then the state folder and the team's policy the others
 need. A check the halt selects that did not run or did not answer `ok`, such as `access` on a host with no
 project-start capability, keeps the halt and prints `the checks of this halt that did not run or answer ok: <checks>`;
-the repository, state, and policy lines alone never lift it. A `note` of the check's own counts as its answer, as
-`note trust:` on a host that keeps no record of trusted folders, such as Codex. When every line is `ok` or a `note`, and
-every check the halt selects answered, it writes a `resume` row with `via: "recheck"`, the halt's `kind`, issue,
+the repository, state, and policy lines alone never lift it. A note is no answer: a `note trust:` line, such as for a
+trust record that cannot be read or parsed, keeps the halt, and the start prints it. The one exception is a host that
+keeps no record of trusted folders, such as Codex, whose trust check answers with exactly `none trust: this host keeps
+no record of trusted folders`. When every line is `ok`, a `note`, or that line, and every check the halt selects
+answered, it writes a `resume` row with `via: "recheck"`, the halt's `kind`, issue,
 and attempt, the `checks` that passed, and for an environment halt its `cause`, under the ledger's lock only while the halt stands, the run has not ended,
 and custody rests where the caller read it, prints `recheck lifted the halt: <cause>; ok <checks>` and
 `` lifted the <kind> halt of <issue>; run `next` again ``, and exits 0 having launched nothing: the driver's next start of the

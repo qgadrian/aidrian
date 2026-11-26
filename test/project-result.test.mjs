@@ -24,7 +24,7 @@ import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
 import { detectHost } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { LINGER_GRACE, releaseAttempts } from '../plugins/aidrian/lib/project-linger.mjs';
 import { appendToRun, HOST_DENIED_MERGE, readRun, runFolder, summaryText } from '../plugins/aidrian/lib/project-run.mjs';
-import { CAUSE_CHECKS, ENVIRONMENT_CAUSES, recheckHalt } from '../plugins/aidrian/lib/project-recheck.mjs';
+import { CAUSE_CHECKS, ENVIRONMENT_CAUSES, NO_TRUST_RECORD, recheckHalt } from '../plugins/aidrian/lib/project-recheck.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { decidedFixture, DRIVER, ISSUES, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
@@ -927,15 +927,26 @@ test('an environment halt\'s re-check reads its cause: one no check covers, or n
   assert.deepEqual(prerequisites, { lifted: false, lines: ['recheck kept the halt: ENG-1 attempt 1 found its environment broken: no network', 'the checks of this halt that did not run or answer ok: access'] });
   assert.deepEqual(rechecks(fx), []);
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'resume', session: OTHER, at: new Date().toISOString() }] }));
+  // A host halt whose trust record cannot be read: the note answers nothing, so it is kept, and printed.
+  const unreadable = 'note trust: the trust record ~/.claude.json cannot be read (ENOENT)';
+  environmentHalt(fx, 'host');
+  const unread = recheckHalt({ state: fx.state, run: 'launch', found: readRun(fx.state, 'launch'), session: DRIVER, key: 'ENG-1', recheck: () => ['ok repository', 'ok state', 'ok policy', 'ok host', unreadable] });
+  assert.deepEqual(unread, { lifted: false, lines: ['recheck kept the halt: ENG-1 attempt 1 found its environment broken: no network', 'the checks of this halt that did not run or answer ok: trust', unreadable] });
+  assert.deepEqual(rechecks(fx), []);
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'resume', session: OTHER, at: new Date().toISOString() }] }));
   const lifts = [];
-  // Each on its own issue, since a second self-lift of one issue's environment halt waits on a person.
-  for (const [cause, checks, key] of [['sign_in', ['access'], 'ENG-1'], ['host', ['host', 'trust'], 'ENG-4']]) {
+  // Each on its own issue, since a second self-lift of one issue's environment halt waits on a person. The host halt is
+  // re-checked on a host that keeps no trust record: its exact answer counts for trust.
+  const noRecord = ({ names }) => names.map((name) => (name === 'trust' ? NO_TRUST_RECORD : `ok ${name}`));
+  for (const [cause, checks, key, answer] of [['sign_in', ['access'], 'ENG-1'], ['host', ['host', 'trust'], 'ENG-4', noRecord]]) {
     environmentHalt(fx, cause, key);
     const asked = [];
-    const lifted = recheck(key, asked);
+    const lifted = answer
+      ? recheckHalt({ state: fx.state, run: 'launch', found: readRun(fx.state, 'launch'), session: DRIVER, key, recheck: (given) => (asked.push([...given.names]), answer(given)) })
+      : recheck(key, asked);
     assert.equal(lifted.lifted, true, lifted.lines.join('\n'));
     assert.deepEqual(asked, [checks], cause);
-    lifts.push({ event: 'resume', session: DRIVER, kind: 'environment', key, attempt: 1, via: 'recheck', checks, cause });
+    lifts.push({ event: 'resume', session: DRIVER, kind: 'environment', key, attempt: 1, via: 'recheck', checks: answer ? ['host'] : checks, cause });
     assert.deepEqual(rechecks(fx), lifts);
   }
 });

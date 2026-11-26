@@ -1797,7 +1797,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     refused with "it pushes commits that change <count> host config or instruction files, and this attempt runs on the
     base branch's copies of them, so it may change none but as git merges the base into the branch", and a diff git cannot give refuses it too.
     One exception is a merge of the base: each such file in HEAD equals git's clean merge of `<overlay>`
-    and HEAD's merge base with origin's default branch (`git merge-tree --write-tree`).
+    and HEAD's merge base with origin's default branch (`git -c merge.renames=false merge-tree --write-tree`).
+    Rename detection is off there, as in the catch-up route's `merge-tree` read and `git merge` (`merge_base` in `lib/project-stops.mjs`).
+    With it on, a base that renames a host file the branch changed would put the branch's lines at the new path, which no base copy covers.
+    Off, that file conflicts as modified and deleted, so the route merges nothing and the guard refuses a merge made with it on.
+    The cost: any file the base renames and the branch changed conflicts too, and the session resolves it by hand, or stops on a host file.
+    The config form runs on every git with `merge-tree --write-tree`, while `-X no-renames` fails there before git 2.43.
+    git's ort merge honours the setting only from git 2.50 on, so an older git still detects renames there, and the case passes as before.
     Once HEAD holds a newer base, every such file is compared, one HEAD keeps as `<overlay>` holds it too.
     A file that conflicts in a merge of a newer base is refused whatever bytes HEAD keeps, even the recorded head's own.
     So is one HEAD holds otherwise; the refusal names the file as one clean, bounded line.

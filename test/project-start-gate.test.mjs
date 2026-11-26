@@ -20,6 +20,7 @@ import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { indexFilesOf } from '../plugins/aidrian/lib/index-edits.mjs';
 import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, INDEX_EDITS_LINE, ISSUE_ATTEMPTS, POLICY_FILES_LINE, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, spellingAt, startDocsAt, startGuards, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
+import { stopLine } from '../plugins/aidrian/lib/project-stops.mjs';
 import { startUnreadable } from '../plugins/aidrian/lib/pr-auto-merge-docs.mjs';
 import { commitFiles } from '../plugins/aidrian/lib/project-trust.mjs';
 import { recordHumanSignoff } from '../plugins/aidrian/lib/review/merge-trust.mjs';
@@ -631,8 +632,10 @@ test('a later attempt over host files no review passed holds the base\'s bytes, 
 });
 
 // The base moved on after the branch forked: both add a change entry, and the base changes AGENTS.md, which the branch
-// kept, so the start holds the base's copies of it and of the branch's CLAUDE.md.
-test('a later attempt over host files no review passed merges its moved base, git merging the base copies in the index alone, and pushes it', (t) => {
+// kept, so the start holds the base's copies of it and of the branch's CLAUDE.md. A later base that renames CLAUDE.md
+// conflicts in the route's merge and the push guard's on git 2.50 and later, so the branch's lines never reach the new
+// path through either.
+test('a later attempt over host files no review passed merges its moved base, git merging the base copies in the index alone, and pushes it, but not a base that renames one', (t) => {
   const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n', 'AGENTS.md': 'a\nb\n', 'CHANGELOG.md': 'one\n' } });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   reopen(fx, 1);
@@ -674,6 +677,38 @@ test('a later attempt over host files no review passed merges its moved base, gi
     root: { root: clone, common: git('rev-parse', '--path-format=absolute', '--git-common-dir').trim() }, pushUrl: row.pushUrl, fold: (each) => each, overlay: row.overlay,
   });
   assert.equal(push(), null, 'the merge of the base passes the push guard');
+
+  // git's ort merge honours merge.renames only from 2.50 on: an older git still detects the rename, as on main.
+  const [major, minor] = git('--version').match(/(\d+)\.(\d+)/u).slice(1).map(Number);
+  if (major < 2 || (major === 2 && minor < 50)) {
+    t.diagnostic(`git ${major}.${minor} detects renames whatever merge.renames says, so the renamed-base asserts are skipped`);
+    return;
+  }
+  // The base then moves CLAUDE.md, which the branch changed, to .claude/CLAUDE.md, a host file no base copy covers.
+  mkdirSync(path.join(base, '.claude'), { recursive: true });
+  fx.git('-C', base, 'mv', 'CLAUDE.md', '.claude/CLAUDE.md');
+  fx.git('-C', base, 'commit', '-q', '-m', 'the base moves its rules');
+  fx.git('-C', base, 'push', '-q', fx.bare, 'HEAD:refs/heads/main');
+  git('fetch', '-q', fx.bare, '+refs/heads/main:refs/remotes/origin/main');
+  const run = (args) => {
+    try {
+      return git(...args);
+    } catch (error) {
+      return `${error.stdout}${error.stderr}`;
+    }
+  };
+  const rules = () => readFileSync(path.join(clone, '.claude/CLAUDE.md'), 'utf8');
+  // The catch-up route's own read and merge, as its line words them, run with rename detection off.
+  const route = stopLine({ action: 'merge_base', why: 'it conflicts with main' }, { view: { base: 'main', number: 12 }, key: 'ENG-1', branch: 'feat/eng-1-export', catchUp: true });
+  const [read, merge] = [/`git (-c merge\.renames=false merge-tree [^`]+)`/u, /`git (-c merge\.renames=false merge --no-ff [^`]+)`/u].map((pattern) => route.match(pattern)[1].split(' '));
+  assert.match(run(read), /^[0-9a-f]{40}\nCLAUDE\.md\n/u, 'the read names the moved host file as a conflict, so the session merges nothing');
+  assert.match(run(merge), /CONFLICT \(modify\/delete\): CLAUDE\.md deleted in origin\/main and modified in HEAD/u);
+  assert.equal(rules(), '# base rules\n', 'the new path keeps the base\'s lines');
+  git('merge', '--abort');
+  // Against the route, git's rename detection carries the branch's lines to the new path, and the push guard refuses them.
+  run(['merge', '--no-ff', '--no-edit', 'origin/main']);
+  assert.equal(rules(), '# branch rules\n');
+  assert.match(push(), /\(CLAUDE\.md conflicts in that merge, which a session never resolves by hand\)/u);
 });
 
 // A file name is the branch's text: it reaches the base-copies file as one clean line, never the driver's stderr or the session's task.

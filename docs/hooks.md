@@ -858,8 +858,9 @@ The guard is not proof that a review happened, because no record lets a merge ru
 So `aidrian pr auto-merge` reads the record itself, and no record keeps auto-merge off. In a session no Human attends
 it asks for [merge trust](review.md#merge-trust) too.
 It also stays off for a changed instruction or workflow file (`paths`), a comment from outside the repository (`outsider`),
-requested changes (`review`), and [product feedback](config.md#product-feedback) owed or unreadable (`feedback`),
-for every merge. In a session no Human attends this guard makes that same feedback check before the merge,
+requested changes (`review`), and [product feedback](config.md#product-feedback) owed (`feedback`),
+for every merge; a feedback read that fails is an error (exit 3), which a project run retries.
+In a session no Human attends this guard makes that same feedback check before the merge,
 by `gh pr merge` or the GitHub MCP merge, reading the review trail it already took; owed or unreadable refuses.
 Neither it nor this guard stops a session with a shell or a forged local record:
 for proof, protect the branch with a required review from a second account. [Limits](config.md#limits).

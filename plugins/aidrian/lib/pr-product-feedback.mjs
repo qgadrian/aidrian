@@ -311,16 +311,24 @@ export function feedbackStatus(value, project, { forge, remotes = () => checkout
 // ready, or marked ready by a form the ready hold cannot read, stops at the merge. `pr` is { number, repo, host }, with
 // `view`, gh's answer to the pull request's view when the caller has it, and `main`, the default branch's name the caller
 // read from GitHub, or null to ask. Owed, or a read that fails, keeps it off: the Human runs the pr-product-feedback skill.
-export function feedbackHold(forge, project, { number, repo, host, view = null, main = null }) {
-  const remedy = `run the pr-product-feedback skill on #${number} in a session the Human attends, then try again`;
+// The gate calls feedbackOwed itself, so a read that fails exits 3 there, which a project run retries.
+export function feedbackHold(forge, project, pr) {
   try {
-    const url = `https://${host}/${repo}/pull/${number}`;
-    const reads = { ...issueReads(), ...(main ? { mainBranch: () => main } : {}) };
-    const { exit, result } = feedbackStatus(url, project, { forge, view, remotes: () => [`${host}/${repo}`.toLowerCase()], ...reads });
-    return exit === 0 ? null : `product feedback is owed on #${number} (${result.why}): ${remedy}`;
+    return feedbackOwed(forge, project, pr);
   } catch (error) {
-    return `the product feedback of #${number} cannot be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}): ${remedy}`;
+    return `the product feedback of #${pr.number} cannot be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}): ${feedbackRemedy(pr.number)}`;
   }
+}
+
+const feedbackRemedy = (number) => `run the pr-product-feedback skill on #${number} in a session the Human attends, then try again`;
+
+// feedbackHold's read, which throws when it cannot read instead of refusing, so `aidrian pr auto-merge` reports a read
+// that failed as an error a project run retries (exit 3), apart from feedback that is owed.
+export function feedbackOwed(forge, project, { number, repo, host, view = null, main = null }) {
+  const url = `https://${host}/${repo}/pull/${number}`;
+  const reads = { ...issueReads(), ...(main ? { mainBranch: () => main } : {}) };
+  const { exit, result } = feedbackStatus(url, project, { forge, view, remotes: () => [`${host}/${repo}`.toLowerCase()], ...reads });
+  return exit === 0 ? null : `product feedback is owed on #${number} (${result.why}): ${feedbackRemedy(number)}`;
 }
 
 // `status`: prints what feedbackStatus says, and exits with it.

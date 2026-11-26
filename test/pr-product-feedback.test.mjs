@@ -500,7 +500,7 @@ test('in an issue session, status never reads clear from the clone\'s refs: GitH
   assert.equal(hold(() => null), null);
 });
 
-test('post takes the record\'s lock under product-feedback/ before any forge call that reads or posts the comment', (t) => {
+test('post takes the record\'s lock under product-feedback/ before any forge call that reads or posts the comment', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'needs folder modes that bind this user' }, (t) => {
   const r = repo(t);
   recorded(t, r, [finding('F1', 'The save button hides')]);
   const body = bodyAt(r, 'Plain words.');

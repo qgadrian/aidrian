@@ -211,7 +211,8 @@ test('product feedback owed, or unreadable, keeps it off for every merge; a defa
   // Off on the default branch: on, as before.
   const off = run(t, r, ['7', '--json']);
   assert.deepEqual([off.code, json(off).reason], [0, null]);
-  // A read of the feedback config that fails keeps it off too, never on: the gate's own read came first and passed.
+  // A read of the feedback config that fails keeps it off too, never on: the gate's own read came first and passed. It is
+  // an error a project run retries (exit 3), not owed feedback it parks.
   let reads = 0;
   const flaky = () => {
     reads += 1;
@@ -219,9 +220,9 @@ test('product feedback owed, or unreadable, keeps it off for every merge; a defa
     return { type: 'file', encoding: 'base64', content: Buffer.from(configText(TEAM)).toString('base64') };
   };
   const unread = run(t, r, ['7', '--json'], { files: { 'acme/notes@main:.aidrian/config.json': flaky } });
-  assert.equal(unread.code, 1);
-  assert.deepEqual([json(unread).reason], ['feedback']);
-  assert.match(json(unread).why, /^the product feedback of #7 cannot be read \(.*\): run the pr-product-feedback skill on #7 in a session the Human attends/u);
+  assert.equal(unread.code, 3);
+  assert.deepEqual(unread.out, [], 'no verdict printed');
+  assert.match(unread.err.join('\n'), /could not read the product feedback of #7 \(.*HTTP 502.*\); the merge stays off until it can/u);
 });
 
 // The command as `aidrian pr auto-merge` runs it: the gate, then, when it allows the merge, where the pull request stands

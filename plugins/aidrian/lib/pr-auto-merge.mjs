@@ -94,7 +94,7 @@ import { indexedAlways } from './knowledge.mjs';
 import { entryKind, FILE_MODES, noneNeededProblem, RELEASE_SCRIPT, startLoadProblem, startUnreadable, treeLookup } from './pr-auto-merge-docs.mjs';
 import { configPathIn, GUARDED_PATHS, isPluginRepository, isPolicyPath, knowledgeIn, strictConfigPathIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, POLICY_PATHS, trailPaths } from './project.mjs';
 import { hostOf } from './remotes.mjs';
-import { feedbackHold } from './pr-product-feedback.mjs';
+import { feedbackOwed } from './pr-product-feedback.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
@@ -855,8 +855,16 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
           signoff = { flow: unsigned[0] ?? null, signoffClass: signoffClassOf(policy, unsigned) };
         } else problem = `${problem}, and no judge's verdict lets it merge: ${stand.why}`;
       }
-      // Product feedback, for every merge this gate judges, on the pull request as it viewed it (pr-product-feedback.mjs feedbackHold).
-      const feedback = outsider || problem || owedSignoff ? null : feedbackHold(forge, project, { number: pr.number, repo: pr.repo, host: pr.host, view, main });
+      // Product feedback, for every merge this gate judges, on the pull request as it viewed it (pr-product-feedback.mjs
+      // feedbackOwed). A read that fails is an error a project run retries, not owed feedback it parks.
+      let feedback = null;
+      if (!outsider && !problem && !owedSignoff) {
+        try {
+          feedback = feedbackOwed(forge, project, { number: pr.number, repo: pr.repo, host: pr.host, view, main });
+        } catch (error) {
+          return fail(`could not read the product feedback of #${pr.number} (${ghError(error)}); the merge stays off until it can`);
+        }
+      }
       // The closing words of a project run's issue session, from the final review verdict: read only when every check
       // before them allows it, a review a judge's verdict waived included. One read of the mark gives the run and its
       // issue.

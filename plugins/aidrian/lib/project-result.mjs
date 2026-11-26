@@ -3,7 +3,8 @@
 // the ledger rows each status leads to. A session of a confined host (lib/project-start.mjs) hands its result over in
 // its attempt's drop folder (writeDrop), which it may write, and the driver's `wait` takes it in (ingestDrops): the
 // file is read as untrusted, without following a link, and every field is checked again; a merged or open pull request
-// must be the issue's own on the forge. Anything else ends the attempt `bad_result`.
+// must be the issue's own on the forge. Anything else ends the attempt `bad_result`. The drop's `tree`, the word the
+// session's `result` read of its clone (lib/project-tree.mjs), goes into the result row alone, for the sweep.
 
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, renameSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -18,6 +19,7 @@ import { defaultBranch } from './pr-auto-merge.mjs';
 import { hostOf, repoName } from './remotes.mjs';
 import { isObject } from './fs.mjs';
 import { safely } from './session-start-gate.mjs';
+import { TREE_WORDS } from './project-tree.mjs';
 
 // What a session records of its issue, and how each decision it parks on is classed. `environment` says the session's
 // own environment kept it from the work, such as its sandbox, its forge sign-in, or its host: the run halts on its stop
@@ -341,9 +343,11 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const next = afterResult(key, start.attempt, result.status, spent);
   // The head the pull request's check read, when one did, never a second read that could differ or fail.
   const head = next.state === 'parked' ? { head: Object.hasOwn(verified, 'head') ? verified.head : forgeHead({ forge, repository, branch }) } : {};
+  // The tree the session's `result` read (project-tree.mjs treeOf), only as one of its words: the sweep alone reads it.
+  const tree = TREE_WORDS.includes(value.tree) ? { tree: value.tree } : {};
   return {
     rows: [{
-      event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', ...stopped, ...head,
+      event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', ...stopped, ...head, ...tree,
       ...(result.status === 'environment' ? { cause: result.cause, halt: haltCause({ key, attempt: start.attempt, stop: result.stop }) } : {}), at,
     }, { ...next, at }],
     line: `${result.status} -> ${next.state}${next.decision ? ` ${next.decision}` : ''}`,

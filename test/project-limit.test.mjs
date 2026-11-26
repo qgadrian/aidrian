@@ -28,7 +28,7 @@ import { clockTime, durationTime, FAR } from '../plugins/aidrian/lib/hosts/limit
 import { BACKOFF, checkedLimit, liftRow, LIMIT_WAITS, limitEndRows, PAUSE_CEILING, PAUSE_FLOOR, pauseEnd, pauseOf, pausedTime, pauseRow, recordedPauseRuns, RESUME_CEILING, RESUME_GRACE } from '../plugins/aidrian/lib/project-limit.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { waitRun } from '../plugins/aidrian/lib/project-run-gate.mjs';
-import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { DRIVER, keptFiles, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const CHILD = STARTED[0].session;
 const MINUTE = 60_000;
@@ -216,7 +216,7 @@ test('a running session the host continues keeps running through the pause, whic
   assert.equal(fx.cmd(['next', 'launch'], { now: during }).out[0], `paused until ${until}`);
   assert.deepEqual(JSON.parse(fx.cmd(['next', 'launch', '--json'], { now: during }).out[0]).pause, { until, key: 'ENG-1', kind: 'usage', wait: 1 });
 
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: during }).out, [`limit ENG-1 usage until ${until} -> open`, `paused until ${until}`, 'idle'], 'a session that ended on the limit ends its attempt');
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: during }).out, [`limit ENG-1 usage until ${until} -> open`, keptFiles(fx), `paused until ${until}`, 'idle'], 'a session that ended on the limit ends its attempt');
   assert.equal(fx.rows().filter((row) => row.event === 'limit').length, 1, 'its pause is the one written');
   assert.equal(fx.claude.starts().length, 1, 'no session started while paused');
 
@@ -320,7 +320,7 @@ test('time paused counts toward no issue\'s hours', (t) => {
   fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: begun + MINUTE });
   fx.limit([said('back at work after the reset')]);
   assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: begun + 2 * HOUR + 5 * MINUTE }).out, ['running ENG-1'], 'two hours and five minutes, fifteen of them paused');
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: begun + 2 * HOUR + 20 * MINUTE }).out, ['ended ENG-1 timeout -> open', 'idle']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: begun + 2 * HOUR + 20 * MINUTE }).out, ['ended ENG-1 timeout -> open', keptFiles(fx), 'idle']);
 });
 
 test('a reset already past when wait reads it waits the 1-minute floor', (t) => {
@@ -375,7 +375,7 @@ test('a limit with no reset time backs off, and a far reset is held to 6 hours',
   const row = fx.rows().find((each) => each.event === 'limit');
   assert.equal(Date.parse(row.until) - Date.parse(row.at), 15 * MINUTE);
   assert.equal(row.named, false);
-  assert.deepEqual(out, [`limit ENG-1 rate until ${row.until} -> open`, `paused until ${row.until}`, 'idle']);
+  assert.deepEqual(out, [`limit ENG-1 rate until ${row.until} -> open`, keptFiles(fx), `paused until ${row.until}`, 'idle']);
   assert.equal(fx.claude.calls.filter((call) => call.args[0] === 'stop').length, 0, 'a session that ended is not stopped again');
 
   const far = started(t);
@@ -451,7 +451,7 @@ test('a held session past 24 pauses writes one halt and ends its attempt; after 
   const past = iso(Date.now() - HOUR);
   appendToRun(fx.state, 'launch', () => ({ rows: Array.from({ length: LIMIT_WAITS }, (_, i) => ({ event: 'limit', key: 'ENG-4', attempt: 1, kind: 'usage', until: past, named: false, wait: i + 1, at: past })) }));
   fx.limit([apiError(`Claude AI usage limit reached|${Math.floor(Date.now() / 1000) + 7200}`, { timestamp: iso(Date.now()) })]);
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['limit ENG-1 usage halt -> open', 'idle']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['limit ENG-1 usage halt -> open', keptFiles(fx), 'idle']);
   assert.equal(fx.claude.states[CHILD], 'stopped', 'a halted run holds no session');
   for (let n = 0; n < 3; n += 1) assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['idle']);
   assert.equal(fx.rows().filter((row) => row.event === 'halt').length, 1);
@@ -497,7 +497,7 @@ function outOfNumbers(t) {
 test('an issue that used its 27th attempt number after a limit halt and resume is parked on attempts, not left open', (t) => {
   const failed = outOfNumbers(t);
   failed.claude.states[CHILD] = 'done';
-  assert.deepEqual(failed.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> parked attempts', 'idle']);
+  assert.deepEqual(failed.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> parked attempts', keptFiles(failed, 'ENG-1', 1), 'idle']);
   assert.deepEqual([failed.run().states.get('ENG-1').state, failed.run().states.get('ENG-1').decision], ['parked', 'attempts']);
 
   const limited = outOfNumbers(t);
@@ -560,7 +560,7 @@ test('a session that handed its result over is not read for a limit, and one wit
   const plain = started(t);
   plain.limit([said('done for now')]);
   plain.claude.states[CHILD] = 'done';
-  assert.deepEqual(plain.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', 'idle']);
+  assert.deepEqual(plain.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', keptFiles(plain), 'idle']);
 });
 
 test('past 24 pauses a run, the next limit halts it until an attended resume', (t) => {
@@ -569,7 +569,7 @@ test('past 24 pauses a run, the next limit halts it until an attended resume', (
   const past = iso(Date.now() - HOUR);
   appendToRun(fx.state, 'launch', () => ({ rows: Array.from({ length: LIMIT_WAITS }, (_, i) => ({ event: 'limit', key: 'ENG-4', attempt: 1, kind: 'usage', until: past, named: false, wait: i + 1, at: past })) }));
   fx.limit([apiError('Claude AI usage limit reached|1763481600')]);
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['limit ENG-1 usage halt -> open', 'idle']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['limit ENG-1 usage halt -> open', keptFiles(fx), 'idle']);
   const halted = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(halted.exitCode, 1);
   assert.match(halted.out[0], /^halt the run is halted: the run waited out 24 usage or rate limits, the most a run waits, and ENG-1 attempt 1 met another/u);

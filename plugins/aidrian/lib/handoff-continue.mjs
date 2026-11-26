@@ -117,10 +117,11 @@ function teamHandoff(project) {
   return { handoff: base.config.session.handoff, config: base.config };
 }
 
-// The config.json the base branch commits, with no machine settings: { config, errors } or { why }, where `what` names
+// The config.json the base branch commits, with no machine settings: { config, errors, file } or { why }, where `what` names
 // what the reader wanted from it. lib/handoff-guard.mjs startedUnattended reads its state.dir. `git` gives each git read's
 // options, as config.mjs firstTip's, such as a hook's bounded timeout; one that throws, out of time, is a `why`. With
-// `commit`, the config is read at that commit, such as a base tip a start pinned, instead of the base ref's.
+// `commit`, the config is read at that commit, such as a base tip a start pinned, instead of the base ref's. `file` is
+// the config file's path there, as the folder override names it.
 export function baseBranchConfig(project, what = 'the team\'s config', git = () => undefined, commit = null) {
   const base = commit ?? baseBranchTip(project.root, git);
   if (!base) return { why: `git names no base branch commit to read ${what} from` };
@@ -129,7 +130,7 @@ export function baseBranchConfig(project, what = 'the team\'s config', git = () 
     if (!file) return { why: 'the base branch\'s folder override names no usable project folder' };
     const errors = [];
     const config = committedConfig({ ...project, paths: { ...project.paths, config: file } }, base, errors, git() ?? {});
-    return { config, errors };
+    return { config, errors, file };
   } catch {
     return { why: 'git could not read the base branch\'s config.json' };
   }

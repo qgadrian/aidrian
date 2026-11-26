@@ -26,12 +26,12 @@ import path from 'node:path';
 import { baseBranchTip, stateDirProblem } from './config.mjs';
 import { foldCase, isObject, isWithin, resolvedPath } from './fs.mjs';
 import { repoIdentity } from './forges/index.mjs';
-import { runGit } from './git.mjs';
+import { runGit, withGitFacts } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { RUNS_FOLDER, startedUnattended } from './handoff-guard.mjs';
 import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
 import { appendRowsAtOnce, withLocks } from './jsonl.mjs';
-import { committedConfigFile, defaultStateDir, stateDir, stateRoot } from './project.mjs';
+import { defaultStateDir, stateDir, stateRoot } from './project.mjs';
 import { dropIssueReads, recordedTexts, sweepIssueReads, writeIssueTexts } from './project-issue-text.mjs';
 import { setupPointer } from './project-setup-doc.mjs';
 import { endedIn } from './run-driver.mjs';
@@ -261,10 +261,15 @@ function sameFolder(one, other) {
 // the project's checkouts, be another user's, or be writable by every user (handoff-markers.mjs looseFolder). A base
 // branch git cannot read refuses, and so does one that does not commit the project's config file, such as a nested
 // project folder that only the working copy holds, whose base config would be the defaults. `home` is for a test.
-export function runPlace(project, working, { env = process.env, home } = {}) {
-  const base = baseBranchConfig(project, 'state.dir');
+// One read of the base tip serves the config read and the commit check, and one of the main checkout's roots both
+// state folders (withGitFacts).
+export const runPlace = (project, working, options) => withGitFacts(() => placeOf(project, working, options));
+
+function placeOf(project, working, { env = process.env, home } = {}) {
+  const tip = baseBranchTip(project.root);
+  const base = tip ? baseBranchConfig(project, 'state.dir', undefined, tip) : { why: 'git names no base branch commit to read state.dir from' };
   if (base.why) return { problem: `${base.why}, so the folder a project run is kept in cannot be checked` };
-  if (!committedOnBase(project)) return { problem: 'the base branch does not commit this project\'s config.json, so the folder a project run is kept in cannot be checked; commit the project folder and merge it first' };
+  if (!committedOnBase(project, tip, base.file)) return { problem: 'the base branch does not commit this project\'s config.json, so the folder a project run is kept in cannot be checked; commit the project folder and merge it first' };
   const moved = stateDirProblem(working, base.config, 'the base branch\'s config.json', 'the project run');
   if (moved) return { problem: moved };
   const state = stateDir(project, { config: working, env });
@@ -280,11 +285,10 @@ export function runPlace(project, working, { env = process.env, home } = {}) {
   return { state };
 }
 
-// Whether the base branch commits the config file of `project` (project.mjs committedConfigFile). A git that fails is no.
-function committedOnBase(project) {
+// Whether the base branch's commit `tip` commits the config file `file` of `project`, the path its folder override names
+// (project.mjs committedConfigFile). A git that fails is no.
+function committedOnBase(project, tip, file) {
   try {
-    const tip = baseBranchTip(project.root);
-    const file = tip && committedConfigFile(project, tip);
     return Boolean(file) && runGit(['cat-file', '-e', `${tip}:./${file}`], project.root).status === 0;
   } catch {
     return false;

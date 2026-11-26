@@ -27,6 +27,13 @@ function ended(t) {
   return { fx, folder, work, git, end: () => { fx.claude.states[CHILD] = 'done'; } };
 }
 
+// The attempt's session records a `failed` result: the command's answer.
+function recordFailed(fx) {
+  const file = path.join(fx.root, 'result.json');
+  writeFileSync(file, JSON.stringify({ status: 'failed', pr: null, decisions: [], stop: 'out of time' }));
+  return fx.cmd(['result', 'launch', 'ENG-1', '--file', file], { session: CHILD });
+}
+
 test('an ended attempt whose clone holds a commit it never pushed keeps its folder, with a kept row and a line naming it', (t) => {
   const { fx, folder, work, git, end } = ended(t);
   git('commit', '-q', '--allow-empty', '-m', 'work the session never pushed');
@@ -49,12 +56,14 @@ test('an ended attempt whose clone holds a commit it never pushed keeps its fold
   assert.equal(fx.rows().filter((row) => row.event === 'kept').length, 1, 'one row');
 });
 
-test('an ended attempt whose work the forge holds is swept as before', (t) => {
+test('an ended attempt whose work the forge holds, and whose result read its tree clean, is swept as before', (t) => {
   const { fx, folder, git, end } = ended(t);
   git('commit', '-q', '--allow-empty', '-m', 'pushed work');
   git('push', '-q', fx.bare, `HEAD:refs/heads/${BRANCH}`);
+  assert.equal(recordFailed(fx).exitCode, 0);
   end();
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', 'idle']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 failed -> open', 'idle']);
+  assert.equal(fx.rows().find((row) => row.event === 'result').tree, 'clean');
   assert.equal(existsSync(folder), false);
   assert.equal(fx.rows().filter((row) => row.event === 'kept').length, 0);
   assert.ok(fx.forge.calls.some(([kind, repo, , options]) => kind === 'hasCommit' && repo === 'acme/widgets' && options.host === 'github.com'), 'asked of the pinned repository');

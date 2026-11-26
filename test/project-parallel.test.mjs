@@ -23,7 +23,7 @@ import { check as processKill } from '../plugins/aidrian/lib/rules/process-kill.
 import { markDriver } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { PROJECT_PARALLEL } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { drivenRunStart, recordsStart } from '../plugins/aidrian/lib/run-driver.mjs';
-import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { DRIVER, keptFiles, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const MINUTE = 60_000;
 const iso = (ms) => new Date(ms).toISOString();
@@ -56,7 +56,7 @@ test('with maxParallel 2 two independent issues run, and the third waits until o
 
   // ENG-3's session ends with no result: its slot is free, and the next start takes it.
   fx.claude.states[STARTED[1].session] = 'done';
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-3 no_result -> open', 'running ENG-1']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-3 no_result -> open', keptFiles(fx, 'ENG-3'), 'running ENG-1']);
   assert.deepEqual(fx.cmd(['next', 'launch']).out[0], 'next ENG-3 feat/eng-3-filter');
   const fourth = fx.cmd(['start', 'launch', 'ENG-3']);
   assert.equal(fourth.exitCode, 0, fourth.err.join('\n'));
@@ -132,7 +132,7 @@ test('a dependent starts only after its blocker\'s merge the forge confirmed: an
   fx.forge.change = () => view('OPEN');
   hand(STARTED[0].session, { status: 'merged', pr: 12 }, 'first.json');
   fx.claude.states[STARTED[0].session] = 'done';
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 bad_result -> open', 'running ENG-3']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 bad_result -> open', keptFiles(fx, 'ENG-1'), 'running ENG-3']);
   assert.equal(dependent(), 'blocked ENG-2 waiting ENG-1');
   // A forge that cannot answer leaves the result to the next wait, and ENG-2 still waits.
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
@@ -156,7 +156,7 @@ test('a dependent starts only after its blocker\'s merge the forge confirmed: an
   const fourth = fx.cmd(['start', 'launch', 'ENG-4']);
   assert.equal(fourth.exitCode, 0, fourth.err.join('\n'));
   fx.claude.states[STARTED[1].session] = 'done';
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-3 no_result -> open', 'running ENG-4']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-3 no_result -> open', keptFiles(fx, 'ENG-3'), 'running ENG-4']);
   assert.equal(JSON.parse(fx.cmd(['next', 'launch', '--json']).out[0]).ready.includes('ENG-2'), true);
 });
 
@@ -179,7 +179,7 @@ test('end to end: a rate limit whose session is stopped joins the usage pause an
   writeTranscript(fx.env.CLAUDE_CONFIG_DIR, three.cwd, [apiError('API Error: 429 rate limited', three.child, { timestamp: iso(Date.now()) })], three.child);
   const out = fx.cmd(['wait', 'launch', '--max-wait', '0']).out;
   const until = iso(reset * 1000);
-  assert.deepEqual(out, [`paused ENG-1 usage until ${until}: its session goes on once the limit resets`, `limit ENG-3 rate until ${until} -> open`, 'running ENG-1', `paused until ${until}`]);
+  assert.deepEqual(out, [`paused ENG-1 usage until ${until}: its session goes on once the limit resets`, `limit ENG-3 rate until ${until} -> open`, keptFiles(fx, 'ENG-3'), 'running ENG-1', `paused until ${until}`]);
   const rows = fx.rows().filter((row) => row.event === 'limit');
   assert.deepEqual(rows.map((row) => [row.key, row.kind, row.wait, row.joined ?? false, row.until]), [['ENG-1', 'usage', 1, false, until], ['ENG-3', 'rate', 1, true, until]]);
   assert.equal(fx.claude.states[one.child], undefined, 'the usage-limited session is held, not stopped');

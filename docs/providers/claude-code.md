@@ -477,7 +477,9 @@ How issue sessions and the driver relate to the cap of five background continuat
   session write the main repository's whole shared `.git` but its `hooks/` and `config`.
   `<state>/runs/<run>/attempts/<issue>.<attempt>/` holds `work/`, the clone, `git/`, its own git folder, which borrows
   the main checkout's objects read-only, `drop/`, where the session hands its result over, and `cache/`, empty and
-  owner-only, where its package managers keep their caches, as on Codex. A first
+  owner-only, where its package managers keep their caches, as on Codex.
+  The session's `aidrian project result` runs in this sandbox, so its read of the clone's tree runs git there alone
+  ([Handoff](../handoff.md#a-project-run)). A first
   attempt cuts the issue's branch from the base tip, and is refused when the forge has that branch already. A clone
   that could not be made, or is refused so, leaves no attempt folder.
 - The session starts with `claude --bg --name '<run> · <issue> · <attempt>' --permission-mode <the driver's>

@@ -17,7 +17,8 @@
 //     package managers keep their caches (lib/project-registries.mjs). The branch comes from
 //     the forge: the first attempt cuts it from the base tip, and a later one fetches it and goes on on it, with the base
 //     tip's copies of the host files it changed when no review passed them. The main repository never fetches from the clone, the gate never runs git
-//     in a clone a session had, and the driver removes an attempt's folder once its session ended (sweepAttempts).
+//     in a clone a session had, and the driver removes an attempt's folder once its session ended (sweepAttempts),
+//     unless it holds a commit the forge lacks, or the ledger cannot say its tree was left clean (lib/project-tree.mjs).
 //     The session may also write the state work folders, plans, reviews, tmp, and dispatch, each a plain folder of the
 //     user directly in the state folder that holds no guarded folder and lies in none.
 //   - A later attempt's clone also holds the commits an attempt a limit ended made and never pushed, under a ref of their
@@ -38,6 +39,7 @@ import { nestedPathspecs } from './hosts/index.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, keepTokenFiles, sessionToken, tokenDigest, tokenFiles, tokenRecordThere, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { keptCandidate, pinnedFolders, takeKept } from './project-kept.mjs';
+import { ledgerKeep } from './project-tree.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
@@ -760,7 +762,9 @@ function linkedPart(top, relative) {
 // Once the session ended, the host's session environment files it handed the forge token to go first, kept folder or
 // not (forgetToken). A clone whose HEAD or issue branch holds a commit the forge does not have keeps its folder for the
 // run's life, with a `kept` row and a line saying where to recover it (unpushedHead): a run never discards work that
-// exists only there. The lines, in order.
+// exists only there. With none, the ledger decides (project-tree.mjs ledgerKeep): the folder goes after a merged result,
+// a result whose session read its tree clean, or a start that ended with neither a result nor an `ended` row; any other
+// end keeps it the same way, with no head, since the tree may hold uncommitted work, which no gate reads. The lines, in order.
 export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge = null }) {
   const lines = [];
   const settled = new Set(found.rows.filter((row) => row.event === 'orphan').map((row) => `${row.key}#${row.attempt}`));
@@ -781,9 +785,11 @@ export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge 
     const forgotten = !token || forgetToken({ cap, folder, row, env, home });
     if (stays || waits || !forgotten) continue;
     const unpushed = unpushedHead({ folder, row, repository: found.init?.repository, forge });
-    if (unpushed?.wait) continue;
-    if (unpushed) {
-      lines.push(...keepClone({ state, run, row, folder, unpushed }));
+    // Nothing unpushed: the ledger says whether the tree may hold uncommitted work (project-tree.mjs ledgerKeep).
+    const left = unpushed ?? ledgerKeep({ found, row });
+    if (left?.wait) continue;
+    if (left) {
+      lines.push(...keepClone({ state, run, row, folder, unpushed: { head: left.head ?? null, why: left.why }, files: !unpushed }));
       continue;
     }
     // The stop history goes to the run's archive first, so the caps hold across attempts; one that cannot be kept
@@ -811,11 +817,15 @@ function folderHolds(found, row) {
 
 // The `kept` row of the attempt the start row `row` made, whose clone in `folder` holds `unpushed` (unpushedHead), once,
 // under the ledger's lock: its line, or none when the row could not be written, so the next wait tries again.
-function keepClone({ state, run, row, folder, unpushed }) {
+// With `files`, a keep of uncommitted files the ledger cannot rule out (ledgerKeep), whose row says so (`files`, which
+// the kept-commit offer looks past): a person copies them out, and runs no git or program in a clone a session had.
+function keepClone({ state, run, row, folder, unpushed, files = false }) {
   const mine = (each) => each.event === 'kept' && each.key === row.key && each.attempt === row.attempt;
   const kept = appendToRun(state, run, (fresh) => (fresh.rows.some(mine) ? { rows: [] }
-    : { rows: [{ event: 'kept', key: row.key, attempt: row.attempt, head: unpushed.head, why: unpushed.why, at: new Date().toISOString() }] }));
-  return kept.problem ? [] : [`kept ${row.key} attempt ${row.attempt}: ${unpushed.why}, so its folder stays for the run's life; recover the work from ${path.join(folder, 'work')}`];
+    : { rows: [{ event: 'kept', key: row.key, attempt: row.attempt, head: unpushed.head, why: unpushed.why, ...(files ? { files: true } : {}), at: new Date().toISOString() }] }));
+  const work = path.join(folder, 'work');
+  const recover = files ? `copy any work out of ${work}, and run no git or program there` : `recover the work from ${work}`;
+  return kept.problem ? [] : [`kept ${row.key} attempt ${row.attempt}: ${unpushed.why}, so its folder stays for the run's life; ${recover}`];
 }
 
 // Removes the host's session environment files the SessionStart hook recorded in the attempt's folder `folder` it handed

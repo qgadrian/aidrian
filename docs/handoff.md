@@ -681,6 +681,23 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   run's life with a `kept` ledger row, and `wait` prints `kept ISSUE attempt N: …; recover the work from <clone>`.
   A forge that cannot answer, or whose 404 the token's read of the default branch's head commit cannot confirm, leaves
   the folder for the next `wait`.
+  A `failed`, `blocked`, `parked`, or `pr_open` result first reads the clone's tree, in the session's own sandbox
+  (`lib/project-tree.mjs`): the status of the clone and of each other worktree git lists, and the commits a local branch,
+  another worktree, or the stash holds that neither HEAD nor a remote-tracking ref does.
+  Any such work refuses the result with no drop, and prints the counts, at most 10 file names, and the ways on:
+  commit the work by path, remove the session's scratch, or run it again with `--uncommitted` to hand it over as it is.
+  The drop carries the word as `tree`: `clean`, `uncommitted`, or `unknown` when git cannot answer, which hands over too.
+  `--uncommitted` runs no git, and carries `uncommitted`.
+  A `.gitmodules` in the clone, or a `modules` folder in its git folder, reads `unknown` before any git call,
+  and a `.gitmodules` in a linked worktree reads `unknown` before that worktree's own status: status does not read into a submodule.
+  `wait` copies it into the `result` row, and only the sweep reads it.
+  With no commit the forge lacks, the sweep decides by the ledger and runs no git in the clone.
+  The folder goes only after a `merged` result, a `tree` of `clean`, or a start with neither a result nor an `ended` row.
+  An attempt offered kept commits is no exception: one that never took them, with no `clean` tree, keeps its folder
+  for a person, as every unchecked end does, at a cost in disk (up to 3 plus 24 kept folders an issue).
+  Every other end keeps it with a `kept` row that names no commit: a timeout, a limit, no result, a refused result,
+  or a `tree` of `uncommitted`, `unknown`, or none.
+  `wait` then prints `kept ISSUE attempt N: <why>, …; copy any work out of <clone>, and run no git or program there`.
   After a usage or rate limit, the issue's next attempt is offered those commits where it may take them, and its own
   session takes and pushes them: `start` prints `offered ISSUE attempt N: …`, or `not taken ISSUE attempt N: <why>`
   ([Project run](config.md#project-run)).

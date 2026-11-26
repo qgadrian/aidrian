@@ -26,7 +26,7 @@ import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { markFolder, markPending, markUnattended, noteBeacon, PENDING_AGE, readBeacon, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { DRIVER, runFixture } from './project-start-fixture.mjs';
+import { DRIVER, keptFiles, runFixture } from './project-start-fixture.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 const HOOKS_JSON = path.resolve(import.meta.dirname, '../plugins/aidrian/hooks/hooks.json');
@@ -669,7 +669,7 @@ test('an issue running past its hours on Codex is stopped by its process', (t) =
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() }).exitCode, 0);
   const { pid } = fx.fake.call();
   const waited = fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: Date.now() + 7 * 60 * 60 * 1000 });
-  assert.deepEqual(waited.out, ['ended ENG-1 timeout -> open', 'idle']);
+  assert.deepEqual(waited.out, ['ended ENG-1 timeout -> open', keptFiles(fx), 'idle']);
   assert.ok(gone(pid));
 });
 
@@ -680,7 +680,7 @@ test('a Codex turn that failed on a usage limit pauses the run through wait: its
   appendFileSync(fx.log(), `${JSON.stringify({ type: 'turn.failed', error: { message: 'You\'ve hit your usage limit. Try again in 2 hours.' } })}\n`);
   const waited = fx.cmd(['wait', 'launch', '--max-wait', '0']);
   const row = fx.rows().find((each) => each.event === 'limit');
-  assert.deepEqual(waited.out, [`limit ENG-1 usage until ${row.until} -> open`, `paused until ${row.until}`, 'idle']);
+  assert.deepEqual(waited.out, [`limit ENG-1 usage until ${row.until} -> open`, keptFiles(fx), `paused until ${row.until}`, 'idle']);
   assert.ok(Math.abs(Date.parse(row.until) - Date.now() - 2 * 60 * 60 * 1000) < 60_000, 'two hours from the log\'s last write');
   assert.ok(gone(pid), 'Codex continues no session at the reset, so its process is stopped');
   assert.match(fx.cmd(['start', 'launch', 'ENG-4']).out.join('\n'), /paused until /u);
@@ -696,8 +696,9 @@ test('a later attempt on Codex clones again, and takes the issue branch from the
   fx.git('-C', work, 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
   const [, , start] = fx.rows();
   codex.capabilities.projectStart.stop({ id: THREAD, started: start.id });
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', 'idle']);
-  assert.equal(existsSync(fx.attempt(1)), false, 'the ended attempt\'s clone is removed');
+  // With no result that read its tree clean, the ended attempt's clone stays for a person; its pushed work is on the forge.
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', keptFiles(fx), 'idle']);
+  assert.ok(existsSync(fx.attempt(1)));
   // A live Codex names each session anew; this fake reuses its id, so its first session's beacon goes.
   rmSync(path.join(markFolder(fx.env), `beacon.${THREAD}.json`));
   fakeCodex(t, fx.bin, { event: 'thread', hook: true });
@@ -956,7 +957,7 @@ test('a dropped result the forge cannot confirm past issueHours ends bad_result,
   } };
   assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { forge }).out, ['running ENG-1'], 'within issueHours, the next wait reads it again');
   const waited = fx.cmd(['wait', 'launch', '--max-wait', '0'], { forge, now: Date.now() + 25 * 60 * 60 * 1000 });
-  assert.deepEqual(waited.out, ['ended ENG-1 bad_result -> open', 'idle']);
+  assert.deepEqual(waited.out, ['ended ENG-1 bad_result -> open', keptFiles(fx), 'idle']);
   const ended = fx.rows().find((row) => row.event === 'ended');
   assert.match(ended.why, /did not confirm the handed-over result within \d+ hours/u);
   assert.ok(gone(pid), 'its session was stopped');

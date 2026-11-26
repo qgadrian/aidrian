@@ -32,7 +32,7 @@ import { decisionStoreFolder } from '../plugins/aidrian/lib/project-decision-sto
 import { projectId } from '../plugins/aidrian/lib/project.mjs';
 import { attemptFolder, guardedFolders, prepareAttempt, runLogFile, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { decidedEntry, decidedFixture, DRIVER, fakeClaude, HELD_REFS, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
+import { decidedEntry, decidedFixture, DRIVER, fakeClaude, HELD_REFS, keptFiles, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
 const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/autopilot/SKILL.md');
 const at = (ms) => new Date(ms).toISOString();
@@ -473,7 +473,7 @@ const viewing = (fx, number, view) => {
 const reopen = (fx, attempt, pr = null) => {
   fx.claude.states[STARTED[attempt - 1].session] = 'done';
   appendToRun(fx.state, 'launch', () => ({ rows: [
-    ...(pr ? [{ event: 'result', key: 'ENG-1', attempt, session: STARTED[attempt - 1].session, via: 'drop', status: 'failed', pr, verified: false, at: at(Date.now()) }] : []),
+    ...(pr ? [{ event: 'result', key: 'ENG-1', attempt, session: STARTED[attempt - 1].session, via: 'drop', status: 'failed', pr, verified: false, tree: 'clean', at: at(Date.now()) }] : []),
     { event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) },
   ] }));
 };
@@ -1659,7 +1659,7 @@ test('once the forge no longer allows project runs, wait still settles the run t
   assert.equal(within.exitCode, 0, within.err.join('\n'));
   assert.deepEqual(within.out, [note, 'running ENG-1']);
   const later = Date.now() + 2 * 60 * 60 * 1000;
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, [note, 'ended ENG-1 timeout -> open', 'idle']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, [note, 'ended ENG-1 timeout -> open', keptFiles(fx), 'idle']);
   assert.equal(fx.claude.states[STARTED[0].session], 'stopped');
   const refused = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(refused.exitCode, 1);
@@ -1682,7 +1682,7 @@ test('a policy the forge withdraws never loosens the hours wait stops a session 
   allow = false;
   const twoHours = Date.now() + 2 * 60 * 60 * 1000;
   const withdrawn = fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: twoHours });
-  assert.deepEqual(withdrawn.out, ['note policy: the default branch main on the forge does not set projectRun.allow to true; wait starts nothing and settles the issues that run, stopping any past projectRun.issueHours, 1', 'ended ENG-1 timeout -> open', 'idle']);
+  assert.deepEqual(withdrawn.out, ['note policy: the default branch main on the forge does not set projectRun.allow to true; wait starts nothing and settles the issues that run, stopping any past projectRun.issueHours, 1', 'ended ENG-1 timeout -> open', keptFiles(fx), 'idle']);
   assert.equal(fx.claude.states[STARTED[0].session], 'stopped');
 
   // A forge that cannot answer now holds each session to the hours its start recorded as the team confirmed them, 24
@@ -1699,7 +1699,7 @@ test('a policy the forge withdraws never loosens the hours wait stops a session 
   assert.match(outage.out[0], /^note outage: .*gh: HTTP 429.*stopping any past the projectRun\.issueHours its start recorded, at most 24, or 6 for a start that recorded none$/u);
   assert.deepEqual(outage.out.slice(1), ['running ENG-1']);
   assert.notEqual(down.claude.states[STARTED[0].session], 'stopped');
-  assert.deepEqual(down.cmd(['wait', 'launch', '--max-wait', '0'], { now: hours(25) }).out.slice(1), ['ended ENG-1 timeout -> open', 'idle']);
+  assert.deepEqual(down.cmd(['wait', 'launch', '--max-wait', '0'], { now: hours(25) }).out.slice(1), ['ended ENG-1 timeout -> open', keptFiles(down), 'idle']);
 
   // A start row an earlier version wrote, with no hours, is held to the default, 6: a session at 7 hours is stopped.
   const older = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 24 } });
@@ -1709,14 +1709,14 @@ test('a policy the forge withdraws never loosens the hours wait stops a session 
   older.forge.contents = () => {
     throw new Error('gh: HTTP 429');
   };
-  assert.deepEqual(older.cmd(['wait', 'launch', '--max-wait', '0'], { now: hours(7) }).out.slice(1), ['ended ENG-1 timeout -> open', 'idle']);
+  assert.deepEqual(older.cmd(['wait', 'launch', '--max-wait', '0'], { now: hours(7) }).out.slice(1), ['ended ENG-1 timeout -> open', keptFiles(older), 'idle']);
 });
 
 test('after wait stops an issue\'s session past its hours, the host lists it stopped, and the issue starts again', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 1 } });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   const later = Date.now() + 2 * 60 * 60 * 1000;
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, ['ended ENG-1 timeout -> open', 'idle']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, ['ended ENG-1 timeout -> open', keptFiles(fx), 'idle']);
   assert.equal(fx.claude.states[STARTED[0].session], 'stopped');
   const again = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(again.exitCode, 0, again.err.join('\n'));

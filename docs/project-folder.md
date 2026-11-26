@@ -160,7 +160,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── product-feedback/     one record.json per pull request, at <owner>/<name>/pr-<n>/ (config.md#product-feedback)
 ├── runs/                 project runs, one folder per run (config.md#project-run)
 │   └── <run>/            snapshot.json, ledger.jsonl, summary.md, and these folders:
-│       ├── attempts/     one folder per attempt, <issue>.<attempt>/: the clone (work/), its git folder (git/), drop/, and cache/
+│       ├── attempts/     one folder per attempt, <issue>.<attempt>/: the clone (work/), its git folder (git/), drop/, and cache/;
+│       │                 the sweep keeps one that may hold work no commit on the forge has, with a `kept` row
 │       ├── results/      each issue's result, as wait took it in
 │       ├── issues/       each issue's text, as the tracker's answer gave it, which a start writes to the attempt's issue.md
 │       ├── stops/        each issue's archived stop actions (stop-history.mjs)

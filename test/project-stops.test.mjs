@@ -407,8 +407,10 @@ test('a stop history that is a link, a FIFO, a hard link, or holds a row the com
 test('the caps hold across attempts: the driver\'s sweep archives an attempt\'s history before it removes its folder', (t) => {
   const fx = stopped(t, { merge: { mergeStateStatus: 'BEHIND' } });
   assert.match(fx.act(on()).out[0], /^update_branch .*\(1 of 2 for this issue\)/u);
+  // A failed result over a clean tree, so the sweep removes the folder.
+  assert.deepEqual(handOver(t, fx, { status: 'failed', pr: null, decisions: [], stop: 'out of time' }, fx.forge), ['result ENG-1 failed -> open']);
   fx.claude.states[CHILD] = 'done';
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['ended ENG-1 no_result -> open', 'idle']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['lingered ENG-1 attempt 1 ended', 'idle']);
   assert.ok(!existsSync(path.dirname(fx.drop)), 'the first attempt\'s folder is swept');
   const archived = readFileSync(archiveFile(fx.state, 'launch', 'ENG-1'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(archived.map((row) => row.action ?? row.event), ['update_branch', 'archived']);

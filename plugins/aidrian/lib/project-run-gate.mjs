@@ -4,7 +4,8 @@
 // anything, then a chain floor of 0, an unattended mark that names the run and the issue, and the driver's start record.
 // Every host starts it confined, in a fresh clone made for the attempt (lib/project-start.mjs), never in a linked
 // worktree of the main checkout. The issue's session works the issue with the autopilot skill and hands its result
-// over; `wait` takes it in (lib/project-result.mjs) and reads how each session ended.
+// over, once its clone holds no work no commit has (lib/project-tree.mjs), unless it hands that over too; `wait` takes it
+// in (lib/project-result.mjs) and reads how each session ended.
 // Who may run which command is lib/project-run-guard.mjs's, which the agent gate hook asks first with the host's own
 // session id. Every git call here goes through gateGit (lib/git.mjs). A start is refused, in this order:
 //   1. a session the run cannot tell apart from another's start (a pending mark), one whose mark names an issue, which
@@ -90,6 +91,7 @@ import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_
 import { accessProblem, feedbackHeld, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, commitFiles, commitGitlinks, isGuarded, namedFiles, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { holdsProblem } from './project-forge-holds.mjs';
+import { treeLines, treeOf, TREE_STATUSES } from './project-tree.mjs';
 import { pushPreflight } from './push-preflight.mjs';
 import { signoffFolder, signoffFolders, storePathProblem } from './review/signoff-store.mjs';
 import { recordsStart } from './run-driver.mjs';
@@ -1457,7 +1459,10 @@ function limitLine({ state, run, store, cap, env, home, spawn, key, start, found
 // runs. Every start is confined and gives its session a drop folder: the checked result is handed over there
 // (lib/project-result.mjs writeDrop), with no ledger write and no forge call, and the driver's `wait` takes it in. A
 // start row with no drop folder records nothing: no host starts one, so it can only be a ledger no gate wrote.
-export function recordResult({ project, config, run, key, file, env = process.env, home, now = Date.now() }) {
+// A failed, blocked, parked, or pr_open result first reads the clone's tree, in the session's own sandbox
+// (lib/project-tree.mjs treeOf): work no commit on the branch holds refuses it, with no drop, unless `uncommitted` hands
+// it over so, with no read; the drop carries the word as `tree`, which the sweep alone reads.
+export function recordResult({ project, config, run, key, file, uncommitted = false, env = process.env, home, now = Date.now() }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project result: ${why}`] });
   const { session } = sessionIdentity(env);
   const opened = openRun(project, config, run, { env, home });
@@ -1471,11 +1476,11 @@ export function recordResult({ project, config, run, key, file, env = process.en
   }
   const author = resultAuthorProblem({ found, store, key, session, mark, now });
   if (author) return refuse(author);
-  const read = readCapped(file, RESULT_CAP);
-  if (read.problem) return refuse(`the result file ${read.problem}`);
+  const given = readCapped(file, RESULT_CAP);
+  if (given.problem) return refuse(`the result file ${given.problem}`);
   let value;
   try {
-    value = JSON.parse(read.bytes.toString('utf8'));
+    value = JSON.parse(given.bytes.toString('utf8'));
   } catch {
     return refuse(`${file} is not JSON`);
   }
@@ -1483,8 +1488,21 @@ export function recordResult({ project, config, run, key, file, env = process.en
   if (!checked.result) return { exitCode: 1, out: [], err: ['aidrian project result: the result has problems; fix them and run it again', ...checked.problems.slice(0, 20).map((problem) => `  ${problem}`)] };
   const start = latestStart(found, key);
   if (typeof start?.drop !== 'string') return refuse(`the start of ${key} names no drop folder to hand the result over to, and every start of a project run is confined`);
-  const handed = writeDrop(start.drop, { run, key, attempt: start.attempt, session, at: iso(now), ...checked.result });
+  // Work the clone holds and no commit on the branch does holds the result back, unless the session hands it over as
+  // it is, which reads nothing; a tree git cannot read hands over as `unknown`, so no result becomes one that cannot be
+  // recorded.
+  const read = treeRead({ status: checked.result.status, uncommitted, start, env });
+  if (read.tree === 'uncommitted' && !uncommitted) return { exitCode: 1, out: [], err: treeLines(read).map((line, at) => (at === 0 ? `aidrian project result: ${line}` : line)) };
+  const tree = read.skip ? {} : { tree: read.tree };
+  const handed = writeDrop(start.drop, { run, key, attempt: start.attempt, session, at: iso(now), ...checked.result, ...tree });
   return handed ? refuse(handed) : { exitCode: 0, out: [`handed ${key} ${checked.result.status}`], err: [] };
+}
+
+// What `result` reads of the clone's tree for a result of `status` (project-tree.mjs treeOf): nothing for a status the
+// check does not run for, and `uncommitted`, with no git run, when the session hands its work over as it is.
+function treeRead({ status, uncommitted, start, env }) {
+  if (!TREE_STATUSES.includes(status)) return { skip: true };
+  return uncommitted ? { tree: 'uncommitted' } : treeOf({ start, env });
 }
 
 // Records, for the driver of run `run`, the sha256 of the handoff brief `brief` it is about to continue from, so the

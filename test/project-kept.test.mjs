@@ -794,7 +794,7 @@ test('the first attempt\'s unpushed commits, unswept through a forge outage, are
 });
 
 // git wrote every file and the index, and then cannot move the branch. Its session does no more work there.
-test('a fast-forward that fails ends its attempt, whose clone the sweep removes as any other, and is offered to no later one', (t) => {
+test('a fast-forward that fails ends its attempt, whose clone the sweep keeps for its files, and is offered to no later one', (t) => {
   const { fx, forge: forgeHead, head } = keptRun(t);
   assert.equal(startAgain(fx), `offered ENG-1 attempt 1: 2 unpushed commits, ${head.slice(0, 12)}`);
   const lock = path.join(folderOf(fx, 2), 'git', 'refs', 'heads', `${BRANCH}.lock`);

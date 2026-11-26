@@ -2098,17 +2098,18 @@ The sweep keeps an ended attempt's folder, with a `kept` row that names no commi
 `tree` is `clean`, or it has neither a result nor an `ended` row.
 So a timeout or a limit keeps it too: a run may hold up to 3 attempt folders an issue, and 24 more after limits.
 The issue's next attempt is offered the commits a kept clone holds (`lib/project-kept.mjs`) when its attempt ended on a
-usage or rate limit, no other attempt ran since but ones offered that very commit that ended on a limit too and whose
-folders the sweep removed, the clone's HEAD and its issue branch, each read as a file, both resolve to the one commit
-its `kept` row names, and the forge has the issue's branch at a commit they descend from. Every start of a later attempt
-runs the sweep once first, as `wait` does. While the folder of such an attempt is there all the same, as through a forge
-outage, none is offered, since it may hold newer work. The gate pushes nothing and runs no git in the kept clone. It
-copies the clone's loose objects alone, each a regular file of one link, never through a link or a folder swapped while
-it reads, at most 64 MiB each and 256 MiB in all, as files and as they expand, out of at most 20,000 folder entries,
-into a repository it makes in the new attempt's folder. A second one there fetches from it under git's fsck, the commits
-are judged in it, and only then does the new clone fetch from that second one, so an object enters only under the id its
-bytes hash to, once fsck passed it, and no refused commit does. A fetch into the new clone that fails ends the start and
-removes that clone: start again. The gate removes both before the session starts.
+usage or rate limit, no other attempt ran since but ones offered that very commit that ended on a limit too, each folder
+swept or kept for its files alone, the clone's HEAD and its issue branch, each read as a file, both resolve to the one
+commit its `kept` row names, and the forge has the issue's branch at a commit they descend from. Every start of a later
+attempt runs the sweep once first, as `wait` does. While the folder of such an attempt is there unswept, or kept with a
+row that is not of files alone, as through a forge outage, none is offered, since it may hold newer work.
+The gate pushes nothing and runs no git in the kept clone. It copies the clone's loose objects alone, each a regular
+file of one link, never through a link or a folder swapped while it reads, at most 64 MiB each and 256 MiB in all, as
+files and as they expand, out of at most 20,000 folder entries, into a repository it makes in the new attempt's
+folder. A second one there fetches from it under git's fsck, the commits are judged in it, and only then does the new
+clone fetch from that second one, so an object enters only under the id its bytes hash to, once fsck passed it, and no
+refused commit does. A fetch into the new clone that fails ends the start and removes that clone: start again. The
+gate removes both before the session starts.
 They are never offered when any one of them, a merge read from each of its parents, changes a host config, instruction,
 or policy file, a root file any host protects, such as `.mcp.json`, or a forge workflow file, even when a later one
 takes the change back; nor when the start checks out the base tip, which holds the branch's head on the forge already,
@@ -2121,8 +2122,9 @@ other work in that clone and records the result `failed` with git's error, so th
 remain, and the next attempt is not offered them. Nothing reads whether it did. Base copies of host files stay in place,
 since none of the commits changes one.
 A start that offers them prints `offered ISSUE attempt N: <count> unpushed commits, <commit>` and records `took`, the
-attempt and the commit, in its start row, whose `head` stays the forge's. Any other start of an issue with a kept clone
-prints `not taken ISSUE attempt N: <why>`; the row and the folder stay, and nothing parks. The sweep judges an attempt
+attempt and the commit, in its start row, whose `head` stays the forge's. Any other start of an issue whose kept rows
+name a candidate prints `not taken ISSUE attempt N: <why>`; the row and the folder stay, and nothing parks. Rows of
+files alone, with no older row that names a commit, print nothing. The sweep judges an attempt
 they were offered to as any other: it keeps one that took them and pushed nothing, whose commits the next attempt is
 offered then, and one that never took them unless its result read its tree clean, for its files alone.
 Such a row of files (`files`, with no commit) hides no offer: the next start looks past it to the latest row that names

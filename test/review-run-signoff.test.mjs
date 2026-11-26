@@ -457,7 +457,7 @@ test('extra rounds: aidrian pr extend writes the summary comment, so another mac
   await extend(t, r, ['--verdict', 'extend', '--reason', 'valid', '--head', capped.head]);
   assert.equal(r.comments.length, 1, 'the one summary comment, edited in place');
   assert.equal(stateFromComment(r.comments[0].body, 7).extensions[0].status, 'asking');
-  assert.match(r.comments[0].body, /### Review: extension_check[\s\S]*- round 2 on `[0-9a-f]{7}`: asking by the judge: valid/u, 'the review step`s text stays; the list follows the record');
+  assert.match(r.comments[0].body, /### ⏸️ Review: extension_check[\s\S]*- round 2 on `[0-9a-f]{7}`: asking by the judge: valid/u, 'the review step`s text stays; the list follows the record');
   rmSync(local);
   assert.equal((await r.step({ exec: clean })).status, 'extension_ask', 'the verdict came back from the pull request');
   rmSync(local);

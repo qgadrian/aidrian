@@ -2010,6 +2010,18 @@ shows of the findings ([config](config.md#keys)):
 - The `pr-review` skill posts no comment of its own, so this summary comment is the one a reader looks at on the pull
   request. The skill's finding text stays in its manifest and its report in chat.
 
+**How the posts look.** Every post shows a severity as one badge, an emoji and a priority from one table
+(`lib/review/findings.mjs` `severityBadge`): `🔴 P0` critical, `🟠 P1` high, `🟡 P2` medium, `🟢 P3` low, and `⚪`
+with the word for any other. A finding's thread or section opens with its attribution line, then the badge, the word, and
+its place in bold, such as `` **🟠 P1 · high** · `src/a.js:2` ``, then the reviewer's title and body, quoted. The summary
+comment's header carries a status emoji, `### 🛠️ Review: fix_required` (✅ received or none needed, 🛠️ a fix to make, ⏸️
+a wait on a person or a step, ⚠️ an error or a timeout, ℹ️ any other), the **Findings** table shows the badge in its
+Severity column, and the quota stops, waived repeats, carried review, extra rounds, waivers, delegations, overrides,
+and the citation note sit in one collapsed **Details** block below the pass table; a text check that refuses either of
+its two tag lines drops both, and the sections show unwrapped. Only the look changed: the marker lines, the attribution
+line, the plan lines, and the record markers are read as before, so a post in the earlier layout, with
+`### Review: <status>` and a bold severity word, still parses, and the next write to a summary comment gives it the new one.
+
 **What counts as private.** The table reads the repository as private only on an exact `PRIVATE` reading of its
 visibility in that step, for a pull request from inside the team; `INTERNAL`, any other value, and a failed read are not
 private. (The visual capture's attach mode reads `INTERNAL` as private for its uploads.) A repository made public later

@@ -653,7 +653,7 @@ test('the findings table: at most 40 rows, blocking findings first, then by seve
   const rows = rowsOf(body);
   assert.equal(rows.length, MAX_ROWS);
   assert.ok(rows.slice(0, 15).every((row) => / \| open \|$/u.test(row)), 'the blocking ones first');
-  assert.ok(rows.slice(0, 8).every((row) => row.includes('| critical |')), 'then the most severe');
+  assert.ok(rows.slice(0, 8).every((row) => row.includes('| 🔴 P0 · critical |')), 'then the most severe');
   assert.match(body, /^- 5 more findings, not listed: the table holds 40\.$/mu);
   assert.doesNotMatch(body.split('\n').filter((line) => !line.startsWith('<!--')).join('\n'), /SENTINEL/u, 'no finding text, even on a private repository');
   assert.equal(summaryBody(withIndex(head, entries), null, 'x', { ...tablePost(root), publish: { summary: 'counts' } }).includes('**Findings:**'), false, 'summary "counts" adds nothing');
@@ -672,14 +672,14 @@ test('the findings table`s outcomes: open, fixed in and not reported again in a 
   const linked = rowsOf(summaryBody(withIndex(head, entries), null, 'x', tablePost(root, { compareUrl: (a, b) => (a === from && b === head ? `https://github.com/o/r/compare/${a}...${b}` : null) })));
   const range = `${from.slice(0, 7)}...${head.slice(0, 7)}`;
   assert.deepEqual(linked, [
-    '| R1-1 | src/a.js:2 | medium | fix\\_now | open |',
-    `| R1-2 | src/a.js:3 | medium | fix\\_now | fixed in [${range}](https://github.com/o/r/compare/${from}...${head}) |`,
-    `| R1-3 | src/a.js:4 | medium | fix\\_now | not reported again in [${range}](https://github.com/o/r/compare/${from}...${head}) |`,
-    `| R1-5 | src/a.js:6 | medium | fix\\_now | fixed in [${range}](https://github.com/o/r/compare/${from}...${head}) |`,
-    '| R1-4 | src/a.js:5 | low | accepted\\_residual | accepted as accepted\\_residual |',
+    '| R1-1 | src/a.js:2 | 🟡 P2 · medium | fix\\_now | open |',
+    `| R1-2 | src/a.js:3 | 🟡 P2 · medium | fix\\_now | fixed in [${range}](https://github.com/o/r/compare/${from}...${head}) |`,
+    `| R1-3 | src/a.js:4 | 🟡 P2 · medium | fix\\_now | not reported again in [${range}](https://github.com/o/r/compare/${from}...${head}) |`,
+    `| R1-5 | src/a.js:6 | 🟡 P2 · medium | fix\\_now | fixed in [${range}](https://github.com/o/r/compare/${from}...${head}) |`,
+    '| R1-4 | src/a.js:5 | 🟢 P3 · low | accepted\\_residual | accepted as accepted\\_residual |',
   ]);
   const plain = rowsOf(summaryBody(withIndex(head, entries), null, 'x', tablePost(root, { compareUrl: () => null })));
-  assert.equal(plain[1], `| R1-2 | src/a.js:3 | medium | fix\\_now | fixed in ${range} |`, 'no link from the forge: the short SHAs as text');
+  assert.equal(plain[1], `| R1-2 | src/a.js:3 | 🟡 P2 · medium | fix\\_now | fixed in ${range} |`, 'no link from the forge: the short SHAs as text');
 });
 
 test('tableCell: one line, table and HTML metacharacters escaped, autolinks and owner/repo#n references neutralized, and only a plain https link', () => {
@@ -716,7 +716,7 @@ test('a security finding and its twin on a repository that is not private: count
     const rows = rowsOf(body);
     assert.match(body, /^- 2 open security findings, counted and not listed/mu, `${JSON.stringify(reading)}: the open one and its twin at its place`);
     assert.deepEqual(rows.map((row) => row.split(' | ')[0]), ['| R1-4', '| R1-3']);
-    assert.ok(rows[1].startsWith('| R1-3 |  | high |  | fixed in ['), `${JSON.stringify(reading)}: ${rows[1]}`);
+    assert.ok(rows[1].startsWith('| R1-3 |  | 🟠 P1 · high |  | fixed in ['), `${JSON.stringify(reading)}: ${rows[1]}`);
     const copy = stateFromComment(body, 7);
     for (const id of ['R1-1', 'R1-2', 'R1-3']) assert.deepEqual([copy.index[id].file, copy.index[id].line, copy.index[id].title], [undefined, undefined, undefined], id);
   }
@@ -724,7 +724,7 @@ test('a security finding and its twin on a repository that is not private: count
   assert.equal(shown.length, 4, 'on a private repository every finding is a row');
   const full = summaryBody(withIndex(head, entries), null, 'x', tablePost(root, { publish: { summary: 'findings', publicSecurity: 'full' } }));
   assert.equal(rowsOf(full).length, 4, 'publicSecurity "full": a security finding is a row like any other');
-  assert.ok(rowsOf(full).includes('| R1-1 | src/a.js:10 | high | fix\\_now | open |'));
+  assert.ok(rowsOf(full).includes('| R1-1 | src/a.js:10 | 🟠 P1 · high | fix\\_now | open |'));
   assert.deepEqual([stateFromComment(full, 7).index['R1-1'].file, stateFromComment(full, 7).index['R1-1'].line], ['src/a.js', 10], 'and the posted copy holds its place');
   assert.doesNotMatch(full, /SENTINEL/u, 'never its text on a repository that is not private');
   const posted = JSON.stringify(stateFromComment(full, 7));
@@ -945,7 +945,7 @@ test('inline: a security finding and its twin get no thread and no line on a rep
     assert.deepEqual(postInline(inlineStep(r, full, posts.forge, { reading, publish: { inline: true, publicSecurity: 'full' } }), openOf(full)).threads, ['R1-1', 'R1-2'], '"full" gives them their threads');
     for (const comment of reviewOf(posts.calls).comments) {
       assert.ok(!comment.body.split('\n').some((line) => line.startsWith('>')) && !comment.body.includes('what is wrong') && !comment.body.includes('another wording'), `${reading.visibility}: "full" posts no title and no body`);
-      assert.match(comment.body, new RegExp(`\\*\\*(high|medium)\\*\\*\\n${WITHHELD}$`, 'u'), 'only the id, the severity, its place by its anchor, and text withheld');
+      assert.match(comment.body, new RegExp(`\\*\\*(🟠 P1 · high|🟡 P2 · medium)\\*\\*\\n${WITHHELD}$`, 'u'), 'only the id, the severity, its place by its anchor, and text withheld');
     }
     assert.match(reviewOf(posts.calls).body, /on the diff at `src\/a\.js:2`/u, 'the place shows under "full"');
   }
@@ -964,7 +964,7 @@ test('inline: from outside the team, and where a check withholds the text, a pos
     for (const body of [review.comments[0].body, review.body]) {
       assert.ok(!body.includes('secret') && !body.includes('more'), 'no title and no body');
       assert.match(body, new RegExp(`${WITHHELD}`, 'u'));
-      assert.match(body, /\*\*medium\*\*/u);
+      assert.match(body, /\*\*🟡 P2 · medium\*\*/u);
     }
   }
 });
@@ -1032,6 +1032,7 @@ test('inline: a refused review falls back to one conversation comment with the s
   const fallback = refusing.calls.find(([name]) => name === 'postComment')[1];
   assert.deepEqual(leadingMarkers(fallback), ['R1-1', 'R1-2']);
   assert.match(fallback, /> \*\*finding R1-1\*\*/u, 'the inline finding`s full text is in the comment');
+  assert.ok(fallback.includes('aidrian review, finding R1-1\n**🟡 P2 · medium** · `src/a.js:2`\n> **finding R1-1**'), 'the badge line follows the attribution line');
   assert.deepEqual([state.index['R1-1'].thread, state.index['R1-2'].thread], [{ fallbackId: 77 }, { fallbackId: 77 }]);
 
   const again = inlineState(r.head, [listed('R1-1')]);
@@ -1371,7 +1372,7 @@ test('inline: a path the text checks refuse is printed nowhere and anchors nothi
   const review = reviewOf(calls);
   assert.deepEqual(review.comments, []);
   assert.ok(!review.body.includes('acme'), 'the path is in no post');
-  assert.match(review.body, /aidrian review, finding R1-1\n\*\*medium\*\*\n/u);
+  assert.match(review.body, /aidrian review, finding R1-1\n\*\*🟡 P2 · medium\*\*\n/u);
 });
 
 test('inline: an unchanged line of a renamed file is no added line: it goes in the body, and the edited line gets its thread', (t) => {

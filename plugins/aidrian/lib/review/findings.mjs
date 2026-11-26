@@ -26,6 +26,18 @@ export function severityOf(value) {
   return SEVERITIES.includes(known) ? known : null;
 }
 
+// The badge of each severity on the engine's posts, the finding threads and the summary's findings table alike: an
+// emoji and a priority. Emoji only, so no post loads an image from another host.
+export const SEVERITY_BADGES = Object.freeze({ critical: '🔴 P0', high: '🟠 P1', medium: '🟡 P2', low: '🟢 P3' });
+
+// A severity as a post shows it: its badge and its word, such as `🟠 P1 · high`, or a white circle and the word as
+// given for one the table does not know. Callers pass the engine's own word (severityOf, or `unknown`), never a
+// reviewer's.
+export function severityBadge(word) {
+  const known = severityOf(word);
+  return known && SEVERITY_BADGES[known] ? `${SEVERITY_BADGES[known]} · ${known}` : `⚪ ${String(word ?? 'unknown')}`;
+}
+
 // Whether severity `a` is no higher than `b`: the table lists them most severe first. An unknown word never is.
 export function noHigher(a, b) {
   const [rankA, rankB] = [a, b].map((value) => SEVERITIES.indexOf(severityOf(value)));

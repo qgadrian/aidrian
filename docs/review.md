@@ -842,6 +842,7 @@ A project adds its own in `review.reviewers`:
     the shape the [body template](../plugins/aidrian/skills/pr-write/references/body-template.md) gives a residual line,
     the title copied as the finding gives it.
     It also names one when it opens `<title> (<file>): <why>`, the file exactly the finding's own, and then only that file's finding.
+    A line that two files' forms both open, such as `a` and `a): b` for `<title> (a): b): <why>`, names nothing.
     A title alone, or a near copy (another case, markup around the title or file, a different path, a finding id,
     other punctuation), names nothing and stays at `low`. The longest matching title wins. A line that opens with two titles
     names neither: each takes its own line. A title raised in two files is named only in the files whose path the line

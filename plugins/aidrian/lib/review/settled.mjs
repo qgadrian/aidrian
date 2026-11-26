@@ -36,18 +36,15 @@ const opensWith = (text, head) => text.startsWith(head) && Boolean(trim(text.sli
 // a colon, and a reason, `<title> (<file>): <why>`. The longest title wins, so a title that opens another title
 // does not name that one's finding. A title raised in one file is named there. Raised in several, the file form names only
 // the finding in its file, and the plain form only the files whose path the line holds, and none when it holds no path:
-// a second file raised later must not widen an earlier line. When two files' forms both open the line, as `a` and
-// `a): b` do for `T (a): b): why`, the longest file wins, as the longest title does.
+// a second file raised later must not widen an earlier line. A line that two files' forms both open, as `a` and `a): b`
+// do for `T (a): b): why`, names nothing.
 export function namedBy(text, raised) {
   const inFile = (each) => trim(each.file) !== '' && opensWith(text, `${trim(each.title)} (${trim(each.file)}):`);
   const named = raised.filter((each) => opensWith(text, `${trim(each.title)}:`) || inFile(each));
   const longest = Math.max(...named.map((each) => trim(each.title).length));
   const titled = named.filter((each) => trim(each.title).length === longest);
   const filed = titled.filter(inFile);
-  if (filed.length) {
-    const file = Math.max(...filed.map((each) => trim(each.file).length));
-    return filed.filter((each) => trim(each.file).length === file);
-  }
+  if (filed.length) return new Set(filed.map((each) => trim(each.file))).size === 1 ? filed : [];
   if (new Set(titled.map((each) => trim(each.file))).size < 2) return titled;
   return titled.filter((each) => holdsPath(text, each.file));
 }

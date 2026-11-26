@@ -471,7 +471,7 @@ test('namedBy: `<title> (<file>): <why>` names the finding in exactly that file,
   assert.deepEqual(namedBy(`${RAISED} (src/b.js): every caller times out first`, twoFiles), [twoFiles[1]], 'one title in two files: only the file in parentheses');
   assert.deepEqual(namedBy(`${RAISED} (src/a.js): src/b.js retries too`, twoFiles), [twoFiles[0]], 'a path in the reason does not widen the file form');
   const nested = [{ title: RAISED, file: 'a' }, { title: RAISED, file: 'a): b' }];
-  assert.deepEqual(namedBy(`${RAISED} (a): b): why`, nested), [nested[1]], 'two file forms open the line: the longest file wins, never both');
+  assert.deepEqual(namedBy(`${RAISED} (a): b): why`, nested), [], 'a line two files\' forms both open names nothing');
   assert.deepEqual(namedBy(`${RAISED} (src/a.js): why`, [...twoFiles, { title: `${RAISED} (src/a.js)`, file: 'src/c.js' }]), [{ title: `${RAISED} (src/a.js)`, file: 'src/c.js' }], 'the longest title still wins');
 });
 

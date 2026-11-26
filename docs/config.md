@@ -2150,7 +2150,8 @@ which on a moved origin keeps the halt before any probe runs, then the state fol
 need. A check the halt selects that did not run or did not answer `ok`, such as `access` on a host with no
 project-start capability, keeps the halt and prints `the checks of this halt that did not run or answer ok: <checks>`;
 the repository, state, and policy lines alone never lift it. A note is no answer: a `note trust:` line, such as for a
-trust record that cannot be read or parsed, keeps the halt, and the start prints it. The one exception is a host that
+trust record that cannot be read or parsed, keeps the halt, and the start prints it, beside any blocker or retry line
+another check gave. The one exception is a host that
 keeps no record of trusted folders, such as Codex, whose trust check answers with exactly `none trust: this host keeps
 no record of trusted folders`. When every line is `ok`, a `note`, or that line, and every check the halt selects
 answered, it writes a `resume` row with `via: "recheck"`, the halt's `kind`, issue,

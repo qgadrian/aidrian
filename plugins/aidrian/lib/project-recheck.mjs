@@ -57,14 +57,14 @@ const classOf = (halt) => {
   return Object.hasOwn(CAUSE_CHECKS, halt.class) ? halt.class : 'not a known cause';
 };
 
-// Why the checks `names` a halt selects did not all answer in the re-check's `lines`, with `passed` the checks that
-// answered `ok`: none when each did, or for trust NO_TRUST_RECORD exactly. The repository, state, and policy lines
-// alone, a check the host cannot run, such as access with no project-start capability, and a check that answered only
-// with a note, such as a trust record that cannot be read, never lift a halt; its notes say why.
-function unansweredLines(names, lines, passed) {
+// The checks `names` a halt selects that did not answer in the re-check's `lines`, with `passed` the checks that
+// answered `ok`: { unanswered, notes }, `notes` their own note lines, which say why. Each answers by `ok`, or for trust
+// NO_TRUST_RECORD exactly. The repository, state, and policy lines alone, a check the host cannot run, such as access
+// with no project-start capability, and a check that answered only with a note, such as a trust record that cannot be
+// read, never lift a halt.
+function unansweredChecks(names, lines, passed) {
   const unanswered = names.filter((name) => !passed.includes(name) && !(name === 'trust' && lines.includes(NO_TRUST_RECORD)));
-  if (!unanswered.length) return [];
-  return [`the checks of this halt that did not run or answer ok: ${unanswered.join(', ')}`, ...lines.filter((line) => unanswered.some((name) => line.startsWith(`note ${name}: `)))];
+  return { unanswered, notes: lines.filter((line) => unanswered.some((name) => line.startsWith(`note ${name}: `))) };
 }
 
 // Whether the run `found` self-lifted a halt of `kind` on issue `key` before row `index`.
@@ -96,9 +96,10 @@ export function recheckHalt({ state, run, found, session, key, custodian = sessi
   }
   const passed = lines.filter((line) => /^ok \S+$/u.test(line)).map((line) => line.slice(3));
   const failed = lines.filter((line) => !line.startsWith('ok ') && !line.startsWith('note ') && line !== NO_TRUST_RECORD);
-  if (failed.length) return { lifted: false, lines: [kept, ...failed] };
-  const unanswered = unansweredLines(names, lines, passed);
-  if (unanswered.length) return { lifted: false, lines: [kept, ...unanswered] };
+  // A blocker or a retry keeps the halt; an unanswered check's notes are printed beside it, so none is hidden.
+  const { unanswered, notes } = unansweredChecks(names, lines, passed);
+  if (failed.length) return { lifted: false, lines: [kept, ...failed, ...notes] };
+  if (unanswered.length) return { lifted: false, lines: [kept, `the checks of this halt that did not run or answer ok: ${unanswered.join(', ')}`, ...notes] };
   const row = { event: 'resume', session, kind: halt.kind, key: halt.key, attempt: halt.attempt, via: 'recheck', checks: passed, ...(halt.kind === 'environment' ? { cause: halt.class } : {}), at: new Date(now).toISOString() };
   const unwritten = (why) => ({ lifted: false, lines: [kept, `the checks passed, but the resume row could not be written: ${String(why).split('\n')[0].slice(0, 200)}`] });
   let written;

@@ -932,6 +932,10 @@ test('an environment halt\'s re-check reads its cause: one no check covers, or n
   environmentHalt(fx, 'host');
   const unread = recheckHalt({ state: fx.state, run: 'launch', found: readRun(fx.state, 'launch'), session: DRIVER, key: 'ENG-1', recheck: () => ['ok repository', 'ok state', 'ok policy', 'ok host', unreadable] });
   assert.deepEqual(unread, { lifted: false, lines: ['recheck kept the halt: ENG-1 attempt 1 found its environment broken: no network', 'the checks of this halt that did not run or answer ok: trust', unreadable] });
+  // With a blocker from another check beside it, both are printed: the blocker does not hide the note.
+  const blocker = 'blocker host: this host\'s project start is not confined to a fresh clone under its own sandbox';
+  const blocked = recheckHalt({ state: fx.state, run: 'launch', found: readRun(fx.state, 'launch'), session: DRIVER, key: 'ENG-1', recheck: () => ['ok repository', 'ok state', 'ok policy', blocker, unreadable] });
+  assert.deepEqual(blocked, { lifted: false, lines: ['recheck kept the halt: ENG-1 attempt 1 found its environment broken: no network', blocker, unreadable] });
   assert.deepEqual(rechecks(fx), []);
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'resume', session: OTHER, at: new Date().toISOString() }] }));
   const lifts = [];

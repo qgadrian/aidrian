@@ -118,7 +118,8 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   `environment`, never `failed`, `blocked`, or `pr_open`, whichever step it stops at: a push or forge call that fails
   on sign-in, permission, or the network, twice in a row; the sandbox refusing a write, a port, or a domain the work
   needs; or a host tool that will not run. Its `stop` names the command and its error, with no token or password in
-  it. A failing test, a review finding, or a merge rule is the work's own outcome, never `environment`.
+  it, and its `cause` names the class. A failing test, a review finding, or a merge rule is the work's own outcome,
+  never `environment`.
 - **The result is the report's last step.** After the report, write the result as JSON to a file in the temporary
   folder (`mktemp`), and run `aidrian project result <run> <key> --file <that file>`. On exit 1, fix what it lists and
   run it again. The fields:
@@ -129,6 +130,7 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   | `pr` | the pull request's number, or `null` |
   | `decisions` | each parked decision: `question`, 2 to 6 `options`, `recommended` (the index of the safest), and `class`: `product`, `ux`, `architecture`, `security`, `scope`, or `other` |
   | `stop` | why the work stopped, in one line, or `null`; for `environment`, the failing command and its error |
+  | `cause` | on `environment` alone, and required there: `commit` (a commit failed), `host` (the host or a host tool will not run), `sign_in` (forge sign-in, token, or permission), `push`, `network`, `sandbox_refused` (the sandbox refused a path, port, or domain the work needs), or `other`; the driver re-checks only what this names, and `sandbox_refused` and `other` wait for a person; else leave the key out |
   | `stopCause` | `"host_denied_merge"` on a `pr_open` whose merge the host's own permission check denied, as `references/phases.md` § When the merge stops says; else leave the key out |
 
   The driver reads only these fields, cleaned: put nothing else in them, and no link, address, or mention.

@@ -46,6 +46,7 @@ import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, landedLine, landedStates, mayStart, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, SERIAL, splitLanded, teamsNote } from './project-run.mjs';
 import { landedPull, openPullHead } from './project-result.mjs';
 import { parallelOf, teamPolicy } from './project-run-gate.mjs';
+import { NO_TRUST_RECORD } from './project-recheck.mjs';
 import { setupPointer } from './project-setup-doc.mjs';
 import { accessProblem, commitProblem, guardedFolders, hostStartProblem, PROBE_BRANCH } from './project-start.mjs';
 import { ancestorProblem, pushProblem, repositoryProblem } from './project-trust.mjs';
@@ -208,7 +209,10 @@ export function recheckLines({ project, config, run, repository, names, env = pr
   if (policy.problem) return lines;
   const cap = detectHost({ env }).capabilities.projectStart;
   if (names.includes('host')) check('host', hostCheck(cap, policy, env));
-  if (names.includes('trust')) trustLines({ cap, state: place.state, env, home, lines, check });
+  // A host that keeps no record of trusted folders, as Codex, answers the trust check with NO_TRUST_RECORD, the one line
+  // the re-check counts as its answer (project-recheck.mjs); a host with no project start fails the host check instead.
+  if (names.includes('trust') && cap && typeof cap.trust !== 'function') lines.push(NO_TRUST_RECORD);
+  else if (names.includes('trust')) trustLines({ cap, state: place.state, env, home, lines, check });
   if (names.includes('access') && cap) {
     lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true, keychain: project.localForgeTokenKeychain, exec }));
   }

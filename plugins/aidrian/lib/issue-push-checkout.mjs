@@ -122,6 +122,9 @@ function leftAt(entries, name, base) {
 // A file HEAD holds otherwise is { edited }. { reason } when git cannot say. The conflict is of any file `held` names,
 // and `differ`, beside no problem, holds each path of `editable` that HEAD holds other than that merge does, when one was
 // read, gathered in the budgeted walk.
+// The merge runs with rename detection off (`-X no-renames`), as the catch-up route's merge does (project-stops.mjs
+// mergeBaseRoute): a base that renames a host file the branch changed would otherwise carry the branch's lines to the new
+// path, which no base copy covers, and read as clean. Off, that file conflicts as modified and deleted, and is refused.
 // SHORTCUT: origin's remote-tracking ref is the session's own copy, as committedProblem's is; the pull request's diff
 // against the forge's own base, which the merge gate holds for a review of these files, stands behind it.
 function mergedProblem(folder, overlay, { held, guarded, editable }, changed) {
@@ -134,7 +137,7 @@ function mergedProblem(folder, overlay, { held, guarded, editable }, changed) {
     const older = budgeted(['merge-base', '--is-ancestor', base, overlay], folder);
     if (older.status !== 0 && older.status !== 1) return { reason: `${SLOW} whether the head merged a newer base` };
     if (older.status === 0 && !changed) return {};
-    const merge = budgeted(['merge-tree', '--write-tree', '--no-messages', '--name-only', '-z', overlay, base], folder, true);
+    const merge = budgeted(['merge-tree', '--write-tree', '--no-messages', '--name-only', '-z', '-X', 'no-renames', overlay, base], folder, true);
     if (merge.status !== 0 && merge.status !== 1) return { reason: `${SLOW} how the base merges` };
     const [tree, ...conflicted] = merge.stdout.split('\0').filter((each) => each !== '');
     let conflict;

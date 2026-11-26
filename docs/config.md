@@ -2122,13 +2122,17 @@ other work in that clone and records the result `failed` with git's error, so th
 remain, and the next attempt is not offered them. Nothing reads whether it did. Base copies of host files stay in place,
 since none of the commits changes one.
 A start that offers them prints `offered ISSUE attempt N: <count> unpushed commits, <commit>` and records `took`, the
-attempt and the commit, in its start row, whose `head` stays the forge's. Any other start of an issue whose kept rows
-name a candidate prints `not taken ISSUE attempt N: <why>`; the row and the folder stay, and nothing parks. Rows of
-files alone, with no older row that names a commit, print nothing. The sweep judges an attempt
-they were offered to as any other: it keeps one that took them and pushed nothing, whose commits the next attempt is
-offered then, and one that never took them unless its result read its tree clean, for its files alone.
-Such a row of files (`files`, with no commit) hides no offer: the next start looks past it to the latest row that names
-a commit, and its folder does not count as one not swept yet; every other rule of the offer holds.
+attempt and the commit, in its start row, whose `head` stays the forge's.
+The start reads the latest `kept` row that is not of files alone, and any other start with such a row prints
+`not taken ISSUE attempt N: <why>`; the row and the folder stay, and nothing parks.
+A row with no commit that is not of files alone, as one whose clone's refs could not be read, is such a row:
+it blocks every older offer and prints ``not taken ISSUE attempt N: its `kept` row names no commit``.
+Rows of files alone, with no other `kept` row, print nothing.
+The sweep judges an attempt they were offered to as any other: it keeps one that took them and pushed nothing, whose
+commits the next attempt is offered then, and one that never took them unless its result read its tree clean, for its
+files alone.
+Such a row of files (`files`, with no commit) hides no offer: the next start skips it, and only it, to the latest row
+that is not of files alone, and its folder does not count as one not swept yet; every other rule of the offer holds.
 Not offered, and left for a person in the kept folder: uncommitted files, a first attempt that never pushed, a clone
 whose objects a session packed, commits that change such a file, a merge of a moved base that brings such a change in,
 and the work of an earlier run.

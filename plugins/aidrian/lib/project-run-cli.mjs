@@ -26,7 +26,8 @@
 //   aidrian project decision ISSUE --forget # an attended session removes ISSUE's entry from that store
 //
 // The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder as lib/project-run.mjs
-// runPlace resolves and checks it. `--project` on init must name the project of the current folder's main checkout.
+// runPlace resolves and checks it. `--project` on init must name the project of the current folder's main checkout,
+// and init refuses a project below its repository's top, whose attempts could not be cloned.
 // Exits: 0 on an answer; 1 on a refusal, a run that cannot be read, a failed sandbox proof, or bad arguments, after
 // printing why; 75 with a `retry:` line when another process holds the run's ledger locked.
 
@@ -49,6 +50,7 @@ import { preflightCommand, recheckLines, snapshotCheck } from './project-preflig
 import { landedPull, openPullHead } from './project-result.mjs';
 import { owedKeys, recordedCommand, reportCommand } from './project-report.mjs';
 import { runConfine } from './project-confine.mjs';
+import { belowTopProblem } from './project-start.mjs';
 import { haltOf, initRun, nextLines, pinnedRepository, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
 import { resumeWords, runStore } from './project-run-guard.mjs';
 import { stopAction } from './project-stops.mjs';
@@ -135,6 +137,9 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   const config = commandConfig(project);
   if (action === 'init') {
     if (!values.file) return fail('project init needs --file');
+    // Only a project at its repository's top runs, checked before the input too (project-start.mjs belowTopProblem).
+    const below = belowTopProblem(project);
+    if (below) return refused('init', below);
     if (values.check) return snapshotCheck({ project, config, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, ...(forge ? { forge } : {}) });
     if (values.project !== undefined && !sameMainCheckout(project, projectAt(cwd))) {
       return refused('init', '--project names a project outside the main checkout of the current folder; run init from that project');

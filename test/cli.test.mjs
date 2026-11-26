@@ -9,6 +9,7 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
+import { belowTopProblem } from '../plugins/aidrian/lib/project-start.mjs';
 import { initRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { usageLines } from '../plugins/aidrian/lib/usage.mjs';
@@ -1947,6 +1948,48 @@ test('project init starts a run for a session the host names, and records that s
   assert.deepEqual([first.event, first.session], ['init', session]);
   // As a process, so the project command stays tested through bin/aidrian's own entry, as the driver session runs it.
   assert.equal(runProcess(['project', 'next', 'launch'], dir).stdout.split('\n')[0], 'next ENG-1 feat/eng-1');
+  // A project below the repository's top: its attempts' clones could not be made, so init and init --check refuse it.
+  const nested = path.join(dir, 'apps', 'web');
+  mkdirSync(path.join(nested, '.aidrian'), { recursive: true });
+  const nestedState = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-state-')));
+  t.after(() => rmSync(nestedState, { recursive: true, force: true }));
+  writeFileSync(path.join(nested, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: nestedState }, projectRun: { maxParallel: 2 } }));
+  // Committed and on the base branch, with a state folder of its own, so no other check of init refuses it.
+  execFileSync('git', ['-C', dir, 'add', 'apps'], { stdio: 'pipe' });
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, 'commit', '-q', '-m', 'nested'], { stdio: 'pipe' });
+  execFileSync('git', ['-C', dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD'], { stdio: 'pipe' });
+  const line = `aidrian project init: the project at ${nested} lies below its repository's top, ${dir}, and a project run starts each issue in a clone of that top, so it runs only a project there: run init from a project at ${dir}`;
+  for (const check of [[], ['--check']]) {
+    assert.deepEqual(projectIn(t, nested, ['init', 'nested', '--file', path.join(dir, 'snapshot.json.input'), ...check], session), { exitCode: 1, out: [], err: [line] }, check.join(' '));
+  }
+  assert.ok(!existsSync(runFolder(nestedState, 'nested')));
+  // A folder name the trimmed roots read could misread, one that starts or ends with whitespace or holds a newline, in
+  // the root, the top, or the main checkout, refuses before any git read; the same name without it is the top.
+  const unread = () => assert.fail('a refused name needs no read');
+  const named = (folder) => `aidrian project init: the project's folder ${JSON.stringify(folder)} has a folder name that starts or ends with whitespace or holds a newline, which a project run does not support: rename or move that folder, then run init again`;
+  assert.equal(`aidrian project init: ${belowTopProblem({ root: '/w/topic ', top: '/w/topic', checkouts: ['/w/topic ', '/src/topic '] }, unread)}`, named('/w/topic '));
+  assert.equal(belowTopProblem({ root: '/w/topic', top: '/w/topic', checkouts: ['/w/topic', '/src/repo'] }, () => assert.fail('the top it found needs no read')), null);
+  for (const [root, top, main] of [['/w/ topic/web', null, '/src/repo/web'], ['/w/a\nb/web', null, '/src/repo/web'], ['/w/topic', '/w/topic', '/src/repo\t']]) {
+    assert.equal(`aidrian project init: ${belowTopProblem({ root, top, checkouts: [root, main] }, unread)}`, named(root === '/w/topic' ? main : root), JSON.stringify(root));
+  }
+  // No top: git's roots read gave no answer it could parse, as for a newline in the main checkout's path, so its main
+  // checkout is unknown, and init refuses before any read.
+  assert.equal(`aidrian project init: ${belowTopProblem({ root: '/w/topic', top: null, checkouts: ['/w/topic'] }, unread)}`,
+    'aidrian project init: git\'s repository folders for the project at /w/topic could not be read, so its main checkout is unknown; a project run needs a project in a git checkout, with no folder name on its path, or its main checkout\'s, that starts or ends with whitespace or holds a newline');
+  // git's prefix decides any other root with a top, read whole: an empty prefix is the top, any other below it, and an
+  // answer with no final newline, or a failed read, refuses.
+  const asked = [];
+  const answer = (said) => (cwd) => {
+    asked.push(cwd);
+    return said;
+  };
+  assert.equal(belowTopProblem({ root: dir, top: dir }, () => assert.fail('the top it found needs no read')), null);
+  assert.equal(belowTopProblem({ root: '/r/repo', top: '/r/linked' }, answer({ status: 0, stdout: '\n' })), null);
+  assert.deepEqual(asked, ['/r/repo'], 'the root itself is asked');
+  assert.equal(belowTopProblem({ root: '/r/top/apps/web', top: '/r/top' }, answer({ status: 0, stdout: 'apps/web/\n' })),
+    'the project at /r/top/apps/web lies below its repository\'s top, /r/top, and a project run starts each issue in a clone of that top, so it runs only a project there: run init from a project at /r/top');
+  assert.match(belowTopProblem({ root: '/r/repo', top: '/r/linked' }, answer({ status: 0, stdout: 'apps/web/' })), /^git cannot tell whether the project at \/r\/repo lies at its repository's top \(rev-parse --show-prefix: no terminated line\)/u);
+  assert.match(belowTopProblem({ root: '/r/repo', top: '/r/linked' }, answer({ status: 128, stdout: '', stderr: 'fatal: not a git repository\n' })), /\(rev-parse --show-prefix: fatal: not a git repository\)/u);
 });
 
 test('project init takes --project only for the project of the current folder\'s main checkout', (t) => {

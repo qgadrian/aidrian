@@ -246,7 +246,8 @@ export function projectAt(start) {
 // The project rooted at `root`, whether or not its folder exists yet:
 // { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, localReview, localDecisions,
 // localAutoMerge, localUnattendedWaiver, localReviewApprovals, localHandoffBackground, localFeedbackAuto,
-// localForgeTokenKeychain, errors, warnings, unreadable }.
+// localForgeTokenKeychain, top, errors, warnings, unreadable }. `top` is the top folder of the checkout `root` is in, or
+// null outside git.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
 // folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, `localAgents`, `localReview`, and
@@ -299,6 +300,8 @@ export function openProject(root, roots, read) {
     localHandoffBackground: local.handoffBackground,
     localFeedbackAuto: local.feedbackAuto,
     localForgeTokenKeychain: local.forgeTokenKeychain ?? null,
+    // The top folder of the checkout `root` is in, as git reports it, from the read the checkouts came from: no git call more.
+    top: found?.current ?? null,
     // A confined attempt's recorded switch: whether git tracked no local file in the main checkout at the start, which
     // mayFollowTeamDefault answers with, since this process cannot ask git there.
     ...(found?.attempt?.machine ? { recordedFollow: found.attempt.machine.autoMerge === 'unset' } : {}),

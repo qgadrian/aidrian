@@ -395,6 +395,8 @@ function nestedLinkHit(target, nested) {
 
 // The pathspecs of the index entries that can be a host file a host loads from any depth, in any case: a `.claude`
 // entry, anything below one, and a SKILL.md, then each glob the other hosts declare (hosts/index.mjs nestedGlobs).
+// Accepted residual: git's icase folds no long s or ligature, so a tracked link spelled so, as `pkg/.claude/ſkills`, is
+// not listed; listing the whole index instead would read every path of a large repository on each write.
 const INDEX_LINKS = Object.freeze([':(glob,icase)**/.claude', ':(glob,icase)**/.claude/**', ':(glob,icase)**/SKILL.md', ...nestedPathspecs()]);
 // The most output that listing may print.
 const INDEX_BUFFER = 64 * 1024 * 1024;
@@ -468,7 +470,8 @@ function partPattern(part) {
 function nestedGlob(prefix, rest, nested) {
   if (!nested.some(({ root }) => isWithin(root, prefix) || isWithin(prefix, root))) return false;
   if (nestedHit(prefix, nested)) return true;
-  const may = (part, name) => (GLOB_WORD.test(part) ? (!name.startsWith('.') || /^[.[{]/u.test(part)) && partPattern(foldPath(part)).test(name) : foldPath(part) === name);
+  // A glob part as written, or by its fold: a fold only adds names, as `[!ß]` names an `s` that its fold `[!ss]` does not.
+  const may = (part, name) => (GLOB_WORD.test(part) ? (!name.startsWith('.') || /^[.[{]/u.test(part)) && (partPattern(part).test(name) || partPattern(foldPath(part)).test(name)) : foldPath(part) === name);
   const last = rest.at(-1) ?? '';
   if (rest.some((part) => may(part, '.claude') || NESTED_NAMES.folders.some((name) => may(part, name)))) return true;
   return may(last, 'skill.md') || NESTED_NAMES.files.some((name) => may(last, name));
@@ -1071,7 +1074,10 @@ function globDenial(globs, found, say) {
       const denial = say.meets(placeOf(spelling.prefix, start, found, { holds: false }), glob.text);
       if (denial) return denial;
       // A refused folder the glob's folder already lies in, and allows, is no entry it reaches.
-      const reached = found.refused.filter((entry) => !isWithin(entry.path, spelling.prefix)).find((entry) => globReaches(spelling, entry.path));
+      // As written, or by its parts' folds against the entry's (foldPath), as refusedHit compares, so `.c*/ſkills` reaches `.claude/skills`.
+      const folded = { prefix: foldPath(spelling.prefix), rest: spelling.rest.map(foldPath) };
+      const reached = found.refused.filter((entry) => !isWithin(entry.path, spelling.prefix))
+        .find((entry) => globReaches(spelling, entry.path) || globReaches(folded, entry.fold));
       if (reached) return say.refused(reached, glob.text);
       if (nestedGlob(spelling.prefix, spelling.rest, found.nested ?? [])) return say.refused(NESTED, glob.text);
       if (!found.limited && gitGlob(spelling.prefix, spelling.rest, found)) return say.refused({ what: GIT_ENTRY }, glob.text);

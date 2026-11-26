@@ -1821,6 +1821,10 @@ test('a host file spelled with a long s, which a disk that folds full Unicode ca
     }
     assert.match(ask(bash(`rm -f ${path.join(top, '.claude', 'ſkills')}/*.md`))?.reason ?? '', /a host file a later session/u, 'a glob from a folded folder');
   }
+  // A wildcard before the folded part: the glob's later parts reach the refused entry by their folds.
+  assert.match(ask(bash(`rm -f ${fx.worktree}/.c*/ſkills/x.md`))?.reason ?? '', /a host file a later session in that checkout loads/u, 'a wildcard, then a folded part');
+  // A negated class its fold would narrow, as `[!ß]` to `[!ss]`, still names a SKILL.md as written.
+  assert.match(ask(bash(`rm -f ${work}/docs/[!ß]kill.md`))?.reason ?? '', /a host file a later session in that clone loads from any depth/u, 'a class its fold narrows');
   // At any depth of the clone, and in a temporary folder, by the hosts' nestedProtected and instruction names.
   for (const file of ['pkg/.claude/ſkills/x.md', 'docs/ſKILL.md', 'a/.claude/ſettings.local.json', 'pkg/.agentſ/x.sh', 'pkg/opencode.jſon']) {
     assert.match(ask(write(path.join(work, file)))?.reason ?? '', /a host file a later session in that clone loads from any depth/u, file);

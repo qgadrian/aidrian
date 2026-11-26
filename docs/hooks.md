@@ -1662,6 +1662,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   A refused entry, host file, instruction file, or `.git` part is compared by its fold (`foldPath` in `lib/fs.mjs`), case and Unicode form folded.
   A disk that folds full Unicode case, as macOS's does, reads `.github/workflowſ`, `.github/workﬂows`, or `.claude/ſkills` as the refused entry.
   So each is refused on every platform, while the places that pass still compare in lower case on macOS and Windows and as spelled elsewhere.
+  A glob part counts as written or by its fold, so a fold never narrows a class such as `[!ß]`.
+  Accepted residual: git's case-insensitive pathspec folds no long s, so the index-link rule misses a tracked link such as `pkg/.claude/ſkills`.
   Accepted residuals of the host-file rules
   ([OpenCode residuals](providers/opencode.md#rules-for-the-other-hosts-sessions)): a copy, move, sync, archive
   extraction, or clone of a folder whose contents hold a host file, or one that names its sources by a glob, is judged

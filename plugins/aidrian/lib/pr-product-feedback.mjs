@@ -21,8 +21,13 @@
 // product-manager read.
 //
 // Exit codes: `status` 0 clear, 2 owed, 3 error; every other action 0 done, 3 refused or failed, with the record untouched.
+//
+// In a project run's issue session, which the start's marker in the environment names (project-registries.mjs
+// ATTEMPT_ENV), every action that writes feedback or calls the forge to post is refused before it does either: the run's
+// product feedback is the Human's (docs/config.md#product-feedback). `status` and `items` still run. The marker is only
+// the message: the session's sandbox, which grants no feedback folder, is the control.
 
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -39,6 +44,7 @@ import { ACCESS_DOC, parsePersona, personaDocs, previewPatterns } from './person
 import { branchConfig, defaultBranch, ghError, notFound, readView, VIEW_FIELDS } from './pr-auto-merge.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
 import { pullRequestDiff } from './pr-diff.mjs';
+import { ATTEMPT_ENV } from './project-registries.mjs';
 import { changedFilesMatch, fromOutside, parseTarget, projectFolder } from './pr-resolve.mjs';
 import { committedConfigFile, repoRoot, stateDir, stateRoot, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
@@ -202,14 +208,16 @@ function committedAuto(project, ref) {
 
 // What git alone says of whether `project` may run product feedback, before any gh call, as { state, team }. A session can
 // rewrite every ref it reads, so this read only ever sends the decision to GitHub, and off needs every source off:
-//   - `on`: the main checkout's local `auto` is true, a ref commits `auto: true`, or the state folder holds `product-feedback/`;
+//   - `on`: the main checkout's local `auto` is true, a ref commits `auto: true`, or the state folder's `product-feedback/`
+//     holds an entry or cannot be listed; one listed empty, as a project run's start makes before its sandbox denies it,
+//     keeps no feedback;
 //   - `maybe`: no source says on, and a ref's config cannot be read (committedAuto undefined): GitHub decides;
 //   - `off`: the local `auto` is false, or every ref says off, and git names the default branch on origin;
 //   - `unknown`: no source says on, and git names no default branch on origin, so only GitHub can say off.
 // The default branch is origin/HEAD, origin/<git.defaultBranch> of the working copy, or origin/main. HEAD, the branch itself,
 // can only raise: it never says off alone. `team` says an origin ref commits `auto: true`, for the reason `status` gives
-// a machine that opted out.
-export function localFeedback(project) {
+// a machine that opted out. `list` is the test seam, readdirSync.
+export function localFeedback(project, { list = readdirSync } = {}) {
   if (project.localFeedbackAuto === true) return { state: 'on', team: false };
   let config = DEFAULTS;
   try {
@@ -223,13 +231,26 @@ export function localFeedback(project) {
   if (project.localFeedbackAuto === false) return { state: onOrigin.length ? 'off' : 'unknown', team };
   let kept = false;
   try {
-    kept = isDirectory(path.join(stateDir(project, { config }), 'product-feedback'));
+    const folder = path.join(stateDir(project, { config }), 'product-feedback');
+    if (isDirectory(folder)) {
+      // Only a listing that worked and found nothing says empty: one the folder refuses may hide a record still reachable.
+      try {
+        kept = list(folder).length > 0;
+      } catch {
+        kept = true;
+      }
+    }
   } catch {}
   if (team || onHead === true || kept) return { state: 'on', team };
   if (!onOrigin.length) return { state: 'unknown', team };
   if (onOrigin.includes(undefined) || onHead === undefined) return { state: 'maybe', team };
   return { state: 'off', team };
 }
+
+// The reads `status` and the ready hold take in a project run's issue session, as feedbackStatus seams: the session can
+// write every ref of its clone, whose git folder it is granted, so git never says off there (`local` is never off), and
+// the default branch's name comes from GitHub (`mainBranch` null). GitHub's config at the default branch and the base decides.
+export const issueReads = () => ({ local: Object.freeze({ state: 'maybe', team: false }), mainBranch: () => null });
 
 // What `status` says of pull request `value`, as { exit, result }: exit 0 clear, 2 owed, and an error thrown. Everything it
 // reads of the team, it reads from GitHub, once localFeedback has not said off. It prints nothing, so the ready hold
@@ -283,9 +304,37 @@ export function feedbackStatus(value, project, { forge, remotes = () => checkout
   return say(2, 'owed', reason, reason === 'unanswered' ? `${count} still owed an answer or a re-check` : `${count} waiting for a re-check of the fix`, owed);
 }
 
+// Why product feedback keeps a merge off, or null: the one check both merge points make, `aidrian pr auto-merge`
+// (pr-auto-merge.mjs, reason `feedback`) for every merge it judges, and the merge guard (rules/github/merge-review.mjs)
+// for a merge no Human attends. It is feedbackStatus with the reads of a project run's issue session (issueReads): GitHub's
+// config at the default branch and the base, never a git ref a session could have rewritten. So a pull request born
+// ready, or marked ready by a form the ready hold cannot read, stops at the merge. `pr` is { number, repo, host }, with
+// `view`, gh's answer to the pull request's view when the caller has it, and `main`, the default branch's name the caller
+// read from GitHub, or null to ask. Owed, or a read that fails, keeps it off: the Human runs the pr-product-feedback skill.
+// The gate calls feedbackOwed itself, so a read that fails exits 3 there, which a project run retries.
+export function feedbackHold(forge, project, pr) {
+  try {
+    return feedbackOwed(forge, project, pr);
+  } catch (error) {
+    return `the product feedback of #${pr.number} cannot be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}): ${feedbackRemedy(pr.number)}`;
+  }
+}
+
+const feedbackRemedy = (number) => `run the pr-product-feedback skill on #${number} in a session the Human attends, then try again`;
+
+// feedbackHold's read, which throws when it cannot read instead of refusing, so `aidrian pr auto-merge` reports a read
+// that failed as an error a project run retries (exit 3), apart from feedback that is owed.
+export function feedbackOwed(forge, project, { number, repo, host, view = null, main = null }) {
+  const url = `https://${host}/${repo}/pull/${number}`;
+  const reads = { ...issueReads(), ...(main ? { mainBranch: () => main } : {}) };
+  const { exit, result } = feedbackStatus(url, project, { forge, view, remotes: () => [`${host}/${repo}`.toLowerCase()], ...reads });
+  return exit === 0 ? null : `product feedback is owed on #${number} (${result.why}): ${feedbackRemedy(number)}`;
+}
+
 // `status`: prints what feedbackStatus says, and exits with it.
-function status({ argv: [value], values, project, forge, remotes }) {
-  const { exit, result } = feedbackStatus(value, project, { forge, remotes });
+// In an issue session it takes the strict reads (issueReads).
+function status({ argv: [value], values, project, forge, remotes, env }) {
+  const { exit, result } = feedbackStatus(value, project, { forge, remotes, ...(inIssueSession(env) ? issueReads() : {}) });
   if (values.json) console.log(JSON.stringify(result));
   else {
     console.log(`product feedback ${result.state} for #${result.pr}: ${result.why}`);
@@ -608,25 +657,29 @@ function post({ argv: [value], values, project, forge, remotes, env, access }) {
   const pr = pullRequest(value, { forge, remotes });
   const state = writingState(project);
   const file = recordPath(state, pr.repo, pr.number);
-  const found = readRecord(file, pr);
-  if (!found) throw new Error(notRun(pr.number));
+  if (!readRecord(file, pr)) throw new Error(notRun(pr.number));
   const body = readBody(values['body-file'], state);
   const kind = refusedKind(body, refusalContext(project, { state, env, access }));
   if (kind) throw new Error(`refused: the body holds ${kind}. Nothing was posted`);
   const marker = feedbackMarker(pr);
   const comment = `${marker}\n${neutralized(body)}`;
-  const target = ownComment({ forge, pr, record: found, marker });
-  let written;
-  try {
-    written = target === null
-      ? forge.postComment(pr.repo, pr.number, comment, { host: pr.host })
-      : forge.editComment(pr.repo, target, comment, { host: pr.host });
-  } catch (error) {
-    throw new Error(`the post failed, and the record is unchanged (${ghError(error)})`);
-  }
-  if (!Number.isSafeInteger(written?.id)) throw new Error('gh gave no comment id for the post, and the record is unchanged');
-  updateRecord(file, pr, (current) => {
-    current.comment_id = written.id;
+  // The record's lock, a write beside it under product-feedback/, is taken before any comment is read or posted, and held
+  // until the record names the comment: a session whose sandbox refuses a write there posts nothing.
+  const target = withLocks([file], () => {
+    const found = readRecord(file, pr);
+    if (!found) throw new Error(notRun(pr.number));
+    const own = ownComment({ forge, pr, record: found, marker });
+    let written;
+    try {
+      written = own === null
+        ? forge.postComment(pr.repo, pr.number, comment, { host: pr.host })
+        : forge.editComment(pr.repo, own, comment, { host: pr.host });
+    } catch (error) {
+      throw new Error(`the post failed, and the record is unchanged (${ghError(error)})`);
+    }
+    if (!Number.isSafeInteger(written?.id)) throw new Error('gh gave no comment id for the post, and the record is unchanged');
+    writeRecord(file, { ...found, comment_id: written.id });
+    return own;
   });
   console.log(`${target === null ? 'posted' : 'edited'} the product feedback comment on #${pr.number}`);
   return 0;
@@ -678,6 +731,12 @@ function diff({ argv: [value], project, forge, remotes }) {
 
 const localNote = (pr, { command, fetched }) => `gh refused the diff of #${pr.number} as too large, so it came from the local fallback: ${command} in this checkout${fetched.length ? `, after fetching ${fetched.join(' ')}` : ''}`;
 
+// The actions an issue session never runs, and the line each refusal prints for pull request `number`.
+export const HUMAN_ACTIONS = Object.freeze(['diff', 'record', 'answer', 'recheck', 'post']);
+// `number` is null when the argument names no pull request.
+export const issueRefusal = (number) => `a project run's issue session does not run product feedback; the Human runs the pr-product-feedback skill on ${number === null ? 'the pull request' : `#${number}`} in a session they attend`;
+const inIssueSession = (env) => typeof env?.[ATTEMPT_ENV] === 'string' && env[ATTEMPT_ENV] !== '';
+
 const TEXT = { type: 'string' };
 const ACTIONS = {
   status: { options: { json: { type: 'boolean' } }, operands: 1, run: status },
@@ -713,6 +772,10 @@ export function runProductFeedback(argv, project, {
     return fail(error.message);
   }
   if (parsed.positionals.length !== operands) return fail(USAGE);
+  if (HUMAN_ACTIONS.includes(name) && inIssueSession(env)) {
+    const target = parseTarget(parsed.positionals[0]);
+    return fail(issueRefusal(target.refusal ? null : target.number));
+  }
   try {
     return run({ argv: parsed.positionals, values: parsed.values, project, forge, remotes, env, access, now });
   } catch (error) {

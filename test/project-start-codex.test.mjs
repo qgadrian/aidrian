@@ -860,6 +860,36 @@ test('a clone denied the main checkout reads the auto-merge switch its start rec
   assert.equal(denied(() => gate(projectAt(work))), false, 'a mark that names another start folder');
 });
 
+// The machine's own product feedback opt-out is recorded with the auto-merge switch, so the feedback check a confined
+// session's merge makes (pr-product-feedback.mjs feedbackOwed) honours it as the main checkout does.
+test('a clone denied the main checkout reads the product feedback opt-out its start recorded, only as its own session', (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip('root reads a folder whatever its mode');
+    return;
+  }
+  const fx = codexRun(t);
+  const localFile = path.join(fx.dir, '.aidrian.local.json');
+  writeFileSync(localFile, JSON.stringify({ ...JSON.parse(readFileSync(localFile, 'utf8')), review: { productFeedback: { auto: false } } }));
+  const started = fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() });
+  assert.equal(started.exitCode, 0, [...started.out, ...started.err].join('\n'));
+  const start = fx.rows().findLast((row) => row.event === 'start');
+  assert.equal(start.machine.feedbackAuto, false, 'the main checkout opts out');
+  const work = path.join(fx.attempt(), 'work');
+  anchorClones({ session: THREAD, env: fx.env, home: fx.home });
+  t.after(() => anchorClones(null));
+  const denied = (read) => {
+    chmodSync(fx.dir, 0o000);
+    try {
+      return read();
+    } finally {
+      chmodSync(fx.dir, 0o755);
+    }
+  };
+  assert.equal(denied(() => projectAt(work)).localFeedbackAuto, false, 'the session keeps the machine`s opt-out');
+  anchorClones({ session: DRIVER, env: fx.env, home: fx.home });
+  assert.equal(denied(() => projectAt(work)).localFeedbackAuto, undefined, 'another session reads none');
+});
+
 // Every host's protected host files stay refused in the clone (lib/hosts/index.mjs protectedPaths), so the folder made
 // here is a plain one.
 test('an attempt clone is no shared main checkout: the main-checkout rule lets its session edit and commit there', (t) => {

@@ -231,17 +231,30 @@ export function linkTripwire({ state, run, store, env, home, main }) {
 // The folder of attempt `attempt` of issue `key` of the run `run` in `state`.
 export const attemptFolder = (state, run, key, attempt) => path.join(runFolder(state, run), 'attempts', `${key}.${attempt}`);
 
+// The folders product feedback keeps, which no confined session is ever granted, nor the state folder itself: its records
+// and their diffs (`<state>/product-feedback`), the persona audits and their triage (`<state>/audits`), and the notes of
+// moved state folders (`<state root>/feedback-folders`), each as a real path when it exists. A grant of any of them, or of
+// a folder in one or holding one, would let a session forge a record the ready hold and the post rule trust.
+export function feedbackHeld(state, { env }) {
+  const base = resolvedPath(state) ?? path.resolve(state);
+  const root = resolvedPath(stateRoot(env)) ?? path.resolve(stateRoot(env));
+  return [path.join(base, 'product-feedback'), path.join(base, 'audits'), path.join(root, 'feedback-folders')].map((each) => resolvedPath(each) ?? each);
+}
+
 // The state work folders a confined session may write, each made owner-only when absent: { folders }, their real paths,
 // or { problem } when one is not a plain folder of this user directly in the state folder's real path under its own
 // name, or holds, or lies in, the runs folder, the handoffs folder, the decisions folder, a mark folder, a sign-off store folder, or a recorded-decision store folder, as a link
-// `tmp -> runs` would.
-export function stateWorkFolders(state, { env, home }) {
+// `tmp -> runs` would, or is the state folder, or is, holds, or lies in a folder product feedback keeps (feedbackHeld).
+// `names` is the test seam, WORK_FOLDERS.
+export function stateWorkFolders(state, { env, home, names = WORK_FOLDERS }) {
   const base = resolvedPath(state);
   if (!base) return { problem: `the state folder ${state} cannot be resolved` };
   const guarded = [runsFolder(state), path.join(state, 'handoffs'), path.join(state, 'decisions'), ...markFolders({ env, home }), ...signoffFolders({ env, home }), ...decisionStoreFolders({ env, home })].map((each) => resolvedPath(each) ?? path.resolve(each));
+  const held = feedbackHeld(state, { env });
   const folders = [];
-  for (const name of WORK_FOLDERS) {
+  for (const name of names) {
     const dir = path.join(base, name);
+    if (dir === base || held.some((each) => each === dir || isWithin(dir, each) || isWithin(each, dir))) return { problem: `the state work folder ${dir} is the state folder, or is, holds, or lies in a folder product feedback keeps, which no confined session is granted` };
     try {
       mkdirSync(dir, { mode: 0o700 });
     } catch (error) {

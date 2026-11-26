@@ -54,7 +54,7 @@
 // started, cut, or reset (lib/project-start.mjs prepareAttempt).
 
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
@@ -87,7 +87,7 @@ import { fenceFor, writeIssueFile } from './project-issue-text.mjs';
 import { keptLines, keptPrompt } from './project-kept.mjs';
 import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, recordedHead, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, custodyWaiverProblem, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
-import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
+import { accessProblem, feedbackHeld, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, commitFiles, commitGitlinks, isGuarded, namedFiles, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { holdsProblem } from './project-forge-holds.mjs';
 import { pushPreflight } from './push-preflight.mjs';
@@ -164,6 +164,43 @@ export function guardedStore({ env, home }) {
     } catch {}
   }
   return [...signoffFolders({ env, home }), ...decisionStoreFolders({ env, home })].map((each) => resolvedPath(each) ?? path.resolve(each));
+}
+
+// The folders product feedback keeps (project-start.mjs feedbackHeld), which a confined session's sandbox denies, made
+// first as guardedStore makes its own, owner-only, once the folders from the real parent of the folder that holds each,
+// the state folder or the state root, down pass storePathProblem: { folders }, their real paths, each a plain folder there
+// at launch, so no sandbox skips a deny of a path that is not there; or { problem }, which halts the start, when one
+// cannot be made so, as through a link or in a folder another user may write.
+export function guardedFeedback(state, { env }) {
+  const real = (folder) => resolvedPath(folder) ?? path.resolve(folder);
+  // Each folder's own entry, in its parent's real path, before feedbackHeld resolves it: a link there would have the
+  // sandbox deny only its target, and leave the link a session could replace with a folder of its own.
+  for (const entry of [path.join(real(state), 'product-feedback'), path.join(real(state), 'audits'), path.join(real(stateRoot(env)), 'feedback-folders')]) {
+    let linked = false;
+    try {
+      linked = lstatSync(entry).isSymbolicLink();
+    } catch {}
+    if (linked) return { problem: `the folder product feedback keeps, ${entry}, is a link, which the session's sandbox cannot deny in place: make it a plain folder, then start again` };
+  }
+  const [records, audits, notes] = feedbackHeld(state, { env });
+  for (const [folder, root] of [[records, real(state)], [audits, real(state)], [notes, real(stateRoot(env))]]) {
+    const unsafe = (why) => ({ problem: `the folder product feedback keeps, ${folder}, cannot be made safely before the session's sandbox denies it (${why}): fix that, then start again` });
+    const problem = storePathProblem(path.join(folder, 'entry'), root);
+    if (problem !== null) return unsafe(problem);
+    try {
+      mkdirSync(folder, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      return unsafe(`it cannot be made: ${error.code ?? 'no code'}`);
+    }
+    const after = storePathProblem(path.join(folder, 'entry'), root);
+    if (after !== null) return unsafe(after);
+    try {
+      if (!lstatSync(folder).isDirectory()) return unsafe('it is not a plain folder');
+    } catch (error) {
+      return unsafe(`it cannot be read: ${error.code ?? 'no code'}`);
+    }
+  }
+  return { folders: feedbackHeld(state, { env }) };
 }
 
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
@@ -752,6 +789,9 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, spelled, policyFiles, startLoaded, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
+  // The folders product feedback keeps, made before the sandbox denies them, or the start halts.
+  const feedback = guardedFeedback(state, { env });
+  if (feedback.problem) return { halt: feedback.problem };
   const clone = prepareAttempt({ project, state, run, found, key, attempt, branch, recorded, tip, reviewed, guards, spelled, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.retry) return { retry: clone.retry };
@@ -808,7 +848,7 @@ function confinedRoom({ project, state, run, key, branch, resumed, recorded, rev
   const indexFiles = clone.overlay ? indexFilesOf({ policy, policyFiles, files: clone.overlay.files, head: commitFiles(clone.work, clone.overlay.sha), tip: commitFiles(clone.work, tip) }) : [];
   const baseCopies = clone.overlay ? writeBaseCopies(clone.folder, clone.overlay.files, indexFiles.map((each) => each.path)) : null;
   if (baseCopies?.problem) return { problem: baseCopies.problem };
-  return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, decision, pushUrl: url || null, claim, branch: clone.branch,
+  return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], feedbackFolders: feedback.folders, drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, decision, pushUrl: url || null, claim, branch: clone.branch,
     head: clone.head, overlay: clone.overlay?.sha ?? null, baseCopies: baseCopies?.file ?? null, indexFiles, policyFiles, startLoaded,
     // The earlier run's work goes on only on its branch as the forge has it: a branch deleted since starts afresh.
     resumed: clone.onForge ? resumed : null, onForge: clone.onForge, kept: clone.kept };
@@ -905,7 +945,7 @@ function decisionLines(decision) {
 function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
   // `policy`: the one the start read once the base was pinned (startPlace), which the launch takes every value from.
-  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, decision, pushUrl, claim, head, overlay, baseCopies, indexFiles, policyFiles, startLoaded, resumed, policy, kept } = place;
+  const { feedbackFolders, folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, decision, pushUrl, claim, head, overlay, baseCopies, indexFiles, policyFiles, startLoaded, resumed, policy, kept } = place;
   const localBinding = policy.localBinding === true;
   // Whether the team's switch reaches this machine's loopback on this host and platform, as the host declares it: one
   // that keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
@@ -956,9 +996,11 @@ function launchStart(context, place) {
   // is in the row for the audit alone: nothing reads it back.
   const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20), ...(startLoaded ? { startLoaded } : {}), ...(indexFiles?.length ? { indexFiles } : {}) } : {};
   // `machine`: this machine's auto-merge switch as the main checkout reads it, which a confined session, denied that
-  // checkout, reads in its place (attempt-clone.mjs confinedMachine): "unset" only for an untracked local file.
+  // checkout, reads in its place (attempt-clone.mjs confinedMachine): "unset" only for an untracked local file. With it,
+  // the machine's own review.productFeedback.auto when it sets one, so the feedback check there honours its opt-out.
   const local = context.project.localAutoMerge;
-  const machine = { autoMerge: local === 'unset' && !mayFollowTeamDefault(context.project) ? 'off' : local };
+  const feedbackAuto = context.project.localFeedbackAuto;
+  const machine = { autoMerge: local === 'unset' && !mayFollowTeamDefault(context.project) ? 'off' : local, ...(typeof feedbackAuto === 'boolean' ? { feedbackAuto } : {}) };
   const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: policy.issueHours, machine, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}), ...(head ? { head } : {}), ...(kept?.took ? { took: kept.took } : {}), ...overlaid, ...(decision?.sha256 ? { decision: decision.sha256 } : {}) };
   let proof = null;
   // Why the write-ahead row was refused under the ledger's lock, when the order or the cap moved since the start read it.
@@ -974,7 +1016,8 @@ function launchStart(context, place) {
           // The runs folder as the run names it, whose trust the host's record must hold for the clone to be trusted.
           runs: runsFolder(state),
           // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
-          guarded: guardedStore({ env, home }),
+          // Nor the folders product feedback keeps (feedbackHeld), even where a temporary folder's grant holds the state root.
+          guarded: [...guardedStore({ env, home }), ...feedbackFolders],
           // Every host's files, from the clone's root and at any depth, whose writes the host's sandbox denies too, so the
           // session plants nothing another host would load there.
           hostFiles: { paths: protectedPaths(), globs: nestedGlobs() },

@@ -25,7 +25,7 @@ import { GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { ATTEMPT_ENV, cacheVars, ENV_NAME, isRegistries, REGISTRIES, REGISTRY_NAMES, registryHosts } from '../plugins/aidrian/lib/project-registries.mjs';
 import { CONFINE_PLAN } from '../plugins/aidrian/lib/project-confine.mjs';
-import { placeHolders, SHELL_VARS } from '../plugins/aidrian/lib/project-start.mjs';
+import { feedbackHeld, placeHolders, SHELL_VARS } from '../plugins/aidrian/lib/project-start.mjs';
 import { PENDING_AGE } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, OWN_PLUGIN, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
@@ -559,6 +559,28 @@ test('a start on Claude Code reaches the registries both reads of the default br
   assert.deepEqual(Object.keys(settings.env ?? {}), ['AIDRIAN_START_CLAIM'], 'no settings env but the start\'s claim, since the host\'s hooks and MCP servers get it');
   assert.doesNotMatch(text, /npm_config_cache|GOMODCACHE|PNPM_HOME/u);
   assert.ok(settings.sandbox.filesystem.allowWrite.includes(realpathSync(cache)), 'the cache folder is writable');
+  // No write the sandbox grants reaches a folder product feedback keeps, or is the state folder (docs/config.md#product-feedback).
+  const held = feedbackHeld(fx.state, { env: fx.env });
+  const state = realpathSync(fx.state);
+  // Both ways: no grant at or under a feedback folder, none at the state folder, and none above the state folder but the
+  // temporary folders, which hold this fixture's state folder because the test's state root lies in one.
+  const temporary = new Set(['/tmp', tmpdir()].map((each) => realpathSync(each)));
+  const under = (inner, outer) => inner === outer || inner.startsWith(`${outer}${path.sep}`);
+  for (const grant of settings.sandbox.filesystem.allowWrite) {
+    assert.notEqual(grant, state, 'not the state folder');
+    for (const folder of held) assert.ok(!under(grant, folder), `${grant} is at or under ${folder}`);
+    assert.ok(temporary.has(grant) || !under(state, grant), `${grant} holds ${state}`);
+  }
+  // A grant that holds a feedback folder, as a temporary folder holds this state root, is no exemption: each is denied,
+  // to sandboxed commands and to the file tools alike.
+  assert.ok([...temporary].some((each) => held.some((folder) => under(folder, each))), 'the fixture\'s state root lies in a temporary folder');
+  for (const folder of held) {
+    // The start makes each one first, owner-only, so the deny names a folder that is there at launch, which no sandbox skips.
+    assert.equal(lstatSync(folder).isDirectory(), true, `${folder} is made before the launch`);
+    assert.equal(lstatSync(folder).mode & 0o077, 0, `${folder} is owner-only`);
+    assert.ok(settings.sandbox.filesystem.denyWrite.includes(folder), `${folder} is denied`);
+    assert.ok(settings.permissions.deny.includes(`Edit(/${folder})`) && settings.permissions.deny.includes(`Edit(/${folder}/**)`), `${folder} is denied to the file tools`);
+  }
   assert.equal(lstatSync(cache).mode & 0o777, 0o700, 'owner-only');
   assert.deepEqual(readdirSync(cache).sort(), ['.keep-attempt', 'npm-global.npmrc', 'npm-user.npmrc']);
   for (const name of ['npm-global.npmrc', 'npm-user.npmrc']) assert.equal(readFileSync(path.join(cache, name), 'utf8'), '', `${name} is empty`);
@@ -665,6 +687,25 @@ test('a start halts unless the default branch sets projectRun.unverifiedHosts', 
   assert.match(result.out[0], /^halt this host's project start is not verified on a live host/u);
   assert.match(result.out[1], /^unverified: /u);
   assert.deepEqual(fx.claude.starts(), []);
+});
+
+test('a start halts when a folder product feedback keeps cannot be made a plain folder before the sandbox denies it', (t) => {
+  // A link where the records folder goes: the deny would name a folder the start cannot vouch for, so nothing starts.
+  const fx = runFixture(t);
+  const elsewhere = mkdtempSync(path.join(tmpdir(), 'aidrian-feedback-elsewhere-'));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  symlinkSync(elsewhere, path.join(fx.state, 'product-feedback'));
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /the folder product feedback keeps, .*product-feedback, is a link/u);
+});
+
+test('a start halts when a folder product feedback keeps is a link to a sibling inside the state folder', (t) => {
+  // The sandbox would deny only the sibling, and leave the link a session could replace with a folder of forged records.
+  for (const name of ['product-feedback', 'audits']) {
+    const fx = runFixture(t);
+    mkdirSync(path.join(fx.state, `${name}-real`));
+    symlinkSync(path.join(fx.state, `${name}-real`), path.join(fx.state, name));
+    halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), new RegExp(`the folder product feedback keeps, .*${name}, is a link`, 'u'));
+  }
 });
 
 test('a host whose project start is not confined halts', (t) => {

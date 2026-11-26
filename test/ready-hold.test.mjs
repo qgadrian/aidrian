@@ -13,10 +13,10 @@ import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
-import { runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
+import { localFeedback, runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { check, checkMcp, DEADLINE_MS, FED_REASON, HOOK_BUDGET_MS, MANY_REASON, OVERRIDE } from '../plugins/aidrian/lib/rules/github/ready-hold.mjs';
+import { check, checkMcp, DEADLINE_MS, FED_REASON, FORM_REASON, HOOK_BUDGET_MS, MANY_REASON, MCP_REPO_REASON, OVERRIDE } from '../plugins/aidrian/lib/rules/github/ready-hold.mjs';
 import { answer, URL7 } from './fixtures/ready-hold/gh.mjs';
 import { hookCall } from './hook-call.mjs';
 
@@ -311,6 +311,127 @@ test('the hold lets the command run when clear, when a read fails, for another r
   assert.match(check(`export ${OVERRIDE}=1; gh pr ready 7`, { now: FROZEN, cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u);
 });
 
+test('in a project run\'s issue session the hold asks GitHub past refs the session wrote, and refuses each read it lets through elsewhere', (t) => {
+  // The clone's origin refs and HEAD all say off, as a session that rewrote them would leave them; GitHub says on.
+  const dir = repo(t, { feedback: null });
+  // An issue mark records the clone the start began the session in, its `cwd`.
+  const issueAt = (where) => () => ({ project: 'proj', issue: 'ENG-1', root: null, cwd: where });
+  const issue = issueAt(dir);
+  const plain = () => null;
+  const judge = (command, spec, mark, more = {}) => {
+    const { calls, exec } = seam(spec);
+    return { calls, reason: check(command, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec), unattendedMark: mark, ...more }) };
+  };
+  const off = judge('gh pr ready 7', { head: HEAD }, plain);
+  assert.deepEqual([off.reason, off.calls.length], [null, 0], 'no issue mark: git says off, as today');
+  const owed = judge('gh pr ready 7', { head: HEAD }, issue);
+  assert.match(owed.reason ?? '', /still owed/u, 'an issue mark asks GitHub, which says owed');
+  assert.match(owed.reason, /record the result pr_open with the stop "product feedback is owed on #7, which an issue session does not run: the Human runs pr-product-feedback on it, then marks it ready"/u);
+  assert.doesNotMatch(owed.reason, /Run the `pr-product-feedback` skill/u, 'an issue session is never told to run it');
+  // The default branch's name comes from GitHub too, never from the clone's origin/HEAD.
+  assert.ok(owed.calls.some(({ args }) => args.at(-1) === 'repos/acme/notes'), 'the default branch read from GitHub');
+  assert.equal(judge('gh pr ready 7', { head: HEAD, config: configText({ auto: false, files: ['src/**'] }) }, issue).reason, null, 'clear on GitHub runs');
+  // Each read the hold lets through for want of it, refused under an issue mark and let through with none, as today.
+  const failing = () => {
+    throw Object.assign(new Error('gh failed'), { stderr: 'gh: HTTP 502\n', status: 1 });
+  };
+  const stalled = () => {
+    throw Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  };
+  const on = repo(t);
+  const cases = [
+    ['a gh failure', (mark) => check('gh pr ready 7', { now: FROZEN, cwd: on, env: {}, forge: forgeOver(failing), unattendedMark: mark })],
+    ['the deadline', (mark) => check('gh pr ready 7', { cwd: on, env: {}, forge: forgeOver(stalled), now: () => 5_000, startedAt: 1_100, unattendedMark: mark })],
+    ['status exit 3', (mark) => check('gh pr ready 7', { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD, config: '{ not json' }).exec), unattendedMark: mark })],
+    ['a graphql id with no literal', (mark) => check('gh api graphql -f id="$ID" -f query=\'mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }\'', { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: mark })],
+  ];
+  for (const [what, ask] of cases) {
+    assert.match(ask(issueAt(on)) ?? '', /in a project run's issue session, and the ready hold could not read/u, what);
+    assert.equal(ask(plain), null, `${what}: no issue mark, as today`);
+  }
+  // There it checks one form alone, `gh pr ready <number or URL>` as the command's first, run from the clone, and refuses
+  // any other with one reason, with no gh call: it guesses no repository and no pull request.
+  const strictAt = (command, more = {}) => {
+    const { calls, exec: answering } = seam({ head: HEAD });
+    return { calls, reason: check(command, { now: FROZEN, cwd: on, env: {}, forge: forgeOver(answering), unattendedMark: issueAt(on), ...more }) };
+  };
+  const todayAt = (command) => check(command, { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: plain });
+  const refusedForm = (command, more, today) => {
+    const { calls, reason } = strictAt(command, more);
+    assert.equal(reason, FORM_REASON, command);
+    assert.equal(calls.length, 0, `${command}: refused with no gh call`);
+    if (today === null) assert.equal(todayAt(command), null, `${command}: no issue mark, as today`);
+    else if (today) assert.match(todayAt(command) ?? '', today, `${command}: no issue mark, as today`);
+  };
+  // A repository option or variable, attached or apart, written out or filled in, anywhere in the command.
+  for (const command of ['gh pr ready 7 -R "$REPO"', 'gh pr ready 7 --repo="$REPO"', 'gh pr ready 7 -R$REPO', 'GH_REPO="$R" gh pr ready 7', 'GH_REPO=$(cat repo) gh pr ready 7',
+    'GH_REPO=acme/notes gh pr ready 7', 'gh -R acme/notes pr ready 7', 'gh pr ready 7 --repo=acme/notes', 'gh pr ready -R acme/notes']) {
+    refusedForm(command, {}, /still owed/u);
+  }
+  refusedForm('gh pr ready 7 -R someone/else', {}, null);
+  refusedForm('export GH_REPO=acme/notes; gh pr ready 7', {});
+  refusedForm('GIT_DIR=/elsewhere/.git gh pr ready 7', {});
+  refusedForm('env -u GH_REPO gh pr ready 7', {});
+  refusedForm('gh pr ready 7', { env: { GH_REPO: 'acme/notes' } });
+  // A folder change before it, a wrapper's folder, or a command before it, which may change the folder.
+  for (const command of ['cd "$D" && gh pr ready 7', 'cd sub && gh pr ready 7', 'cd sub; gh pr ready 7', '(cd sub && gh pr ready 7)', 'env -C /tmp gh pr ready 7',
+    'pushd /tmp && gh pr ready 7', 'source x.sh; gh pr ready 7', 'aidrian pr product-feedback status 7 && gh pr ready 7']) {
+    refusedForm(command, {});
+  }
+  // A pull request not written out: the shell fills it in, the current branch's, or a branch's.
+  refusedForm('gh pr ready "$PR"', {}, null);
+  for (const command of ['gh pr ready', 'gh pr ready feature/absences']) refusedForm(command, {}, /still owed/u);
+  // A ready it cannot read as one: gh's `pr` and `ready` around a word the shell fills in.
+  for (const command of ['gh pr "$X" ready 7', 'gh "$N" pr ready 7']) refusedForm(command, {}, null);
+  // A `-c` string the walk reads as commands: its ready is not the line's first, so it is refused with no gh call.
+  refusedForm("nohup sh -c 'gh pr ready 7'", {});
+  // A program that runs no command its words name, and gh's own subcommand when it is another, hold no ready.
+  for (const command of ['brew upgrade gh && echo ready', 'G=gh; echo "$G"', 'gh pr view "$PR"', 'xargs gh pr list', '"$PY" -m pytest "$T"',
+    '"$(git rev-parse --show-toplevel)/scripts/x.sh" "$Y"', 'gh pr ready 7 --undo', 'echo gh pr ready 7', "printf 'gh pr ready 7'",
+    'gh pr create --draft --title ready', 'gh pr create --draft --title "$T" --body ready', 'gh issue create --title "pr ready" --body "$B"', 'xargs gh pr create --draft --title ready',
+    'find . -name ready -print']) {
+    assert.equal(strictAt(command).reason, null, `${command}: no ready`);
+  }
+  // The one form, a number or a URL, behind a wrapper that sets no folder or variable, is judged; so is one after a `cd`
+  // the walk reads as landing in the session's own folder, where gh runs only once that `cd` worked.
+  for (const command of ['gh pr ready 7', "gh pr ready '#7'", `gh pr ready ${URL7}`, 'timeout 30 gh pr ready 7', `cd ${on} && gh pr ready 7`]) {
+    assert.match(strictAt(command).reason ?? '', /still owed/u, command);
+  }
+  // Every ready is judged in the clone the mark records, from the clone or a folder of its own checkout inside it, such as
+  // a project nested in it; a folder of another checkout, nested in the clone or elsewhere, is refused, and a mark that
+  // records no clone too. With no mark, each is judged in its own project, as today.
+  const nested = path.join(on, 'sub');
+  mkdirSync(path.join(nested, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(nested, '.aidrian/config.json'), configText(null));
+  assert.match(strictAt('gh pr ready 7', { cwd: nested }).reason ?? '', /still owed/u, 'a project nested in the clone, the clone\'s checkout');
+  const vendored = path.join(on, 'vendor');
+  mkdirSync(vendored);
+  writeFileSync(path.join(vendored, '.git'), 'gitdir: /elsewhere\n');
+  const elsewhere = repo(t, { feedback: null });
+  for (const folder of [vendored, path.join(vendored, 'x'), elsewhere]) assert.equal(strictAt('gh pr ready 7', { cwd: folder }).reason, FORM_REASON, `${folder} as the session's folder`);
+  assert.equal(check(`cd ${elsewhere} && gh pr ready 7`, { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: plain }), null, 'no issue mark: judged in its own project, which git says is off');
+  // The MCP form names its repository, so it is judged from any folder when that is the clone's origin.
+  assert.match(checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 7, draft: false }, { now: FROZEN, cwd: elsewhere, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: issueAt(on) }) ?? '', /still owed/u, 'MCP from another folder');
+  const unrecorded = () => ({ project: 'proj', issue: 'ENG-1', root: null });
+  assert.match(check('gh pr ready 7', { now: FROZEN, cwd: on, env: {}, forge: forgeOver(seam({ head: HEAD }).exec), unattendedMark: unrecorded }) ?? '', /could not read the clone this session's mark records/u);
+  // Fed text and more than one ready are refused there whatever git says.
+  assert.equal(judge("echo 'gh pr ready 7' | bash", { head: HEAD }, issue).reason, FED_REASON);
+  assert.equal(judge('gh pr ready 7; gh pr ready 8', { head: HEAD }, issue).reason, MANY_REASON);
+  assert.equal(judge("echo 'gh pr ready 7' | bash", { head: HEAD }, plain).reason, null);
+  // The MCP form alike, and the override still lets every one run.
+  const { exec } = seam({ head: HEAD });
+  const mcp = (given, mark) => checkMcp(given, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec), unattendedMark: mark });
+  assert.match(mcp({ owner: 'acme', repo: 'notes', pullNumber: 7, draft: false }, issue) ?? '', /still owed/u);
+  assert.match(mcp({ owner: 'acme', repo: 'notes', pullNumber: 'x', draft: false }, issue) ?? '', /could not read the pull request number/u);
+  // In an issue session it names the clone's origin as owner and repo, both, or it is refused.
+  for (const given of [{ pullNumber: 7 }, { owner: 'acme', pullNumber: 7 }, { repo: 'notes', pullNumber: 7 }, { owner: 'someone', repo: 'else', pullNumber: 7 }]) {
+    assert.equal(mcp({ ...given, draft: false }, issue), MCP_REPO_REASON, JSON.stringify(given));
+  }
+  assert.match(mcp({ owner: 'ACME', repo: 'Notes', pullNumber: 7, draft: false }, issue) ?? '', /still owed/u, 'as GitHub reads a name, in any case');
+  assert.equal(mcp({ owner: 'acme', repo: 'notes', pullNumber: 7, draft: false }, plain), null);
+  assert.equal(judge('gh pr ready 7', { head: HEAD }, issue, { env: { [OVERRIDE]: '1' } }).reason, null, 'the override');
+});
+
 test('every gh call shares one deadline, and a gh that stalls past it lets the command run', (t) => {
   assert.ok(DEADLINE_MS < 4000 && HOOK_BUDGET_MS < 5000, 'inside the hook\'s 5 s');
   const dir = repo(t);
@@ -461,9 +582,24 @@ test('the committed config is found where each ref puts it, and only off at ever
   assert.match(owedNow(headOn).reason('gh pr ready 7') ?? '', /still owed/u, 'HEAD raises');
   // Every ref off, and the state folder keeps product feedback: GitHub decides.
   const kept = repo(t, { feedback: null });
-  mkdirSync(path.join(kept, '../state/product-feedback'));
+  mkdirSync(path.join(kept, '../state/product-feedback/acme'), { recursive: true });
   const keptCalls = owedNow(kept);
   assert.match(keptCalls.reason('gh pr ready 7') ?? '', /still owed/u, 'a state folder that keeps product feedback raises');
+  // An empty one, as a project run's start makes before its sandbox denies it, keeps none: every ref off still runs unasked.
+  const empty = repo(t, { feedback: null });
+  mkdirSync(path.join(empty, '../state/product-feedback'));
+  const emptyCalls = owedNow(empty);
+  assert.equal(emptyCalls.reason('gh pr ready 7'), null, 'an empty product-feedback folder raises nothing');
+  assert.equal(emptyCalls.calls.length, 0, 'and asks GitHub nothing');
+  // One that cannot be listed may hide a record a path still reaches: GitHub decides. The listing is the seam's, so the
+  // test holds whoever runs it, root included.
+  const unlisted = repo(t, { feedback: null });
+  mkdirSync(path.join(unlisted, '../state/product-feedback'));
+  const refused = () => {
+    throw Object.assign(new Error('EACCES: permission denied, scandir'), { code: 'EACCES' });
+  };
+  assert.equal(localFeedback(findProject(unlisted), { list: refused }).state, 'on', 'a product-feedback folder that cannot be listed raises');
+  assert.equal(localFeedback(findProject(unlisted)).state, 'off', 'the same folder, listed empty, keeps none');
 });
 
 test('status of a project without the feature, or a machine that opted out, makes no gh call', (t) => {

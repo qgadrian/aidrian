@@ -188,11 +188,41 @@ test('both layers on, the Human\'s own pull request, and a finished review on it
     ['conversationComments', 'acme/notes', 7, 'github.com'],
     ['reviews', 'acme/notes', 7, 'github.com'],
     ['reviewComments', 'acme/notes', 7, 'github.com'],
-  ], 'the base is the default branch: its config is read once, then the knowledge folder beside it');
+    // The product feedback check reads the default branch's config again, as `status` does, and the base is that branch.
+    ['contents', 'acme/notes', '.aidrian.json', 'refs/heads/main', 'github.com'],
+    ['contents', 'acme/notes', '.aidrian/config.json', 'refs/heads/main', 'github.com'],
+  ], 'the base is the default branch: its config is read once, then the knowledge folder beside it, then again for product feedback');
   const human = run(t, r, ['7']);
   assert.equal(human.code, 0);
   assert.equal(human.out.length, 1);
   assert.match(human.out[0], /^auto-merge allowed for #7 at abcdef1, this check merges nothing: squash, delete the branch, keep the worktree$/);
+});
+
+test('product feedback owed, or unreadable, keeps it off for every merge; a default branch with it off lets it on', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  // The default branch runs product feedback on src/, which the pull request changes, and no record says it ran.
+  const feedbackOn = JSON.stringify({ version: 1, state: STATE, github: { ...CHECKS, autoMerge: TEAM }, review: { productFeedback: { auto: true, files: ['src/**'] } } });
+  const held = run(t, r, ['7', '--json'], { files: { 'acme/notes@main:.aidrian/config.json': feedbackOn } });
+  assert.equal(held.code, 1);
+  const out = json(held);
+  assert.deepEqual([out.effective, out.reason], [false, 'feedback']);
+  assert.match(out.why, /^product feedback is owed on #7 \(.*\): run the pr-product-feedback skill on #7 in a session the Human attends, then try again$/u);
+  // Off on the default branch: on, as before.
+  const off = run(t, r, ['7', '--json']);
+  assert.deepEqual([off.code, json(off).reason], [0, null]);
+  // A read of the feedback config that fails keeps it off too, never on: the gate's own read came first and passed. It is
+  // an error a project run retries (exit 3), not owed feedback it parks.
+  let reads = 0;
+  const flaky = () => {
+    reads += 1;
+    if (reads > 1) throw Object.assign(new Error('Command failed'), { stderr: 'gh: Server Error (HTTP 502)\n' });
+    return { type: 'file', encoding: 'base64', content: Buffer.from(configText(TEAM)).toString('base64') };
+  };
+  const unread = run(t, r, ['7', '--json'], { files: { 'acme/notes@main:.aidrian/config.json': flaky } });
+  assert.equal(unread.code, 3);
+  assert.deepEqual(unread.out, [], 'no verdict printed');
+  assert.match(unread.err.join('\n'), /could not read the product feedback of #7 \(.*HTTP 502.*\); the merge stays off until it can/u);
 });
 
 // The command as `aidrian pr auto-merge` runs it: the gate, then, when it allows the merge, where the pull request stands
@@ -314,7 +344,7 @@ test('every forge call after the view names the host of the pull request\'s URL'
   });
   assert.equal(result.code, 0);
   const api = result.calls.filter((call) => call[0] !== 'change');
-  assert.equal(api.length, 8);
+  assert.equal(api.length, 10, 'with the product feedback check\'s two config reads');
   for (const call of api) assert.equal(call.at(-1), 'ghe.acme.io', call[0]);
 });
 
@@ -1332,7 +1362,7 @@ test('both branches allow it: on, with the strategy and cleanup of the default b
   assert.equal(result.code, 0);
   const out = json(result);
   assert.deepEqual([out.allow, out.strategy, out.deleteBranch, out.deleteWorktree, out.base], [true, 'rebase', false, true, 'main']);
-  assert.equal(contentsReads(result.calls).length, 5, 'two branches: each read once, and the default branch\'s knowledge folder');
+  assert.equal(contentsReads(result.calls).length, 9, 'two branches: each read once, the default branch\'s knowledge folder, and each again for product feedback');
 });
 
 test('a default branch gh cannot name exits 3', (t) => {

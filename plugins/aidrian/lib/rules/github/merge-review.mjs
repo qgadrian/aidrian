@@ -75,6 +75,7 @@ import { stateFolders } from '../../handoff-guard.mjs';
 // A cycle (pr-auto-merge.mjs imports this file), benign while neither uses the other's exports as it loads.
 import { branchPolicies, changesRequested, headPolicyProblem, includesGuardedPaths, includesPolicyFiles, pathsProblem, refusingBranches, startDocs, trailDocs, trailPaths, trailPolicies } from '../../pr-auto-merge.mjs';
 import { computeVerdict } from '../../pr-checks.mjs';
+import { feedbackHold } from '../../pr-product-feedback.mjs';
 import { findProject, mayFollowTeamDefault } from '../../project.mjs';
 import { closingTextsProblem, forgeClosingProblem, mergeClosingContext } from '../../closing-words.mjs';
 import { pinnedRepository, readRun } from '../../project-run.mjs';
@@ -839,11 +840,44 @@ export function unattendedProblem({ project, home = project, merge, mark, forge 
         trail, head, reviewer: policies.policy.github.reviewer, files: Array.isArray(trail?.files) ? trail.files : [], complete: trail?.filesComplete === true,
         configs: [policies.policy, policies.basePolicy], prefix, policyFiles: policies.policyFiles, state: scoped(recordFor(project, pr, repo), project, repo), signoffs: readHumanSignoffs({ repo, pr }),
       })
+      // Product feedback, as `aidrian pr auto-merge` reads it (pr-product-feedback.mjs feedbackHold), from the trail.
+      ?? feedbackHold(trailForge(reads, trail, prefix), project, { number: pr, repo, host: pinned.host, view: trailView(trail, { number: pr, repo, host: pinned.host }), main: policies.main })
       ?? mergeClosesProblem({ trail, merge, mark, home, pr: { repo, host: pinned.host } });
     return problem ? deny(problem) : null;
   } catch (error) {
     return deny(`the forge could not confirm it in time (${String(error?.message ?? error).split('\n')[0]}); running the merge once more is safe`);
   }
+}
+
+// The pull request as gh's view gives it, read off the review trail, for the product feedback check, or null when the
+// trail's file list is not whole, or its address is not this pull request's, which then views it once. The address is
+// GitHub's own spelling, since the feedback commands keep records under it and a record's folder keeps its case.
+export function trailView(trail, { number, repo, host }) {
+  if (trail?.filesComplete !== true || !Array.isArray(trail.files) || !Number.isInteger(trail.filesTotal)) return null;
+  const url = typeof trail.url === 'string' ? trail.url : '';
+  const match = /^https:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/(\d+)$/u.exec(url);
+  if (!match || match[1].toLowerCase() !== String(host).toLowerCase() || match[2].toLowerCase() !== String(repo).toLowerCase() || Number(match[3]) !== number) return null;
+  return {
+    number, headRefOid: trail.head, baseRefName: trail.base, baseRefOid: trail.baseOid, author: { login: trail.author }, url,
+    files: trail.files, changedFiles: trail.filesTotal, reviewDecision: trail.reviewDecision ?? '', latestReviews: trail.latestReviews ?? [],
+  };
+}
+
+// The forge `reads`, with the branches' pointer and config files served from the review trail, which read them with it:
+// a text is the file, null is no file (a 404), and any other file, or one the trail did not read, is read from the forge.
+function trailForge(reads, trail, prefix) {
+  const paths = trailPaths(prefix);
+  const branches = [trail?.branches?.default, trail?.branches?.base].filter((branch) => typeof branch?.name === 'string' && branch.name !== '');
+  return {
+    ...reads,
+    contents: (repo, file, ref, options) => {
+      const branch = branches.find(({ name }) => ref === `refs/heads/${name}`);
+      const text = branch ? { [paths.pointer]: branch.pointer, [paths.config]: branch.config }[file] : undefined;
+      if (typeof text === 'string') return { type: 'file', encoding: 'base64', content: Buffer.from(text).toString('base64') };
+      if (text === null) throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)\n' });
+      return reads.contents(repo, file, ref, options);
+    },
+  };
 }
 
 // The unattended mark of `session`, or, for a project run's driver, the one its driver mark stands for (run-driver.mjs

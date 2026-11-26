@@ -25,14 +25,29 @@
 // one deadline cannot check.
 // `AIDRIAN_ALLOW_UNHELD_READY=1` in the hook's own environment, set by a person before the session, lets every one run. Only
 // this rule reads it, from `env`, so an inline setter in a command lifts nothing.
+//
+// In a project run's issue session (unattended-mark.mjs issueHeld) the session can write every ref of its clone, whose git
+// folder it is granted, so git alone never says off and never names the default branch there: every ready asks GitHub.
+// There it guesses no repository: it checks a `gh pr ready` only in one form (plainReady), `gh pr ready <number or URL>`
+// as the command's first, run from the clone the mark records, with no `-R`, `--repo`, GH_REPO, GIT_DIR, or GIT_WORK_TREE
+// in the command or the hook's environment, and refuses any other with FORM_REASON. So it refuses a ready it cannot read
+// as one (unreadReady): gh with `pr` and `ready` around a word the shell fills in. It refuses each read that fails
+// (strictReason): gh failing or past the deadline, and status exiting 3. A ready a variable spells (`gh $X 7`), and one
+// another program runs (xargs, parallel, `find -exec`, watch), are out of its sight.
+// The MCP call names its repository, which must be the clone's origin. The deny of an owed one names the stop the run records.
+
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 
 import { forgeFor } from '../../forges/index.mjs';
+import { resolvedPath } from '../../fs.mjs';
 import { runGit } from '../../git.mjs';
 import { VIEW_FIELDS } from '../../pr-auto-merge.mjs';
-import { feedbackStatus, localFeedback } from '../../pr-product-feedback.mjs';
+import { feedbackStatus, issueReads, localFeedback } from '../../pr-product-feedback.mjs';
 import { findProject } from '../../project.mjs';
-import { originRepo } from '../../review-gate.mjs';
+import { originRepo, repoName } from '../../review-gate.mjs';
 import { shellPlain, walkCommands } from '../../shell-lex.mjs';
+import { issueHeld, readUnattendedMark } from '../../unattended-mark.mjs';
 import { projectReader, UNKNOWN, unreadable } from '../product-feedback-answer.mjs';
 import { commandPath, readWords, switchValue } from './review-request.mjs';
 
@@ -146,13 +161,15 @@ export function deadlineForge({ forge = forgeFor, now = Date.now, deadlineMs = D
 // gh's answer when the rule viewed it, so status views it once. A bare number with no repository goes to status as it is;
 // any other target is viewed as written, with `-R` as written, so gh reads every spelling it accepts. An id that names no
 // pull request marks none the rule can check.
-function marked(call, forge) {
+// In an issue session (`strict`), a node read that fails throws, as a view that fails does.
+function marked(call, forge, strict = false) {
   if (call.ids) {
     return call.ids.flatMap((id) => {
       try {
         const url = forge.nodeChange(id)?.data?.node?.url;
         return typeof url === 'string' ? [{ value: url, view: null }] : [];
-      } catch {
+      } catch (error) {
+        if (strict) throw error;
         return [];
       }
     });
@@ -173,8 +190,15 @@ const mainBranchOf = (project) => (pr) => {
 
 const owedLine = ({ title, command }) => `${JSON.stringify(title)}: \`${command}\``;
 
-// The deny for a pull request status says is owed.
-function owedReason({ pr, reason, why, owed }) {
+// The stop an issue session records while product feedback is owed on `pr`, which it does not run.
+export const issueStop = (pr) => `product feedback is owed on #${pr}, which an issue session does not run: the Human runs pr-product-feedback on it, then marks it ready`;
+
+// The deny for a pull request status says is owed. In an issue session it names the stop the run records instead.
+function owedReason({ pr, reason, why, owed }, strict = false) {
+  if (strict) {
+    return `Blocked: this marks pull request #${pr} ready, and its product feedback is still owed: ${why}. ` +
+      `A project run's issue session does not run product feedback: leave the draft, and record the result pr_open with the stop "${issueStop(pr)}".`;
+  }
   const what = reason === 'not_run'
     ? `${why}. Run the \`pr-product-feedback\` skill on it`
     : `${why}: ${owed.map(owedLine).join('; ')}`;
@@ -191,53 +215,181 @@ export const MANY_REASON =
   'Blocked: this marks more than one pull request ready in one command, and the ready hold checks the product feedback of each ' +
   'within one time limit, which one command shares. Run one `gh pr ready <n>` per command.';
 
-// The deny reason for `calls`, each { call, projects }, or null. Any failure to read the state lets a call run.
-function judgeCalls(calls, seams) {
+// The deny an issue session gets for a ready the hold could not read, `why` naming what it could not read.
+export const strictReason = (why) =>
+  `Blocked: this marks a pull request ready in a project run's issue session, and the ready hold could not read ${why}, ` +
+  'so it cannot tell whether product feedback is owed. Run `aidrian pr product-feedback status <PR>`, then `gh pr ready <PR>` with the ' +
+  'number written out, as its own command, from the attempt\'s clone; when gh keeps failing, leave the draft and say so in the report.';
+// The one deny an issue session gets for a ready in any form but `gh pr ready <number or URL>` run first from its clone
+// (plainReady): the hold there never guesses which repository or pull request gh would mark.
+export const FORM_REASON =
+  'Blocked: this marks a pull request ready in a project run\'s issue session in a form the ready hold does not check there: ' +
+  'it checks only `gh pr ready <PR>`, the number or URL written out, as the command\'s first, run from the attempt\'s clone, ' +
+  'with no `cd` or other folder before it and no `-R`, `--repo`, or `GH_REPO`. Run `gh pr ready <PR>` from the clone, with no repository option.';
+// The deny an issue session gets for an MCP ready that does not name its clone's origin repository as owner and repo.
+export const MCP_REPO_REASON =
+  'Blocked: this marks a pull request ready in a project run\'s issue session, and the call does not name the attempt\'s clone\'s ' +
+  'origin repository as its owner and repo, which the ready hold there requires. Name both, or run `gh pr ready <PR>` from the clone.';
+
+// The deny reason for `calls`, each { call, projects, plain }, or null, `plain` saying the call has the one form an issue
+// session's ready takes (plainReady). Any failure to read the state lets a call run, but in an issue session (`strict`),
+// where each failure refuses, any other form refuses, and git's answer is never read (pr-product-feedback.mjs issueReads,
+// which `status` takes there too).
+function judgeCalls(calls, seams, strict = false) {
   const local = new Map();
+  const strictReads = issueReads();
   const localOf = (project) => {
-    if (!local.has(project.root)) local.set(project.root, localFeedback(project));
+    if (!local.has(project.root)) local.set(project.root, strict ? strictReads.local : localFeedback(project));
     return local.get(project.root);
   };
   const may = (project) => ['on', 'maybe'].includes(localOf(project).state);
-  if (calls.some(({ call, projects }) => call.fed && projects.some((project) => localOf(project).state === 'on'))) return FED_REASON;
+  if (calls.some(({ call, projects }) => call.fed && (strict || projects.some((project) => localOf(project).state === 'on')))) return FED_REASON;
   const marks = calls.filter(({ call }) => !call.fed).reduce((sum, { call }) => sum + (call.ids?.length || 1), 0);
-  if (marks > 1 && calls.some(({ projects }) => projects.some(may))) return MANY_REASON;
+  if (marks > 1 && (strict || calls.some(({ projects }) => projects.some(may)))) return MANY_REASON;
   let forgeAt = null;
-  for (const { call, projects } of calls) {
-    if (call.fed || call.unreadable) continue;
+  for (const { call, projects, plain } of calls) {
+    if (call.fed) continue;
+    if (strict && plain === false) return FORM_REASON;
+    if (call.unreadable) {
+      if (strict) return strictReason(call.unreadable);
+      continue;
+    }
     const judged = projects.filter(may);
-    if (!judged.length) continue;
+    if (!judged.length) {
+      if (strict) return strictReason('the project of the folder gh runs in');
+      continue;
+    }
     forgeAt ??= deadlineForge(seams);
     let pulls;
     try {
-      pulls = marked(call, forgeAt(judged[0].root));
-    } catch {
+      pulls = marked(call, forgeAt(judged[0].root), strict);
+    } catch (error) {
+      if (strict) return strictReason(`the pull request with gh (${firstLine(error)})`);
       continue;
     }
+    if (strict && !pulls.length) return strictReason('which pull request the call marks');
     for (const project of judged) {
       for (const { value, view } of pulls) {
         try {
-          const { exit, result } = feedbackStatus(value, project, { forge: forgeAt(project.root), view, local: localOf(project), mainBranch: mainBranchOf(project) });
-          if (exit === 2) return owedReason(result);
-        } catch {}
+          const mainBranch = strict ? strictReads.mainBranch : mainBranchOf(project);
+          const { exit, result } = feedbackStatus(value, project, { forge: forgeAt(project.root), view, local: localOf(project), mainBranch });
+          if (exit === 2) return owedReason(result, strict);
+        } catch (error) {
+          if (strict) return strictReason(`its product feedback (${firstLine(error)})`);
+        }
       }
     }
   }
   return null;
 }
 
-const named = (call) => Boolean(call.ids || call.repo || call.url);
+const firstLine = (error) => String(error?.message ?? error).split('\n')[0].slice(0, 200);
 
-// The deny reason for `command`, or null. `cwd` is the session's folder, `env` the hook's own environment; the rest are the
-// seams of deadlineForge.
-export function check(command, { cwd = process.cwd(), env = process.env, ...seams } = {}) {
+// The issue mark of the session the hook's payload `input` names (unattended-mark.mjs issueHeld), or null when it works no
+// project run's issue. A mark it cannot read holds no issue: the sandbox still holds the session.
+function issueMark(unattendedMark) {
+  try {
+    const mark = unattendedMark();
+    return issueHeld(mark) ? mark : null;
+  } catch {
+    return null;
+  }
+}
+const markReader = (input, home) => () => readUnattendedMark(input?.session_id, home ? { home } : {});
+
+// The project of the clone an issue mark records (`cwd`, the folder the start began the session in), or null.
+function cloneProject(mark) {
+  if (typeof mark.cwd !== 'string' || !path.isAbsolute(mark.cwd)) return null;
+  try {
+    return findProject(mark.cwd);
+  } catch {
+    return null;
+  }
+}
+const real = (folder) => resolvedPath(folder) ?? path.resolve(folder);
+
+// Whether the folder `cwd` is the clone `clone` (the mark's cwd) or inside it, in its own checkout: no folder from `cwd`
+// up to the clone holds a `.git` of another checkout, so gh reads the clone's repository there.
+function inClone(cwd, clone) {
+  const here = real(cwd);
+  const root = real(clone);
+  if (here !== root && !here.startsWith(`${root}${path.sep}`)) return false;
+  for (let dir = here; dir !== root; dir = path.dirname(dir)) if (existsSync(path.join(dir, '.git'))) return false;
+  return true;
+}
+
+// The words that choose a repository for gh or git other than the folder's own: `-R` and `--repo`, attached or apart,
+// and the variables. An issue session's ready refuses any of them anywhere in the command, or in the hook's environment.
+const REPO_WORDS = /(?<![\w-])(?:-R|--repo)|\b(?:GH_REPO|GIT_DIR|GIT_WORK_TREE)\b/u;
+const REPO_VARS = ['GH_REPO', 'GIT_DIR', 'GIT_WORK_TREE'];
+
+// Whether the walked command `entry`, the `at`th the command runs, is the one ready form an issue session checks:
+// `gh pr ready <number or URL>`, every word written out, as the command's first, in the folder the session is in, with no
+// wrapper folder and no variable set for it.
+function plainReady({ invocation, folder }, at, cwd) {
+  const args = invocation.args ?? [];
+  return at === 0 && !invocation.dynamic && !invocation.chdir && (invocation.environment ?? []).length === 0
+    && typeof folder === 'string' && real(folder) === real(cwd)
+    && args.length === 3 && args.every((token) => !unreadable(token)) && args[0].text === 'pr' && args[1].text === 'ready'
+    && (BARE.test(args[2].text) || URL_TARGET.test(args[2].text));
+}
+
+// gh's first two command words as tokens, as commandPath reads them.
+function commandTokens(args) {
+  const words = commandPath(args);
+  const tokens = [];
+  for (const token of args) if (tokens.length < words.length && token.text === words[tokens.length]) tokens.push(token);
+  return tokens;
+}
+
+// A ready the hold cannot read, which only an issue session refuses (check), or null: gh, which readReady reads as no
+// ready, whose command words are not both written out, with `pr` and then `ready` among its words written out, as
+// `gh pr "$X" ready 7`, but an `--undo`. gh whose command words are written out and are another subcommand, as
+// `gh pr create --title ready`, is none. A ready another program runs, as xargs, parallel, `find -exec`, or watch
+// runs it, and one a variable spells, as `X="pr ready"; gh $X 7`, it does not see.
+export function unreadReady(invocation) {
+  if (invocation?.program !== 'gh' || invocation.dynamic) return null;
+  const args = invocation.args ?? [];
+  const [noun, verb] = commandTokens(args);
+  if (noun && !unreadable(noun) && (noun.text !== 'pr' || (verb && !unreadable(verb)))) return null;
+  const words = args.filter((token) => !unreadable(token)).map(({ text }) => text);
+  const pr = words.indexOf('pr');
+  if (pr === -1 || !words.slice(pr + 1).includes('ready')) return null;
+  return switchValue(args, readWords(args, READY_VALUES).flags, '--undo') === true ? null : 'gh pr ready around a word the shell fills in';
+}
+
+// The deny reason for `command`, or null. `cwd` is the session's folder, `env` the hook's own environment, `input` the hook's
+// payload, whose session's mark `unattendedMark` reads (the seam); the rest are the seams of deadlineForge. The mark is read
+// only for a command that holds a ready, or one the hold cannot read (unreadReady).
+export function check(command, { cwd = process.cwd(), env = process.env, input = {}, home, unattendedMark = markReader(input, home), ...seams } = {}) {
   if (env[OVERRIDE] === '1' || !mayMarkReady(command)) return null;
-  const found = walkCommands(command, cwd).flatMap((entry) => {
+  const found = [];
+  const hidden = [];
+  let at = 0;
+  for (const entry of walkCommands(command, cwd)) {
     const text = fedText(entry);
-    if (text !== null) return namesReady(text) ? [{ entry, call: { fed: true } }] : [];
-    const call = readReady(entry.invocation, env);
-    return call ? [{ entry, call }] : [];
-  });
+    if (text !== null) {
+      if (namesReady(text)) found.push({ entry, call: { fed: true }, at });
+    } else {
+      const call = readReady(entry.invocation, env);
+      if (call) found.push({ entry, call, at });
+      else if (unreadReady(entry.invocation)) hidden.push({ entry, call: { hidden: true }, at });
+    }
+    at += 1;
+  }
+  if (!found.length && !hidden.length) return null;
+  const mark = issueMark(unattendedMark);
+  if (mark) {
+    // An issue session's every ready is judged in the clone its mark records, and checked in the one form alone. A ready
+    // it cannot read is one in another form, after fed text and more than one ready, which judgeCalls refuses first.
+    const clone = cloneProject(mark);
+    if (!clone) return strictReason('the clone this session\'s mark records');
+    const free = !REPO_WORDS.test(shellPlain(command)) && !REPO_VARS.some((name) => env[name]) && inClone(cwd, mark.cwd);
+    // A graphql call names its pull request by node id, from any folder: it is judged as it is.
+    const api = (entry) => commandPath(entry.invocation.args ?? [])[0] === 'api';
+    const plain = ({ entry, call, at: index }) => !call.fed && !call.hidden && (api(entry) || (free && plainReady(entry, index, cwd)));
+    return judgeCalls([...found, ...hidden].map((each) => ({ call: each.call, projects: [clone], plain: plain(each) })), seams, true);
+  }
   if (!found.length) return null;
   // Every folder the rule cannot read is UNKNOWN: the hold needs no record to hold.
   const projectIn = projectReader(command, cwd, env, { on: () => true, unknownWhen: () => true });
@@ -251,17 +403,22 @@ export function check(command, { cwd = process.cwd(), env = process.env, ...seam
     const projects = list.filter((project, at) => project && list.findIndex((other) => other?.root === project.root) === at);
     return { call, projects };
   });
-  return judgeCalls(calls, seams);
+  return judgeCalls(calls, seams, false);
 }
 
+const named = (call) => Boolean(call.ids || call.repo || call.url);
+
 // The deny reason for one MCP call that marks ready, `given` as { owner, repo, pullNumber, draft }, or null. A number it
-// cannot read lets it run, as a target the shell fills in does.
-export function checkMcp(given, { cwd = process.cwd(), env = process.env, ...seams } = {}) {
+// cannot read lets it run, as a target the shell fills in does, but in an issue session, as check's reads, where it is
+// judged in the clone the mark records and must name that clone's origin repository as its owner and repo.
+export function checkMcp(given, { cwd = process.cwd(), env = process.env, input = {}, home, unattendedMark = markReader(input, home), ...seams } = {}) {
   if (env[OVERRIDE] === '1' || given?.draft === true || given?.draft === undefined) return null;
-  const project = findProject(cwd);
-  if (!project) return null;
+  const mark = issueMark(unattendedMark);
+  const project = mark ? cloneProject(mark) : findProject(cwd);
+  if (!project) return mark ? strictReason('the clone this session\'s mark records') : null;
   const n = Number(given.pullNumber);
-  if (!(Number.isInteger(n) && n > 0)) return null;
+  if (!(Number.isInteger(n) && n > 0)) return mark ? strictReason('the pull request number') : null;
   const repo = typeof given.owner === 'string' && typeof given.repo === 'string' ? `${given.owner}/${given.repo}` : null;
-  return judgeCalls([{ call: { target: String(n), repo, url: false }, projects: [project] }], seams);
+  if (mark && (repoName(repo) === null || repoName(repo) !== originRepo(project))) return MCP_REPO_REASON;
+  return judgeCalls([{ call: { target: String(n), repo, url: false }, projects: [project] }], seams, Boolean(mark));
 }

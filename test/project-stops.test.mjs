@@ -59,6 +59,7 @@ test('every policy reason, changes requested, a sign-off the Human owes, and a r
     assert.deepEqual([decision.action, decision.why.includes(`(${reason})`)], ['park', true], reason);
   }
   assert.ok(POLICY_REASONS.includes('closes'), 'the closing-word refusal is a policy reason');
+  assert.ok(POLICY_REASONS.includes('feedback'), 'owed product feedback waits for the Human');
   const changes = classify({ autoMerge: off('review'), view: view({ latestReviews: [{ state: 'CHANGES_REQUESTED', author: { login: 'ana' } }] }) });
   assert.deepEqual([changes.action, /ana requested changes/u.test(changes.why)], ['park', true]);
   const signoff = classify({ autoMerge: off('trust', { trust: 'signoff' }) });

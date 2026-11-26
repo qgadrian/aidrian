@@ -417,6 +417,8 @@ after the `pr-merge-when-green` steps waited for every check. The read must give
 a head pushed in between exits 3, as does a failed read of the pull request.
 
 It is on only when all of these hold, checked in this order; the last two, `closes` and `trust`, only in a session no Human attends.
+`feedback` holds for every merge, attended or not, and the [merge guard](hooks.md#merge-guard) makes the same check
+before a merge in a session no Human attends, by `gh pr merge` or the GitHub MCP merge.
 With `--json`, `reason` names the first that fails and `why` says it in a sentence; both are `null` when on.
 
 | `reason` | What must hold |
@@ -428,6 +430,7 @@ With `--json`, `reason` names the first that fails and `why` says it in a senten
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
 | `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a `received` review of exactly the current head, and nothing is owed. There is no looser mode: no record, a review of an earlier head, an owed review, or a waiver above `low` through an accepted residual, on any pass record, keeps it off, also after the waiver ends, until the body no longer lists it and the review of the current head weighed it again: the pass that raised the finding, as the finding index names it for the finding the ruling names, ran on exactly that head over the finding's file and carries it as ended. Another pass, such as a cross pass or a slice over other files, or a slice result reused from an earlier head, proves nothing, and a waiver with no ruling id holds. The gate then reads the pull request's body at the head, once, under the default branch's `github.pullRequest.residuals.section`. A body item that is the residual's text, or names the finding as the review pass reads a residual line (the anchored residuals of [review.md](review.md#reviewers): its title, a colon, and a reason, over the same raised findings), still lists it, whatever kept it from the pass input, such as the residual limit. A body read that fails, or a head that moves during it, is an error (exit 3). The hold keys on the finding's [id](review.md#finding-ids), so a listing of the same title and file as fixed ends nothing. A `none_needed` record of exactly the current head counts too, with nothing owed, only when all of these hold. Its plan's reasons are exactly "only files that cannot change behaviour", at depth `none`, so any other reason, an extra one such as a rule's, or a record an older plugin wrote with no reasons, waits for the Human. [`github.autoMerge.unreviewedPaths`](#auto-merge) is a non-empty list with no error on both the default branch and the base, and each lists every changed file, from the project root. Every changed file in the paths check's whole list is added, modified, or deleted (never `CHANGED`, a type change, nor `COPIED`); is one the default branch's [`review.nonBehaviour`](review.md#rules), its own or the built-in list, names, and not one its `review.ignore` names, since no review read it, with no error anywhere in its `review` group; and ends in `.md`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, or `.ico`, whatever the lists say. Whatever the team lists, these stay off: a file on the `paths` row's fixed list, which holds every host's instruction files, at the repository root or the project root, even with `github.autoMerge.includeGuardedPaths` on; a knowledge doc the start hook loads, or a file of its knowledge folder, as the `paths` row reads them, with the key on too, and knowledge the gate cannot read; a path with a folder or file name that starts with `.`, which covers every host's folder, such as `.github/prompts/`, `.kiro/`, and `.changeset/`; and a test file, fixture, or golden file: a path the review's test-file patterns match (`*.test.*`, `*.spec.*`, `*_test.*`, or a `test/`, `tests/`, `__tests__/`, or `spec/` folder), or one under a `fixture`, `fixtures`, `__fixtures__`, `testdata`, `test-data`, `golden`, `goldens`, or `__golden__` folder. Every list is read from GitHub as the branches commit it now, never from the head or this checkout, so a pull request that widens a list gets nothing from it. Last, every changed file still at the head is a regular file there. The forge's changed-file list gives no file mode, so the gate reads the head commit's tree, one folder at a time. It refuses a symbolic link (mode `120000`), which a static server or site builder may follow to a file it should not publish, a submodule (`160000`), any other mode, a file the tree does not hold, and a tree it cannot read whole. A deleted file is not looked up. Beyond the two branches' config files and the knowledge the `paths` row read, the route reads only that tree. |
+| `feedback` | The pull request's [product feedback](#product-feedback) is not owed, as `aidrian pr product-feedback status` reads it in a project run's issue session: from GitHub's config at the default branch and the base, never a git ref of the checkout, and this machine's record. Owed keeps it off, and `why` says to run the `pr-product-feedback` skill on it in a session the Human attends. A read that fails keeps it off too, as an error (exit 3), which a project run retries before it parks. A project without product feedback, or a pull request that changes no file its lists name, passes. So a pull request born ready, or marked ready by a form the [ready hold](hooks.md#ready-hold) cannot read, stops here. |
 | `closes` | Only for a [project run](#project-run)'s issue session, one whose unattended mark names the run's issue: the pull request's title, body, and every commit message name no issue but that one after a closing word, as GitHub and a tracker's forge integration read them: `close`, `fix`, `resolve`, and `complete`, in each form, followed by a list of `#12`, `owner/name#12`, an issue link, or tracker keys such as `ENG-12`. The title names no key but the issue's own even with no closing word, since Linear links an issue a title names, and may move it at the merge. A token counts as a tracker key only when its prefix is a team key the run knows: the issue's own, the snapshot's `teams`, every team of the tracker workspace as the driver read it at init, and the teams of the run's issues. So `utf-8`, `SHA-256`, and `e2e-2` are none while no team is so named. A snapshot with no `teams` knows only the run's own teams, and a key of any other team is not seen: a named residual. A key a hyphen joins to more text, such as `ENG-9-export`, counts. Any white space separates a closing word from its first reference, line breaks included, and separates the rest of a list but a line break, which ends it; a key of a team the run does not know, and a link to another site, are passed over, and one longer than 50 references keeps it off. A merge would otherwise close those issues too, behind the run's back. The gate first reads the commits, and a list shorter than its count, which GitHub caps at 250, keeps it off; then it reads the title, the body, and the closing issue references below from one snapshot, the review trail at exactly the head, taken after the commits so an edit or a link made while they were read is seen, and merge trust judges that same snapshot. A head that moves during the reads is an error (exit 3). A mark that is pending or cannot be read names no issue, and a run whose snapshot cannot be read knows no team, so any reference keeps it off. Text that names an issue in the body with no closing word, such as `Refs ENG-9`, does not count. Then the issues GitHub itself links to the pull request to close at the merge (its closing issue references): an issue linked by hand in the pull request's sidebar closes with no text naming it, so any issue there but the run's own keeps it off, and so does a list the forge gave only in part. The [merge guard](hooks.md#merge-guard) holds the merge itself to the same rule at the moment it runs, through the same check, with the merge commit's own subject and body. |
 | `trust` | Only in a session no Human attends, one with an [unattended mark](handoff.md#the-background-route), or a project run's driver: the record is this machine's word, which a project run's confined session can write, so the merge also needs [merge trust](review.md#merge-trust), the default branch's `github.reviewer` bot's passing verdict on exactly the head, read from GitHub in one more call, and the Human's sign-off from the sign-off store of every flow the record or the changed files ask for, on that head. With no bot set it stays off, and says to set one. `--json` adds `trust`, `bot` or `signoff`, which half is missing, and the plain line names both: `auto-merge off for #<PR> (trust: bot): ...`. With `signoff`, it adds `flow`, the first flow whose sign-off is missing, and `signoffClass`, `security` when any unsigned flow of the default branch has an id that holds the word `security` or a `require` that names `agent:security-engineer`, else `product`. A session the Human attends skips this row. |
 
@@ -860,6 +863,54 @@ machine opted out. Two limits follow, for `status` and the ready hold alike:
   `main` and a clone that never fetched.
 - A session that rewrites those refs and `HEAD` to say off turns `status` and the ready hold off. A follow-up keeps the
   session-start answer instead, as the session's gates do.
+  A project run's issue session is the exception: there the hold never reads git, as [In an issue session](#in-an-issue-session) says.
+
+### In an issue session
+
+In a [project run](#project-run)'s issue session, product feedback is the Human's step, never the session's.
+The session writes none of it: its sandbox grants no write to `<state>/product-feedback/`, `<state>/audits/`,
+`<state root>/feedback-folders/`, or the state folder itself.
+On Claude Code its sandbox also denies writes to those three folders, to sandboxed commands and the file tools,
+even where the grant of a temporary folder, such as `/tmp`, holds a state root placed inside it.
+The start makes each of the three first, owner-only, as it does the sign-off store, so each deny names a folder that is there at launch.
+A start where one of them is a link halts, since the sandbox would deny only its target and leave the link a session could replace.
+Codex's start takes no deny list, so there a state root inside a temporary folder its sandbox writes, `/tmp` or `$TMPDIR`, halts the start.
+It starts once `exclude_slash_tmp` or `exclude_tmpdir_env_var` is set true under `[sandbox_workspace_write]`, or the state root moves out
+([Codex's project start](providers/codex.md#project-start)).
+A record holds what the ready hold and the post rule trust, such as an answer's `by` and `limited`, so a session that could write it could forge them.
+After the draft opens, the session runs only `status <PR> --json`.
+There `status` reads no git ref, which the session could have rewritten:
+GitHub's config at the default branch and the base decides, as for the ready hold.
+On exit 2, for any reason, it runs nothing of the `pr-product-feedback` skill, keeps the line for its report, and goes on with the review rounds.
+On exit 3 it reports the line and goes on; this step never ends the issue `environment` or `failed`.
+`diff`, `record`, `answer`, `recheck`, and `post` exit 3 there, before any write, note, or forge call, with this line:
+"a project run's issue session does not run product feedback; the Human runs the pr-product-feedback skill on #<n> in a session they attend".
+`status` and `items` still run.
+The start's marker in the session's environment, `AIDRIAN_ATTEMPT_ENV`, names the session; it is only the message, and the sandbox is the control.
+While feedback is owed, the pull request stays a draft, and the session records `pr_open` with the stop
+"product feedback is owed on #<n>, which an issue session does not run: the Human runs pr-product-feedback on it, then marks it ready".
+Its report lists that under Decisions for the Human, with that command, and the pull request body gets one plain line:
+"Product feedback: owed, for the Human, before this leaves draft".
+With `auto` on, every user-facing pull request of a project run stops at a draft for the Human.
+The [ready hold](hooks.md#ready-hold) holds that draft there, and the forge merges no draft.
+The merge hold itself sits at both merge points, so at every merge the harness sees that no Human asks for:
+the [auto-merge gate](#auto-merge)'s `feedback` row for every merge it judges, and the [merge guard](hooks.md#merge-guard)
+before a merge in a session no Human attends, by `gh pr merge` or the GitHub MCP merge.
+Both run one check, `feedbackHold` in `lib/pr-product-feedback.mjs`, from GitHub, so a pull request born ready, or marked
+ready by a form no hook reads, still stops there.
+There the hold checks a ready in one form alone, `gh pr ready <number or URL>` run first from the clone, with no repository option,
+and refuses every other ([In an issue session](hooks.md#in-an-issue-session)).
+So a ready from a folder outside the clone, or one naming a repository, is refused even when it would be right.
+
+What this does not stop: the ready hold reads the words of each shell command, as every hook that reads commands does.
+A session that runs a script file, an interpreter such as `node -e`, a shell alias, or a GraphQL query read from a file
+can mark the draft ready with no word the hook sees.
+So can a ready a variable spells, such as `X="pr ready"; gh $X 7` or `G=gh; $G pr ready 7`, a ready another program runs,
+such as `xargs gh pr ready`, `parallel`, `find -exec`, or `watch`, and one in a string argument of a program that runs it,
+such as an interpreter's code.
+Each passes the ready hold, and is held at the merge: `aidrian pr auto-merge` stays off, and the merge guard refuses a merge in a
+session no Human attends, while its feedback is owed or cannot be read.
+The ready hold stops a session that follows the flow; the merge points stop a merge no Human asks for, whatever marked it ready.
 
 ### With the key off
 
@@ -939,6 +990,8 @@ through its re-check. `--by human` is held to the Human's own word by the [answe
 
 `post` is the only path that posts, and a pull request body or comment never receives a local path. Its `--body-file` must really be
 inside `<state>/tmp/`, a symlink resolved. The comment opens with a marker, `<!-- aidrian-product-feedback: pr=<n> repo=<owner/name> -->`.
+It takes the record's lock, a file beside the record, before it reads or posts the comment, and holds it until the record names the comment.
+So where no write reaches `product-feedback/`, as in a confined session's sandbox, nothing is posted.
 
 Before any write, `post` exits 3, naming the kind of match and never the value, on the body as written, and on a copy with format
 characters stripped and numeric entities and `%xx` decoded. It refuses:
@@ -2095,7 +2148,7 @@ one action. The `why` is cleaned and capped as a result's `stop` is, and a forge
 | --- | --- | --- |
 | Merged on the forge, as the result command records `merged`: into the default branch, after the attempt's start | `done`: record the result `merged` | |
 | Merged on the forge, where the result command refuses `merged`: into another branch, or at or before the attempt's start | `park`: record the result `parked`, with one decision of class `other` on whether the merge counts as the issue's work, whose first and recommended option is to leave the issue parked; the line names the result command's reason | |
-| Closed; a base other than the default branch; a reason `team`, `local`, `checks`, `paths`, `author`, `outsider`, or `closes`; a `review` that is changes requested; a reason it does not know; a draft | `park`: record the result `pr_open` with the line as its stop | |
+| Closed; a base other than the default branch; a reason `team`, `local`, `checks`, `paths`, `author`, `outsider`, `feedback`, or `closes`; a `review` that is changes requested; a reason it does not know; a draft | `park`: record the result `pr_open` with the line as its stop | |
 | `trust` with `signoff` | `park`: record the result `parked`, with one decision for the Human's sign-off, whose first and recommended option is to leave the pull request unmerged; of class `security` when any unsigned flow is a security one (an id that holds the word `security`, or a `require` that names `agent:security-engineer`), and `product` otherwise | |
 | A conflict with the base | `merge_base`: the session fetches the base and its branch, and stays on its own branch, its commits kept; a fetch that fails is run again in the same turn, up to three times in all, and one that still fails merges nothing and records `pr_open` naming the failed fetch, with no second `stop-action`, so no second base update is spent; when `git merge-base --is-ancestor origin/<branch> HEAD` fails, it records `pr_open` naming the divergence and merges nothing; when `git merge-tree --write-tree --name-only` names a host config or instruction file, or a base copy the first message lists, that would conflict, or git refuses the merge over one, it records `pr_open` with that file's path in its stop and merges nothing; else it merges the base into HEAD with a merge commit, resolves it, and pushes with a full refspec, never with force | 2 base updates per issue, with the next row |
 | Behind the base | `update_branch`: the forge merges the base in, or rebases under the `rebase` strategy where the branch's rules allow a push that is no fast-forward | the same 2 |
@@ -2346,7 +2399,9 @@ state folder the project does not name, reads every switch off. A confined sessi
 checkout, so its own commands, such as `aidrian pr auto-merge` and `stop-action`, cannot read that link: for them the
 auto-merge switch is the one the start row records as `machine.autoMerge`, which the driver reads in the main checkout
 as `aidrian pr auto-merge` reads it there, `unset` only for a local file git does not track, which then follows a team
-default of `"on"`. It holds only while the main checkout is denied to the reading process and the session's own mark
+default of `"on"`.
+The start row records the main checkout's `review.productFeedback.auto` as `machine.feedbackAuto` when it sets one, which those commands read the same way.
+It holds only while the main checkout is denied to the reading process and the session's own mark
 names the run, the issue, the main checkout, and the clone as the folder its start began in; every other switch still
 reads off there. The merge guard, a hook outside the sandbox, still reads the main checkout's own switch at the merge,
 so a switch turned off after the start stops the merge.

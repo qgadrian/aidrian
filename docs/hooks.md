@@ -858,7 +858,11 @@ The guard is not proof that a review happened, because no record lets a merge ru
 So `aidrian pr auto-merge` reads the record itself, and no record keeps auto-merge off. In a session no Human attends
 it asks for [merge trust](review.md#merge-trust) too.
 It also stays off for a changed instruction or workflow file (`paths`), a comment from outside the repository (`outsider`),
-and requested changes (`review`). Neither it nor this guard stops a session with a shell or a forged local record:
+requested changes (`review`), and [product feedback](config.md#product-feedback) owed (`feedback`),
+for every merge; a feedback read that fails is an error (exit 3), which a project run retries.
+In a session no Human attends this guard makes that same feedback check before the merge,
+by `gh pr merge` or the GitHub MCP merge, reading the review trail it already took; owed or unreadable refuses.
+Neither it nor this guard stops a session with a shell or a forged local record:
 for proof, protect the branch with a required review from a second account. [Limits](config.md#limits).
 
 Limits:
@@ -934,11 +938,47 @@ A gh call that fails, one past the deadline, `status` exiting 3, or anything els
 command run. The deny never names the override or the local opt-out as a route. A choice is the Human's, so an unattended
 run leaves the draft.
 
+### In an issue session
+
+In a project run's issue session, which the session's mark names (`issueHeld` in `lib/unattended-mark.mjs`), the hold reads more strictly.
+The session can write every ref of its clone, whose git folder it is granted, so the hold never reads git there.
+Step 3 never says off, and every ready asks GitHub.
+`status` asks GitHub for the default branch too, never the clone's `origin/HEAD`.
+It refuses each read that fails there: a graphql id it cannot read, a gh call that fails or passes the deadline, and `status` exiting 3.
+`status` takes the same reads there (`issueReads` in `lib/pr-product-feedback.mjs`), so it never says clear from the clone's refs either.
+Text fed to a shell that names a ready, and more than one ready in a command, are refused whatever git says.
+It guesses no repository there: it checks `gh pr ready` in one form alone, and refuses every other with one deny.
+That form is `gh pr ready <number or URL>`, every word written out, as the first command of the line, behind no wrapper that sets a folder or a variable.
+The command, and the hook's environment, hold no `-R`, `--repo`, `GH_REPO`, `GIT_DIR`, or `GIT_WORK_TREE`, in any spelling.
+The hook's folder is the clone the session's mark records, or a folder inside it with no other checkout's `.git` on the way.
+No `cd`, `pushd`, `env -C`, or other command runs before it, except a `cd` that lands in that same folder.
+The deny asks for `gh pr ready <PR>` from the clone, with no repository option.
+So a ready from a folder outside the clone, or one naming a repository, is refused even when it would mark the right pull request.
+A graphql call names its pull request by node id, so it is judged from any folder.
+Every ready there is judged in the project of that clone.
+It refuses a ready it cannot read as one with the same deny: gh's `pr` and `ready` around a word the shell fills in, such as `gh pr "$X" ready 7`.
+gh whose own subcommand is another, as `gh pr create --title ready`, holds no ready, and no other program's words are read for one,
+so `echo gh pr ready 7` runs; a ready another program runs, as `xargs`, `parallel`, `find -exec`, or `watch` do, passes this hook
+and is held at the merge: by the auto-merge gate, and by the [merge guard](#merge-guard) in a session no Human attends.
+The GitHub MCP hook reads the same mark and judges in the same clone.
+It refuses a call whose number it cannot read, and one whose `owner` and `repo` are not both given and equal to the clone's origin repository.
+A pull request opened as no draft, or marked ready by a form this hook cannot read, skips this hold and is held at the merge:
+the [auto-merge gate](config.md#auto-merge)'s `feedback` row, for every merge it judges, and the [merge guard](#merge-guard),
+for a merge in a session no Human attends, run the same check.
+The deny of an owed pull request names the stop the run records,
+`pr_open` with "product feedback is owed on #<n>, which an issue session does not run: …", never the skill:
+the step is the Human's ([In an issue session](config.md#in-an-issue-session)).
+A project without product feedback pays the gh calls of each ready there.
+`AIDRIAN_ALLOW_UNHELD_READY=1` still lets every one run, and outside issue sessions nothing changes.
+
 What it cannot read runs, by the Human's decision, and is out of its sight:
 
 - A word the shell fills in or expands where gh's program, `pr`, `ready`, or the pull request goes: `"$GH" pr ready 7`,
   `gh pr {ready,} 7`, `gh pr ready "$PR"`, `gh pr ready {7,}`, a loop such as `for n in 7 8; do gh pr ready $n; done`.
   A repository the shell fills in or expands (`-R "$REPO"`) counts as the session's own, as the merge guard reads it.
+  In an issue session each of these is refused, but a ready a variable spells, such as `X="pr ready"; gh $X 7` or `$G pr ready 7`,
+  and one another program runs, which no hook that reads words can see, and which the auto-merge gate and the merge guard hold
+  ([What this does not stop](config.md#in-an-issue-session)).
 - A graphql call with no literal pull request id (`$id` from `-f id="$ID"`, `@file`, or `--input`), and an id that resolves to
   no pull request.
 - A script, an interpreter, `xargs`, a variable set in an earlier Bash call, a `gh alias` such as `gh rd 7`, and `curl` to the
@@ -953,7 +993,8 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
   on its own branch, chooses both branches whose config is read.
 - An off read from stale or rewritten git refs: [The commands](config.md#the-commands) names both limits, which the hold
   shares with `status`.
-- A pull request opened as no draft is never held. A person's own shell outside a session is never held.
+- A pull request opened as no draft is never held here; the auto-merge gate's `feedback` row and the merge guard hold its merge.
+  A person's own shell outside a session is never held.
 
 ### Where the ready hold is verified
 
@@ -1803,6 +1844,17 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     read from a file or the input, or built at run time.
   - A shell the lexer cannot read, or a command word built at run time, whose text names a push, a release, a workflow,
     or the API.
+  - A pull request opened as no draft, since one opened ready skips the [ready hold](#ready-hold).
+    A create from the shell passes in one form alone: every word of the gh command written out, none the shell fills in,
+    opening with exactly `gh pr create` or `gh pr new`, and its last draft setting on, as the pull request body rule reads
+    its options with their values: `--draft`, `--draft=true`, or `-d`, so `--attach --draft` and `--draft --draft=false` are off.
+    So a create with a shell-filled value, such as `--title "$T"`, or with an option before `create`, is refused even as a draft.
+    A write to `repos/<owner>/<name>/pulls` (`forgeApiOpensPull`) is refused too.
+    The GitHub MCP server's `create_pull_request` without `draft: true` is refused, under a plugin's name and as Codex's connector too.
+    A shell the lexer cannot read, such as PowerShell, whose text runs `gh pr create`, `gh pr new`, or a `gh api` write to
+    a `/pulls` path is refused with a draft word or without, since the hook cannot tie that word to the create.
+    The refusal names the fix: `gh pr create --draft ...` from the Bash tool with every value written out and
+    `--body-file <literal path>`, or the MCP call with `draft: true`.
 
   An attended session, a run's driver, and a session a pending mark holds are not held by it. Its residual: a script or
   program the session runs, or `curl` with the token, can still push or call the forge, a command an earlier call left

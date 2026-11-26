@@ -693,7 +693,7 @@ test('a later attempt over host files no review passed merges its moved base, gi
   const rules = () => readFileSync(path.join(clone, '.claude/CLAUDE.md'), 'utf8');
   // The catch-up route's own read and merge, as its line words them, run with rename detection off.
   const route = stopLine({ action: 'merge_base', why: 'it conflicts with main' }, { view: { base: 'main', number: 12 }, key: 'ENG-1', branch: 'feat/eng-1-export', catchUp: true });
-  const [read, merge] = [/`git (merge-tree [^`]+)`/u, /`git (merge --no-ff [^`]+)`/u].map((pattern) => route.match(pattern)[1].split(' '));
+  const [read, merge] = [/`git (-c merge\.renames=false merge-tree [^`]+)`/u, /`git (-c merge\.renames=false merge --no-ff [^`]+)`/u].map((pattern) => route.match(pattern)[1].split(' '));
   assert.match(run(read), /^[0-9a-f]{40}\nCLAUDE\.md\n/u, 'the read names the moved host file as a conflict, so the session merges nothing');
   assert.match(run(merge), /CONFLICT \(modify\/delete\): CLAUDE\.md deleted in origin\/main and modified in HEAD/u);
   assert.equal(rules(), '# base rules\n', 'the new path keeps the base\'s lines');

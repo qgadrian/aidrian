@@ -182,11 +182,12 @@ function nextStep(decision, { view, branch, method, catchUp = false }) {
 // Both the read and the merge run with rename detection off, as the push guard's merge does: a base that renames a host
 // file the branch changed would otherwise write the branch's lines to the new path, which no base copy covers. The cost:
 // any file the base renames and the branch changed conflicts, and the session resolves it by hand, or stops on a host file.
+// The config form, which every git with `merge-tree --write-tree` takes; git's ort merge honours it from 2.50 on.
 const mergeBaseRoute = (base, branch) => `run \`git fetch origin ${base} ${branch}\`, and when it fails, run it again in this turn, up to three times in all; when it still fails, merge nothing and record the result pr_open with a stop that names the failed fetch, never asking this command again for it; \`git merge-base --is-ancestor origin/${branch} HEAD\`: when it fails, `
   + `HEAD does not hold the branch as the forge has it, so merge nothing and record the result pr_open with a stop that says ${branch} diverged from origin/${branch}; `
-  + `then \`git merge-tree --write-tree --name-only -X no-renames HEAD origin/${base}\` lists the files that would conflict: when one is a host config or instruction file, or a base copy the first message lists, `
+  + `then \`git -c merge.renames=false merge-tree --write-tree --name-only HEAD origin/${base}\` lists the files that would conflict: when one is a host config or instruction file, or a base copy the first message lists, `
   + 'record the result pr_open with that file\'s path in its stop, and merge nothing; '
-  + `else run \`git merge --no-ff --no-edit -X no-renames origin/${base}\`, a merge commit, never a rebase, resolve the conflicts without editing a host config or instruction file, or a base copy the first message lists, by hand (a merge git refuses over one is recorded the same way), `
+  + `else run \`git -c merge.renames=false merge --no-ff --no-edit origin/${base}\`, a merge commit, never a rebase, resolve the conflicts without editing a host config or instruction file, or a base copy the first message lists, by hand (a merge git refuses over one is recorded the same way), `
   + `run the tests, commit, and push with \`git push origin HEAD:refs/heads/${branch}\` in a call of its own, never with force`;
 
 // The line of a decision. `why` is cleaned and capped as a result's `stop` is (project-result.mjs cleanText).
